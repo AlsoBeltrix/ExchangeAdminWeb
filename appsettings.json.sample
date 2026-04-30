@@ -37,8 +37,8 @@
     ],
     "PreventSelfGrant": true,
     "AllowedGroups": [
-      "IT-Helpdesk",
-      "Exchange-Admins"
+      "DOMAIN\\IT-Helpdesk",
+      "DOMAIN\\Exchange-Admins"
     ]
   },
   "AllowedHosts": "*"

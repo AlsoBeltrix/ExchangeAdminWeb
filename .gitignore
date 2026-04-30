@@ -28,6 +28,7 @@ logs/
 session_*.json
 
 # Sensitive configuration
+appsettings.json
 appsettings.Development.json
 
 # IDE
