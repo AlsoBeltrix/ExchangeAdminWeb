@@ -110,10 +110,10 @@ public class ExchangeService : IExchangeService
 
         return RunAsync(ps =>
         {
-            ValidateMailbox(ps, targetMailbox);
+            var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateMailbox(ps, user);
 
-            calendarPath = GetCalendarFolderName(ps, targetMailbox);
+            calendarPath = GetCalendarFolderName(ps, resolvedMailbox);
             var level = accessRight.ToString();
 
             ps.AddCommand("Set-MailboxFolderPermission")
@@ -144,10 +144,10 @@ public class ExchangeService : IExchangeService
 
         return RunAsync(ps =>
         {
-            ValidateMailbox(ps, targetMailbox);
+            var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateMailbox(ps, user);
 
-            calendarPath = GetCalendarFolderName(ps, targetMailbox);
+            calendarPath = GetCalendarFolderName(ps, resolvedMailbox);
             ps.AddCommand("Remove-MailboxFolderPermission")
               .AddParameter("Identity", calendarPath)
               .AddParameter("User", user)
@@ -398,7 +398,7 @@ public class ExchangeService : IExchangeService
         if (folder is null)
             throw new InvalidOperationException($"No calendar folder found for {mailbox}");
 
-        var folderPath = folder.Properties["FolderPath"]?.Value?.ToString() ?? "/Calendar";
+        var folderPath = folder.Properties["FolderPath"]?.Value?.ToString() ?? @"\Calendar";
         return $"{mailbox}:{folderPath}";
     }
 
@@ -493,12 +493,16 @@ public class ExchangeService : IExchangeService
             $"Certificate '{_certSubject}' with a private key was not found in LocalMachine\\My or CurrentUser\\My.");
     }
 
-    private static void ValidateMailbox(PowerShell ps, string mailbox)
+    private static string ValidateMailbox(PowerShell ps, string mailbox)
     {
         ps.AddCommand("Get-Mailbox")
           .AddParameter("Identity", mailbox)
           .AddParameter("ErrorAction", "Stop");
-        Invoke(ps);
+        var result = Invoke(ps);
+        var mbx = result.FirstOrDefault();
+
+        // Return PrimarySmtpAddress for use in calendar paths
+        return mbx?.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? mailbox;
     }
 
     private static Collection<PSObject> Invoke(PowerShell ps)
