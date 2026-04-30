@@ -1,0 +1,50 @@
+@page "/access-denied"
+@inject AuthenticationStateProvider AuthStateProvider
+
+<PageTitle>Access Denied</PageTitle>
+
+<div class="container-fluid">
+    <div class="row justify-content-center mt-5">
+        <div class="col-md-6">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h3 class="mb-0">🔒 Access Denied</h3>
+                </div>
+                <div class="card-body">
+                    <p class="lead">You do not have permission to access this application.</p>
+
+                    @if (!string.IsNullOrEmpty(currentUser))
+                    {
+                        <div class="alert alert-info">
+                            <strong>Logged in as:</strong> @currentUser
+                        </div>
+                    }
+
+                    <p>This application is restricted to authorized IT staff only. If you believe you should have access, please contact:</p>
+
+                    <ul>
+                        <li>Your manager to request access</li>
+                        <li>The IT Service Desk to verify your group membership</li>
+                    </ul>
+
+                    <hr />
+
+                    <p class="text-muted small mb-0">
+                        <strong>Note:</strong> Access is controlled by Active Directory group membership.
+                        You must be a member of an authorized group to use this application.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = authState.User.Identity?.Name ?? "Unknown";
+    }
+}

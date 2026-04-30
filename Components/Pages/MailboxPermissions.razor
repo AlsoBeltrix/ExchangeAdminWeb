@@ -1,0 +1,358 @@
+@page "/mailbox-permissions"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IExchangeService Exchange
+@inject AuditService Audit
+@inject EmailService Email
+@inject PermissionValidator Validator
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IHttpContextAccessor HttpContextAccessor
+@inject IJSRuntime JS
+@inject IConfiguration Config
+
+<PageTitle>Mailbox Permissions</PageTitle>
+
+<div class="container-fluid">
+    <h1 class="mb-4">Mailbox Permissions</h1>
+
+    <div class="alert alert-info mb-4">
+        <strong>ℹ️ Notice:</strong> All actions performed in this application are logged for audit purposes.
+        @if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false"))
+        {
+            <text> End users will receive email notifications when permissions are granted or removed.</text>
+        }
+    </div>
+
+    <ul class="nav nav-tabs mb-4">
+        <li class="nav-item">
+            <button class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => SetTab(0)">Add</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => SetTab(1)">Remove</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="() => SetTab(2)">Bulk Upload</button>
+        </li>
+    </ul>
+
+    @if (tabIndex < 2)
+    {
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Permissions</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="chkFullAccess" @bind="grantFullAccess" />
+                                <label class="form-check-label" for="chkFullAccess">Full Access</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="chkSendAs" @bind="grantSendAs" />
+                                <label class="form-check-label" for="chkSendAs">Send As</label>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="targetMailbox">Target Mailbox</label>
+                            <input id="targetMailbox" class="form-control" type="text"
+                                   placeholder="mailbox@domain.com or SamAccountName"
+                                   @bind="targetMailbox" @bind:event="oninput" />
+                            <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="affectedUser">User</label>
+                            <input id="affectedUser" class="form-control" type="text"
+                                   placeholder="user@domain.com or SamAccountName"
+                                   @bind="affectedUser" @bind:event="oninput" />
+                            <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
+                            <input id="ticketNumber" class="form-control" type="text"
+                                   placeholder="INC0001234 or REQ0005678"
+                                   @bind="ticketNumber" @bind:event="oninput" />
+                            <div class="form-text">Service request or incident ticket number</div>
+                        </div>
+
+                        @if (tabIndex == 0 && grantFullAccess)
+                        {
+                            <div class="mb-3 form-check">
+                                <input class="form-check-input" type="checkbox" id="chkAutoMap" @bind="autoMapping" />
+                                <label class="form-check-label" for="chkAutoMap">
+                                    AutoMapping <span class="text-muted">(auto-add to Outlook)</span>
+                                </label>
+                            </div>
+                        }
+
+                        <button class="btn btn-primary" @onclick="SubmitSingle" disabled="@(isLoading || !IsFormValid)">
+                            @if (isLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            }
+                            @(tabIndex == 0 ? "Add Permissions" : "Remove Permissions")
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">Bulk @(bulkIsAdd ? "Add" : "Remove") Permissions</h5>
+                        <p class="text-muted">Upload a CSV file with the following columns:</p>
+                        <ul class="small text-muted">
+                            <li><code>Target</code> - Mailbox (SMTP, UPN, or SamAccountName)</li>
+                            <li><code>User</code> - User to grant/revoke access (SMTP, UPN, or SamAccountName)</li>
+                            <li><code>FullAccess</code> - Yes/No/True/False/1/0/X</li>
+                            <li><code>SendAs</code> - Yes/No/True/False/1/0/X</li>
+                            <li><code>AutoMapping</code> - (optional) Yes/No/True/False/1/0/X (defaults to Yes)</li>
+                        </ul>
+
+                        <div class="mb-3 btn-group" role="group">
+                            <input type="radio" class="btn-check" name="bulkAction" id="radioAdd" checked="@bulkIsAdd" @onchange="() => bulkIsAdd = true" />
+                            <label class="btn btn-outline-primary" for="radioAdd">Add</label>
+                            <input type="radio" class="btn-check" name="bulkAction" id="radioRemove" checked="@(!bulkIsAdd)" @onchange="() => bulkIsAdd = false" />
+                            <label class="btn btn-outline-primary" for="radioRemove">Remove</label>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold" for="bulkTicket">Ticket Number (applies to all rows) <span class="text-danger">*</span></label>
+                            <input id="bulkTicket" class="form-control" type="text"
+                                   placeholder="INC0001234 or REQ0005678"
+                                   @bind="bulkTicketNumber" @bind:event="oninput" />
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="csvFile" class="form-label fw-semibold">CSV File</label>
+                            <InputFile id="csvFile" class="form-control" OnChange="HandleCsvUpload" accept=".csv" />
+                        </div>
+
+                        <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(isLoading || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
+                            @if (isLoading)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            }
+                            Process CSV
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (result is not null)
+    {
+        <div class="row mt-3">
+            <div class="col-md-8">
+                <div class="alert @(result.Success ? "alert-success" : "alert-danger") alert-dismissible" role="alert">
+                    <strong>@(result.Success ? "Success" : "Error"):</strong> @result.Message
+                    @if (!string.IsNullOrEmpty(result.Detail))
+                    {
+                        <div class="mt-1"><small>@result.Detail</small></div>
+                    }
+                    <button type="button" class="btn-close" @onclick="() => result = null" aria-label="Close"></button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (bulkResult is not null)
+    {
+        <div class="row mt-3">
+            <div class="col-md-8">
+                <div class="alert @(bulkResult.FailedCount == 0 ? "alert-success" : "alert-warning") alert-dismissible">
+                    <h5 class="alert-heading">Bulk Operation Complete</h5>
+                    <p><strong>@bulkResult.Summary</strong></p>
+                    <div class="mb-2">
+                        <button class="btn btn-sm btn-primary" @onclick="DownloadCsvReport">
+                            Download Full Report (CSV)
+                        </button>
+                    </div>
+                    @if (bulkResult.Errors.Any())
+                    {
+                        <hr />
+                        <p class="mb-1"><strong>Errors:</strong></p>
+                        <ul class="mb-0 small">
+                            @foreach (var err in bulkResult.Errors.Take(20))
+                            {
+                                <li>@err</li>
+                            }
+                            @if (bulkResult.Errors.Count > 20)
+                            {
+                                <li class="text-muted">... and @(bulkResult.Errors.Count - 20) more</li>
+                            }
+                        </ul>
+                    }
+                    <button type="button" class="btn-close" @onclick="() => bulkResult = null" aria-label="Close"></button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private int tabIndex = 0;
+    private bool grantFullAccess = true;
+    private bool grantSendAs = false;
+    private string targetMailbox = string.Empty;
+    private string affectedUser = string.Empty;
+    private string ticketNumber = string.Empty;
+    private bool autoMapping = true;
+    private bool isLoading = false;
+    private PermissionResult? result;
+    private string currentUser = string.Empty;
+
+    private bool bulkIsAdd = true;
+    private string bulkTicketNumber = string.Empty;
+    private IBrowserFile? csvFile;
+    private BulkOperationResult? bulkResult;
+
+    private bool IsFormValid =>
+        !string.IsNullOrWhiteSpace(targetMailbox) &&
+        !string.IsNullOrWhiteSpace(affectedUser) &&
+        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        (grantFullAccess || grantSendAs);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        currentUser = authState.User.Identity?.Name ?? "Unknown";
+    }
+
+    private void SetTab(int index)
+    {
+        tabIndex = index;
+        result = null;
+        bulkResult = null;
+    }
+
+    private async Task SubmitSingle()
+    {
+        isLoading = true;
+        result = null;
+
+        var target = targetMailbox.Trim();
+        var user = affectedUser.Trim();
+        var ticket = ticketNumber.Trim();
+
+        // Validate target is not excluded
+        var validationError = await Validator.ValidateTargetMailboxAsync(target);
+        if (validationError is not null)
+        {
+            result = PermissionResult.Fail(validationError);
+            isLoading = false;
+            return;
+        }
+
+        // Validate self-grant (only for Add operations)
+        if (tabIndex == 0)
+        {
+            var selfGrantError = Validator.ValidateSelfGrant(currentUser, user);
+            if (selfGrantError is not null)
+            {
+                result = PermissionResult.Fail(selfGrantError);
+                isLoading = false;
+                return;
+            }
+        }
+
+        try
+        {
+            var opResult = tabIndex == 0
+                ? await Exchange.AddMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs, autoMapping)
+                : await Exchange.RemoveMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs);
+
+            var perms = new List<string>();
+            if (grantFullAccess) perms.Add("FullAccess");
+            if (grantSendAs) perms.Add("SendAs");
+            var permType = string.Join("+", perms);
+            var action = $"{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
+            var ipAddress = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+
+            Audit.LogMailboxPermission(
+                currentUser, action, target, user, permType,
+                opResult.Success, ticket,
+                autoMapping: tabIndex == 0 && grantFullAccess ? autoMapping : null,
+                errorDetail: opResult.Success ? null : opResult.Message);
+
+            // Send admin notification
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, action, target, user, permType,
+                opResult.Success, ticket, opResult.Success ? null : opResult.Message);
+
+            // Send user notification for both add and remove operations
+            if (opResult.Success)
+            {
+                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant: tabIndex == 0);
+            }
+
+            result = opResult;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    {
+        csvFile = e.File;
+        bulkResult = null;
+    }
+
+    private async Task ProcessBulk()
+    {
+        if (csvFile is null) return;
+
+        isLoading = true;
+        bulkResult = null;
+
+        try
+        {
+            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            bulkResult = await Exchange.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser);
+
+            var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
+            var ipAddress = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+            var ticket = bulkTicketNumber.Trim();
+
+            Audit.LogMailboxPermission(
+                currentUser, action, "Bulk", csvFile.Name,
+                "Multiple", bulkResult.FailedCount == 0, ticket,
+                errorDetail: bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+
+            // Send admin notification for bulk operation
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, action, "Bulk Operation", csvFile.Name,
+                $"{bulkResult.TotalRows} rows", bulkResult.FailedCount == 0, ticket,
+                bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task DownloadCsvReport()
+    {
+        if (bulkResult is null) return;
+
+        var csvBytes = bulkResult.GenerateCsvReport();
+        var base64 = Convert.ToBase64String(csvBytes);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var filename = $"mailbox_permissions_report_{timestamp}.csv";
+
+        await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+    }
+}

@@ -1,0 +1,45 @@
+{
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft.AspNetCore": "Warning",
+        "Microsoft.Hosting.Lifetime": "Information"
+      }
+    }
+  },
+  "ExchangeOnline": {
+    "AppId": "YOUR-APP-ID-HERE",
+    "Organization": "yourorg.onmicrosoft.com",
+    "CertificateSubject": "CN=EXO-Automation"
+  },
+  "Audit": {
+    "LogRoot": "E:\\WWWOutput",
+    "RotationPeriod": "daily"
+  },
+  "Email": {
+    "SmtpHost": "smtp.yourcompany.com",
+    "SmtpPort": 25,
+    "SmtpUsername": "",
+    "SmtpPassword": "",
+    "SmtpUseSsl": false,
+    "FromAddress": "exchangeadmin@yourcompany.com",
+    "FromName": "Exchange Admin",
+    "AdminNotificationEmail": "itadmin@yourcompany.com",
+    "NotifyUsersOnPermissionGrant": false
+  },
+  "Security": {
+    "ExcludedUsers": [
+      "C-Suite",
+      "Board of Directors",
+      "Executives",
+      "ceo@yourcompany.com"
+    ],
+    "PreventSelfGrant": true,
+    "AllowedGroups": [
+      "IT-Helpdesk",
+      "Exchange-Admins"
+    ]
+  },
+  "AllowedHosts": "*"
+}
