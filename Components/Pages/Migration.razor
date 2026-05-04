@@ -405,7 +405,7 @@
                         </button>
                     </div>
                 }
-                else if (migrationBatches == null || !migrationBatches.Any())
+                else if ((migrationBatches == null || !migrationBatches.Any()) && batchActionResult == null)
                 {
                     <div class="alert alert-info">
                         <strong>No migration batches found</strong>
@@ -1044,7 +1044,11 @@
             }
 
             if (result.Success)
+            {
+                var savedResult = batchActionResult;
                 await LoadMigrationStatus();
+                batchActionResult = batchActionResult ?? savedResult;
+            }
         }
         catch (Exception ex)
         {
