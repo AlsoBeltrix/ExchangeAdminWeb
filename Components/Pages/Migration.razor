@@ -909,9 +909,11 @@
         try
         {
             migrationBatches = await Exchange.GetMigrationBatchesAsync();
+            batchActionResult = null;
         }
         catch (Exception ex)
         {
+            migrationBatches ??= new List<MigrationBatchInfo>();
             batchActionResult = PermissionResult.Fail($"Failed to load migration batches: {ex.Message}");
         }
         finally
