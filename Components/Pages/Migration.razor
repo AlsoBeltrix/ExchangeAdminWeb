@@ -26,7 +26,7 @@
             <a class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => tabIndex = 1" href="javascript:void(0)">Bulk CSV Check</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="() => LoadMigrationStatus()" href="javascript:void(0)">Migration Status</a>
+            <a class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="LoadMigrationStatus" href="javascript:void(0)">Migration Status</a>
         </li>
     </ul>
 
@@ -394,13 +394,21 @@
                         <div class="spinner-border text-primary" role="status">
                             <span class="visually-hidden">Loading...</span>
                         </div>
-                        <p class="mt-2 text-muted">Loading migration batches...</p>
+                        <p class="mt-2 text-muted">@(actionInProgress == "clearing" ? "Removing completed batches and reloading..." : "Loading migration batches...")</p>
+                    </div>
+                }
+                else if (!batchesLoaded)
+                {
+                    <div class="text-center py-5">
+                        <button class="btn btn-primary" @onclick="LoadMigrationStatus">
+                            Load Migration Batches
+                        </button>
                     </div>
                 }
                 else if (migrationBatches == null || !migrationBatches.Any())
                 {
                     <div class="alert alert-info">
-                        <strong>ℹ️ No migration batches found</strong>
+                        <strong>No migration batches found</strong>
                         <p class="mb-0 mt-2">There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.</p>
                     </div>
                 }
@@ -660,6 +668,7 @@
     // Migration status
     private List<MigrationBatchInfo>? migrationBatches;
     private bool isLoadingStatus = false;
+    private bool batchesLoaded = false;
     private string? expandedBatch;
     private List<MigrationUserInfo>? batchUsers;
     private string? loadingBatchUsers;
@@ -901,14 +910,14 @@
         {
             migrationBatches = await Exchange.GetMigrationBatchesAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            // Log error and show empty state
-            migrationBatches = new List<MigrationBatchInfo>();
+            batchActionResult = PermissionResult.Fail($"Failed to load migration batches: {ex.Message}");
         }
         finally
         {
             isLoadingStatus = false;
+            batchesLoaded = true;
         }
     }
 
@@ -1093,6 +1102,7 @@
         if (migrationBatches == null) return;
 
         actionInProgress = "clearing";
+        isLoadingStatus = true;
         batchActionResult = null;
         var removed = 0;
         var errors = new List<string>();
@@ -1129,7 +1139,9 @@
             else
                 batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}");
 
+            var savedResult = batchActionResult;
             await LoadMigrationStatus();
+            batchActionResult = batchActionResult ?? savedResult;
         }
         catch (Exception ex)
         {
@@ -1138,6 +1150,7 @@
         finally
         {
             actionInProgress = null;
+            isLoadingStatus = false;
         }
     }
 
