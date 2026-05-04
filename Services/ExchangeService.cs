@@ -1147,6 +1147,48 @@ https://admin.exchange.microsoft.com/#/migration";
         });
     }
 
+    public Task<string?> FindMigrationUserBatchAsync(string emailAddress)
+    {
+        return Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                ps.AddCommand("Get-MigrationUser")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "SilentlyContinue");
+
+                var results = Invoke(ps);
+                var user = results.FirstOrDefault();
+                return user?.Properties["BatchId"]?.Value?.ToString();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to find migration user {Email}", emailAddress);
+                return (string?)null;
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline")
+                      .AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+        });
+    }
+
     // -------------------------------------------------------------------------
     // On-Prem Exchange Operations
     // -------------------------------------------------------------------------

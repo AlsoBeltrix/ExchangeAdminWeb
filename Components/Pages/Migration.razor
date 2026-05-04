@@ -309,15 +309,35 @@
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="card-title mb-0">Migration Batches</h5>
                     <div class="d-flex align-items-center gap-2">
-                        <input type="text" class="form-control form-control-sm" style="width: 160px;"
-                               placeholder="Ticket # (required)" @bind="statusTicketNumber" @bind:event="oninput" />
+                        <div class="input-group input-group-sm" style="width: 280px;">
+                            <input type="text" class="form-control" placeholder="Search batch or user email..."
+                                   @bind="searchQuery" @bind:event="oninput"
+                                   @onkeydown="HandleSearchKeyDown" />
+                            @if (!string.IsNullOrWhiteSpace(searchQuery))
+                            {
+                                <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearch" title="Clear">
+                                    &times;
+                                </button>
+                            }
+                            <button class="btn btn-outline-primary" type="button" @onclick="SearchUser"
+                                    disabled="@(isSearching || string.IsNullOrWhiteSpace(searchQuery))">
+                                @if (isSearching)
+                                {
+                                    <span class="spinner-border spinner-border-sm"></span>
+                                }
+                                else
+                                {
+                                    <span>Find</span>
+                                }
+                            </button>
+                        </div>
                     </div>
                     <div>
                         @if (migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
                             || (b.TotalCount == 0)) == true)
                         {
-                            <button class="btn btn-sm btn-outline-secondary me-2" disabled="@(actionInProgress != null)"
-                                    @onclick="ClearCompletedBatches">
+                            <button class="btn btn-sm btn-outline-secondary me-2" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                    @onclick="StageClearCompleted">
                                 Clear Completed
                             </button>
                         }
@@ -335,7 +355,36 @@
                 {
                     <div class="alert alert-@(batchActionResult.Success ? "success" : "danger") alert-dismissible fade show">
                         @batchActionResult.Message
+                        @if (!string.IsNullOrEmpty(batchActionResult.Detail))
+                        {
+                            <div class="mt-1"><small>@batchActionResult.Detail</small></div>
+                        }
                         <button type="button" class="btn-close" @onclick="() => batchActionResult = null"></button>
+                    </div>
+                }
+
+                @if (pendingActionLabel != null)
+                {
+                    <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
+                        <strong>@pendingActionLabel</strong> <span class="text-muted">@pendingActionTarget</span>
+                        <div class="input-group input-group-sm" style="width: 220px;">
+                            <input type="text" class="form-control" placeholder="Ticket # (required)"
+                                   @bind="pendingActionTicket" @bind:event="oninput"
+                                   @onkeydown="HandleConfirmKeyDown" />
+                        </div>
+                        <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
+                                disabled="@(string.IsNullOrWhiteSpace(pendingActionTicket) || actionInProgress != null)">
+                            @if (actionInProgress != null)
+                            {
+                                <span class="spinner-border spinner-border-sm"></span>
+                            }
+                            else
+                            {
+                                <span>Confirm</span>
+                            }
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPendingAction"
+                                disabled="@(actionInProgress != null)">Cancel</button>
                     </div>
                 }
 
@@ -361,20 +410,20 @@
                         <table class="table table-hover">
                             <thead>
                                 <tr>
-                                    <th>Batch Name</th>
-                                    <th>Status</th>
-                                    <th>Direction</th>
-                                    <th>Created</th>
-                                    <th class="text-center">Total</th>
-                                    <th class="text-center">Synced</th>
-                                    <th class="text-center">Failed</th>
+                                    <th role="button" @onclick='() => ToggleBatchSort("Name")'>Batch Name @SortIndicator("Name")</th>
+                                    <th role="button" @onclick='() => ToggleBatchSort("Status")'>Status @SortIndicator("Status")</th>
+                                    <th role="button" @onclick='() => ToggleBatchSort("Direction")'>Direction @SortIndicator("Direction")</th>
+                                    <th role="button" @onclick='() => ToggleBatchSort("Created")'>Created @SortIndicator("Created")</th>
+                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Total")'>Total @SortIndicator("Total")</th>
+                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Synced")'>Synced @SortIndicator("Synced")</th>
+                                    <th role="button" class="text-center" @onclick='() => ToggleBatchSort("Failed")'>Failed @SortIndicator("Failed")</th>
                                     <th></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var batch in migrationBatches.OrderByDescending(b => b.CreatedDateTime))
+                                @foreach (var batch in GetSortedBatches())
                                 {
-                                    <tr>
+                                    <tr class="@(expandedBatch == batch.BatchName && highlightedUser == null ? "table-info" : "")">
                                         <td>
                                             <strong>@batch.BatchName</strong>
                                         </td>
@@ -402,7 +451,7 @@
                                         <td class="text-end text-nowrap">
                                             @if (batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
                                             {
-                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null)"
+                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                         @onclick="() => CompleteBatch(batch.BatchName)">
                                                     Complete
                                                 </button>
@@ -421,6 +470,21 @@
                                                     <span>Details</span>
                                                 }
                                             </button>
+                                            @if (expandedBatch == batch.BatchName && batchUsers != null)
+                                            {
+                                                <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh batch users"
+                                                        disabled="@(loadingBatchUsers != null)"
+                                                        @onclick="() => RefreshBatchUsers(batch.BatchName)">
+                                                    @if (loadingBatchUsers == batch.BatchName)
+                                                    {
+                                                        <span class="spinner-border spinner-border-sm"></span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>&#x21bb;</span>
+                                                    }
+                                                </button>
+                                            }
                                         </td>
                                     </tr>
                                     @if (expandedBatch == batch.BatchName && batchUsers != null)
@@ -459,7 +523,7 @@
                                                             <tbody>
                                                                 @foreach (var user in batchUsers)
                                                                 {
-                                                                    <tr>
+                                                                    <tr class="@(highlightedUser != null && user.EmailAddress.Contains(highlightedUser, StringComparison.OrdinalIgnoreCase) ? "table-warning" : "")">
                                                                         <td>@user.EmailAddress</td>
                                                                         <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
                                                                         <td>@user.ItemsSynced.ToString("N0")</td>
@@ -478,28 +542,28 @@
                                                                             @{ var s = user.Status; var e = user.EmailAddress; }
                                                                             @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
                                                                             {
-                                                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null)"
+                                                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                                                         @onclick="() => CompleteUser(e)">Complete</button>
                                                                             }
                                                                             @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
                                                                             {
-                                                                                <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null)"
+                                                                                <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                                                         @onclick="() => ApproveUser(e)">Approve</button>
                                                                             }
                                                                             @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
                                                                             {
-                                                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null)"
+                                                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                                                         @onclick="() => PauseUser(e)">Pause</button>
                                                                             }
                                                                             @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
                                                                                 || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
                                                                             {
-                                                                                <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null)"
+                                                                                <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                                                         @onclick="() => ResumeUser(e)">Resume</button>
                                                                             }
                                                                             @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
                                                                             {
-                                                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null)"
+                                                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                                                         @onclick="() => ClearUser(e)">Clear</button>
                                                                             }
                                                                             @if (s.Equals("Failed", StringComparison.OrdinalIgnoreCase)
@@ -519,6 +583,11 @@
                                                                                     }
                                                                                 </button>
                                                                             }
+                                                                            <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh user status"
+                                                                                    disabled="@(loadingBatchUsers != null)"
+                                                                                    @onclick="() => RefreshBatchUsers(expandedBatch!)">
+                                                                                &#x21bb;
+                                                                            </button>
                                                                             @if (actionInProgress == e)
                                                                             {
                                                                                 <span class="spinner-border spinner-border-sm ms-1"></span>
@@ -599,7 +668,17 @@
     private string? reportUser;
     private string? userReport;
     private PermissionResult? batchActionResult;
-    private string statusTicketNumber = "";
+    private string searchQuery = "";
+    private bool isSearching = false;
+    private string? highlightedUser;
+    private string batchSortColumn = "Created";
+    private bool batchSortAsc = false;
+
+    // Per-action ticket confirmation
+    private string pendingActionTicket = "";
+    private string? pendingActionLabel;
+    private string? pendingActionTarget;
+    private Func<string, Task>? pendingActionCallback;
 
     protected override async Task OnInitializedAsync()
     {
@@ -862,21 +941,75 @@
         }
     }
 
-    private Task CompleteBatch(string name) => BatchAction(() => Exchange.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name);
-    private Task CompleteUser(string email) => UserAction(() => Exchange.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email);
-    private Task ApproveUser(string email) => UserAction(() => Exchange.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email);
-    private Task PauseUser(string email) => UserAction(() => Exchange.StopMigrationUserAsync(email), "StopMigrationUser", email);
-    private Task ResumeUser(string email) => UserAction(() => Exchange.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email);
-    private Task ClearUser(string email) => UserAction(() => Exchange.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email);
-
-    private async Task BatchAction(Func<Task<PermissionResult>> action, string auditAction, string target)
+    private async Task RefreshBatchUsers(string batchName)
     {
-        if (string.IsNullOrWhiteSpace(statusTicketNumber))
-        {
-            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
-            return;
-        }
+        loadingBatchUsers = batchName;
 
+        try
+        {
+            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+        }
+        catch
+        {
+            batchUsers = new List<MigrationUserInfo>();
+        }
+        finally
+        {
+            loadingBatchUsers = null;
+        }
+    }
+
+    private void CompleteBatch(string name) => StageBatchAction("Complete Batch", name, t => ExecuteBatchAction(() => Exchange.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name, t));
+    private void CompleteUser(string email) => StageUserAction("Complete User", email, t => ExecuteUserAction(() => Exchange.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email, t));
+    private void ApproveUser(string email) => StageUserAction("Approve User", email, t => ExecuteUserAction(() => Exchange.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email, t));
+    private void PauseUser(string email) => StageUserAction("Pause User", email, t => ExecuteUserAction(() => Exchange.StopMigrationUserAsync(email), "StopMigrationUser", email, t));
+    private void ResumeUser(string email) => StageUserAction("Resume User", email, t => ExecuteUserAction(() => Exchange.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email, t));
+    private void ClearUser(string email) => StageUserAction("Clear User", email, t => ExecuteUserAction(() => Exchange.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email, t));
+
+    private void StageBatchAction(string label, string target, Func<string, Task> callback)
+    {
+        pendingActionLabel = label;
+        pendingActionTarget = target;
+        pendingActionTicket = "";
+        pendingActionCallback = callback;
+        batchActionResult = null;
+    }
+
+    private void StageUserAction(string label, string email, Func<string, Task> callback)
+    {
+        pendingActionLabel = label;
+        pendingActionTarget = email;
+        pendingActionTicket = "";
+        pendingActionCallback = callback;
+        batchActionResult = null;
+    }
+
+    private async Task HandleConfirmKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(pendingActionTicket))
+            await ConfirmPendingAction();
+    }
+
+    private void CancelPendingAction()
+    {
+        pendingActionLabel = null;
+        pendingActionTarget = null;
+        pendingActionTicket = "";
+        pendingActionCallback = null;
+    }
+
+    private async Task ConfirmPendingAction()
+    {
+        if (pendingActionCallback == null || string.IsNullOrWhiteSpace(pendingActionTicket)) return;
+
+        var callback = pendingActionCallback;
+        var ticket = pendingActionTicket.Trim();
+        CancelPendingAction();
+        await callback(ticket);
+    }
+
+    private async Task ExecuteBatchAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
+    {
         actionInProgress = target;
         batchActionResult = null;
 
@@ -887,7 +1020,7 @@
 
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, statusTicketNumber.Trim(), result.Success ? null : result.Message);
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
             }
             catch (Exception ex)
             {
@@ -912,14 +1045,8 @@
         }
     }
 
-    private async Task UserAction(Func<Task<PermissionResult>> action, string auditAction, string target)
+    private async Task ExecuteUserAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
-        if (string.IsNullOrWhiteSpace(statusTicketNumber))
-        {
-            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
-            return;
-        }
-
         actionInProgress = target;
         batchActionResult = null;
 
@@ -930,7 +1057,7 @@
 
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, statusTicketNumber.Trim(), result.Success ? null : result.Message);
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, ticket, result.Success ? null : result.Message);
             }
             catch (Exception ex)
             {
@@ -955,15 +1082,15 @@
         }
     }
 
-    private async Task ClearCompletedBatches()
+    private void StageClearCompleted()
+    {
+        var count = migrationBatches?.Count(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0) ?? 0;
+        StageBatchAction("Clear Completed", $"{count} batch(es)", ClearCompletedBatches);
+    }
+
+    private async Task ClearCompletedBatches(string ticket)
     {
         if (migrationBatches == null) return;
-
-        if (string.IsNullOrWhiteSpace(statusTicketNumber))
-        {
-            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
-            return;
-        }
 
         actionInProgress = "clearing";
         batchActionResult = null;
@@ -984,7 +1111,7 @@
                     removed++;
                     try
                     {
-                        Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true, statusTicketNumber.Trim());
+                        Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true, ticket);
                     }
                     catch (Exception ex)
                     {
@@ -1011,6 +1138,72 @@
         finally
         {
             actionInProgress = null;
+        }
+    }
+
+    private async Task HandleSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchQuery))
+            await SearchUser();
+    }
+
+    private void ClearSearch()
+    {
+        searchQuery = "";
+        highlightedUser = null;
+        batchActionResult = null;
+    }
+
+    private async Task SearchUser()
+    {
+        if (string.IsNullOrWhiteSpace(searchQuery) || migrationBatches == null) return;
+
+        var query = searchQuery.Trim();
+        isSearching = true;
+        highlightedUser = null;
+        batchActionResult = null;
+
+        try
+        {
+            var matchedBatch = migrationBatches.FirstOrDefault(b =>
+                b.BatchName.Contains(query, StringComparison.OrdinalIgnoreCase));
+
+            if (matchedBatch != null)
+            {
+                expandedBatch = matchedBatch.BatchName;
+                loadingBatchUsers = matchedBatch.BatchName;
+                batchUsers = null;
+                StateHasChanged();
+
+                batchUsers = await Exchange.GetMigrationBatchUsersAsync(matchedBatch.BatchName);
+                loadingBatchUsers = null;
+                return;
+            }
+
+            var batchName = await Exchange.FindMigrationUserBatchAsync(query);
+
+            if (batchName == null)
+            {
+                batchActionResult = PermissionResult.Fail($"No batch or user found matching \"{query}\".");
+                return;
+            }
+
+            highlightedUser = query;
+            expandedBatch = batchName;
+            loadingBatchUsers = batchName;
+            batchUsers = null;
+            StateHasChanged();
+
+            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+            loadingBatchUsers = null;
+        }
+        catch (Exception ex)
+        {
+            batchActionResult = PermissionResult.Fail($"Search failed: {ex.Message}");
+        }
+        finally
+        {
+            isSearching = false;
         }
     }
 
@@ -1041,6 +1234,42 @@
         {
             loadingReport = null;
         }
+    }
+
+    private void ToggleBatchSort(string column)
+    {
+        if (batchSortColumn == column)
+            batchSortAsc = !batchSortAsc;
+        else
+        {
+            batchSortColumn = column;
+            batchSortAsc = column is "Name" or "Status" or "Direction";
+        }
+    }
+
+    private MarkupString SortIndicator(string column)
+    {
+        if (batchSortColumn != column)
+            return new MarkupString("<span class=\"text-muted opacity-25\">↕</span>");
+        return new MarkupString(batchSortAsc ? "▲" : "▼");
+    }
+
+    private IEnumerable<MigrationBatchInfo> GetSortedBatches()
+    {
+        if (migrationBatches == null) return Enumerable.Empty<MigrationBatchInfo>();
+
+        IOrderedEnumerable<MigrationBatchInfo> sorted = batchSortColumn switch
+        {
+            "Name" => batchSortAsc ? migrationBatches.OrderBy(b => b.BatchName) : migrationBatches.OrderByDescending(b => b.BatchName),
+            "Status" => batchSortAsc ? migrationBatches.OrderBy(b => b.Status) : migrationBatches.OrderByDescending(b => b.Status),
+            "Direction" => batchSortAsc ? migrationBatches.OrderBy(b => b.Direction) : migrationBatches.OrderByDescending(b => b.Direction),
+            "Total" => batchSortAsc ? migrationBatches.OrderBy(b => b.TotalCount) : migrationBatches.OrderByDescending(b => b.TotalCount),
+            "Synced" => batchSortAsc ? migrationBatches.OrderBy(b => b.SyncedCount) : migrationBatches.OrderByDescending(b => b.SyncedCount),
+            "Failed" => batchSortAsc ? migrationBatches.OrderBy(b => b.FailedCount) : migrationBatches.OrderByDescending(b => b.FailedCount),
+            _ => batchSortAsc ? migrationBatches.OrderBy(b => b.CreatedDateTime) : migrationBatches.OrderByDescending(b => b.CreatedDateTime),
+        };
+
+        return sorted;
     }
 
     private string GetStatusColor(string status)
