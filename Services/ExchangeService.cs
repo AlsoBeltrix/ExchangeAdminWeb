@@ -50,8 +50,7 @@ public class ExchangeService : IExchangeService
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .ToArray();
 
-        // On-prem Exchange configuration
-        _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "http://ashbmbx8.ad.analog.com/PowerShell/";
+        _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "";
         _delineaService = delineaService;
     }
 
@@ -205,10 +204,27 @@ public class ExchangeService : IExchangeService
         {
             try
             {
-                // Parse permission flags (used for validation and operations)
                 var fullAccess = ParseBool(row.FullAccess);
                 var sendAs = ParseBool(row.SendAs);
                 var autoMap = ParseBool(row.AutoMapping ?? "true");
+
+                if (!fullAccess && !sendAs)
+                {
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_NoPermissions",
+                        row.Target, row.User, "None", false, ticketNumber,
+                        errorDetail: "No permissions specified (FullAccess and SendAs are both false)");
+                    errors.Add($"{row.Target}/{row.User}: No permissions specified (FullAccess and SendAs are both false)");
+                    entries.Add(new BulkOperationEntry
+                    {
+                        Target = row.Target,
+                        User = row.User,
+                        Permission = "None",
+                        Status = "FAILED",
+                        Message = "No permissions specified"
+                    });
+                    continue;
+                }
 
                 var permissions = new List<string>();
                 if (fullAccess) permissions.Add("FullAccess");
@@ -219,6 +235,10 @@ public class ExchangeService : IExchangeService
                 var validationError = await validator.ValidateTargetMailboxAsync(row.Target);
                 if (validationError is not null)
                 {
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_ExcludedTarget",
+                        row.Target, row.User, permType, false, ticketNumber,
+                        errorDetail: validationError);
                     errors.Add($"{row.Target}/{row.User}: {validationError}");
                     entries.Add(new BulkOperationEntry
                     {
@@ -231,7 +251,6 @@ public class ExchangeService : IExchangeService
                     continue;
                 }
 
-                // Validate self-grant (only for Add operations)
                 if (isAdd)
                 {
                     var selfGrantError = validator.ValidateSelfGrant(currentUser, row.User);
@@ -260,6 +279,12 @@ public class ExchangeService : IExchangeService
                     ? await AddMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs, autoMap)
                     : await RemoveMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs);
 
+                var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
+                audit.LogMailboxPermission(
+                    currentUser, ipAddress, action, row.Target, row.User, permType,
+                    result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
+                    errorDetail: result.Success ? null : result.Message);
+
                 if (result.Success)
                 {
                     successCount++;
@@ -287,6 +312,10 @@ public class ExchangeService : IExchangeService
             }
             catch (Exception ex)
             {
+                audit.LogMailboxPermission(
+                    currentUser, ipAddress, $"Bulk{(isAdd ? "Add" : "Remove")}_Error",
+                    row.Target, row.User, "Mailbox", false, ticketNumber,
+                    errorDetail: ex.Message);
                 errors.Add($"{row.Target}/{row.User}: {ex.Message}");
                 entries.Add(new BulkOperationEntry
                 {
@@ -329,10 +358,13 @@ public class ExchangeService : IExchangeService
         {
             try
             {
-                // Validate target is not excluded
                 var validationError = await validator.ValidateTargetMailboxAsync(row.Target);
                 if (validationError is not null)
                 {
+                    audit.LogCalendarPermission(
+                        currentUser, ipAddress, $"Bulk{(isSet ? "Set" : "Remove")}Calendar_ExcludedTarget",
+                        row.Target, row.User, null, false, ticketNumber,
+                        errorDetail: validationError);
                     errors.Add($"{row.Target}/{row.User}: {validationError}");
                     entries.Add(new BulkOperationEntry
                     {
@@ -345,7 +377,6 @@ public class ExchangeService : IExchangeService
                     continue;
                 }
 
-                // Validate self-grant (only for Set operations)
                 if (isSet)
                 {
                     var selfGrantError = validator.ValidateSelfGrant(currentUser, row.User);
@@ -376,6 +407,12 @@ public class ExchangeService : IExchangeService
                     ? await SetCalendarPermissionAsync(row.Target, row.User, Enum.Parse<CalendarAccessRight>(row.AccessRight))
                     : await RemoveCalendarPermissionAsync(row.Target, row.User);
 
+                var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
+                audit.LogCalendarPermission(
+                    currentUser, ipAddress, action, row.Target, row.User,
+                    isSet ? row.AccessRight : null, result.Success, ticketNumber,
+                    errorDetail: result.Success ? null : result.Message);
+
                 if (result.Success)
                 {
                     successCount++;
@@ -403,6 +440,10 @@ public class ExchangeService : IExchangeService
             }
             catch (Exception ex)
             {
+                audit.LogCalendarPermission(
+                    currentUser, ipAddress, $"Bulk{(isSet ? "Set" : "Remove")}Calendar_Error",
+                    row.Target, row.User, null, false, ticketNumber,
+                    errorDetail: ex.Message);
                 errors.Add($"{row.Target}/{row.User}: {ex.Message}");
                 entries.Add(new BulkOperationEntry
                 {
@@ -500,7 +541,9 @@ public class ExchangeService : IExchangeService
                             if (!string.IsNullOrEmpty(samAccountName))
                             {
                                 // Import Active Directory module
-                                ps.AddScript("Import-Module ActiveDirectory -ErrorAction Stop");
+                                ps.AddCommand("Import-Module")
+                                  .AddParameter("Name", "ActiveDirectory")
+                                  .AddParameter("ErrorAction", "Stop");
                                 Invoke(ps);
 
                                 // Get AD user with group memberships
@@ -561,6 +604,7 @@ public class ExchangeService : IExchangeService
                             var totalGB = mailboxGB + archiveGB;
                             result.MailboxSizeGB = mailboxGB;
                             result.ArchiveSizeGB = archiveGB;
+                            result.CloudQuotaGB = _cloudQuotaGB;
 
                             _logger.LogInformation("On-prem sizes for {Email}: Mailbox={MailboxGB:F2} GB, Archive={ArchiveGB:F2} GB, Total={TotalGB:F2} GB, Quota={QuotaGB} GB",
                                 emailAddress, mailboxGB, archiveGB, totalGB, _cloudQuotaGB);
@@ -776,50 +820,50 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 var batchResults = Invoke(ps);
 
-            foreach (var batchObj in batchResults)
-            {
-                try
+                foreach (var batchObj in batchResults)
                 {
-                    var batchName = batchObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
-                    var status = batchObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
-                    var totalCount = Convert.ToInt32(batchObj.Properties["TotalCount"]?.Value ?? 0);
-                    var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedItemCount"]?.Value ?? 0);
-                    var finalizedCount = Convert.ToInt32(batchObj.Properties["FinalizedItemCount"]?.Value ?? 0);
-                    var failedCount = Convert.ToInt32(batchObj.Properties["FailedItemCount"]?.Value ?? 0);
-                    var createdDateTime = batchObj.Properties["CreationDateTime"]?.Value as DateTime? ?? DateTime.MinValue;
-                    var startDateTime = batchObj.Properties["StartDateTime"]?.Value as DateTime?;
-                    var completedDateTime = batchObj.Properties["CompletionDateTime"]?.Value as DateTime?;
-                    var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();
-                    var autoStart = Convert.ToBoolean(batchObj.Properties["AutoStart"]?.Value ?? false);
-                    var autoComplete = Convert.ToBoolean(batchObj.Properties["CompleteAfter"]?.Value != null);
-
-                    // Determine direction based on endpoint (hybrid = ToOnPrem, null/cloud = ToCloud)
-                    var direction = targetEndpoint?.Contains("hybrid", StringComparison.OrdinalIgnoreCase) == true
-                        ? MigrationDirection.ToOnPrem
-                        : MigrationDirection.ToCloud;
-
-                    batches.Add(new MigrationBatchInfo
+                    try
                     {
-                        BatchName = batchName,
-                        Status = status,
-                        CreatedDateTime = createdDateTime,
-                        StartDateTime = startDateTime,
-                        CompletedDateTime = completedDateTime,
-                        TotalCount = totalCount,
-                        SyncedCount = syncedCount,
-                        FinalizedCount = finalizedCount,
-                        FailedCount = failedCount,
-                        TargetEndpoint = targetEndpoint,
-                        AutoStart = autoStart,
-                        AutoComplete = autoComplete,
-                        Direction = direction
-                    });
+                        var batchName = batchObj.Properties["Identity"]?.Value?.ToString() ?? "Unknown";
+                        var status = batchObj.Properties["Status"]?.Value?.ToString() ?? "Unknown";
+                        var totalCount = Convert.ToInt32(batchObj.Properties["TotalCount"]?.Value ?? 0);
+                        var syncedCount = Convert.ToInt32(batchObj.Properties["SyncedItemCount"]?.Value ?? 0);
+                        var finalizedCount = Convert.ToInt32(batchObj.Properties["FinalizedItemCount"]?.Value ?? 0);
+                        var failedCount = Convert.ToInt32(batchObj.Properties["FailedItemCount"]?.Value ?? 0);
+                        var createdDateTime = batchObj.Properties["CreationDateTime"]?.Value as DateTime? ?? DateTime.MinValue;
+                        var startDateTime = batchObj.Properties["StartDateTime"]?.Value as DateTime?;
+                        var completedDateTime = batchObj.Properties["CompletionDateTime"]?.Value as DateTime?;
+                        var targetEndpoint = batchObj.Properties["TargetEndpoint"]?.Value?.ToString();
+                        var autoStart = Convert.ToBoolean(batchObj.Properties["AutoStart"]?.Value ?? false);
+                        var autoComplete = Convert.ToBoolean(batchObj.Properties["CompleteAfter"]?.Value != null);
+
+                        // Determine direction based on endpoint (hybrid = ToOnPrem, null/cloud = ToCloud)
+                        var direction = targetEndpoint?.Contains("hybrid", StringComparison.OrdinalIgnoreCase) == true
+                            ? MigrationDirection.ToOnPrem
+                            : MigrationDirection.ToCloud;
+
+                        batches.Add(new MigrationBatchInfo
+                        {
+                            BatchName = batchName,
+                            Status = status,
+                            CreatedDateTime = createdDateTime,
+                            StartDateTime = startDateTime,
+                            CompletedDateTime = completedDateTime,
+                            TotalCount = totalCount,
+                            SyncedCount = syncedCount,
+                            FinalizedCount = finalizedCount,
+                            FailedCount = failedCount,
+                            TargetEndpoint = targetEndpoint,
+                            AutoStart = autoStart,
+                            AutoComplete = autoComplete,
+                            Direction = direction
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to process migration batch");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to process migration batch");
-                }
-            }
 
                 return batches;
             }
@@ -1109,6 +1153,12 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<(double mailboxSizeGB, double archiveSizeGB)?> GetOnPremMailboxSizeAsync(string emailAddress)
     {
+        if (string.IsNullOrEmpty(_onPremServerUri))
+        {
+            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot check mailbox size");
+            return null;
+        }
+
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
         {
@@ -1129,19 +1179,25 @@ https://admin.exchange.microsoft.com/#/migration";
             {
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
 
-                // Get primary mailbox size
-                ps.AddScript($"Invoke-Command -Session $onpremSession -ScriptBlock {{ Get-MailboxStatistics -Identity '{emailAddress}' -ErrorAction Stop | Select-Object TotalItemSize }}");
+                var mbxScript = ScriptBlock.Create("param($Identity) Get-MailboxStatistics -Identity $Identity -ErrorAction Stop | Select-Object TotalItemSize");
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
+                  .AddParameter("ScriptBlock", mbxScript)
+                  .AddParameter("ArgumentList", new object[] { emailAddress });
                 var mbxStats = Invoke(ps);
                 var totalItemSize = mbxStats.FirstOrDefault()?.Properties["TotalItemSize"]?.Value?.ToString();
                 var mailboxGB = ParseExchangeSize(totalItemSize);
 
                 _logger.LogInformation("On-prem mailbox size for {Email}: {Size} GB", emailAddress, mailboxGB);
 
-                // Get archive size (may not exist)
                 double archiveGB = 0;
                 try
                 {
-                    ps.AddScript($"Invoke-Command -Session $onpremSession -ScriptBlock {{ Get-MailboxStatistics -Identity '{emailAddress}' -Archive -ErrorAction Stop | Select-Object TotalItemSize }}");
+                    var archiveScript = ScriptBlock.Create("param($Identity) Get-MailboxStatistics -Identity $Identity -Archive -ErrorAction Stop | Select-Object TotalItemSize");
+                    ps.AddCommand("Invoke-Command")
+                      .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
+                      .AddParameter("ScriptBlock", archiveScript)
+                      .AddParameter("ArgumentList", new object[] { emailAddress });
                     var archiveStats = Invoke(ps);
                     var archiveSize = archiveStats.FirstOrDefault()?.Properties["TotalItemSize"]?.Value?.ToString();
                     archiveGB = ParseExchangeSize(archiveSize);
@@ -1164,8 +1220,12 @@ https://admin.exchange.microsoft.com/#/migration";
                 try
                 {
                     ps.Commands.Clear();
-                    ps.AddScript("if ($onpremSession) { Remove-PSSession $onpremSession }");
-                    ps.Invoke();
+                    var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (session != null)
+                    {
+                        ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
+                        ps.Invoke();
+                    }
                 }
                 catch { }
             }
@@ -1174,6 +1234,12 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<string>> GetOnPremDatabasesAsync()
     {
+        if (string.IsNullOrEmpty(_onPremServerUri))
+        {
+            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot query databases");
+            return new List<string>();
+        }
+
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
         {
@@ -1194,7 +1260,10 @@ https://admin.exchange.microsoft.com/#/migration";
             {
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
 
-                ps.AddScript("Invoke-Command -Session $onpremSession -ScriptBlock { Get-MailboxDatabase -Status -ErrorAction Stop | Where-Object { $_.Mounted -eq $true } | Sort-Object @{Expression={($_ | Get-Mailbox -ResultSize Unlimited).Count}} | Select-Object Name }");
+                var dbScript = ScriptBlock.Create("Get-MailboxDatabase -Status -ErrorAction Stop | Where-Object { $_.Mounted -eq $true } | Sort-Object @{Expression={($_ | Get-Mailbox -ResultSize Unlimited).Count}} | Select-Object Name");
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
+                  .AddParameter("ScriptBlock", dbScript);
                 var dbResults = Invoke(ps);
 
                 var databases = dbResults
@@ -1215,8 +1284,12 @@ https://admin.exchange.microsoft.com/#/migration";
                 try
                 {
                     ps.Commands.Clear();
-                    ps.AddScript("if ($onpremSession) { Remove-PSSession $onpremSession }");
-                    ps.Invoke();
+                    var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (session != null)
+                    {
+                        ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
+                        ps.Invoke();
+                    }
                 }
                 catch { }
             }
@@ -1229,12 +1302,23 @@ https://admin.exchange.microsoft.com/#/migration";
             ? username
             : $"{domain}\\{username}";
 
-        ps.AddScript($@"
-            $secPassword = ConvertTo-SecureString '{password.Replace("'", "''")}' -AsPlainText -Force
-            $cred = New-Object System.Management.Automation.PSCredential('{fullUsername.Replace("'", "''")}', $secPassword)
-            $onpremSession = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri '{_onPremServerUri}' -Authentication Kerberos -Credential $cred -ErrorAction Stop
-        ");
-        Invoke(ps);
+        var securePassword = new System.Security.SecureString();
+        foreach (var c in password)
+            securePassword.AppendChar(c);
+        securePassword.MakeReadOnly();
+
+        var credential = new PSCredential(fullUsername, securePassword);
+
+        ps.AddCommand("New-PSSession")
+          .AddParameter("ConfigurationName", "Microsoft.Exchange")
+          .AddParameter("ConnectionUri", _onPremServerUri)
+          .AddParameter("Authentication", "Kerberos")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var sessions = Invoke(ps);
+        var session = sessions.FirstOrDefault() ?? throw new InvalidOperationException("Failed to create on-prem Exchange session");
+
+        ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
 
         _logger.LogInformation("Connected to on-prem Exchange at {Uri}", _onPremServerUri);
     }

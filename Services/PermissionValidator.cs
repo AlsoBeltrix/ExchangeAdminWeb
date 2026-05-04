@@ -14,6 +14,7 @@ public class PermissionValidator
     private readonly bool _preventSelfGrant;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialized = false;
+    private bool _initFailed = false;
 
     public PermissionValidator(IConfiguration config, ILogger<PermissionValidator> logger)
     {
@@ -38,6 +39,14 @@ public class PermissionValidator
 
     public async Task<string?> ValidateTargetMailboxAsync(string targetMailbox)
     {
+        await EnsureInitializedAsync();
+
+        if (_initFailed)
+        {
+            _logger.LogWarning("Blocking operation on {Target} — protected-user list failed to load", targetMailbox);
+            return "Access denied: Protected-user list is unavailable. Contact your administrator.";
+        }
+
         if (await IsUserExcludedAsync(targetMailbox))
         {
             _logger.LogWarning("Attempted operation on excluded user: {Target}", targetMailbox);
@@ -75,15 +84,15 @@ public class PermissionValidator
 
             _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", _configuredExclusions.Length);
 
+            _excludedUsers.Clear();
+
             foreach (var entry in _configuredExclusions)
             {
                 var trimmed = entry.Trim();
                 if (string.IsNullOrWhiteSpace(trimmed)) continue;
 
-                // Add the entry itself first
                 _excludedUsers.Add(trimmed);
 
-                // Try to expand as a group
                 var members = await TryExpandGroupAsync(trimmed);
                 foreach (var member in members)
                 {
@@ -92,13 +101,15 @@ public class PermissionValidator
                 }
             }
 
+            _initFailed = false;
             _initialized = true;
             _logger.LogInformation("Permission validator initialized with {Total} total excluded identities", _excludedUsers.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to initialize permission validator, proceeding with partial exclusion list");
-            _initialized = true; // Proceed anyway to avoid blocking the app
+            _excludedUsers.Clear();
+            _initFailed = true;
+            _logger.LogError(ex, "Failed to initialize permission validator — all operations on protected targets will be blocked until resolved.");
         }
         finally
         {
@@ -110,75 +121,65 @@ public class PermissionValidator
     {
         var members = new List<string>();
 
-        try
+        await Task.Run(() =>
         {
-            await Task.Run(() =>
-            {
-                using var runspace = RunspaceFactory.CreateRunspace();
-                runspace.Open();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+            using var runspace = RunspaceFactory.CreateRunspace();
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
 
-                // Connect to Exchange Online
-                if (!ConnectToExchange(ps))
+            if (!ConnectToExchange(ps))
+                throw new InvalidOperationException($"Cannot connect to Exchange Online to expand group '{identity}'");
+
+            try
+            {
+                ps.AddCommand("Get-Recipient")
+                  .AddParameter("Identity", identity)
+                  .AddParameter("ErrorAction", "Stop");
+
+                var recipients = Invoke(ps);
+                if (recipients.Count == 0)
                     return;
 
-                try
+                var recipient = recipients[0];
+                var recipientType = recipient.Properties["RecipientTypeDetails"]?.Value?.ToString();
+
+                if (recipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true)
                 {
-                    // Check if this is a group
-                    ps.AddCommand("Get-Recipient")
+                    _logger.LogInformation("Expanding group: {Group} (type: {Type})", identity, recipientType);
+
+                    ps.AddCommand("Get-DistributionGroupMember")
                       .AddParameter("Identity", identity)
+                      .AddParameter("ResultSize", "Unlimited")
                       .AddParameter("ErrorAction", "Stop");
 
-                    var recipients = Invoke(ps);
-                    if (recipients.Count == 0)
-                        return;
+                    var groupMembers = Invoke(ps);
 
-                    var recipient = recipients[0];
-                    var recipientType = recipient.Properties["RecipientTypeDetails"]?.Value?.ToString();
-
-                    if (recipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true)
+                    foreach (var member in groupMembers)
                     {
-                        _logger.LogInformation("Expanding group: {Group} (type: {Type})", identity, recipientType);
+                        var email = member.Properties["PrimarySmtpAddress"]?.Value?.ToString();
+                        var upn = member.Properties["UserPrincipalName"]?.Value?.ToString();
+                        var sam = member.Properties["SamAccountName"]?.Value?.ToString();
 
-                        // Get group members
-                        ps.AddCommand("Get-DistributionGroupMember")
-                          .AddParameter("Identity", identity)
-                          .AddParameter("ResultSize", "Unlimited")
-                          .AddParameter("ErrorAction", "SilentlyContinue");
-
-                        var groupMembers = Invoke(ps);
-
-                        foreach (var member in groupMembers)
-                        {
-                            var email = member.Properties["PrimarySmtpAddress"]?.Value?.ToString();
-                            var upn = member.Properties["UserPrincipalName"]?.Value?.ToString();
-                            var sam = member.Properties["SamAccountName"]?.Value?.ToString();
-
-                            if (!string.IsNullOrWhiteSpace(email)) members.Add(email);
-                            if (!string.IsNullOrWhiteSpace(upn) && upn != email) members.Add(upn);
-                            if (!string.IsNullOrWhiteSpace(sam)) members.Add(sam);
-                        }
-
-                        _logger.LogInformation("Expanded group {Group} to {Count} members", identity, members.Count);
+                        if (!string.IsNullOrWhiteSpace(email)) members.Add(email);
+                        if (!string.IsNullOrWhiteSpace(upn) && upn != email) members.Add(upn);
+                        if (!string.IsNullOrWhiteSpace(sam)) members.Add(sam);
                     }
+
+                    _logger.LogInformation("Expanded group {Group} to {Count} members", identity, members.Count);
                 }
-                finally
+            }
+            finally
+            {
+                try
                 {
-                    try
-                    {
-                        ps.Commands.Clear();
-                        ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                        ps.Invoke();
-                    }
-                    catch { /* best effort */ }
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
                 }
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to expand potential group {Identity}, treating as individual user", identity);
-        }
+                catch { /* best effort */ }
+            }
+        });
 
         return members;
     }

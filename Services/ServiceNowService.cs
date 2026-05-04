@@ -53,9 +53,9 @@ public class ServiceNowService
 
         try
         {
-            // ServiceNow Table API query for incident by number
+            var table = ticketNumber.StartsWith("REQ", StringComparison.OrdinalIgnoreCase) ? "sc_request" : "incident";
             var query = $"number={ticketNumber}";
-            var url = $"{_instanceUrl}/api/now/table/incident?sysparm_query={Uri.EscapeDataString(query)}&sysparm_fields=number,state,short_description,sys_id";
+            var url = $"{_instanceUrl}/api/now/table/{table}?sysparm_query={Uri.EscapeDataString(query)}&sysparm_fields=number,state,short_description,sys_id";
 
             _logger.LogInformation("Validating ticket {Ticket} via ServiceNow API: {Url}", ticketNumber, url);
 

@@ -12,6 +12,7 @@
 @inject ClientInfoService ClientInfo
 @inject IJSRuntime JS
 @inject IConfiguration Config
+@inject ServiceNowService ServiceNow
 
 <PageTitle>Calendar Permissions</PageTitle>
 
@@ -256,7 +257,14 @@
         var user = affectedUser.Trim();
         var ticket = ticketNumber.Trim();
 
-        // Validate target is not excluded
+        var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+        if (!ticketValidation.IsValid)
+        {
+            result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+            isLoading = false;
+            return;
+        }
+
         var validationError = await Validator.ValidateTargetMailboxAsync(target);
         if (validationError is not null)
         {
@@ -265,7 +273,6 @@
             return;
         }
 
-        // Validate self-grant (only for Set operations)
         if (tabIndex == 0)
         {
             var selfGrantError = Validator.ValidateSelfGrant(currentUser, user);
@@ -273,10 +280,19 @@
             {
                 // Log self-grant attempt to audit log
                 var ipAddress = clientIpAddress;
-                Audit.LogCalendarPermission(
-                    currentUser, ipAddress, "SetCalendar_SelfGrantAttempt", target, user,
-                    accessRight.ToString(), false, ticket,
-                    errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                try
+                {
+                    Audit.LogCalendarPermission(
+                        currentUser, ipAddress, "SetCalendar_SelfGrantAttempt", target, user,
+                        accessRight.ToString(), false, ticket,
+                        errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                }
+                catch (Exception ex)
+                {
+                    result = PermissionResult.Fail($"Self-grant blocked, but audit logging failed: {ex.Message}");
+                    isLoading = false;
+                    return;
+                }
 
                 result = PermissionResult.Fail(selfGrantError);
                 isLoading = false;
@@ -329,6 +345,10 @@
 
             result = opResult;
         }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail($"Operation may have succeeded but audit logging failed: {ex.Message}");
+        }
         finally
         {
             isLoading = false;
@@ -353,17 +373,31 @@
             var ipAddress = clientIpAddress;
             var ticket = bulkTicketNumber.Trim();
 
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                isLoading = false;
+                return;
+            }
+
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
             bulkResult = await Exchange.ProcessCalendarPermissionsCsvAsync(stream, bulkIsSet, Validator, currentUser, Audit, ipAddress, ticket);
 
             var action = bulkIsSet ? "BulkSetCalendar" : "BulkRemoveCalendar";
 
-            Audit.LogCalendarPermission(
-                currentUser, ipAddress, action, "Bulk", csvFile.Name, "Multiple",
-                bulkResult.FailedCount == 0, ticket,
-                errorDetail: bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+            try
+            {
+                Audit.LogCalendarPermission(
+                    currentUser, ipAddress, action, "Bulk", csvFile.Name, "Multiple",
+                    bulkResult.FailedCount == 0, ticket,
+                    errorDetail: bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+            }
+            catch (Exception ex)
+            {
+                result = PermissionResult.Fail($"Bulk operations completed ({bulkResult.Summary}) but summary audit logging failed: {ex.Message}");
+            }
 
-            // Send admin notification for bulk operation
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, action, "Bulk Operation", csvFile.Name,
                 $"{bulkResult.TotalRows} rows", bulkResult.FailedCount == 0, ticket,

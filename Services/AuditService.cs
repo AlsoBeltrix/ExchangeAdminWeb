@@ -167,13 +167,14 @@ public class AuditService
         string action,
         string target,
         bool success,
+        string ticketNumber = "",
         string? errorDetail = null)
     {
         var csvLine = BuildCsvLine(
             DateTime.UtcNow.ToString("O"),
             SamName(performedBy),
             ipAddress,
-            "",
+            ticketNumber,
             action,
             target,
             "N/A",
@@ -213,25 +214,17 @@ public class AuditService
 
     private void WriteLog(string csvLine)
     {
-        try
-        {
-            var filename = GetLogFilename();
-            var logPath = Path.Combine(_logFolder, filename);
+        var filename = GetLogFilename();
+        var logPath = Path.Combine(_logFolder, filename);
 
-            lock (_lock)
+        lock (_lock)
+        {
+            if (!File.Exists(logPath))
             {
-                // Write header if file doesn't exist
-                if (!File.Exists(logPath))
-                {
-                    File.WriteAllText(logPath, CsvHeader + Environment.NewLine);
-                }
-
-                File.AppendAllText(logPath, csvLine + Environment.NewLine);
+                File.WriteAllText(logPath, CsvHeader + Environment.NewLine);
             }
-        }
-        catch
-        {
-            // Log write failure must not surface to the user
+
+            File.AppendAllText(logPath, csvLine + Environment.NewLine);
         }
     }
 

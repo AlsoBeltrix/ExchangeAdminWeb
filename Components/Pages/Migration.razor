@@ -98,7 +98,7 @@
                         }
                         @if (singleResult.ExceedsQuota)
                         {
-                            <p class="mb-0 text-warning"><strong>Mailbox + archive (@singleResult.TotalSizeGB.ToString("F2") GB) exceeds 100 GB cloud quota</strong></p>
+                            <p class="mb-0 text-warning"><strong>Mailbox + archive (@singleResult.TotalSizeGB.ToString("F2") GB) exceeds @singleResult.CloudQuotaGB GB cloud quota</strong></p>
                         }
                     </div>
 
@@ -308,6 +308,10 @@
             <div class="card-body">
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="card-title mb-0">Migration Batches</h5>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="text" class="form-control form-control-sm" style="width: 160px;"
+                               placeholder="Ticket # (required)" @bind="statusTicketNumber" @bind:event="oninput" />
+                    </div>
                     <div>
                         @if (migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
                             || (b.TotalCount == 0)) == true)
@@ -595,6 +599,7 @@
     private string? reportUser;
     private string? userReport;
     private PermissionResult? batchActionResult;
+    private string statusTicketNumber = "";
 
     protected override async Task OnInitializedAsync()
     {
@@ -674,10 +679,21 @@
 
             var ipAddress = clientIpAddress;
 
-            Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
-                1, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+            try
+            {
+                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
+                    1, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+            }
+            catch (Exception ex)
+            {
+                singleCreateResult = new PermissionResult
+                {
+                    Success = singleCreateResult.Success,
+                    Message = singleCreateResult.Message,
+                    Detail = $"Audit logging failed: {ex.Message}"
+                };
+            }
 
-            // Send admin notification
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
                 singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}",
@@ -765,10 +781,21 @@
 
             var ipAddress = clientIpAddress;
 
-            Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
-                eligibleEmails.Count, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+            try
+            {
+                Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
+                    eligibleEmails.Count, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+            }
+            catch (Exception ex)
+            {
+                createResult = new PermissionResult
+                {
+                    Success = createResult.Success,
+                    Message = createResult.Message,
+                    Detail = $"Audit logging failed: {ex.Message}"
+                };
+            }
 
-            // Send admin notification
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
                 $"{eligibleEmails.Count} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}",
@@ -844,6 +871,12 @@
 
     private async Task BatchAction(Func<Task<PermissionResult>> action, string auditAction, string target)
     {
+        if (string.IsNullOrWhiteSpace(statusTicketNumber))
+        {
+            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
+            return;
+        }
+
         actionInProgress = target;
         batchActionResult = null;
 
@@ -851,7 +884,20 @@
         {
             var result = await action();
             batchActionResult = result;
-            Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, result.Success ? null : result.Message);
+
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, statusTicketNumber.Trim(), result.Success ? null : result.Message);
+            }
+            catch (Exception ex)
+            {
+                batchActionResult = new PermissionResult
+                {
+                    Success = result.Success,
+                    Message = result.Message,
+                    Detail = $"Audit logging failed: {ex.Message}"
+                };
+            }
 
             if (result.Success)
                 await LoadMigrationStatus();
@@ -868,6 +914,12 @@
 
     private async Task UserAction(Func<Task<PermissionResult>> action, string auditAction, string target)
     {
+        if (string.IsNullOrWhiteSpace(statusTicketNumber))
+        {
+            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
+            return;
+        }
+
         actionInProgress = target;
         batchActionResult = null;
 
@@ -875,7 +927,20 @@
         {
             var result = await action();
             batchActionResult = result;
-            Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, result.Success ? null : result.Message);
+
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, statusTicketNumber.Trim(), result.Success ? null : result.Message);
+            }
+            catch (Exception ex)
+            {
+                batchActionResult = new PermissionResult
+                {
+                    Success = result.Success,
+                    Message = result.Message,
+                    Detail = $"Audit logging failed: {ex.Message}"
+                };
+            }
 
             if (result.Success && expandedBatch != null)
                 batchUsers = await Exchange.GetMigrationBatchUsersAsync(expandedBatch);
@@ -894,6 +959,12 @@
     {
         if (migrationBatches == null) return;
 
+        if (string.IsNullOrWhiteSpace(statusTicketNumber))
+        {
+            batchActionResult = PermissionResult.Fail("A ticket number is required for migration actions.");
+            return;
+        }
+
         actionInProgress = "clearing";
         batchActionResult = null;
         var removed = 0;
@@ -911,7 +982,14 @@
                 if (result.Success)
                 {
                     removed++;
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true);
+                    try
+                    {
+                        Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true, statusTicketNumber.Trim());
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add($"{batch.BatchName}: removed but audit logging failed: {ex.Message}");
+                    }
                 }
                 else
                 {

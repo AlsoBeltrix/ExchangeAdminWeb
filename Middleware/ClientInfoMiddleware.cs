@@ -19,12 +19,7 @@ public class ClientInfoMiddleware
 
     public async Task InvokeAsync(HttpContext context, ClientInfoService clientInfo)
     {
-        // Capture IP address from initial HTTP request
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString()
-            ?? context.Request.Headers["X-Forwarded-For"].FirstOrDefault()
-            ?? context.Request.Headers["X-Real-IP"].FirstOrDefault()
-            ?? context.Request.Headers["REMOTE_ADDR"].FirstOrDefault()
-            ?? "Unknown";
+        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
 
         var userAgent = context.Request.Headers["User-Agent"].FirstOrDefault() ?? string.Empty;
         var username = context.User.Identity?.Name ?? "Anonymous";

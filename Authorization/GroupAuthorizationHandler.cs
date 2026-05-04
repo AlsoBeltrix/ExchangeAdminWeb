@@ -37,11 +37,10 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
         var roleClaims = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
         _logger.LogDebug("User {User} has role claims: {Roles}", userName, string.Join(", ", roleClaims));
 
-        // If no allowed groups configured, allow all authenticated users
         if (requirement.AllowedGroups.Length == 0)
         {
-            _logger.LogDebug("No allowed groups configured - allowing authenticated user {User}", userName);
-            context.Succeed(requirement);
+            _logger.LogError("No allowed groups configured (Security:AllowedGroups) — denying all access. Configure at least one AD group.");
+            context.Fail(new AuthorizationFailureReason(this, "No allowed groups configured. Contact your administrator."));
             return Task.CompletedTask;
         }
 

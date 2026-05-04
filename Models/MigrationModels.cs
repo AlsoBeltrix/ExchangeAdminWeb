@@ -8,7 +8,8 @@ public class MigrationEligibilityResult
     public double MailboxSizeGB { get; set; }
     public double ArchiveSizeGB { get; set; }
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
-    public bool ExceedsQuota => TotalSizeGB > 100;
+    public long CloudQuotaGB { get; set; } = 100;
+    public bool ExceedsQuota => TotalSizeGB > CloudQuotaGB;
 }
 
 public class MigrationBatchResult

@@ -57,5 +57,12 @@
     "Username": "api_user",
     "Password": "api_password"
   },
+  "Delinea": {
+    "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
+    "ExchangeSecretId": 0
+  },
+  "OnPremExchange": {
+    "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
+  },
   "AllowedHosts": "*"
 }

@@ -1,3 +1,4 @@
+using System.Net;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
@@ -56,6 +57,7 @@ public class EmailService
             : (success ? "✓" : "✗") + " Permission Change Notification";
 
         var subject = $"[Exchange Admin] {action} - {(success ? "SUCCESS" : "FAILED")} - Ticket #{ticketNumber}";
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
         var body = $@"<!DOCTYPE html>
 <html>
 <head>
@@ -70,20 +72,20 @@ public class EmailService
 </head>
 <body>
     <div class=""header"">
-        <h2>{headerText}</h2>
+        <h2>{h(headerText)}</h2>
     </div>
     <div class=""content"">
         <table>
-            <tr><td>Ticket Number</td><td><strong>{ticketNumber}</strong></td></tr>
-            <tr><td>Action</td><td>{action}</td></tr>
+            <tr><td>Ticket Number</td><td><strong>{h(ticketNumber)}</strong></td></tr>
+            <tr><td>Action</td><td>{h(action)}</td></tr>
             <tr><td>Status</td><td>{(success ? "SUCCESS" : "FAILED")}</td></tr>
-            <tr><td>Target Mailbox</td><td>{targetMailbox}</td></tr>
-            <tr><td>Affected User</td><td>{affectedUser}</td></tr>
-            <tr><td>Permission Type</td><td>{permissionType}</td></tr>
-            <tr><td>Performed By</td><td>{performedBy}</td></tr>
-            <tr><td>IP Address</td><td>{ipAddress}</td></tr>
+            <tr><td>Target Mailbox</td><td>{h(targetMailbox)}</td></tr>
+            <tr><td>Affected User</td><td>{h(affectedUser)}</td></tr>
+            <tr><td>Permission Type</td><td>{h(permissionType)}</td></tr>
+            <tr><td>Performed By</td><td>{h(performedBy)}</td></tr>
+            <tr><td>IP Address</td><td>{h(ipAddress)}</td></tr>
             <tr><td>Timestamp (UTC)</td><td>{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}</td></tr>
-            {(string.IsNullOrWhiteSpace(errorDetail) ? "" : $"<tr><td>Error</td><td style=\"color: red;\">{errorDetail}</td></tr>")}
+            {(string.IsNullOrWhiteSpace(errorDetail) ? "" : $"<tr><td>Error</td><td style=\"color: red;\">{h(errorDetail)}</td></tr>")}
         </table>
     </div>
 </body>
@@ -118,6 +120,7 @@ public class EmailService
         var headerText = isGrant ? "📬 Mailbox Access Granted" : "📪 Mailbox Access Removed";
         var headerColor = isGrant ? "#0078d4" : "#dc3545";
 
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
         var body = $@"<!DOCTYPE html>
 <html>
 <head>
@@ -134,15 +137,15 @@ public class EmailService
 <body>
     <div class=""container"">
         <div class=""header"">
-            <h2>{headerText}</h2>
+            <h2>{h(headerText)}</h2>
         </div>
         <div class=""content"">
             <p>Hello,</p>
             <p>Your access to the following mailbox has been {actionWord}:</p>
             <div class=""details"">
-                <strong>Mailbox:</strong> {targetMailbox}<br>
-                <strong>Permission:</strong> {permissionType}<br>
-                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {performedBy}<br>
+                <strong>Mailbox:</strong> {h(targetMailbox)}<br>
+                <strong>Permission:</strong> {h(permissionType)}<br>
+                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {h(performedBy)}<br>
                 <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
             </div>
             {(isGrant && permissionType.Contains("FullAccess") ? "<p>This mailbox may automatically appear in your Outlook if AutoMapping is enabled.</p>" : "")}
@@ -200,6 +203,7 @@ public class EmailService
                 permissionDetails = "<p><strong>Reviewer</strong> allows the user to read items in your calendar.</p>";
         }
 
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
         var body = $@"<!DOCTYPE html>
 <html>
 <head>
@@ -216,15 +220,15 @@ public class EmailService
 <body>
     <div class=""container"">
         <div class=""header"">
-            <h2>{headerText}</h2>
+            <h2>{h(headerText)}</h2>
         </div>
         <div class=""content"">
             <p>Hello,</p>
             <p>The following user has been {actionWord} your {resourceType}:</p>
             <div class=""details"">
-                <strong>User:</strong> {grantedUser}<br>
-                <strong>Permission:</strong> {permissionType}<br>
-                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {performedBy}<br>
+                <strong>User:</strong> {h(grantedUser)}<br>
+                <strong>Permission:</strong> {h(permissionType)}<br>
+                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {h(performedBy)}<br>
                 <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
             </div>
             {permissionDetails}

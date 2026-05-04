@@ -26,8 +26,8 @@ public class DelineaService
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            _logger.LogWarning("Delinea API credentials not found in Windows Credential Manager. On-prem Exchange features will be unavailable. " +
-                "To configure, run as the IIS app pool identity: cmdkey /generic:\"DelineaSecretServer\" /user:\"SS_SDK\" /pass:\"<api-key>\"");
+            _logger.LogWarning("Delinea API credentials not found in Windows Credential Manager (target: Delinea_Client). On-prem Exchange features will be unavailable. " +
+                "Store credentials in PasswordVault under resource 'Delinea_Client' with the SDK client ID as username and client secret as password.");
             _apiUsername = string.Empty;
             _apiKey = string.Empty;
         }

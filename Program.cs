@@ -4,7 +4,6 @@ using ExchangeAdminWeb.Middleware;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -23,6 +22,8 @@ try
         .WriteTo.File("logs/app-.log", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30));
 
     var allowedGroups = builder.Configuration.GetSection("Security:AllowedGroups").Get<string[]>() ?? Array.Empty<string>();
+    if (allowedGroups.Length == 0)
+        Log.Warning("Security:AllowedGroups is empty or missing — all users will be denied access until configured");
 
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
@@ -63,29 +64,15 @@ try
 
     var app = builder.Build();
 
-    // Configure forwarded headers to get real client IP behind IIS
-    // Note: With IIS inprocess hosting, RemoteIpAddress should be available directly
-    // This is mainly for reverse proxy scenarios
-    var forwardedHeadersOptions = new ForwardedHeadersOptions
-    {
-        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
-        // Don't require forwarded headers - allow direct connection info too
-        RequireHeaderSymmetry = false
-    };
-    // Clear default networks to allow any proxy
-    forwardedHeadersOptions.KnownIPNetworks.Clear();
-    forwardedHeadersOptions.KnownProxies.Clear();
-    app.UseForwardedHeaders(forwardedHeadersOptions);
-
     app.UsePathBase("/ExchangeAdminWeb");
 
     if (!app.Environment.IsDevelopment())
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
 
     app.UseStaticFiles();
-    app.UseMiddleware<ClientInfoMiddleware>();
     app.UseAuthentication();
     app.UseAuthorization();
+    app.UseMiddleware<ClientInfoMiddleware>();
     app.UseAntiforgery();
 
     app.MapRazorComponents<App>()
