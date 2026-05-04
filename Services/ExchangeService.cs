@@ -1044,8 +1044,9 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         return RunAsync(ps =>
         {
-            ps.AddCommand("Resume-MoveRequest")
+            ps.AddCommand("Start-MigrationUser")
               .AddParameter("Identity", emailAddress)
+              .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps);
         }, () => ($"Migration resumed for {emailAddress}.", (string?)null));
