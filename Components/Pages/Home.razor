@@ -1,9 +1,25 @@
 @page "/"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
 @rendermode InteractiveServer
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
 @inject IConfiguration Config
 
 <PageTitle>Exchange Admin</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
 
 <div class="container-fluid">
     <div class="alert alert-info">
@@ -23,7 +39,7 @@
     </div>
 
     <div class="row g-4">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card h-100">
                 <div class="card-body">
                     <h5 class="card-title">Mailbox Permissions</h5>
@@ -34,7 +50,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card h-100">
                 <div class="card-body">
                     <h5 class="card-title">Calendar Permissions</h5>
@@ -45,15 +61,41 @@
                 </div>
             </div>
         </div>
+        <div class="col-md-4">
+            <div class="card h-100">
+                <div class="card-body">
+                    <h5 class="card-title">Exchange Migration</h5>
+                    <p class="card-text text-muted">
+                        Check migration eligibility and create migration batches for Exchange Online and on-premises mailboxes.
+                    </p>
+                    <a href="migration" class="btn btn-primary">Open</a>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
 @code {
     private string currentUser = "Not authenticated";
+    private bool authChecked = false;
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        currentUser = authState.User.Identity?.Name ?? "Unknown";
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        // CRITICAL: Explicitly check authorization in component
+        // The [Authorize] attribute alone is not reliably enforced in Blazor Server
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+
+        if (!authResult.Succeeded)
+        {
+            // Force redirect to access denied
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        authChecked = true;
     }
 }

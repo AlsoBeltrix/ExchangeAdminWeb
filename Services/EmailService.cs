@@ -50,6 +50,11 @@ public class EmailService
             return;
         }
 
+        var isMigration = action.Contains("Migration", StringComparison.OrdinalIgnoreCase);
+        var headerText = isMigration
+            ? (success ? "✓" : "✗") + " Migration Notification"
+            : (success ? "✓" : "✗") + " Permission Change Notification";
+
         var subject = $"[Exchange Admin] {action} - {(success ? "SUCCESS" : "FAILED")} - Ticket #{ticketNumber}";
         var body = $@"<!DOCTYPE html>
 <html>
@@ -65,7 +70,7 @@ public class EmailService
 </head>
 <body>
     <div class=""header"">
-        <h2>{(success ? "✓" : "✗")} Permission Change Notification</h2>
+        <h2>{headerText}</h2>
     </div>
     <div class=""content"">
         <table>
@@ -84,7 +89,15 @@ public class EmailService
 </body>
 </html>";
 
-        await SendEmailAsync(_adminEmail, subject, body);
+        // Support multiple admin emails (comma-separated)
+        var adminEmails = _adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e));
+
+        foreach (var email in adminEmails)
+        {
+            await SendEmailAsync(email, subject, body);
+        }
     }
 
     public async Task SendUserNotificationAsync(
@@ -147,6 +160,87 @@ public class EmailService
 </html>";
 
         await SendEmailAsync(userEmail, subject, body);
+    }
+
+    public async Task SendOwnerNotificationAsync(
+        string ownerEmail,
+        string grantedUser,
+        string performedBy,
+        string permissionType,
+        bool isGrant = true)
+    {
+        if (!_notifyUsers)
+        {
+            _logger.LogDebug("User notifications disabled, skipping notification to {Email}", ownerEmail);
+            return;
+        }
+
+        var isCalendar = permissionType.Contains("Calendar");
+        var resourceType = isCalendar ? "calendar" : "mailbox";
+
+        var subject = isGrant
+            ? $"Access to Your {(isCalendar ? "Calendar" : "Mailbox")} Has Been Granted"
+            : $"Access to Your {(isCalendar ? "Calendar" : "Mailbox")} Has Been Removed";
+        var actionWord = isGrant ? "granted access to" : "removed access from";
+        var headerText = isGrant
+            ? (isCalendar ? "📅 Calendar Access Granted" : "🔑 Mailbox Access Granted")
+            : (isCalendar ? "🔒 Calendar Access Removed" : "🔒 Mailbox Access Removed");
+        var headerColor = isGrant ? "#ffc107" : "#28a745";
+
+        var permissionDetails = "";
+        if (isGrant)
+        {
+            if (permissionType.Contains("FullAccess"))
+                permissionDetails = "<p><strong>Full Access</strong> allows the user to read, send, and manage all items in your mailbox.</p>";
+            else if (permissionType.Contains("SendAs"))
+                permissionDetails = "<p><strong>Send As</strong> allows the user to send email as if it came from you.</p>";
+            else if (permissionType.Contains("Editor"))
+                permissionDetails = "<p><strong>Editor</strong> allows the user to read and modify items in your calendar.</p>";
+            else if (permissionType.Contains("Reviewer"))
+                permissionDetails = "<p><strong>Reviewer</strong> allows the user to read items in your calendar.</p>";
+        }
+
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: {headerColor}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
+        .footer {{ background: #f0f0f0; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #666; }}
+        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 3px; }}
+        .details {{ background: white; padding: 10px; margin: 10px 0; border-left: 3px solid {headerColor}; }}
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <div class=""header"">
+            <h2>{headerText}</h2>
+        </div>
+        <div class=""content"">
+            <p>Hello,</p>
+            <p>The following user has been {actionWord} your {resourceType}:</p>
+            <div class=""details"">
+                <strong>User:</strong> {grantedUser}<br>
+                <strong>Permission:</strong> {permissionType}<br>
+                <strong>{(isGrant ? "Granted" : "Removed")} by:</strong> {performedBy}<br>
+                <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
+            </div>
+            {permissionDetails}
+            <div class=""warning"">
+                <strong>⚠️ Security Notice:</strong> If you did not authorize this change or have concerns about this access, please contact the IT Service Desk immediately.
+            </div>
+        </div>
+        <div class=""footer"">
+            <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+            <p>© {DateTime.Now.Year} Analog Devices. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>";
+
+        await SendEmailAsync(ownerEmail, subject, body);
     }
 
     private async Task SendEmailAsync(string to, string subject, string htmlBody)

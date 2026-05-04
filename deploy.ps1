@@ -63,7 +63,6 @@ if (Test-Path "IIS:\AppPools\$AppPoolName") {
 }
 
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion        -Value ""
-Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType    -Value 4
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.loadUserProfile -Value $true
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name startMode                    -Value "AlwaysRunning"
 
@@ -125,7 +124,7 @@ if (-not $exoCert) {
         }
 
         if (Test-Path $keyPath) {
-            icacls $keyPath /grant "IIS AppPool\${AppPoolName}:(R)" | Out-Null
+            icacls $keyPath /grant "ANALOG\SVC_SCRIPTADM:(R)" | Out-Null
             Write-Success "Private key access granted (thumbprint: $($exoCert.Thumbprint))"
         } else {
             Write-Warn "Private key file not found at expected location"
@@ -145,7 +144,7 @@ if (-not (Test-Path $AppLogFolder)) {
     New-Item -ItemType Directory -Path $AppLogFolder -Force | Out-Null
 }
 
-icacls $AppLogFolder /grant "IIS AppPool\${AppPoolName}:(OI)(CI)M" | Out-Null
+icacls $AppLogFolder /grant "ANALOG\SVC_SCRIPTADM:(OI)(CI)M" | Out-Null
 Write-Success "Log folder access granted"
 
 # --- 7. Start app pool ---

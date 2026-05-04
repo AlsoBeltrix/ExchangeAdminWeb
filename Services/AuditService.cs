@@ -8,7 +8,7 @@ public class AuditService
     private readonly string _logFolder;
     private readonly string _rotationPeriod;
     private readonly object _lock = new();
-    private static readonly string CsvHeader = "TimestampUtc,User,TicketNumber,Action,TargetMailbox,AffectedUser,PermissionType,AutoMapping,AccessRight,Result,Error";
+    private static readonly string CsvHeader = "TimestampUtc,User,IPAddress,TicketNumber,Action,TargetMailbox,AffectedUser,PermissionType,AutoMapping,AccessRight,Result,Error";
 
     public AuditService(IConfiguration config)
     {
@@ -17,10 +17,41 @@ public class AuditService
         _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
 
         Directory.CreateDirectory(_logFolder);
+        MigrateOldLogFormatIfNeeded();
+    }
+
+    private void MigrateOldLogFormatIfNeeded()
+    {
+        try
+        {
+            // Check if current log file exists and has old format (no IPAddress column)
+            var currentLogFile = Path.Combine(_logFolder, GetLogFilename());
+
+            if (File.Exists(currentLogFile))
+            {
+                var firstLine = File.ReadLines(currentLogFile).FirstOrDefault();
+                // Old format: "TimestampUtc,User,TicketNumber,Action..."
+                // New format: "TimestampUtc,User,IPAddress,TicketNumber,Action..."
+                if (firstLine != null && firstLine.StartsWith("TimestampUtc,User,TicketNumber"))
+                {
+                    // Old format detected - rename it
+                    var backupName = currentLogFile.Replace(".csv", $"_old_format_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+                    File.Move(currentLogFile, backupName);
+
+                    // Log will be recreated with new header on next write
+                    Console.WriteLine($"[AuditService] Migrated old log format to: {Path.GetFileName(backupName)}");
+                }
+            }
+        }
+        catch
+        {
+            // Don't fail startup if log migration fails
+        }
     }
 
     public void LogMailboxPermission(
         string performedBy,
+        string ipAddress,
         string action,
         string targetMailbox,
         string affectedUser,
@@ -33,6 +64,7 @@ public class AuditService
         var csvLine = BuildCsvLine(
             DateTime.UtcNow.ToString("O"),
             SamName(performedBy),
+            ipAddress,
             ticketNumber,
             action,
             targetMailbox,
@@ -48,6 +80,7 @@ public class AuditService
 
     public void LogCalendarPermission(
         string performedBy,
+        string ipAddress,
         string action,
         string targetMailbox,
         string affectedUser,
@@ -59,6 +92,7 @@ public class AuditService
         var csvLine = BuildCsvLine(
             DateTime.UtcNow.ToString("O"),
             SamName(performedBy),
+            ipAddress,
             ticketNumber,
             action,
             targetMailbox,
@@ -66,6 +100,86 @@ public class AuditService
             "Calendar",
             "",
             accessRight ?? "",
+            success ? "SUCCESS" : "FAILED",
+            errorDetail ?? "");
+
+        WriteLog(csvLine);
+    }
+
+    public void LogMigrationCheck(
+        string performedBy,
+        string ipAddress,
+        string emailAddress,
+        string status,
+        string ticketNumber,
+        string? reasons = null)
+    {
+        var csvLine = BuildCsvLine(
+            DateTime.UtcNow.ToString("O"),
+            SamName(performedBy),
+            ipAddress,
+            ticketNumber,
+            "CheckMigrationEligibility",
+            emailAddress,
+            "N/A",
+            "Migration",
+            "",
+            status,
+            status == "Eligible" ? "SUCCESS" : "INELIGIBLE",
+            reasons ?? "");
+
+        WriteLog(csvLine);
+    }
+
+    public void LogMigrationBatch(
+        string performedBy,
+        string ipAddress,
+        string batchName,
+        string direction,
+        int userCount,
+        bool autoStart,
+        bool autoComplete,
+        string ticketNumber,
+        bool success,
+        string? errorDetail = null)
+    {
+        var options = $"Users:{userCount},AutoStart:{autoStart},AutoComplete:{autoComplete}";
+        var csvLine = BuildCsvLine(
+            DateTime.UtcNow.ToString("O"),
+            SamName(performedBy),
+            ipAddress,
+            ticketNumber,
+            $"CreateMigrationBatch_{direction}",
+            batchName,
+            "N/A",
+            "Migration",
+            "",
+            options,
+            success ? "SUCCESS" : "FAILED",
+            errorDetail ?? "");
+
+        WriteLog(csvLine);
+    }
+
+    public void LogMigrationAction(
+        string performedBy,
+        string ipAddress,
+        string action,
+        string target,
+        bool success,
+        string? errorDetail = null)
+    {
+        var csvLine = BuildCsvLine(
+            DateTime.UtcNow.ToString("O"),
+            SamName(performedBy),
+            ipAddress,
+            "",
+            action,
+            target,
+            "N/A",
+            "Migration",
+            "",
+            "",
             success ? "SUCCESS" : "FAILED",
             errorDetail ?? "");
 

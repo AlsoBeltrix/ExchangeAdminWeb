@@ -1,7 +1,10 @@
+using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Components;
+using ExchangeAdminWeb.Middleware;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Serilog;
 
 Log.Logger = new LoggerConfiguration()
@@ -24,15 +27,17 @@ try
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
 
+    builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
+
     builder.Services.AddAuthorization(options =>
     {
-        if (allowedGroups.Length > 0)
-        {
-            options.FallbackPolicy = new AuthorizationPolicyBuilder()
-                .RequireAuthenticatedUser()
-                .RequireRole(allowedGroups)
-                .Build();
-        }
+        var groupPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+            .Build();
+
+        options.AddPolicy("GroupPolicy", groupPolicy);
+        options.FallbackPolicy = groupPolicy;
     });
 
     builder.Services.AddCascadingAuthenticationState();
@@ -41,12 +46,36 @@ try
     builder.Services.AddRazorComponents()
         .AddInteractiveServerComponents();
 
+    builder.Services.AddHttpClient("ServiceNow")
+        .ConfigureHttpClient(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+            client.DefaultRequestHeaders.Add("Accept", "application/json");
+        });
+
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<PermissionValidator>();
+    builder.Services.AddSingleton<ServiceNowService>();
+    builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddScoped<IExchangeService, ExchangeService>();
+    builder.Services.AddScoped<ClientInfoService>();
 
     var app = builder.Build();
+
+    // Configure forwarded headers to get real client IP behind IIS
+    // Note: With IIS inprocess hosting, RemoteIpAddress should be available directly
+    // This is mainly for reverse proxy scenarios
+    var forwardedHeadersOptions = new ForwardedHeadersOptions
+    {
+        ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto,
+        // Don't require forwarded headers - allow direct connection info too
+        RequireHeaderSymmetry = false
+    };
+    // Clear default networks to allow any proxy
+    forwardedHeadersOptions.KnownIPNetworks.Clear();
+    forwardedHeadersOptions.KnownProxies.Clear();
+    app.UseForwardedHeaders(forwardedHeadersOptions);
 
     app.UsePathBase("/ExchangeAdminWeb");
 
@@ -54,6 +83,7 @@ try
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
 
     app.UseStaticFiles();
+    app.UseMiddleware<ClientInfoMiddleware>();
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseAntiforgery();

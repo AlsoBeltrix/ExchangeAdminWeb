@@ -41,5 +41,21 @@
       "DOMAIN\\Exchange-Admins"
     ]
   },
+  "Migration": {
+    "HybridEndpoint": "hybrid1",
+    "CloudTargetDeliveryDomain": "yourorg.mail.onmicrosoft.com",
+    "OnPremTargetDeliveryDomain": "yourcompany.com",
+    "OnPremTargetDatabases": "DAG2019",
+    "CloudQuotaGB": 100,
+    "ExcludedADGroups": [
+      "SEC_ITAR_USERS"
+    ]
+  },
+  "ServiceNow": {
+    "Enabled": false,
+    "InstanceUrl": "https://yourinstance.service-now.com",
+    "Username": "api_user",
+    "Password": "api_password"
+  },
   "AllowedHosts": "*"
 }

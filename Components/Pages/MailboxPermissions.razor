@@ -1,12 +1,15 @@
 @page "/mailbox-permissions"
-@attribute [Authorize]
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
 @rendermode InteractiveServer
 @inject IExchangeService Exchange
 @inject AuditService Audit
 @inject EmailService Email
 @inject PermissionValidator Validator
 @inject AuthenticationStateProvider AuthStateProvider
-@inject IHttpContextAccessor HttpContextAccessor
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
 @inject IJSRuntime JS
 @inject IConfiguration Config
 
@@ -208,6 +211,7 @@
     private bool isLoading = false;
     private PermissionResult? result;
     private string currentUser = string.Empty;
+    private string clientIpAddress = "Unknown";
 
     private bool bulkIsAdd = true;
     private string bulkTicketNumber = string.Empty;
@@ -223,7 +227,21 @@
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        currentUser = authState.User.Identity?.Name ?? "Unknown";
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        // CRITICAL: Explicitly check authorization - [Authorize] attribute is not reliably enforced
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        // Try scoped instance first, then fall back to cached value
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
     }
 
     private void SetTab(int index)
@@ -257,6 +275,18 @@
             var selfGrantError = Validator.ValidateSelfGrant(currentUser, user);
             if (selfGrantError is not null)
             {
+                // Log self-grant attempt to audit log
+                var perms = new List<string>();
+                if (grantFullAccess) perms.Add("FullAccess");
+                if (grantSendAs) perms.Add("SendAs");
+                var permType = string.Join("+", perms);
+                var ipAddress = clientIpAddress;
+
+                Audit.LogMailboxPermission(
+                    currentUser, ipAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType,
+                    false, ticket, autoMapping,
+                    errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+
                 result = PermissionResult.Fail(selfGrantError);
                 isLoading = false;
                 return;
@@ -274,10 +304,10 @@
             if (grantSendAs) perms.Add("SendAs");
             var permType = string.Join("+", perms);
             var action = $"{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
-            var ipAddress = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+            var ipAddress = clientIpAddress;
 
             Audit.LogMailboxPermission(
-                currentUser, action, target, user, permType,
+                currentUser, ipAddress, action, target, user, permType,
                 opResult.Success, ticket,
                 autoMapping: tabIndex == 0 && grantFullAccess ? autoMapping : null,
                 errorDetail: opResult.Success ? null : opResult.Message);
@@ -287,10 +317,14 @@
                 currentUser, ipAddress, action, target, user, permType,
                 opResult.Success, ticket, opResult.Success ? null : opResult.Message);
 
-            // Send user notification for both add and remove operations
+            // Send notifications to both the user being granted access and the mailbox owner
             if (opResult.Success)
             {
-                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant: tabIndex == 0);
+                var isGrant = tabIndex == 0;
+                // Notify the user being granted/removed access
+                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
+                // Notify the mailbox owner
+                await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
             }
 
             result = opResult;
@@ -316,15 +350,16 @@
 
         try
         {
-            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            bulkResult = await Exchange.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser);
-
-            var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
-            var ipAddress = HttpContextAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "Unknown";
+            var ipAddress = clientIpAddress;
             var ticket = bulkTicketNumber.Trim();
 
+            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            bulkResult = await Exchange.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket);
+
+            var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
+
             Audit.LogMailboxPermission(
-                currentUser, action, "Bulk", csvFile.Name,
+                currentUser, ipAddress, action, "Bulk", csvFile.Name,
                 "Multiple", bulkResult.FailedCount == 0, ticket,
                 errorDetail: bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
 

@@ -1,0 +1,996 @@
+@page "/migration"
+@using ExchangeAdminWeb.Models
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
+@inject IExchangeService Exchange
+@inject AuditService Audit
+@inject EmailService Email
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@rendermode InteractiveServer
+
+<PageTitle>Exchange Migration</PageTitle>
+
+<div class="container-fluid mt-4">
+    <h2>Exchange Migration</h2>
+    <p class="text-muted">Check migration eligibility and create migration batches to/from Exchange Online</p>
+
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <a class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => tabIndex = 0" href="javascript:void(0)">Single User Check</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => tabIndex = 1" href="javascript:void(0)">Bulk CSV Check</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="() => LoadMigrationStatus()" href="javascript:void(0)">Migration Status</a>
+        </li>
+    </ul>
+
+    @if (tabIndex == 0)
+    {
+        <!-- Single User Check -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Check Single User Migration Eligibility</h5>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Email Address</label>
+                        <input type="email" class="form-control" @bind="singleEmail" placeholder="user@analog.com" disabled="@isLoading" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Migration Direction</label>
+                        <select class="form-select" @bind="singleMigrationDirection" disabled="@isLoading">
+                            <option value="@MigrationDirection.ToCloud">To Exchange Online</option>
+                            <option value="@MigrationDirection.ToOnPrem">To On-Premises</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Ticket Number</label>
+                        <input type="text" class="form-control" @bind="singleTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(string.IsNullOrWhiteSpace(singleEmail) || string.IsNullOrWhiteSpace(singleTicketNumber) || isLoading)">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                    }
+                    Check Eligibility
+                </button>
+
+                @if (singleResult != null)
+                {
+                    <div class="alert @(singleResult.Status == MigrationStatus.Eligible ? "alert-success" : "alert-danger") mt-3">
+                        @if (singleResult.Status == MigrationStatus.Eligible)
+                        {
+                            <p class="mb-0"><strong>@singleResult.EmailAddress IS eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises"). :)</strong></p>
+                        }
+                        else
+                        {
+                            <p class="mb-0"><strong>@singleResult.EmailAddress IS NOT eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")</strong></p>
+                            @if (singleResult.IneligibilityReasons.Any())
+                            {
+                                <hr />
+                                <strong>Reasons:</strong>
+                                <ul class="mb-0">
+                                    @foreach (var reason in singleResult.IneligibilityReasons)
+                                    {
+                                        <li>@reason</li>
+                                    }
+                                </ul>
+                            }
+                        }
+                        @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0)
+                        {
+                            <p class="mb-1">
+                                <strong>Mailbox:</strong> @singleResult.MailboxSizeGB.ToString("F2") GB
+                                @if (singleResult.ArchiveSizeGB > 0)
+                                {
+                                    <text> | <strong>Archive:</strong> @singleResult.ArchiveSizeGB.ToString("F2") GB</text>
+                                }
+                                | <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB
+                            </p>
+                        }
+                        @if (singleResult.ExceedsQuota)
+                        {
+                            <p class="mb-0 text-warning"><strong>Mailbox + archive (@singleResult.TotalSizeGB.ToString("F2") GB) exceeds 100 GB cloud quota</strong></p>
+                        }
+                    </div>
+
+                    @if (singleResult.Status == MigrationStatus.Eligible)
+                    {
+                        <div class="card mt-3 border-success">
+                            <div class="card-body">
+                                <h6>Create Migration Batch</h6>
+                                <p class="text-muted">User is eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")</p>
+
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Batch Name (optional)</label>
+                                        <input type="text" class="form-control" @bind="singleBatchName" placeholder="@singleResult.EmailAddress" disabled="@isCreating" />
+                                        <small class="text-muted">Leave empty to use email address as batch name</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Options</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="singleAutoStart" disabled="@isCreating" id="singleAutoStartCheck" />
+                                            <label class="form-check-label" for="singleAutoStartCheck">Auto-start migration immediately</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="singleAutoComplete" disabled="@isCreating" id="singleAutoCompleteCheck" />
+                                            <label class="form-check-label" for="singleAutoCompleteCheck">Auto-complete migration when synced</label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@isCreating">
+                                    @if (isCreating)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2"></span>
+                                    }
+                                    Create Migration Batch
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (singleCreateResult != null)
+                    {
+                        <div class="alert @(singleCreateResult.Success ? "alert-success" : "alert-danger") mt-3">
+                            <strong>@(singleCreateResult.Success ? "✓" : "✗") @singleCreateResult.Message</strong>
+                            @if (!string.IsNullOrWhiteSpace(singleCreateResult.Detail))
+                            {
+                                <p class="mb-0 mt-2">@singleCreateResult.Detail</p>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+    else if (tabIndex == 1)
+    {
+        <!-- Bulk CSV Check -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Bulk Migration Eligibility Check</h5>
+                <p class="text-muted">Upload a CSV file with EmailAddress column to check migration eligibility for multiple users.</p>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">CSV File (EmailAddress column required)</label>
+                        <InputFile class="form-control" OnChange="HandleCsvUpload" disabled="@isLoading" accept=".csv" />
+                        <small class="text-muted">Format: EmailAddress<br />user1@analog.com<br />user2@analog.com</small>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Migration Direction</label>
+                        <select class="form-select" @bind="migrationDirection" disabled="@isLoading">
+                            <option value="@MigrationDirection.ToCloud">To Exchange Online</option>
+                            <option value="@MigrationDirection.ToOnPrem">To On-Premises</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Ticket Number</label>
+                        <input type="text" class="form-control" @bind="bulkTicketNumber" placeholder="INC0000000" disabled="@isLoading" required />
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(csvFile == null || string.IsNullOrWhiteSpace(bulkTicketNumber) || isLoading)">
+                    @if (isLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                    }
+                    Check All
+                </button>
+
+                @if (bulkResult != null)
+                {
+                    <div class="alert alert-info mt-3">
+                        <h6>Eligibility Check Results</h6>
+                        <p class="mb-0">
+                            <strong>Total Users:</strong> @bulkResult.TotalUsers |
+                            <strong>Eligible:</strong> <span class="text-success">@bulkResult.EligibleUsers</span> |
+                            <strong>Ineligible:</strong> <span class="text-danger">@bulkResult.IneligibleUsers</span>
+                        </p>
+                    </div>
+
+                    <div class="table-responsive mt-3">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Email Address</th>
+                                    <th>Status</th>
+                                    <th>Reasons / Notes</th>
+                                    <th>Size (GB)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in bulkResult.EligibilityResults)
+                                {
+                                    <tr class="@(item.Status == MigrationStatus.Eligible ? "table-success" : "table-danger")">
+                                        <td>@item.EmailAddress</td>
+                                        <td><strong>@item.Status</strong></td>
+                                        <td>
+                                            @if (item.IneligibilityReasons.Any())
+                                            {
+                                                <ul class="mb-0">
+                                                    @foreach (var reason in item.IneligibilityReasons)
+                                                    {
+                                                        <li>@reason</li>
+                                                    }
+                                                </ul>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-success">✓ Ready to migrate</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @if (item.ExceedsQuota)
+                                            {
+                                                <span class="text-warning">@item.TotalSizeGB.ToString("F2") GB (exceeds quota)</span>
+                                            }
+                                            else if (item.MailboxSizeGB > 0)
+                                            {
+                                                <span>@item.MailboxSizeGB.ToString("F2") GB</span>
+                                                @if (item.ArchiveSizeGB > 0)
+                                                {
+                                                    <text> + @item.ArchiveSizeGB.ToString("F2") GB archive</text>
+                                                }
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    @if (bulkResult.EligibleUsers > 0)
+                    {
+                        <div class="card mt-3 border-success">
+                            <div class="card-body">
+                                <h6>Create Migration Batch</h6>
+                                <p class="text-muted">@bulkResult.EligibleUsers user(s) eligible to migrate @(migrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises")</p>
+
+                                <div class="row g-3 mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">Batch Name (optional)</label>
+                                        <input type="text" class="form-control" @bind="bulkBatchName" placeholder="@($"{DateTime.Now:yyyy-MM-dd}_{(migrationDirection == MigrationDirection.ToCloud ? "Move" : "MoveBack")}")" disabled="@isCreating" />
+                                        <small class="text-muted">Leave empty to use date and direction (e.g., @($"{DateTime.Now:yyyy-MM-dd}_{(migrationDirection == MigrationDirection.ToCloud ? "Move" : "MoveBack")}"))</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">Options</label>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="bulkAutoStart" disabled="@isCreating" id="bulkAutoStartCheck" />
+                                            <label class="form-check-label" for="bulkAutoStartCheck">Auto-start migration immediately</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" @bind="bulkAutoComplete" disabled="@isCreating" id="bulkAutoCompleteCheck" />
+                                            <label class="form-check-label" for="bulkAutoCompleteCheck">Auto-complete migration when synced</label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@isCreating">
+                                    @if (isCreating)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-2"></span>
+                                    }
+                                    Create Migration Batch
+                                </button>
+                            </div>
+                        </div>
+                    }
+
+                    @if (createResult != null)
+                    {
+                        <div class="alert @(createResult.Success ? "alert-success" : "alert-danger") mt-3">
+                            <strong>@(createResult.Success ? "✓" : "✗") @createResult.Message</strong>
+                            @if (!string.IsNullOrWhiteSpace(createResult.Detail))
+                            {
+                                <p class="mb-0 mt-2">@createResult.Detail</p>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+    else if (tabIndex == 2)
+    {
+        <!-- Migration Status -->
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="card-title mb-0">Migration Batches</h5>
+                    <div>
+                        @if (migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
+                            || (b.TotalCount == 0)) == true)
+                        {
+                            <button class="btn btn-sm btn-outline-secondary me-2" disabled="@(actionInProgress != null)"
+                                    @onclick="ClearCompletedBatches">
+                                Clear Completed
+                            </button>
+                        }
+                        <button class="btn btn-sm btn-primary" @onclick="LoadMigrationStatus" disabled="@isLoadingStatus">
+                            @if (isLoadingStatus)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                @if (batchActionResult != null)
+                {
+                    <div class="alert alert-@(batchActionResult.Success ? "success" : "danger") alert-dismissible fade show">
+                        @batchActionResult.Message
+                        <button type="button" class="btn-close" @onclick="() => batchActionResult = null"></button>
+                    </div>
+                }
+
+                @if (isLoadingStatus)
+                {
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading migration batches...</p>
+                    </div>
+                }
+                else if (migrationBatches == null || !migrationBatches.Any())
+                {
+                    <div class="alert alert-info">
+                        <strong>ℹ️ No migration batches found</strong>
+                        <p class="mb-0 mt-2">There are currently no migration batches. Create one using the Single User Check or Bulk CSV Check tabs.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Batch Name</th>
+                                    <th>Status</th>
+                                    <th>Direction</th>
+                                    <th>Created</th>
+                                    <th class="text-center">Total</th>
+                                    <th class="text-center">Synced</th>
+                                    <th class="text-center">Failed</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var batch in migrationBatches.OrderByDescending(b => b.CreatedDateTime))
+                                {
+                                    <tr>
+                                        <td>
+                                            <strong>@batch.BatchName</strong>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-@GetStatusColor(batch.Status)">@batch.Status</span>
+                                        </td>
+                                        <td>
+                                            <span class="badge bg-secondary">@batch.Direction</span>
+                                        </td>
+                                        <td>
+                                            <small>@batch.CreatedDateTime.ToLocalTime().ToString("MMM dd, HH:mm")</small>
+                                        </td>
+                                        <td class="text-center">@batch.TotalCount</td>
+                                        <td class="text-center"><span class="text-success fw-bold">@batch.SyncedCount</span></td>
+                                        <td class="text-center">
+                                            @if (batch.FailedCount > 0)
+                                            {
+                                                <span class="text-danger fw-bold">@batch.FailedCount</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">0</span>
+                                            }
+                                        </td>
+                                        <td class="text-end text-nowrap">
+                                            @if (batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null)"
+                                                        @onclick="() => CompleteBatch(batch.BatchName)">
+                                                    Complete
+                                                </button>
+                                            }
+                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleBatchDetails(batch.BatchName)">
+                                                @if (expandedBatch == batch.BatchName && batchUsers != null)
+                                                {
+                                                    <span>Hide</span>
+                                                }
+                                                else if (loadingBatchUsers == batch.BatchName)
+                                                {
+                                                    <span class="spinner-border spinner-border-sm"></span>
+                                                }
+                                                else
+                                                {
+                                                    <span>Details</span>
+                                                }
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    @if (expandedBatch == batch.BatchName && batchUsers != null)
+                                    {
+                                        <tr>
+                                            <td colspan="8" class="p-0">
+                                                <div class="bg-light p-3 border-top">
+                                                    <div class="row mb-3">
+                                                        <div class="col-md-12">
+                                                            <small class="text-muted d-block">
+                                                                <strong>Created:</strong> @batch.CreatedDateTime.ToLocalTime().ToString("MMM dd, yyyy HH:mm")
+                                                                @if (batch.StartDateTime.HasValue)
+                                                                {
+                                                                    <span class="ms-3"><strong>Started:</strong> @batch.StartDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                                                }
+                                                                @if (batch.CompletedDateTime.HasValue)
+                                                                {
+                                                                    <span class="ms-3"><strong>Completed:</strong> @batch.CompletedDateTime.Value.ToLocalTime().ToString("MMM dd, yyyy HH:mm")</span>
+                                                                }
+                                                            </small>
+                                                        </div>
+                                                    </div>
+                                                    @if (batchUsers.Any())
+                                                    {
+                                                        <table class="table table-sm table-bordered bg-white mb-0">
+                                                            <thead class="table-light">
+                                                                <tr>
+                                                                    <th>Email</th>
+                                                                    <th>Status</th>
+                                                                    <th>Synced</th>
+                                                                    <th>Last Sync</th>
+                                                                    <th>Error</th>
+                                                                    <th></th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                @foreach (var user in batchUsers)
+                                                                {
+                                                                    <tr>
+                                                                        <td>@user.EmailAddress</td>
+                                                                        <td><span class="badge bg-@GetUserStatusColor(user.Status)">@user.Status</span></td>
+                                                                        <td>@user.ItemsSynced.ToString("N0")</td>
+                                                                        <td><small>@(user.LastSyncDateTime?.ToLocalTime().ToString("MMM dd HH:mm") ?? "-")</small></td>
+                                                                        <td>
+                                                                            @if (!string.IsNullOrEmpty(user.ErrorSummary))
+                                                                            {
+                                                                                <small class="text-danger">@user.ErrorSummary</small>
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                <small class="text-muted">-</small>
+                                                                            }
+                                                                        </td>
+                                                                        <td class="text-end text-nowrap">
+                                                                            @{ var s = user.Status; var e = user.EmailAddress; }
+                                                                            @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null)"
+                                                                                        @onclick="() => CompleteUser(e)">Complete</button>
+                                                                            }
+                                                                            @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null)"
+                                                                                        @onclick="() => ApproveUser(e)">Approve</button>
+                                                                            }
+                                                                            @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null)"
+                                                                                        @onclick="() => PauseUser(e)">Pause</button>
+                                                                            }
+                                                                            @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+                                                                                || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null)"
+                                                                                        @onclick="() => ResumeUser(e)">Resume</button>
+                                                                            }
+                                                                            @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null)"
+                                                                                        @onclick="() => ClearUser(e)">Clear</button>
+                                                                            }
+                                                                            @if (s.Equals("Failed", StringComparison.OrdinalIgnoreCase)
+                                                                                || s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase)
+                                                                                || !string.IsNullOrEmpty(user.ErrorSummary))
+                                                                            {
+                                                                                <button class="btn btn-sm btn-outline-danger"
+                                                                                        disabled="@(loadingReport == e)"
+                                                                                        @onclick="() => LoadUserReport(e)">
+                                                                                    @if (loadingReport == e)
+                                                                                    {
+                                                                                        <span class="spinner-border spinner-border-sm"></span>
+                                                                                    }
+                                                                                    else
+                                                                                    {
+                                                                                        <span>Report</span>
+                                                                                    }
+                                                                                </button>
+                                                                            }
+                                                                            @if (actionInProgress == e)
+                                                                            {
+                                                                                <span class="spinner-border spinner-border-sm ms-1"></span>
+                                                                            }
+                                                                        </td>
+                                                                    </tr>
+                                                                    @if (reportUser == user.EmailAddress && userReport != null)
+                                                                    {
+                                                                        <tr>
+                                                                            <td colspan="6" class="p-0">
+                                                                                <div class="bg-white border-top p-3">
+                                                                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                                                                        <strong>Report for @user.EmailAddress</strong>
+                                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => { reportUser = null; userReport = null; }">Close</button>
+                                                                                    </div>
+                                                                                    <pre class="bg-light p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
+                                                                                </div>
+                                                                            </td>
+                                                                        </tr>
+                                                                    }
+                                                                }
+                                                            </tbody>
+                                                        </table>
+                                                    }
+                                                    else
+                                                    {
+                                                        <p class="text-muted mb-0">No user details available</p>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private int tabIndex = 0;
+    private bool isLoading = false;
+    private bool isCreating = false;
+    private string currentUser = "Unknown";
+    private string clientIpAddress = "Unknown";
+
+    // Single check
+    private string singleEmail = "";
+    private MigrationEligibilityResult? singleResult;
+    private MigrationDirection singleMigrationDirection = MigrationDirection.ToCloud;
+    private string singleBatchName = "";
+    private string singleTicketNumber = "";
+    private bool singleAutoStart = false;
+    private bool singleAutoComplete = false;
+    private PermissionResult? singleCreateResult;
+
+    // Bulk check
+    private IBrowserFile? csvFile;
+    private MigrationBatchResult? bulkResult;
+    private MigrationDirection migrationDirection = MigrationDirection.ToCloud;
+    private string bulkBatchName = "";
+    private string bulkTicketNumber = "";
+    private bool bulkAutoStart = false;
+    private bool bulkAutoComplete = false;
+    private PermissionResult? createResult;
+
+    // Migration status
+    private List<MigrationBatchInfo>? migrationBatches;
+    private bool isLoadingStatus = false;
+    private string? expandedBatch;
+    private List<MigrationUserInfo>? batchUsers;
+    private string? loadingBatchUsers;
+    private string? actionInProgress;
+    private string? loadingReport;
+    private string? reportUser;
+    private string? userReport;
+    private PermissionResult? batchActionResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        // CRITICAL: Explicitly check authorization - [Authorize] attribute is not reliably enforced
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        // Try scoped instance first, then fall back to cached value
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    private async Task CheckSingleEligibility()
+    {
+        if (string.IsNullOrWhiteSpace(singleEmail))
+            return;
+
+        isLoading = true;
+        singleResult = null;
+        singleCreateResult = null;
+
+        try
+        {
+            singleResult = await Exchange.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
+
+            var ipAddress = clientIpAddress;
+
+            Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
+                singleTicketNumber, string.Join("; ", singleResult.IneligibilityReasons));
+
+            // Send admin notification
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, $"CheckMigrationEligibility_{singleMigrationDirection}", singleEmail, "N/A",
+                singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, singleTicketNumber,
+                singleResult.IneligibilityReasons.Any() ? string.Join("; ", singleResult.IneligibilityReasons) : null);
+        }
+        catch (Exception ex)
+        {
+            singleResult = new MigrationEligibilityResult
+            {
+                EmailAddress = singleEmail,
+                Status = MigrationStatus.Ineligible
+            };
+            singleResult.IneligibilityReasons.Add($"Error: {ex.Message}");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CreateSingleMigrationBatch()
+    {
+        if (singleResult == null || singleResult.Status != MigrationStatus.Eligible || string.IsNullOrWhiteSpace(singleTicketNumber))
+            return;
+
+        isCreating = true;
+        singleCreateResult = null;
+
+        try
+        {
+            var finalBatchName = string.IsNullOrWhiteSpace(singleBatchName)
+                ? singleResult.EmailAddress
+                : singleBatchName.Trim();
+
+            singleCreateResult = await Exchange.CreateMigrationBatchAsync(
+                singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete);
+
+            var ipAddress = clientIpAddress;
+
+            Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
+                1, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+
+            // Send admin notification
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
+                singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}",
+                singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message);
+        }
+        catch (Exception ex)
+        {
+            singleCreateResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isCreating = false;
+        }
+    }
+
+    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    {
+        csvFile = e.File;
+        bulkResult = null;
+        createResult = null;
+    }
+
+    private async Task CheckBulkEligibility()
+    {
+        if (csvFile == null)
+            return;
+
+        isLoading = true;
+        bulkResult = null;
+        createResult = null;
+
+        try
+        {
+            using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+
+            bulkResult = await Exchange.CheckBulkMigrationEligibilityAsync(memoryStream, migrationDirection);
+
+            var ipAddress = clientIpAddress;
+
+            // Send admin notification for bulk check
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{migrationDirection}", "Bulk Operation", csvFile.Name,
+                $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, bulkTicketNumber, null);
+        }
+        catch (Exception ex)
+        {
+            bulkResult = new MigrationBatchResult
+            {
+                BatchName = "Error",
+                Success = false,
+                Message = ex.Message,
+                Direction = migrationDirection
+            };
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task CreateMigrationBatch()
+    {
+        if (bulkResult == null || bulkResult.EligibleUsers == 0 || string.IsNullOrWhiteSpace(bulkTicketNumber))
+            return;
+
+        isCreating = true;
+        createResult = null;
+
+        try
+        {
+            var eligibleEmails = bulkResult.EligibilityResults
+                .Where(r => r.Status == MigrationStatus.Eligible)
+                .Select(r => r.EmailAddress)
+                .ToList();
+
+            var finalBatchName = string.IsNullOrWhiteSpace(bulkBatchName)
+                ? $"{DateTime.Now:yyyy-MM-dd}_{(migrationDirection == MigrationDirection.ToCloud ? "Move" : "MoveBack")}"
+                : bulkBatchName.Trim();
+
+            createResult = await Exchange.CreateMigrationBatchAsync(
+                migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete);
+
+            var ipAddress = clientIpAddress;
+
+            Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
+                eligibleEmails.Count, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+
+            // Send admin notification
+            await Email.SendAdminNotificationAsync(
+                currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
+                $"{eligibleEmails.Count} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}",
+                createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message);
+        }
+        catch (Exception ex)
+        {
+            createResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isCreating = false;
+        }
+    }
+
+    private async Task LoadMigrationStatus()
+    {
+        tabIndex = 2;
+        isLoadingStatus = true;
+        expandedBatch = null;
+        batchUsers = null;
+
+        try
+        {
+            migrationBatches = await Exchange.GetMigrationBatchesAsync();
+        }
+        catch
+        {
+            // Log error and show empty state
+            migrationBatches = new List<MigrationBatchInfo>();
+        }
+        finally
+        {
+            isLoadingStatus = false;
+        }
+    }
+
+    private async Task ToggleBatchDetails(string batchName)
+    {
+        // If clicking the same batch, collapse it
+        if (expandedBatch == batchName)
+        {
+            expandedBatch = null;
+            batchUsers = null;
+            return;
+        }
+
+        // Expand this batch and load users
+        expandedBatch = batchName;
+        loadingBatchUsers = batchName;
+        batchUsers = null;
+
+        try
+        {
+            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+        }
+        catch
+        {
+            batchUsers = new List<MigrationUserInfo>();
+        }
+        finally
+        {
+            loadingBatchUsers = null;
+        }
+    }
+
+    private Task CompleteBatch(string name) => BatchAction(() => Exchange.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name);
+    private Task CompleteUser(string email) => UserAction(() => Exchange.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email);
+    private Task ApproveUser(string email) => UserAction(() => Exchange.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email);
+    private Task PauseUser(string email) => UserAction(() => Exchange.StopMigrationUserAsync(email), "StopMigrationUser", email);
+    private Task ResumeUser(string email) => UserAction(() => Exchange.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email);
+    private Task ClearUser(string email) => UserAction(() => Exchange.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email);
+
+    private async Task BatchAction(Func<Task<PermissionResult>> action, string auditAction, string target)
+    {
+        actionInProgress = target;
+        batchActionResult = null;
+
+        try
+        {
+            var result = await action();
+            batchActionResult = result;
+            Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, result.Success ? null : result.Message);
+
+            if (result.Success)
+                await LoadMigrationStatus();
+        }
+        catch (Exception ex)
+        {
+            batchActionResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            actionInProgress = null;
+        }
+    }
+
+    private async Task UserAction(Func<Task<PermissionResult>> action, string auditAction, string target)
+    {
+        actionInProgress = target;
+        batchActionResult = null;
+
+        try
+        {
+            var result = await action();
+            batchActionResult = result;
+            Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, target, result.Success, result.Success ? null : result.Message);
+
+            if (result.Success && expandedBatch != null)
+                batchUsers = await Exchange.GetMigrationBatchUsersAsync(expandedBatch);
+        }
+        catch (Exception ex)
+        {
+            batchActionResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            actionInProgress = null;
+        }
+    }
+
+    private async Task ClearCompletedBatches()
+    {
+        if (migrationBatches == null) return;
+
+        actionInProgress = "clearing";
+        batchActionResult = null;
+        var removed = 0;
+        var errors = new List<string>();
+
+        try
+        {
+            var toRemove = migrationBatches
+                .Where(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0)
+                .ToList();
+
+            foreach (var batch in toRemove)
+            {
+                var result = await Exchange.RemoveMigrationBatchAsync(batch.BatchName);
+                if (result.Success)
+                {
+                    removed++;
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true);
+                }
+                else
+                {
+                    errors.Add($"{batch.BatchName}: {result.Message}");
+                }
+            }
+
+            if (errors.Count == 0)
+                batchActionResult = new PermissionResult { Success = true, Message = $"Removed {removed} completed/empty batch(es)." };
+            else
+                batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}");
+
+            await LoadMigrationStatus();
+        }
+        catch (Exception ex)
+        {
+            batchActionResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            actionInProgress = null;
+        }
+    }
+
+    private async Task LoadUserReport(string emailAddress)
+    {
+        if (reportUser == emailAddress)
+        {
+            reportUser = null;
+            userReport = null;
+            return;
+        }
+
+        loadingReport = emailAddress;
+        reportUser = null;
+        userReport = null;
+
+        try
+        {
+            userReport = await Exchange.GetMigrationUserReportAsync(emailAddress);
+            reportUser = emailAddress;
+        }
+        catch (Exception ex)
+        {
+            userReport = $"Error: {ex.Message}";
+            reportUser = emailAddress;
+        }
+        finally
+        {
+            loadingReport = null;
+        }
+    }
+
+    private string GetStatusColor(string status)
+    {
+        return status.ToLowerInvariant() switch
+        {
+            "completed" => "success",
+            "syncing" or "synced" => "primary",
+            "stopped" or "stopping" => "warning",
+            "failed" => "danger",
+            "corrupted" => "danger",
+            "needsapproval" => "warning",
+            _ => "secondary"
+        };
+    }
+
+    private string GetUserStatusColor(string status)
+    {
+        return status.ToLowerInvariant() switch
+        {
+            "completed" => "success",
+            "synced" => "info",
+            "syncing" => "primary",
+            "failed" => "danger",
+            "stopped" => "warning",
+            "needsapproval" => "warning",
+            "queued" => "secondary",
+            _ => "secondary"
+        };
+    }
+}

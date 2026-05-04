@@ -44,6 +44,10 @@ ASP.NET Core 8 Blazor Server application for managing Exchange Online mailbox an
 ### Active Directory
 - **AD Security Groups** for authorization (e.g., `IT-Helpdesk`, `Exchange-Admins`)
 - Users must be authenticated via Windows Authentication (domain-joined)
+- **ActiveDirectory PowerShell Module** (RSAT-AD-PowerShell) required for migration eligibility checks
+- **IIS App Pool Identity** must have AD read permissions to query user group memberships
+  - Default: Uses ApplicationPoolIdentity (inherits from computer account)
+  - Recommended: Configure app pool to run as domain service account with AD read access
 
 ## Installation
 
@@ -67,7 +71,11 @@ Enable-WindowsOptionalFeature -Online -FeatureName IIS-ASPNET45 -All
 
 **Install PowerShell Modules:**
 ```powershell
+# Exchange Online Management module
 Install-Module -Name ExchangeOnlineManagement -Force -AllowClobber -Scope AllUsers
+
+# Active Directory module (required for migration eligibility checks)
+Install-WindowsFeature RSAT-AD-PowerShell
 ```
 
 ### 2. Configure Exchange Online App Registration
@@ -268,6 +276,20 @@ See [NOTIFICATIONS_SECURITY.md](NOTIFICATIONS_SECURITY.md) for complete document
 - Verify firewall allows outbound SMTP traffic
 - Check application logs for SMTP errors
 - Test SMTP credentials if using authenticated SMTP
+
+### Migration eligibility checks show AD group warning
+- Ensure ActiveDirectory PowerShell module is installed: `Install-WindowsFeature RSAT-AD-PowerShell`
+- Verify IIS app pool identity has AD read permissions
+- If using ApplicationPoolIdentity (default), ensure server computer account has domain access
+- **To use domain service account:**
+  ```powershell
+  Import-Module WebAdministration
+  Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.identityType -Value 3
+  Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.userName -Value "DOMAIN\svc_exchangeadmin"
+  Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.password -Value "password"
+  ```
+- Check application logs for detailed AD errors: `D:\inetpub\ExchangeAdminWeb\logs\app-*.log`
+- Test AD access: Run `Get-ADUser -Identity username` in PowerShell as the app pool identity
 
 ## Development
 

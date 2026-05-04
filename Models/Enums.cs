@@ -18,3 +18,15 @@ public enum CalendarAccessRight
     AvailabilityOnly,
     LimitedDetails
 }
+
+public enum MigrationDirection
+{
+    ToCloud,
+    ToOnPrem
+}
+
+public enum MigrationStatus
+{
+    Eligible,
+    Ineligible
+}

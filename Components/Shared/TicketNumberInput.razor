@@ -1,0 +1,119 @@
+@inject ServiceNowService ServiceNow
+
+<div class="@ContainerClass">
+    <label class="form-label">@Label</label>
+    <div class="input-group">
+        <input type="text"
+               class="form-control @(ValidationResult?.IsValid == true ? "is-valid" : ValidationResult?.IsValid == false ? "is-invalid" : "")"
+               @bind="TicketNumber"
+               @bind:event="oninput"
+               @onblur="ValidateTicket"
+               placeholder="@Placeholder"
+               disabled="@Disabled"
+               required />
+        @if (isValidating)
+        {
+            <span class="input-group-text">
+                <span class="spinner-border spinner-border-sm"></span>
+            </span>
+        }
+        else if (ValidationResult != null)
+        {
+            <span class="input-group-text">
+                @if (ValidationResult.IsValid)
+                {
+                    <span class="text-success">✓</span>
+                }
+                else
+                {
+                    <span class="text-danger">✗</span>
+                }
+            </span>
+        }
+    </div>
+    @if (ValidationResult != null && !string.IsNullOrEmpty(ValidationResult.Message))
+    {
+        <div class="@(ValidationResult.IsValid ? "valid-feedback" : "invalid-feedback") d-block">
+            @ValidationResult.Message
+            @if (!string.IsNullOrEmpty(ValidationResult.Description))
+            {
+                <br /><small>@ValidationResult.Description</small>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string TicketNumber { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> TicketNumberChanged { get; set; }
+
+    [Parameter]
+    public string Label { get; set; } = "Ticket Number";
+
+    [Parameter]
+    public string Placeholder { get; set; } = "INC0000000";
+
+    [Parameter]
+    public bool Disabled { get; set; }
+
+    [Parameter]
+    public string ContainerClass { get; set; } = "";
+
+    [Parameter]
+    public TicketValidationResult? ValidationResult { get; set; }
+
+    [Parameter]
+    public EventCallback<TicketValidationResult?> ValidationResultChanged { get; set; }
+
+    private bool isValidating = false;
+    private System.Threading.Timer? validationTimer;
+
+    private async Task ValidateTicket()
+    {
+        if (string.IsNullOrWhiteSpace(TicketNumber))
+        {
+            ValidationResult = null;
+            await ValidationResultChanged.InvokeAsync(ValidationResult);
+            return;
+        }
+
+        isValidating = true;
+        StateHasChanged();
+
+        try
+        {
+            ValidationResult = await ServiceNow.ValidateTicketAsync(TicketNumber);
+            await ValidationResultChanged.InvokeAsync(ValidationResult);
+        }
+        finally
+        {
+            isValidating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnTicketNumberChanged(string value)
+    {
+        TicketNumber = value;
+        await TicketNumberChanged.InvokeAsync(value);
+
+        // Reset validation result when typing
+        ValidationResult = null;
+        await ValidationResultChanged.InvokeAsync(ValidationResult);
+
+        // Debounce validation
+        validationTimer?.Dispose();
+        validationTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(ValidateTicket);
+        }, null, 1000, Timeout.Infinite);
+    }
+
+    public void Dispose()
+    {
+        validationTimer?.Dispose();
+    }
+}
