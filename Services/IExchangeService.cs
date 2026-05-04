@@ -23,5 +23,5 @@ public interface IExchangeService
     Task<PermissionResult> RemoveMigrationUserAsync(string emailAddress);
     Task<PermissionResult> RemoveMigrationBatchAsync(string batchName);
     Task<string?> GetMigrationUserReportAsync(string emailAddress);
-    Task<string?> FindMigrationUserBatchAsync(string emailAddress);
+    Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm);
 }

@@ -58,3 +58,23 @@ public class MigrationUserInfo
     public long ItemsSynced { get; set; }
     public long ItemsSkipped { get; set; }
 }
+
+public class MigrationUserSearchResult
+{
+    public string? BatchId { get; init; }
+    public string? Email { get; init; }
+    public string? Error { get; init; }
+    public int MatchCount { get; init; }
+
+    public static MigrationUserSearchResult Found(string batchId, string email) =>
+        new() { BatchId = batchId, Email = email, MatchCount = 1 };
+
+    public static MigrationUserSearchResult Ambiguous(int count) =>
+        new() { MatchCount = count };
+
+    public static MigrationUserSearchResult NotFound() =>
+        new() { MatchCount = 0 };
+
+    public static MigrationUserSearchResult Failed(string error) =>
+        new() { Error = error };
+}

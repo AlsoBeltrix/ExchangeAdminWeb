@@ -1180,21 +1180,33 @@
                 return;
             }
 
-            var batchName = await Exchange.FindMigrationUserBatchAsync(query);
+            var searchResult = await Exchange.FindMigrationUserBatchAsync(query);
 
-            if (batchName == null)
+            if (searchResult.Error != null)
+            {
+                batchActionResult = PermissionResult.Fail($"Search failed: {searchResult.Error}");
+                return;
+            }
+
+            if (searchResult.MatchCount == 0)
             {
                 batchActionResult = PermissionResult.Fail($"No batch or user found matching \"{query}\".");
                 return;
             }
 
-            highlightedUser = query;
-            expandedBatch = batchName;
-            loadingBatchUsers = batchName;
+            if (searchResult.MatchCount > 1)
+            {
+                batchActionResult = PermissionResult.Fail($"Multiple users ({searchResult.MatchCount}) match \"{query}\". Use a more specific search term.");
+                return;
+            }
+
+            highlightedUser = searchResult.Email;
+            expandedBatch = searchResult.BatchId;
+            loadingBatchUsers = searchResult.BatchId;
             batchUsers = null;
             StateHasChanged();
 
-            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+            batchUsers = await Exchange.GetMigrationBatchUsersAsync(searchResult.BatchId!);
             loadingBatchUsers = null;
         }
         catch (Exception ex)

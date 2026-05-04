@@ -1148,7 +1148,7 @@ https://admin.exchange.microsoft.com/#/migration";
         });
     }
 
-    public Task<string?> FindMigrationUserBatchAsync(string emailAddress)
+    public Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
     {
         return Task.Run(() =>
         {
@@ -1164,17 +1164,26 @@ https://admin.exchange.microsoft.com/#/migration";
                 Connect(ps);
 
                 ps.AddCommand("Get-MigrationUser")
-                  .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
+                  .AddParameter("ResultSize", "Unlimited")
+                  .AddParameter("ErrorAction", "Stop");
 
                 var results = Invoke(ps);
-                var user = results.FirstOrDefault();
-                return user?.Properties["BatchId"]?.Value?.ToString();
+
+                var users = new List<(string Email, string? BatchId)>();
+                foreach (var user in results)
+                {
+                    var email = user.Properties["Identity"]?.Value?.ToString();
+                    var batchId = user.Properties["BatchId"]?.Value?.ToString();
+                    if (email != null)
+                        users.Add((email, batchId));
+                }
+
+                return MatchMigrationUser(searchTerm, users);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to find migration user {Email}", emailAddress);
-                return (string?)null;
+                _logger.LogWarning(ex, "Failed to search migration users for {Term}", searchTerm);
+                return MigrationUserSearchResult.Failed(ex.Message);
             }
             finally
             {
@@ -1188,6 +1197,39 @@ https://admin.exchange.microsoft.com/#/migration";
                 catch { }
             }
         });
+    }
+
+    public static MigrationUserSearchResult MatchMigrationUser(
+        string searchTerm, List<(string Email, string? BatchId)> users)
+    {
+        var term = searchTerm.Trim();
+
+        var exact = users.FirstOrDefault(u =>
+            u.Email.Equals(term, StringComparison.OrdinalIgnoreCase));
+
+        if (exact.Email != null)
+        {
+            if (string.IsNullOrEmpty(exact.BatchId))
+                return MigrationUserSearchResult.NotFound();
+            return MigrationUserSearchResult.Found(exact.BatchId, exact.Email);
+        }
+
+        var partials = users
+            .Where(u => u.Email.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (partials.Count == 0)
+            return MigrationUserSearchResult.NotFound();
+
+        if (partials.Count == 1)
+        {
+            var match = partials[0];
+            if (string.IsNullOrEmpty(match.BatchId))
+                return MigrationUserSearchResult.NotFound();
+            return MigrationUserSearchResult.Found(match.BatchId, match.Email);
+        }
+
+        return MigrationUserSearchResult.Ambiguous(partials.Count);
     }
 
     // -------------------------------------------------------------------------
