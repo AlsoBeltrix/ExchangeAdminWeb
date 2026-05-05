@@ -187,6 +187,31 @@ public class AuditService
         WriteLog(csvLine);
     }
 
+    public void LogLookupAction(
+        string performedBy,
+        string ipAddress,
+        string action,
+        string target,
+        bool success,
+        string? errorDetail = null)
+    {
+        var csvLine = BuildCsvLine(
+            DateTime.UtcNow.ToString("O"),
+            SamName(performedBy),
+            ipAddress,
+            "",
+            action,
+            target,
+            "N/A",
+            "Lookup",
+            "",
+            "",
+            success ? "SUCCESS" : "FAILED",
+            errorDetail ?? "");
+
+        WriteLog(csvLine);
+    }
+
     private string BuildCsvLine(params string[] fields)
     {
         var sb = new StringBuilder();

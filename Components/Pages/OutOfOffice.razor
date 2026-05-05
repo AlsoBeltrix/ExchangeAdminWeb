@@ -1,0 +1,323 @@
+@page "/out-of-office"
+@using ExchangeAdminWeb.Models
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
+@rendermode InteractiveServer
+@inject IExchangeService Exchange
+@inject AuditService Audit
+@inject EmailService Email
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+
+<PageTitle>Out of Office</PageTitle>
+
+<div class="container-fluid mt-4">
+    <h2>Out of Office / Auto-Reply</h2>
+    <p class="text-muted">Check or set auto-reply configuration for a mailbox</p>
+
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <a class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => tabIndex = 0" href="javascript:void(0)">Check Status</a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => tabIndex = 1" href="javascript:void(0)">Set / Clear</a>
+        </li>
+    </ul>
+
+    @if (tabIndex == 0)
+    {
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-5">
+                        <label class="form-label">Email Address</label>
+                        <input type="email" class="form-control" @bind="checkEmail" placeholder="user@analog.com"
+                               disabled="@isChecking" @onkeydown="HandleCheckKeyDown" />
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn btn-primary" @onclick="CheckStatus"
+                                disabled="@(string.IsNullOrWhiteSpace(checkEmail) || isChecking)">
+                            @if (isChecking)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Check
+                        </button>
+                    </div>
+                </div>
+
+                @if (checkResult?.Error != null)
+                {
+                    <div class="alert alert-danger mt-3">@checkResult.Error</div>
+                }
+                else if (checkResult != null)
+                {
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <span class="badge bg-@GetStateBadge(checkResult.State) me-2">@checkResult.State</span>
+                            @checkResult.EmailAddress
+                        </div>
+                        <div class="card-body">
+                            @if (checkResult.State == "Scheduled" && checkResult.StartTime.HasValue)
+                            {
+                                <p><strong>Schedule:</strong> @checkResult.StartTime.Value.ToString("yyyy-MM-dd HH:mm") — @checkResult.EndTime?.ToString("yyyy-MM-dd HH:mm")</p>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(checkResult.InternalMessage))
+                            {
+                                <h6>Internal Message</h6>
+                                <div class="border rounded p-2 mb-3 bg-light" style="max-height:200px;overflow:auto">
+                                    <pre class="mb-0" style="white-space:pre-wrap;word-break:break-word">@StripHtml(checkResult.InternalMessage)</pre>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(checkResult.ExternalMessage))
+                            {
+                                <h6>External Message</h6>
+                                <div class="border rounded p-2 bg-light" style="max-height:200px;overflow:auto">
+                                    <pre class="mb-0" style="white-space:pre-wrap;word-break:break-word">@StripHtml(checkResult.ExternalMessage)</pre>
+                                </div>
+                            }
+                            @if (checkResult.State == "Disabled")
+                            {
+                                <p class="text-muted mb-0">Auto-reply is currently disabled.</p>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="card">
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Email Address</label>
+                        <input type="email" class="form-control" @bind="setEmail" placeholder="user@analog.com" disabled="@isSetting" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Ticket Number</label>
+                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC0000000" disabled="@isSetting" />
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Action</label>
+                        <select class="form-select" @bind="oofState" disabled="@isSetting">
+                            <option value="Enabled">Enable</option>
+                            <option value="Scheduled">Schedule</option>
+                            <option value="Disabled">Disable</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (oofState == "Scheduled")
+                {
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Start Date/Time</label>
+                            <input type="datetime-local" class="form-control" @bind="startTime" disabled="@isSetting" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">End Date/Time</label>
+                            <input type="datetime-local" class="form-control" @bind="endTime" disabled="@isSetting" />
+                        </div>
+                    </div>
+                }
+
+                @if (oofState != "Disabled")
+                {
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Internal Message</label>
+                            <textarea class="form-control" rows="4" @bind="internalMessage" placeholder="Message for internal senders" disabled="@isSetting"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">External Message</label>
+                            <textarea class="form-control" rows="4" @bind="externalMessage" placeholder="Message for external senders (optional)" disabled="@isSetting"></textarea>
+                        </div>
+                    </div>
+                }
+
+                <button class="btn btn-primary" @onclick="SetOof"
+                        disabled="@(!IsSetFormValid || isSetting)">
+                    @if (isSetting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2"></span>
+                    }
+                    @(oofState == "Disabled" ? "Disable Auto-Reply" : "Set Auto-Reply")
+                </button>
+
+                @if (setValidationError != null)
+                {
+                    <div class="alert alert-danger mt-3">@setValidationError</div>
+                }
+
+                @if (setResult != null)
+                {
+                    <div class="alert alert-@(setResult.Success ? "success" : "danger") mt-3">
+                        @setResult.Message
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private int tabIndex = 0;
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+
+    // Check tab
+    private string checkEmail = "";
+    private bool isChecking = false;
+    private OutOfOfficeResult? checkResult;
+
+    // Set tab
+    private string setEmail = "";
+    private string ticketNumber = "";
+    private string oofState = "Enabled";
+    private string internalMessage = "";
+    private string externalMessage = "";
+    private DateTime startTime = DateTime.Now;
+    private DateTime endTime = DateTime.Now.AddDays(7);
+    private bool isSetting = false;
+    private string? setValidationError;
+    private PermissionResult? setResult;
+
+    private bool IsSetFormValid =>
+        !string.IsNullOrWhiteSpace(setEmail)
+        && !string.IsNullOrWhiteSpace(ticketNumber)
+        && (oofState == "Disabled" || !string.IsNullOrWhiteSpace(internalMessage));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    private async Task HandleCheckKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(checkEmail))
+            await CheckStatus();
+    }
+
+    private async Task CheckStatus()
+    {
+        if (string.IsNullOrWhiteSpace(checkEmail)) return;
+        isChecking = true;
+        checkResult = null;
+
+        try
+        {
+            checkResult = await Exchange.GetOutOfOfficeAsync(checkEmail.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", checkEmail.Trim(), checkResult.Error == null, checkResult.Error);
+        }
+        catch (Exception ex)
+        {
+            checkResult = new OutOfOfficeResult { EmailAddress = checkEmail, State = "Unknown", Error = ex.Message };
+        }
+        finally
+        {
+            isChecking = false;
+        }
+    }
+
+    public static string? ValidateOofSchedule(string state, DateTime? start, DateTime? end)
+    {
+        if (state != "Scheduled") return null;
+        if (!start.HasValue || !end.HasValue)
+            return "Start and end times are required for scheduled auto-reply.";
+        if (end.Value <= start.Value)
+            return "End time must be after start time.";
+        return null;
+    }
+
+    private async Task SetOof()
+    {
+        setValidationError = null;
+        setResult = null;
+
+        setValidationError = ValidateOofSchedule(oofState, startTime, endTime);
+        if (setValidationError != null) return;
+
+        isSetting = true;
+
+        try
+        {
+            setResult = await Exchange.SetOutOfOfficeAsync(
+                setEmail.Trim(), oofState,
+                oofState != "Disabled" ? internalMessage : null,
+                oofState != "Disabled" ? externalMessage : null,
+                oofState == "Scheduled" ? startTime : null,
+                oofState == "Scheduled" ? endTime : null);
+
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress,
+                    oofState == "Disabled" ? "DisableOutOfOffice" : "SetOutOfOffice",
+                    setEmail.Trim(), setResult.Success, ticketNumber.Trim(),
+                    setResult.Success ? null : setResult.Message);
+            }
+            catch { }
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress,
+                    oofState == "Disabled" ? "DisableOutOfOffice" : $"SetOutOfOffice_{oofState}",
+                    setEmail.Trim(), "N/A", "OutOfOffice",
+                    setResult.Success, ticketNumber.Trim(),
+                    setResult.Success ? null : setResult.Message);
+            }
+            catch { }
+
+            if (setResult.Success)
+            {
+                try
+                {
+                    await Email.SendOofNotificationAsync(
+                        setEmail.Trim(), currentUser,
+                        oofState == "Disabled" ? "disabled" : "enabled");
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            setResult = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isSetting = false;
+        }
+    }
+
+    private static string GetStateBadge(string state) => state switch
+    {
+        "Enabled" => "success",
+        "Scheduled" => "info",
+        "Disabled" => "secondary",
+        _ => "warning"
+    };
+
+    private static string StripHtml(string? html)
+    {
+        if (string.IsNullOrEmpty(html)) return "";
+        return System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", "").Trim();
+    }
+}

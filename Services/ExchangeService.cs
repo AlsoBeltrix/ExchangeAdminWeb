@@ -1244,6 +1244,424 @@ https://admin.exchange.microsoft.com/#/migration";
     }
 
     // -------------------------------------------------------------------------
+    // Lookup Operations
+    // -------------------------------------------------------------------------
+
+    public Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
+    {
+        return Task.Run(() =>
+        {
+            var result = new DelegationReportResult { EmailAddress = emailAddress };
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                // Full Access
+                ps.AddCommand("Get-MailboxPermission")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Stop");
+                var perms = Invoke(ps);
+                foreach (var perm in perms)
+                {
+                    var user = perm.Properties["User"]?.Value?.ToString();
+                    var accessRights = perm.Properties["AccessRights"]?.Value?.ToString();
+                    var isInherited = perm.Properties["IsInherited"]?.Value as bool? ?? true;
+                    if (user != null && !isInherited && accessRights?.Contains("FullAccess") == true
+                        && !user.Equals("NT AUTHORITY\\SELF", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.FullAccess.Add(new DelegationEntry { User = user });
+                    }
+                }
+
+                // Send As
+                ps.AddCommand("Get-RecipientPermission")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Stop");
+                var recipPerms = Invoke(ps);
+                foreach (var perm in recipPerms)
+                {
+                    var trustee = perm.Properties["Trustee"]?.Value?.ToString();
+                    if (trustee != null && !trustee.Equals("NT AUTHORITY\\SELF", StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.SendAs.Add(new DelegationEntry { User = trustee });
+                    }
+                }
+
+                // Calendar
+                try
+                {
+                    var calendarPath = GetCalendarFolderName(ps, emailAddress);
+                    ps.AddCommand("Get-MailboxFolderPermission")
+                      .AddParameter("Identity", calendarPath)
+                      .AddParameter("ErrorAction", "Stop");
+                    var calPerms = Invoke(ps);
+                    foreach (var perm in calPerms)
+                    {
+                        var user = perm.Properties["User"]?.Value?.ToString();
+                        var rights = perm.Properties["AccessRights"]?.Value?.ToString();
+                        if (user != null && rights != null
+                            && !user.Equals("Default", StringComparison.OrdinalIgnoreCase)
+                            && !user.Equals("Anonymous", StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.Calendar.Add(new CalendarDelegationEntry { User = user, AccessRights = rights });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not retrieve calendar permissions for {Email}", emailAddress);
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Error = ex.Message;
+                _logger.LogError(ex, "Error getting delegation report for {Email}", emailAddress);
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+
+            return result;
+        });
+    }
+
+    public Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter)
+    {
+        return Task.Run(() =>
+        {
+            var response = new MessageTraceResponse();
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                var allResults = new List<MessageTraceResult>();
+                var page = 1;
+                const int pageSize = 200;
+
+                while (allResults.Count < MessageTraceResponse.MaxResults)
+                {
+                    ps.AddCommand("Get-MessageTrace")
+                      .AddParameter("StartDate", startDate)
+                      .AddParameter("EndDate", endDate)
+                      .AddParameter("PageSize", pageSize)
+                      .AddParameter("Page", page)
+                      .AddParameter("ErrorAction", "Stop");
+
+                    if (!string.IsNullOrWhiteSpace(sender))
+                        ps.AddParameter("SenderAddress", sender);
+                    if (!string.IsNullOrWhiteSpace(recipient))
+                        ps.AddParameter("RecipientAddress", recipient);
+
+                    var results = Invoke(ps);
+                    if (!results.Any())
+                        break;
+
+                    foreach (var msg in results)
+                    {
+                        var subject = msg.Properties["Subject"]?.Value?.ToString() ?? "";
+                        if (!string.IsNullOrWhiteSpace(subjectFilter) &&
+                            !subject.Contains(subjectFilter, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        allResults.Add(new MessageTraceResult
+                        {
+                            Received = msg.Properties["Received"]?.Value as DateTime? ?? DateTime.MinValue,
+                            SenderAddress = msg.Properties["SenderAddress"]?.Value?.ToString() ?? "",
+                            RecipientAddress = msg.Properties["RecipientAddress"]?.Value?.ToString() ?? "",
+                            Subject = subject,
+                            Status = msg.Properties["Status"]?.Value?.ToString() ?? "",
+                            MessageId = msg.Properties["MessageId"]?.Value?.ToString() ?? "",
+                            Size = msg.Properties["Size"]?.Value as long? ?? 0
+                        });
+
+                        if (allResults.Count >= MessageTraceResponse.MaxResults)
+                        {
+                            response.Truncated = true;
+                            break;
+                        }
+                    }
+
+                    if (results.Count < pageSize)
+                        break;
+
+                    page++;
+                }
+
+                response.Results = allResults;
+                response.TotalAvailable = allResults.Count;
+            }
+            catch (Exception ex)
+            {
+                response.Error = ex.Message;
+                _logger.LogError(ex, "Error running message trace");
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+
+            return response;
+        });
+    }
+
+    public Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
+    {
+        return Task.Run(() =>
+        {
+            var result = new RecipientInfoResult { EmailAddress = emailAddress };
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                // Get-Recipient for basic info
+                ps.AddCommand("Get-Recipient")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Stop");
+                var recipients = Invoke(ps);
+                var recip = recipients.FirstOrDefault();
+
+                if (recip == null)
+                {
+                    result.Error = $"Recipient '{emailAddress}' not found.";
+                    return result;
+                }
+
+                result.DisplayName = recip.Properties["DisplayName"]?.Value?.ToString();
+                result.RecipientType = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
+                result.WhenCreated = recip.Properties["WhenCreated"]?.Value as DateTime?;
+
+                var emailAddresses = recip.Properties["EmailAddresses"]?.Value;
+                if (emailAddresses is System.Collections.IEnumerable addrs)
+                {
+                    foreach (var addr in addrs)
+                    {
+                        var s = addr?.ToString();
+                        if (s != null) result.EmailAddresses.Add(s);
+                    }
+                }
+
+                // Determine location
+                var typeDetails = result.RecipientType ?? "";
+                if (typeDetails.Contains("Remote", StringComparison.OrdinalIgnoreCase))
+                    result.MailboxLocation = "On-Premises";
+                else if (typeDetails.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
+                    result.MailboxLocation = "Cloud";
+                else
+                    result.MailboxLocation = "Unknown";
+
+                // Try Get-Mailbox for more details (cloud mailboxes only)
+                ps.AddCommand("Get-Mailbox")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Ignore");
+                var mbxResults = InvokeOptional(ps);
+                var mbx = mbxResults.FirstOrDefault();
+
+                if (mbx != null)
+                {
+                    result.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
+                        ?? mbx.Properties["ForwardingAddress"]?.Value?.ToString();
+                    result.ArchiveEnabled = mbx.Properties["ArchiveStatus"]?.Value?.ToString()
+                        ?.Equals("Active", StringComparison.OrdinalIgnoreCase) == true;
+
+                    // Get mailbox statistics
+                    try
+                    {
+                        ps.AddCommand("Get-MailboxStatistics")
+                          .AddParameter("Identity", emailAddress)
+                          .AddParameter("ErrorAction", "Stop");
+                        var stats = Invoke(ps);
+                        var stat = stats.FirstOrDefault();
+                        if (stat != null)
+                        {
+                            result.ItemCount = stat.Properties["ItemCount"]?.Value as long?
+                                ?? (stat.Properties["ItemCount"]?.Value is int ic ? (long)ic : null);
+                            result.LastLogonTime = stat.Properties["LastLogonTime"]?.Value as DateTime?;
+                            var sizeStr = stat.Properties["TotalItemSize"]?.Value?.ToString();
+                            result.MailboxSizeGB = ParseSizeToGB(sizeStr);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
+                    }
+
+                    // Archive size if enabled
+                    if (result.ArchiveEnabled)
+                    {
+                        try
+                        {
+                            ps.AddCommand("Get-MailboxStatistics")
+                              .AddParameter("Identity", emailAddress)
+                              .AddParameter("Archive", true)
+                              .AddParameter("ErrorAction", "Stop");
+                            var archiveStats = Invoke(ps);
+                            var archiveStat = archiveStats.FirstOrDefault();
+                            if (archiveStat != null)
+                            {
+                                var archiveSizeStr = archiveStat.Properties["TotalItemSize"]?.Value?.ToString();
+                                result.ArchiveSizeGB = ParseSizeToGB(archiveSizeStr);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            result.Warnings.Add($"Could not retrieve archive statistics: {ex.Message}");
+                        }
+                    }
+                }
+                else if (result.MailboxLocation == "On-Premises")
+                {
+                    result.Warnings.Add("Mailbox is on-premises — size/statistics not available from cloud.");
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Error = ex.Message;
+                _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+
+            return result;
+        });
+    }
+
+    public Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
+    {
+        return Task.Run(() =>
+        {
+            var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                ps.AddCommand("Get-MailboxAutoReplyConfiguration")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("ErrorAction", "Stop");
+                var results = Invoke(ps);
+                var config = results.FirstOrDefault();
+
+                if (config == null)
+                {
+                    result.Error = $"Could not retrieve auto-reply configuration for '{emailAddress}'.";
+                    return result;
+                }
+
+                result.State = config.Properties["AutoReplyState"]?.Value?.ToString() ?? "Disabled";
+                result.InternalMessage = config.Properties["InternalMessage"]?.Value?.ToString();
+                result.ExternalMessage = config.Properties["ExternalMessage"]?.Value?.ToString();
+                result.StartTime = config.Properties["StartTime"]?.Value as DateTime?;
+                result.EndTime = config.Properties["EndTime"]?.Value as DateTime?;
+            }
+            catch (Exception ex)
+            {
+                result.Error = ex.Message;
+                _logger.LogError(ex, "Error getting OOF status for {Email}", emailAddress);
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+
+            return result;
+        });
+    }
+
+    public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
+    {
+        return RunAsync(ps =>
+        {
+            ps.AddCommand("Set-MailboxAutoReplyConfiguration")
+              .AddParameter("Identity", emailAddress)
+              .AddParameter("AutoReplyState", state)
+              .AddParameter("ErrorAction", "Stop");
+
+            if (state != "Disabled")
+            {
+                if (!string.IsNullOrWhiteSpace(internalMessage))
+                    ps.AddParameter("InternalMessage", internalMessage);
+                if (!string.IsNullOrWhiteSpace(externalMessage))
+                    ps.AddParameter("ExternalMessage", externalMessage);
+            }
+
+            if (state == "Scheduled")
+            {
+                if (startTime.HasValue)
+                    ps.AddParameter("StartTime", startTime.Value);
+                if (endTime.HasValue)
+                    ps.AddParameter("EndTime", endTime.Value);
+            }
+
+            Invoke(ps);
+        }, () => (state == "Disabled"
+            ? $"Auto-reply disabled for {emailAddress}."
+            : $"Auto-reply set to {state} for {emailAddress}.", (string?)null));
+    }
+
+    public static double? ParseSizeToGB(string? sizeString)
+    {
+        if (string.IsNullOrWhiteSpace(sizeString)) return null;
+        var match = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d,]+)\s*bytes");
+        if (match.Success && long.TryParse(match.Groups[1].Value.Replace(",", ""), out var bytes))
+            return Math.Round(bytes / 1073741824.0, 2);
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
     // On-Prem Exchange Operations
     // -------------------------------------------------------------------------
 

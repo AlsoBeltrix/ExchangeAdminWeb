@@ -247,6 +247,52 @@ public class EmailService
         await SendEmailAsync(ownerEmail, subject, body);
     }
 
+    public async Task SendOofNotificationAsync(string targetEmail, string performedBy, string action)
+    {
+        if (!_notifyUsers)
+            return;
+
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        var isEnabled = action != "disabled";
+        var headerText = isEnabled ? "Auto-Reply Enabled" : "Auto-Reply Disabled";
+        var headerColor = isEnabled ? "#0078d4" : "#28a745";
+
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: {headerColor}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
+        .footer {{ background: #f0f0f0; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #666; }}
+        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 3px; }}
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <div class=""header"">
+            <h2>{h(headerText)}</h2>
+        </div>
+        <div class=""content"">
+            <p>Hello,</p>
+            <p>Your mailbox auto-reply (Out of Office) has been <strong>{h(action)}</strong> by an administrator.</p>
+            <p><strong>Changed by:</strong> {h(performedBy)}<br>
+               <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}</p>
+            <div class=""warning"">
+                <strong>Important:</strong> If you were unaware of this change or did not request it, please contact the IT Service Desk immediately.
+            </div>
+        </div>
+        <div class=""footer"">
+            <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>";
+
+        await SendEmailAsync(targetEmail, $"Your Auto-Reply Has Been {(isEnabled ? "Enabled" : "Disabled")}", body);
+    }
+
     private async Task SendEmailAsync(string to, string subject, string htmlBody)
     {
         try

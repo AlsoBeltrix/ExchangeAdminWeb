@@ -1043,6 +1043,14 @@
                 };
             }
 
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
+                    "Migration", result.Success, ticket, result.Success ? null : result.Message);
+            }
+            catch { }
+
             if (result.Success)
             {
                 var savedResult = batchActionResult;
@@ -1083,6 +1091,14 @@
                     Detail = $"Audit logging failed: {ex.Message}"
                 };
             }
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
+                    "Migration", result.Success, ticket, result.Success ? null : result.Message);
+            }
+            catch { }
 
             if (result.Success && expandedBatch != null)
                 batchUsers = await Exchange.GetMigrationBatchUsersAsync(expandedBatch);

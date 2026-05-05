@@ -1,0 +1,163 @@
+@page "/recipient-lookup"
+@using ExchangeAdminWeb.Models
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
+@rendermode InteractiveServer
+@inject IExchangeService Exchange
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+
+<PageTitle>Recipient Lookup</PageTitle>
+
+<div class="container-fluid mt-4">
+    <h2>Recipient Lookup</h2>
+    <p class="text-muted">View recipient type, mailbox location, size, and configuration</p>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-3 mb-3">
+                <div class="col-md-5">
+                    <label class="form-label">Email Address</label>
+                    <input type="email" class="form-control" @bind="emailAddress" placeholder="user@analog.com"
+                           disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button class="btn btn-primary" @onclick="RunLookup"
+                            disabled="@(string.IsNullOrWhiteSpace(emailAddress) || isLoading)">
+                        @if (isLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                        }
+                        Lookup
+                    </button>
+                </div>
+            </div>
+
+            @if (result?.Error != null)
+            {
+                <div class="alert alert-danger">@result.Error</div>
+            }
+            else if (result != null)
+            {
+                @if (result.Warnings.Any())
+                {
+                    <div class="alert alert-warning">
+                        @foreach (var w in result.Warnings)
+                        {
+                            <div>@w</div>
+                        }
+                    </div>
+                }
+
+                <div class="row mt-3">
+                    <div class="col-md-6">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr><td class="fw-bold" style="width:180px">Display Name</td><td>@result.DisplayName</td></tr>
+                                <tr><td class="fw-bold">Primary Email</td><td>@result.EmailAddress</td></tr>
+                                <tr><td class="fw-bold">Recipient Type</td><td>@result.RecipientType</td></tr>
+                                <tr>
+                                    <td class="fw-bold">Mailbox Location</td>
+                                    <td>
+                                        <span class="badge bg-@(result.MailboxLocation == "Cloud" ? "primary" : result.MailboxLocation == "On-Premises" ? "secondary" : "warning")">
+                                            @result.MailboxLocation
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr><td class="fw-bold">Created</td><td>@(result.WhenCreated?.ToString("yyyy-MM-dd") ?? "N/A")</td></tr>
+                                <tr><td class="fw-bold">Last Logon</td><td>@(result.LastLogonTime?.ToString("yyyy-MM-dd HH:mm") ?? "N/A")</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="col-md-6">
+                        <table class="table table-sm">
+                            <tbody>
+                                <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(result.MailboxSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                <tr><td class="fw-bold">Item Count</td><td>@(result.ItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                <tr><td class="fw-bold">Archive</td><td>@(result.ArchiveEnabled ? "Enabled" : "Disabled")</td></tr>
+                                @if (result.ArchiveEnabled)
+                                {
+                                    <tr><td class="fw-bold">Archive Size</td><td>@(result.ArchiveSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                }
+                                <tr><td class="fw-bold">Forwarding</td><td>@(result.ForwardingAddress ?? "None")</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                @if (result.EmailAddresses.Any())
+                {
+                    <h6 class="mt-3">Email Addresses</h6>
+                    <ul class="list-group list-group-flush">
+                        @foreach (var addr in result.EmailAddresses.Take(20))
+                        {
+                            <li class="list-group-item py-1 small">@addr</li>
+                        }
+                        @if (result.EmailAddresses.Count > 20)
+                        {
+                            <li class="list-group-item py-1 small text-muted">...and @(result.EmailAddresses.Count - 20) more</li>
+                        }
+                    </ul>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string emailAddress = "";
+    private bool isLoading = false;
+    private RecipientInfoResult? result;
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(emailAddress))
+            await RunLookup();
+    }
+
+    private async Task RunLookup()
+    {
+        if (string.IsNullOrWhiteSpace(emailAddress)) return;
+
+        isLoading = true;
+        result = null;
+
+        try
+        {
+            result = await Exchange.GetRecipientInfoAsync(emailAddress.Trim());
+            Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", emailAddress.Trim(), result.Error == null, result.Error);
+        }
+        catch (Exception ex)
+        {
+            result = new RecipientInfoResult { EmailAddress = emailAddress, Error = ex.Message };
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

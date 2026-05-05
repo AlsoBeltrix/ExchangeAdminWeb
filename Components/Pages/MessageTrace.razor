@@ -1,0 +1,203 @@
+@page "/message-trace"
+@using ExchangeAdminWeb.Models
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupPolicy")]
+@rendermode InteractiveServer
+@inject IExchangeService Exchange
+@inject AuditService Audit
+@inject EmailService Email
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+
+<PageTitle>Message Trace</PageTitle>
+
+<div class="container-fluid mt-4">
+    <h2>Message Trace</h2>
+    <p class="text-muted">Search recent mail flow (up to 10 days)</p>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="row g-3 mb-3">
+                <div class="col-md-3">
+                    <label class="form-label">Sender</label>
+                    <input type="email" class="form-control" @bind="sender" placeholder="sender@analog.com" disabled="@isLoading" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Recipient</label>
+                    <input type="email" class="form-control" @bind="recipient" placeholder="recipient@analog.com" disabled="@isLoading" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" class="form-control" @bind="startDate" disabled="@isLoading" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">End Date</label>
+                    <input type="date" class="form-control" @bind="endDate" disabled="@isLoading" />
+                </div>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">Subject Contains</label>
+                    <input type="text" class="form-control" @bind="subjectFilter" placeholder="(optional)" disabled="@isLoading" />
+                </div>
+                <div class="col-md-2 d-flex align-items-end">
+                    <button class="btn btn-primary" @onclick="RunTrace"
+                            disabled="@(!IsFormValid || isLoading)">
+                        @if (isLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-2"></span>
+                        }
+                        Search
+                    </button>
+                </div>
+            </div>
+
+            @if (validationError != null)
+            {
+                <div class="alert alert-danger">@validationError</div>
+            }
+
+            @if (response?.Error != null)
+            {
+                <div class="alert alert-danger">@response.Error</div>
+            }
+            else if (response != null)
+            {
+                @if (response.Truncated)
+                {
+                    <div class="alert alert-warning">
+                        Results limited to @MessageTraceResponse.MaxResults messages. Narrow your search criteria for complete results.
+                    </div>
+                }
+
+                @if (response.Results.Any())
+                {
+                    <p class="text-muted mb-2">@response.Results.Count result(s)</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Received</th>
+                                    <th>Sender</th>
+                                    <th>Recipient</th>
+                                    <th>Subject</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var msg in response.Results)
+                                {
+                                    <tr>
+                                        <td>@msg.Received.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td>@msg.SenderAddress</td>
+                                        <td>@msg.RecipientAddress</td>
+                                        <td>@msg.Subject</td>
+                                        <td><span class="badge bg-@GetStatusBadge(msg.Status)">@msg.Status</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-info">No messages found matching your criteria.</div>
+                }
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string sender = "";
+    private string recipient = "";
+    private DateTime startDate = DateTime.Today.AddDays(-2);
+    private DateTime endDate = DateTime.Today;
+    private string subjectFilter = "";
+    private bool isLoading = false;
+    private string? validationError;
+    private MessageTraceResponse? response;
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+
+    private bool IsFormValid => !string.IsNullOrWhiteSpace(sender) || !string.IsNullOrWhiteSpace(recipient);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+    }
+
+    public static string? ValidateDateRange(DateTime start, DateTime end)
+    {
+        if (end < start)
+            return "End date must be after start date.";
+        if ((end - start).TotalDays > 10)
+            return "Date range cannot exceed 10 days.";
+        if (start > DateTime.Today)
+            return "Start date cannot be in the future.";
+        return null;
+    }
+
+    private async Task RunTrace()
+    {
+        validationError = ValidateDateRange(startDate, endDate);
+        if (validationError != null) return;
+
+        isLoading = true;
+        response = null;
+
+        try
+        {
+            response = await Exchange.GetMessageTraceAsync(
+                string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
+                string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
+                startDate, endDate.AddDays(1),
+                string.IsNullOrWhiteSpace(subjectFilter) ? null : subjectFilter.Trim());
+
+            var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, response.Error == null, response.Error);
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress, "MessageTrace", target,
+                    $"{response.Results.Count} results", "Lookup",
+                    response.Error == null, "", response.Error);
+            }
+            catch { }
+        }
+        catch (Exception ex)
+        {
+            response = new MessageTraceResponse { Error = ex.Message };
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Delivered" => "success",
+        "Failed" => "danger",
+        "Pending" => "warning",
+        "FilteredAsSpam" => "secondary",
+        _ => "info"
+    };
+}

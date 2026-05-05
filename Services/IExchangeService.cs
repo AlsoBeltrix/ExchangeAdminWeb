@@ -24,4 +24,9 @@ public interface IExchangeService
     Task<PermissionResult> RemoveMigrationBatchAsync(string batchName);
     Task<string?> GetMigrationUserReportAsync(string emailAddress);
     Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm);
+    Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress);
+    Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter);
+    Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress);
+    Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress);
+    Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime);
 }
