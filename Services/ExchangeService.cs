@@ -1632,18 +1632,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private static Collection<PSObject> InvokeOptional(PowerShell ps)
     {
-        Collection<PSObject> result;
-        try
-        {
-            result = ps.Invoke();
-        }
-        catch (RuntimeException)
-        {
-            ps.Commands.Clear();
-            ps.Streams.Error.Clear();
-            return new Collection<PSObject>();
-        }
-
+        var result = ps.Invoke();
         ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;
