@@ -18,11 +18,25 @@ public class BulkOperationResult
 
         foreach (var entry in Entries)
         {
-            var message = entry.Message.Replace("\"", "\"\"");
-            csv.AppendLine($"\"{entry.Target}\",\"{entry.User}\",\"{entry.Permission}\",\"{entry.Status}\",\"{message}\"");
+            csv.AppendLine($"{SanitizeCsvField(entry.Target)},{SanitizeCsvField(entry.User)},{SanitizeCsvField(entry.Permission)},{SanitizeCsvField(entry.Status)},{SanitizeCsvField(entry.Message)}");
         }
 
         return Encoding.UTF8.GetBytes(csv.ToString());
+    }
+
+    private static string SanitizeCsvField(string field)
+    {
+        if (string.IsNullOrEmpty(field))
+            return "";
+
+        var sanitized = field;
+        if (sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+            sanitized = "'" + sanitized;
+
+        if (sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n') || sanitized.Contains('\r'))
+            return $"\"{sanitized.Replace("\"", "\"\"")}\"";
+
+        return sanitized;
     }
 }
 

@@ -203,13 +203,16 @@ public class AuditService
         if (string.IsNullOrEmpty(field))
             return "";
 
-        // If field contains comma, quote, or newline, wrap in quotes and escape internal quotes
-        if (field.Contains(',') || field.Contains('"') || field.Contains('\n') || field.Contains('\r'))
+        var sanitized = field;
+        if (sanitized.Length > 0 && sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+            sanitized = "'" + sanitized;
+
+        if (sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n') || sanitized.Contains('\r'))
         {
-            return $"\"{field.Replace("\"", "\"\"")}\"";
+            return $"\"{sanitized.Replace("\"", "\"\"")}\"";
         }
 
-        return field;
+        return sanitized;
     }
 
     private void WriteLog(string csvLine)

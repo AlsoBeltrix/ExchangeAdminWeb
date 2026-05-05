@@ -1,4 +1,6 @@
 @page "/access-denied"
+@using Microsoft.AspNetCore.Authorization
+@attribute [AllowAnonymous]
 @inject AuthenticationStateProvider AuthStateProvider
 
 <PageTitle>Access Denied</PageTitle>

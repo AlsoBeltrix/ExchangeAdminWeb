@@ -494,8 +494,8 @@ public class ExchangeService : IExchangeService
                 // Check 1: Does user have an active migration?
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var migUser = Invoke(ps);
+                  .AddParameter("ErrorAction", "Ignore");
+                var migUser = InvokeOptional(ps);
                 if (migUser.Any())
                 {
                     result.Status = MigrationStatus.Ineligible;
@@ -505,8 +505,8 @@ public class ExchangeService : IExchangeService
                 // Check 2: Is user a cloud mailbox?
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var cloudMbx = Invoke(ps);
+                  .AddParameter("ErrorAction", "Ignore");
+                var cloudMbx = InvokeOptional(ps);
                 var isCloudMailbox = false;
 
                 if (cloudMbx.Any())
@@ -647,6 +647,17 @@ public class ExchangeService : IExchangeService
                 result.Status = MigrationStatus.Ineligible;
                 result.IneligibilityReasons.Add($"Error checking eligibility: {ex.Message}");
                 _logger.LogError(ex, "Error checking migration eligibility for {Email}", emailAddress);
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline")
+                      .AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
             }
 
             return result;
@@ -816,9 +827,9 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 // Get all migration batches
                 ps.AddCommand("Get-MigrationBatch")
-                  .AddParameter("ErrorAction", "SilentlyContinue");
+                  .AddParameter("ErrorAction", "Ignore");
 
-                var batchResults = Invoke(ps);
+                var batchResults = InvokeOptional(ps);
 
                 foreach (var batchObj in batchResults)
                 {
@@ -905,9 +916,9 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("BatchId", batchName)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
+                  .AddParameter("ErrorAction", "Ignore");
 
-                var userResults = Invoke(ps);
+                var userResults = InvokeOptional(ps);
 
                 foreach (var userObj in userResults)
                 {
@@ -1000,14 +1011,14 @@ https://admin.exchange.microsoft.com/#/migration";
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            Invoke(ps);
+              .AddParameter("ErrorAction", "Ignore");
+            InvokeOptional(ps);
 
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            Invoke(ps);
+              .AddParameter("ErrorAction", "Ignore");
+            InvokeOptional(ps);
 
             ps.AddCommand("Set-MoveRequest")
               .AddParameter("Identity", emailAddress)
@@ -1023,8 +1034,8 @@ https://admin.exchange.microsoft.com/#/migration";
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
-              .AddParameter("ErrorAction", "SilentlyContinue");
-            Invoke(ps);
+              .AddParameter("ErrorAction", "Ignore");
+            InvokeOptional(ps);
         }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", (string?)null));
     }
 
@@ -1615,6 +1626,25 @@ https://admin.exchange.microsoft.com/#/migration";
             throw new InvalidOperationException(msg);
         }
 
+        ps.Commands.Clear();
+        return result;
+    }
+
+    private static Collection<PSObject> InvokeOptional(PowerShell ps)
+    {
+        Collection<PSObject> result;
+        try
+        {
+            result = ps.Invoke();
+        }
+        catch (RuntimeException)
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            return new Collection<PSObject>();
+        }
+
+        ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;
     }

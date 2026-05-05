@@ -28,13 +28,10 @@ public class PermissionValidator
     {
         await EnsureInitializedAsync();
 
-        // Check exact match first
         if (_excludedUsers.Contains(userIdentity))
             return true;
 
-        // Extract just the username part if it's domain\user or user@domain
-        var username = ExtractUsername(userIdentity);
-        return _excludedUsers.Any(excluded => ExtractUsername(excluded).Equals(username, StringComparison.OrdinalIgnoreCase));
+        return _excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity));
     }
 
     public async Task<string?> ValidateTargetMailboxAsync(string targetMailbox)
@@ -61,16 +58,31 @@ public class PermissionValidator
         if (!_preventSelfGrant)
             return null;
 
-        var currentUsername = ExtractUsername(currentUser);
-        var affectedUsername = ExtractUsername(affectedUser);
-
-        if (currentUsername.Equals(affectedUsername, StringComparison.OrdinalIgnoreCase))
+        if (IdentitiesMatch(currentUser, affectedUser))
         {
-            _logger.LogWarning("User {User} attempted to grant permissions to themselves", currentUser);
+            _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected})", currentUser, affectedUser);
             return "Access denied: You cannot grant permissions to yourself.";
         }
 
         return null;
+    }
+
+    public static bool IdentitiesMatch(string identity1, string identity2)
+    {
+        var names1 = GetNormalizedNames(identity1);
+        var names2 = GetNormalizedNames(identity2);
+        return names1.Overlaps(names2);
+    }
+
+    private static HashSet<string> GetNormalizedNames(string identity)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var username = ExtractUsername(identity);
+        names.Add(username);
+        names.Add(username.Replace(".", ""));
+        if (identity.Contains('@'))
+            names.Add(identity.Trim().ToLowerInvariant());
+        return names;
     }
 
     private async Task EnsureInitializedAsync()
