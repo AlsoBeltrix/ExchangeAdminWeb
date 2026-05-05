@@ -13,8 +13,10 @@ public class PermissionValidator
     private readonly string[] _configuredExclusions;
     private readonly bool _preventSelfGrant;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
     private bool _initialized = false;
     private bool _initFailed = false;
+    private DateTime _lastRefresh = DateTime.MinValue;
 
     public PermissionValidator(IConfiguration config, ILogger<PermissionValidator> logger)
     {
@@ -87,12 +89,12 @@ public class PermissionValidator
 
     private async Task EnsureInitializedAsync()
     {
-        if (_initialized) return;
+        if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
 
         await _initLock.WaitAsync();
         try
         {
-            if (_initialized) return;
+            if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
 
             _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", _configuredExclusions.Length);
 
@@ -115,6 +117,7 @@ public class PermissionValidator
 
             _initFailed = false;
             _initialized = true;
+            _lastRefresh = DateTime.UtcNow;
             _logger.LogInformation("Permission validator initialized with {Total} total excluded identities", _excludedUsers.Count);
         }
         catch (Exception ex)
