@@ -1161,6 +1161,15 @@
             else
                 batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}");
 
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, clientIpAddress, "Migration_ClearCompleted",
+                    $"{removed} batch(es)", "N/A", "Migration",
+                    errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
+            }
+            catch { }
+
             var savedResult = batchActionResult;
             await LoadMigrationStatus();
             batchActionResult = batchActionResult ?? savedResult;

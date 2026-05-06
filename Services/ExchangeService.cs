@@ -1358,8 +1358,9 @@ https://admin.exchange.microsoft.com/#/migration";
                 var allResults = new List<MessageTraceResult>();
                 var page = 1;
                 const int pageSize = 200;
+                const int maxPages = 10;
 
-                while (allResults.Count < MessageTraceResponse.MaxResults)
+                while (allResults.Count < MessageTraceResponse.MaxResults && page <= maxPages)
                 {
                     ps.AddCommand("Get-MessageTrace")
                       .AddParameter("StartDate", startDate)
@@ -1408,6 +1409,9 @@ https://admin.exchange.microsoft.com/#/migration";
                     page++;
                 }
 
+                if (page > maxPages && allResults.Count < MessageTraceResponse.MaxResults)
+                    response.Truncated = true;
+
                 response.Results = allResults;
                 response.TotalAvailable = allResults.Count;
             }
@@ -1431,9 +1435,9 @@ https://admin.exchange.microsoft.com/#/migration";
         });
     }
 
-    public Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
+    public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
-        return Task.Run(() =>
+        return await Task.Run(async () =>
         {
             var result = new RecipientInfoResult { EmailAddress = emailAddress };
             var iss = InitialSessionState.CreateDefault();
@@ -1544,7 +1548,23 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 else if (result.MailboxLocation == "On-Premises")
                 {
-                    result.Warnings.Add("Mailbox is on-premises — size/statistics not available from cloud.");
+                    try
+                    {
+                        var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
+                        if (onPremSize != null)
+                        {
+                            result.MailboxSizeGB = onPremSize.Value.mailboxSizeGB;
+                            result.ArchiveSizeGB = onPremSize.Value.archiveSizeGB;
+                        }
+                        else
+                        {
+                            result.Warnings.Add("On-premises mailbox size unavailable (connection not configured).");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
+                    }
                 }
             }
             catch (Exception ex)
