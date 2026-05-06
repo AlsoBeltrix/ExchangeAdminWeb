@@ -1,3 +1,4 @@
+using System.Globalization;
 using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Services;
 
@@ -94,6 +95,11 @@ public class ParseSizeToGBTests
     [InlineData("1,073,741,824 bytes", 1.0)]
     [InlineData("536,870,912 bytes", 0.5)]
     [InlineData("0 bytes", 0.0)]
+    [InlineData("1.234 GB (1,325,039,752 bytes)", 1.23)]
+    [InlineData("500.1 MB (524,396,544 bytes)", 0.49)]
+    [InlineData("2.5 GB", 2.5)]
+    [InlineData("512 MB", 0.5)]
+    [InlineData("256 KB", 0.0002)]
     public void ParsesValidSizeStrings(string input, double expected)
     {
         var result = ExchangeService.ParseSizeToGB(input);
@@ -108,5 +114,25 @@ public class ParseSizeToGBTests
     public void ReturnsNullForInvalidInput(string? input)
     {
         Assert.Null(ExchangeService.ParseSizeToGB(input));
+    }
+
+    [Theory]
+    [InlineData("2.5 GB", 2.5)]
+    [InlineData("500.1 MB", 0.49)]
+    [InlineData("1.234 GB (1,325,039,752 bytes)", 1.23)]
+    public void ParsesCorrectlyUnderNonUsCulture(string input, double expected)
+    {
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("pt-BR");
+            var result = ExchangeService.ParseSizeToGB(input);
+            Assert.NotNull(result);
+            Assert.Equal(expected, result!.Value, 2);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 }

@@ -1675,9 +1675,33 @@ https://admin.exchange.microsoft.com/#/migration";
     public static double? ParseSizeToGB(string? sizeString)
     {
         if (string.IsNullOrWhiteSpace(sizeString)) return null;
-        var match = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d,]+)\s*bytes");
-        if (match.Success && long.TryParse(match.Groups[1].Value.Replace(",", ""), out var bytes))
-            return Math.Round(bytes / 1073741824.0, 2);
+
+        // Exchange returns sizes like "1.234 GB (1,234,567,890 bytes)" or "500.1 MB (524,396,544 bytes)"
+        // Try parenthesized bytes first (most reliable)
+        var parenMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"\(([\d,]+)\s+bytes\)");
+        if (parenMatch.Success && long.TryParse(parenMatch.Groups[1].Value.Replace(",", ""), out var parenBytes))
+            return Math.Round(parenBytes / 1073741824.0, 2);
+
+        // Bare bytes format: "1,234,567 bytes"
+        var bareMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"^([\d,]+)\s*bytes$");
+        if (bareMatch.Success && long.TryParse(bareMatch.Groups[1].Value.Replace(",", ""), out var bareBytes))
+            return Math.Round(bareBytes / 1073741824.0, 2);
+
+        // Human-readable GB: "1.234 GB"
+        var gbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*GB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (gbMatch.Success && double.TryParse(gbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb))
+            return Math.Round(gb, 2);
+
+        // Human-readable MB: "500.1 MB"
+        var mbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*MB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (mbMatch.Success && double.TryParse(mbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mb))
+            return Math.Round(mb / 1024.0, 2);
+
+        // Human-readable KB: "512 KB"
+        var kbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*KB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (kbMatch.Success && double.TryParse(kbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var kb))
+            return Math.Round(kb / 1048576.0, 4);
+
         return null;
     }
 
@@ -1859,29 +1883,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private static double ParseExchangeSize(string? sizeString)
     {
-        if (string.IsNullOrWhiteSpace(sizeString))
-            return 0;
-
-        // Exchange returns sizes like "1.234 GB (1,234,567,890 bytes)" or "500.1 MB (524,396,544 bytes)"
-        // Try to extract the bytes value from parentheses first (most reliable)
-        var bytesMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"\(([\d,]+)\s+bytes\)");
-        if (bytesMatch.Success)
-        {
-            var bytesStr = bytesMatch.Groups[1].Value.Replace(",", "");
-            if (long.TryParse(bytesStr, out var bytes))
-                return Math.Round(bytes / (1024.0 * 1024.0 * 1024.0), 2);
-        }
-
-        // Fallback: parse the human-readable portion
-        var gbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*GB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (gbMatch.Success && double.TryParse(gbMatch.Groups[1].Value, out var gb))
-            return Math.Round(gb, 2);
-
-        var mbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*MB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (mbMatch.Success && double.TryParse(mbMatch.Groups[1].Value, out var mb))
-            return Math.Round(mb / 1024.0, 2);
-
-        return 0;
+        return ParseSizeToGB(sizeString) ?? 0;
     }
 
     // -------------------------------------------------------------------------
