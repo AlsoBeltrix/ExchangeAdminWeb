@@ -38,6 +38,7 @@ appsettings.Development.json
 # OS files
 .DS_Store
 Thumbs.db
+~$*
 
 # Claude Code
 .claude/
