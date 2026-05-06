@@ -49,3 +49,123 @@ h1:focus {
 .darker-border-checkbox.form-check-input {
     border-color: #929292;
 }
+
+.theme-toggle {
+    border: none;
+    background: transparent;
+    font-size: 1.2rem;
+    padding: 0.2rem 0.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+
+/* Dark mode */
+html.dark {
+    color-scheme: dark;
+}
+
+html.dark body {
+    background-color: #1a1d21;
+    color: #e0e0e0;
+}
+
+html.dark .top-row {
+    background-color: #2b2f33 !important;
+    border-bottom-color: #3a3f44 !important;
+}
+
+html.dark .card {
+    background-color: #2b2f33;
+    border-color: #3a3f44;
+    color: #e0e0e0;
+}
+
+html.dark .card-header {
+    background-color: #343a40;
+    border-bottom-color: #3a3f44;
+}
+
+html.dark .table {
+    --bs-table-bg: transparent;
+    color: #e0e0e0;
+    border-color: #3a3f44;
+}
+
+html.dark .form-control,
+html.dark .form-select {
+    background-color: #2b2f33;
+    border-color: #3a3f44;
+    color: #e0e0e0;
+}
+
+html.dark .form-control:focus,
+html.dark .form-select:focus {
+    background-color: #343a40;
+    border-color: #258cfb;
+    color: #e0e0e0;
+}
+
+html.dark .form-control::placeholder {
+    color: #888;
+}
+
+html.dark .alert-danger {
+    background-color: #3d1c1c;
+    border-color: #5a2d2d;
+    color: #f5a5a5;
+}
+
+html.dark .alert-success {
+    background-color: #1c3d1c;
+    border-color: #2d5a2d;
+    color: #a5f5a5;
+}
+
+html.dark .alert-warning {
+    background-color: #3d3a1c;
+    border-color: #5a5528;
+    color: #f5eda5;
+}
+
+html.dark .bg-light {
+    background-color: #343a40 !important;
+}
+
+html.dark .text-muted {
+    color: #adb5bd !important;
+}
+
+html.dark .nav-tabs .nav-link {
+    color: #adb5bd;
+}
+
+html.dark .nav-tabs .nav-link.active {
+    background-color: #2b2f33;
+    border-color: #3a3f44 #3a3f44 #2b2f33;
+    color: #e0e0e0;
+}
+
+html.dark .list-group-item {
+    background-color: #2b2f33;
+    border-color: #3a3f44;
+    color: #e0e0e0;
+}
+
+html.dark .btn-primary {
+    background-color: #2563eb;
+    border-color: #1d4ed8;
+}
+
+html.dark .btn-outline-secondary {
+    color: #adb5bd;
+    border-color: #6c757d;
+}
+
+html.dark .content {
+    background-color: #1a1d21;
+}
+
+html.dark #blazor-error-ui {
+    background: #3d3a1c;
+    color: #f5eda5;
+}

@@ -1498,10 +1498,8 @@ https://admin.exchange.microsoft.com/#/migration";
                 {
                     result.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
                         ?? mbx.Properties["ForwardingAddress"]?.Value?.ToString();
-                    result.ArchiveEnabled = mbx.Properties["ArchiveStatus"]?.Value?.ToString()
-                        ?.Equals("Active", StringComparison.OrdinalIgnoreCase) == true;
 
-                    // Get mailbox statistics
+                    // Get-Mailbox | Get-MailboxStatistics for primary mailbox
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
@@ -1511,11 +1509,11 @@ https://admin.exchange.microsoft.com/#/migration";
                         var stat = stats.FirstOrDefault();
                         if (stat != null)
                         {
-                            result.ItemCount = stat.Properties["ItemCount"]?.Value as long?
-                                ?? (stat.Properties["ItemCount"]?.Value is int ic ? (long)ic : null);
+                            result.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
+                            result.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
                             result.LastLogonTime = stat.Properties["LastLogonTime"]?.Value as DateTime?;
-                            var sizeStr = stat.Properties["TotalItemSize"]?.Value?.ToString();
-                            result.MailboxSizeGB = ParseSizeToGB(sizeStr);
+                            result.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
+                            result.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
                     catch (Exception ex)
@@ -1523,27 +1521,27 @@ https://admin.exchange.microsoft.com/#/migration";
                         result.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
                     }
 
-                    // Archive size if enabled
-                    if (result.ArchiveEnabled)
+                    // Get-Mailbox | Get-MailboxStatistics -Archive — errors if no archive exists
+                    try
                     {
-                        try
+                        ps.AddCommand("Get-MailboxStatistics")
+                          .AddParameter("Identity", emailAddress)
+                          .AddParameter("Archive", true)
+                          .AddParameter("ErrorAction", "Stop");
+                        var archiveStats = Invoke(ps);
+                        var archiveStat = archiveStats.FirstOrDefault();
+                        if (archiveStat != null)
                         {
-                            ps.AddCommand("Get-MailboxStatistics")
-                              .AddParameter("Identity", emailAddress)
-                              .AddParameter("Archive", true)
-                              .AddParameter("ErrorAction", "Stop");
-                            var archiveStats = Invoke(ps);
-                            var archiveStat = archiveStats.FirstOrDefault();
-                            if (archiveStat != null)
-                            {
-                                var archiveSizeStr = archiveStat.Properties["TotalItemSize"]?.Value?.ToString();
-                                result.ArchiveSizeGB = ParseSizeToGB(archiveSizeStr);
-                            }
+                            result.ArchiveEnabled = true;
+                            result.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
+                            result.ArchiveDeletedItemCount = ParseLong(archiveStat.Properties["DeletedItemCount"]?.Value);
+                            result.ArchiveSizeGB = ParseSizeToGB(archiveStat.Properties["TotalItemSize"]?.Value?.ToString());
+                            result.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
-                        catch (Exception ex)
-                        {
-                            result.Warnings.Add($"Could not retrieve archive statistics: {ex.Message}");
-                        }
+                    }
+                    catch
+                    {
+                        // No archive — expected error, not a warning
                     }
                 }
                 else if (result.MailboxLocation == "On-Premises")
@@ -1702,6 +1700,14 @@ https://admin.exchange.microsoft.com/#/migration";
         if (kbMatch.Success && double.TryParse(kbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var kb))
             return Math.Round(kb / 1048576.0, 4);
 
+        return null;
+    }
+
+    private static long? ParseLong(object? value)
+    {
+        if (value is long l) return l;
+        if (value is int i) return i;
+        if (value != null && long.TryParse(value.ToString(), out var parsed)) return parsed;
         return null;
     }
 

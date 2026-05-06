@@ -77,11 +77,16 @@
                         <table class="table table-sm">
                             <tbody>
                                 <tr><td class="fw-bold" style="width:180px">Mailbox Size</td><td>@(result.MailboxSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                <tr><td class="fw-bold">Deleted Item Size</td><td>@(result.DeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                <tr><td class="fw-bold">Total Size</td><td>@(result.TotalSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
                                 <tr><td class="fw-bold">Item Count</td><td>@(result.ItemCount?.ToString("N0") ?? "N/A")</td></tr>
+                                <tr><td class="fw-bold">Deleted Items</td><td>@(result.DeletedItemCount?.ToString("N0") ?? "N/A")</td></tr>
                                 <tr><td class="fw-bold">Archive</td><td>@(result.ArchiveEnabled ? "Enabled" : "Disabled")</td></tr>
                                 @if (result.ArchiveEnabled)
                                 {
                                     <tr><td class="fw-bold">Archive Size</td><td>@(result.ArchiveSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                    <tr><td class="fw-bold">Archive Deleted</td><td>@(result.ArchiveDeletedItemSizeGB?.ToString("F2") ?? "N/A") GB</td></tr>
+                                    <tr><td class="fw-bold">Archive Items</td><td>@(result.ArchiveItemCount?.ToString("N0") ?? "N/A")</td></tr>
                                 }
                                 <tr><td class="fw-bold">Forwarding</td><td>@(result.ForwardingAddress ?? "None")</td></tr>
                             </tbody>

@@ -50,13 +50,21 @@ public class RecipientInfoResult
     public string? ForwardingAddress { get; set; }
     public bool ArchiveEnabled { get; set; }
     public double? MailboxSizeGB { get; set; }
+    public double? DeletedItemSizeGB { get; set; }
     public double? ArchiveSizeGB { get; set; }
+    public double? ArchiveDeletedItemSizeGB { get; set; }
     public long? ItemCount { get; set; }
+    public long? DeletedItemCount { get; set; }
+    public long? ArchiveItemCount { get; set; }
+    public long? ArchiveDeletedItemCount { get; set; }
     public DateTime? WhenCreated { get; set; }
     public DateTime? LastLogonTime { get; set; }
     public List<string> EmailAddresses { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
     public string? Error { get; set; }
+
+    public double? TotalSizeGB => MailboxSizeGB.HasValue || DeletedItemSizeGB.HasValue
+        ? (MailboxSizeGB ?? 0) + (DeletedItemSizeGB ?? 0) : null;
 }
 
 public class OutOfOfficeResult

@@ -8,53 +8,41 @@ Analog Devices Confidential Information. All rights reserved.
 
 ## Project Background
 
-- ADI's Exchange administration workflows rely on manual PowerShell scripts run by helpdesk staff, creating audit gaps and operational risk from human error.
-- ExchangeAdminWeb replaces these scripts with a governed web application providing mailbox permission management, migration operations, and lookup tools.
-- The objective is to provide a secure, auditable, self-service interface for Exchange Online and hybrid on-premises administration that enforces policy controls (protected users, self-grant prevention, ticket tracking).
-- The application connects to Exchange Online via an existing Azure App Registration using certificate-based authentication (no user credentials stored).
+- Helpdesk and L2 support staff require the ability to perform Exchange administration tasks — mailbox permission grants, migrations, out-of-office management — that are restricted by security policy from being performed directly.
+- ExchangeAdminWeb provides a gated, governed interface that allows authorized operators to perform these restricted operations within enforced guardrails: protected-user exclusions, self-grant prevention, mandatory ticket capture, comprehensive audit logging, and admin/end-user notifications.
+- The application acts as a controlled delegation layer — operators never receive direct Exchange admin credentials. All Exchange operations execute server-side through a certificate-authenticated app registration, and on-premises operations use credentials retrieved at runtime from a secret vault.
+- This document reflects the current implementation baseline as of May 6, 2026.
 
 ---
 
 ## Design Considerations
 
 - System connects to both Exchange Online (EXO) and on-premises Exchange (hybrid environment).
-- Exchange Online access uses the EXO PowerShell module with app-only certificate authentication — no interactive login required.
-- On-premises Exchange access uses Kerberos authentication with credentials retrieved from Delinea Secret Server at runtime.
+- Exchange Online access uses the EXO PowerShell module with app-only certificate authentication — operators never handle Exchange credentials.
+- On-premises Exchange access uses Kerberos authentication with credentials retrieved from Delinea Secret Server at runtime; credentials are never stored on disk or exposed to operators.
 - IIS hosting with Windows Authentication provides zero-friction SSO for domain-joined helpdesk users.
-- Blazor Server (interactive) was chosen over client-side to keep Exchange credentials and PowerShell execution server-side only.
+- Blazor Server (interactive) was chosen over client-side to keep Exchange credentials and PowerShell execution server-side only — nothing sensitive reaches the browser.
 - .NET 10 target framework for long-term support and performance.
+- Action tools require ticket numbers for audit correlation.
+- Exchange PowerShell operations run in isolated runspaces and disconnect Exchange Online / on-premises PSSessions in `finally` blocks to prevent session leaks.
 
 ---
 
-## System Design – Deployment Overview
-
-| Environment | Server | Specs | Role |
-|---|---|---|---|
-| PRD | ASHBEXUTIL1 | 4 CPU, 16 GB RAM, 100 GB HDD | IIS App Server |
-| PRD | (Azure AD) | N/A | App Registration + Certificate |
-| PRD | ASHBMBX8 | Existing | On-Prem Exchange endpoint |
-| PRD | Secret Server | Existing | Credential vault (Delinea) |
-| PRD | mailhost.analog.com | Existing | SMTP relay |
-
-**Technology Stack:**
+## System Design – Technology Stack
 
 | Component | Technology |
 |---|---|
 | Framework | .NET 10, Blazor Server (InteractiveServer) |
-| Hosting | IIS (in-process, Windows Auth) |
+| Hosting | IIS (in-process, Windows Auth, No Managed Code app pool) |
 | Exchange Online | EXO PowerShell via System.Management.Automation |
 | On-Prem Exchange | Remote PowerShell (Kerberos) via PSSession |
 | Authentication | Windows Negotiate (AD/Kerberos SSO) |
-| Authorization | AD Group membership (Security:AllowedGroups) |
-| Audit Log | CSV on E:\WWWOutput (daily rotation) |
-| Email Notifications | MailKit → mailhost.analog.com:25 (no TLS) |
-| Credential Management | Delinea Secret Server API |
-
-**URLs:**
-
-| Environment | URL |
-|---|---|
-| Production | https://ashbexutil1/ExchangeAdminWeb |
+| Authorization | AD Group membership policy (Security:AllowedGroups) |
+| Protected-User Enforcement | Configurable exclusion list with AD group expansion, 30-minute refresh, fail-closed |
+| Audit Log | CSV on dedicated volume (daily rotation, formula-injection sanitized) |
+| Email Notifications | MailKit → configured SMTP relay |
+| Credential Management | Delinea Secret Server REST API (runtime retrieval only) |
+| Certificate Auth | Azure App Registration with locally-installed X.509 certificate |
 
 ---
 
@@ -66,145 +54,173 @@ Analog Devices Confidential Information. All rights reserved.
 
 ```
                           ┌─────────────────────┐
-                          │   Helpdesk User      │
+                          │   Helpdesk / L2      │
                           │   (Domain-joined)    │
                           └──────────┬───────────┘
                                      │ HTTPS + Windows Auth (Kerberos)
                                      ▼
                           ┌─────────────────────┐
-                          │   IIS / .NET 10     │
-                          │   ASHBEXUTIL1       │
-                          │   (Blazor Server)   │
+                          │ IIS / .NET 10       │
+                          │ Blazor Server       │
+                          │ (all operations     │
+                          │  execute here)      │
                           └──┬────┬────┬────┬───┘
                              │    │    │    │
           ┌──────────────────┘    │    │    └──────────────────┐
           ▼                       ▼    ▼                       ▼
 ┌─────────────────┐   ┌────────────┐  ┌──────────────┐  ┌──────────────┐
 │ Exchange Online │   │ On-Prem    │  │ Delinea      │  │ SMTP Relay   │
-│ (PowerShell)    │   │ Exchange   │  │ Secret Server│  │ mailhost     │
-│                 │   │ ASHBMBX8   │  │              │  │              │
-│ Cert Auth:      │   │ Kerberos   │  │ REST API     │  │ Port 25      │
-│ CN=EXO-         │   │ via        │  │              │  │ No TLS       │
-│ Automation      │   │ PSSession  │  │              │  │              │
+│ (PowerShell)    │   │ Exchange   │  │ Secret Server│  │              │
+│                 │   │            │  │              │  │              │
+│ Cert Auth via   │   │ Kerberos   │  │ REST API     │  │ Notifications│
+│ App Reg         │   │ PSSession  │  │ (creds at    │  │ (admin +     │
+│                 │   │            │  │  runtime)    │  │  end-user)   │
 └─────────────────┘   └────────────┘  └──────────────┘  └──────────────┘
           │
           ▼
 ┌─────────────────┐
-│ Azure AD        │
-│ App Reg:        │
-│ 129fb786-...    │
-│ analog.         │
-│ onmicrosoft.com │
+│ Microsoft       │
+│ Entra ID        │
+│ App             │
+│ Registration    │
 └─────────────────┘
 ```
 
 ---
 
-## Security Considerations
+## Access Control & Authorization
 
-### Users / Roles
+### User Roles
 
-| Role | Description | Access |
+| Role | Who | What They Can Do |
 |---|---|---|
-| Helpdesk Admin | Members of `ANALOG\ExchangeWebAdmins` or `ANALOG\iam` AD groups | Full application access |
-| Protected Users | Configured in `Security:ExcludedUsers` (executives, service accounts) | Cannot be targeted by operations |
-| End Users | Mailbox owners receiving notifications | No app access; email notifications only |
+| Authorized Operator | Members of configured AD groups (e.g., `ExchangeWebAdmins`, `iam`) | Execute all application features |
+| Protected Users | Executives, service accounts, members of configured protected groups | Cannot be targeted by any write operation — enforced server-side |
+| End Users (mailbox owners) | Any mailbox targeted by an operation | Receive email notifications; no application access |
 
-### Access Controls
+### Authorization Enforcement
 
-- Windows Authentication (Negotiate/Kerberos) — no anonymous access permitted.
-- Authorization enforced via AD group membership policy on every page.
-- Self-grant prevention: operators cannot modify permissions on their own mailbox.
-- Protected-user list refreshes from AD groups every 30 minutes.
-- Identity comparison uses dot-insensitive matching across DOMAIN\sam and email formats.
+- **AD group gating:** Every page enforces group membership policy. Unauthorized users are redirected to an access-denied page.
+- **Self-grant prevention:** Operators cannot modify their own mailbox permissions. Identity comparison is dot-insensitive and matches across DOMAIN\samAccountName and email formats.
+- **Protected-user enforcement:** A configurable list of users and AD groups whose members cannot be targeted by write operations. Groups are expanded and cached with a 30-minute refresh cycle. If the protected list cannot be loaded, validation **fails closed** — all write operations are blocked until it recovers.
+- **Protected-user scope:** Enforced on mailbox permission changes, calendar permission changes, and Out of Office Set/Clear actions.
+- **No credential exposure:** Operators authenticate via Windows SSO only. They never see or handle Exchange admin credentials, certificate keys, or Secret Server tokens.
 
 ### Authentication Flow
 
 1. User accesses application → IIS negotiates Kerberos ticket.
-2. Application verifies user is member of configured AllowedGroups.
-3. If authorized → render page. If not → redirect to /access-denied ([AllowAnonymous]).
-4. Exchange operations use app-only certificate auth (no user delegation).
+2. Application verifies user is a member of at least one configured AllowedGroup.
+3. If authorized → render page. If not → redirect to /access-denied.
+4. Exchange operations use app-only certificate auth (EXO) or vault-retrieved service credentials (on-prem). The operator's identity is recorded for audit but is not used for Exchange authentication.
 
-### Secrets Management
+---
+
+## Audit Logging
+
+### What Is Logged
+
+Every operation — both read-only lookups and write actions — is recorded to a daily-rotating CSV file on a dedicated volume.
+
+| Field | Description |
+|---|---|
+| Timestamp | UTC time of the operation |
+| Operator | Windows identity (DOMAIN\username) of the authenticated user |
+| IP Address | Client IP of the operator |
+| Action | Operation type (e.g., AddFullAccess, SetOutOfOffice, RecipientLookup) |
+| Target | Mailbox or recipient being acted upon |
+| Affected User | User being granted/revoked access (for permission operations) |
+| Ticket Number | ServiceNow or equivalent ticket reference (required for write actions) |
+| Success | Boolean result |
+| Error Detail | Error message if the operation failed |
+
+### Security Properties
+
+- CSV fields are sanitized against formula injection (leading `=`, `+`, `-`, `@`, tab, and CR characters are prefixed with an apostrophe).
+- Audit logging failures do not silently swallow — they surface to the operator.
+- Log volume is on a separate drive from the application to prevent disk-fill attacks from affecting application availability.
+
+---
+
+## Notifications
+
+### Admin Notifications
+
+Email notifications are sent to a configured admin distribution list for:
+
+| Trigger | Purpose |
+|---|---|
+| Permission add/remove (mailbox, calendar) | Security awareness — sensitive access changes |
+| Migration operations (create, complete, stop, resume, remove, clear) | Operational awareness |
+| Out of Office set/schedule/clear | Awareness of changes to user mailboxes |
+| Message trace searches | Visibility into who is tracing whose email |
+
+### End-User Notifications
+
+Mailbox owners receive email notification when:
+
+- Permissions are granted or revoked on their mailbox
+- Their Out of Office is changed by an operator
+
+This ensures affected users are aware of changes made to their mailbox by helpdesk/L2 staff.
+
+---
+
+## Secrets Management
 
 | Secret | Storage | Access Method |
 |---|---|---|
-| EXO Certificate | LocalMachine\My certificate store | Certificate subject lookup |
-| On-Prem Exchange credentials | Delinea Secret Server | REST API call at runtime |
-| App Registration details | appsettings.json (AppId, Org) | Non-sensitive identifiers only |
+| EXO Certificate (private key) | LocalMachine\My certificate store | Certificate subject lookup at runtime |
+| On-Prem Exchange credentials | Delinea Secret Server | REST API call at runtime — never cached to disk |
+| App Registration identifiers | appsettings.json | Non-sensitive identifiers only (AppId, Org) |
 
-### Data Classification
-
-- No ITAR, PII, or regulated data processed by the application.
-- Mailbox content is never read or stored — only permission metadata and migration status.
-- Audit logs contain: operator identity, IP, timestamp, action, target, result.
-- Message trace results are transient (displayed only, never persisted).
+- No credentials are stored in source control, environment variables, or application configuration files.
+- On-prem credentials are retrieved fresh from the vault for each operation requiring on-prem connectivity.
 
 ---
 
-## Security Considerations (cont)
+## Input Validation & Injection Protection
 
-### Input Validation & Output Encoding
+- All Exchange cmdlet parameters are passed via PowerShell SDK parameter binding (not string interpolation) — immune to command injection.
+- CSV audit output sanitizes formula-injection characters.
+- Blazor Server renders all user-provided content with automatic HTML encoding — no raw HTML output.
+- Out of Office message display strips HTML tags before rendering (defense-in-depth against stored XSS in Exchange OOF messages).
+- Message trace limits user-selected date ranges to 10 days and caps backend paging at 10 pages / 2,000 scanned messages, with a 1,000-result display cap.
+- Exchange mailbox size parsing uses culture-invariant numeric parsing so server locale cannot distort values.
 
-- All Exchange cmdlet parameters are passed via PowerShell SDK parameter binding (not string interpolation) — immune to injection.
-- CSV audit output sanitizes formula-injection characters (=, +, -, @, tab, CR).
-- Blazor Server renders all user-provided content with automatic HTML encoding.
-- OOF message display strips HTML tags before rendering.
+---
 
-### Network Security
+## Network Security
 
 | Source | Destination | Port/Protocol | Purpose |
 |---|---|---|---|
-| ASHBEXUTIL1 | outlook.office365.com | 443/HTTPS | EXO PowerShell |
-| ASHBEXUTIL1 | ASHBMBX8 | 80/HTTP | On-Prem Exchange PowerShell |
-| ASHBEXUTIL1 | secretserver.ad.analog.com | 443/HTTPS | Delinea API |
-| ASHBEXUTIL1 | mailhost.analog.com | 25/SMTP | Email notifications |
-| Helpdesk users | ASHBEXUTIL1 | 443/HTTPS | Web application |
-
-### Vulnerability Management
-
-- Application runs on IIS with No Managed Code app pool (ASP.NET Core process model).
-- Server patching follows corporate standards.
-- NuGet dependencies monitored for vulnerabilities via `dotnet list --vulnerable`.
-- No external JavaScript dependencies (Blazor Server, no client-side JS framework).
+| Application server | Exchange Online PowerShell endpoint | 443/HTTPS | EXO PowerShell |
+| Application server | On-premises Exchange endpoint | HTTP/HTTPS per config | On-prem Exchange PowerShell |
+| Application server | Delinea Secret Server | 443/HTTPS | Credential vault API |
+| Application server | SMTP relay | 25/SMTP or configured port | Notifications |
+| Helpdesk/L2 users | Application server | 443/HTTPS | Web application |
 
 ---
 
-## Backup and Data Retention
+## Application Features
 
-- **Audit logs (E:\WWWOutput):** Daily CSV rotation. Retained per corporate records policy.
-- **Application binaries (D:\inetpub\ExchangeAdminWeb):** Deployed from Git; no backup needed beyond source control.
-- **Source code:** Hosted on internal Gitea (https://ashbexutil1/gitea/mcoelho/ExchangeAdminWeb).
-- **Certificate (CN=EXO-Automation):** Managed via corporate PKI; renewal tracked separately.
-- **No database:** Application is stateless beyond audit CSV files.
-- **Disaster Recovery:** Redeploy from Git + restore audit logs from E: drive backup. Recovery time < 1 hour.
+### Write Operations (ticket required, audited, notified)
 
----
+| Feature | Description | Protected-User Enforced |
+|---|---|---|
+| Mailbox Permissions | Grant/revoke Full Access, Send As | Yes |
+| Calendar Permissions | Grant/revoke calendar folder access | Yes |
+| Migration Eligibility Check | Validates mailbox readiness for cloud migration | No |
+| Migration Batch Management | Create, complete, stop, resume, remove batches | No |
+| Out of Office Set/Schedule/Clear | Manage auto-reply for a target mailbox | Yes |
 
-## Scope
+### Read-Only Operations (no ticket required, audited)
 
-### Application Features
-
-| Feature | Type | Ticket Required | Admin Notification |
-|---|---|---|---|
-| Mailbox Permissions (Full Access, Send As) | Action | Yes | Yes |
-| Calendar Permissions | Action | Yes | Yes |
-| Migration Eligibility Check | Action | Yes | Yes |
-| Migration Batch Creation/Management | Action | Yes | Yes |
-| Out of Office Set/Clear | Action | Yes | Yes |
-| Delegation Report | Read-only | No | No |
-| Message Trace | Read-only | No | Yes |
-| Recipient Lookup | Read-only | No | No |
-
-### Integration Points
-
-| System | Direction | Method | Purpose |
-|---|---|---|---|
-| Exchange Online | Bidirectional | EXO PowerShell (cert auth) | All cloud mailbox operations |
-| On-Prem Exchange | Read + Write | Remote PowerShell (Kerberos) | Migration, size checks |
-| Active Directory | Read | PowerShell AD module | Group membership, ITAR checks |
-| Delinea Secret Server | Read | REST API | On-prem credentials |
-| SMTP (mailhost) | Outbound | SMTP port 25 | Admin + user notifications |
+| Feature | Description | Admin Notification |
+|---|---|---|
+| Delegation Report | Full Access, Send As, Calendar permissions for a mailbox | No |
+| Message Trace | Sender/recipient message delivery status lookup | Yes |
+| Recipient Lookup | Type, location (cloud/on-prem), size, archive, forwarding | No |
+| Out of Office Check | Current auto-reply status and message text | No |
 
 ### Application Screenshots
 
@@ -215,42 +231,76 @@ Analog Devices Confidential Information. All rights reserved.
 ![Recipient Lookup](images/recipient-lookup.png)
 ![Out of Office](images/out-of-office.png)
 
-### Out of Scope
+---
+
+## Integration Points
+
+| System | Direction | Method | Purpose |
+|---|---|---|---|
+| Exchange Online | Bidirectional | EXO PowerShell (cert auth) | All cloud mailbox operations |
+| On-Prem Exchange | Read + Write | Remote PowerShell (Kerberos via vault creds) | Migration, mailbox stats, hybrid operations |
+| Active Directory | Read | PowerShell AD module / Exchange group expansion | Protected-user group expansion |
+| Delinea Secret Server | Read | REST API (HTTPS) | On-prem credential retrieval |
+| SMTP relay | Outbound | SMTP | Admin + end-user notifications |
+
+---
+
+## Data Classification
+
+- **No mailbox content** is read, stored, or transmitted by the application. Only permission metadata, migration status, recipient properties, and message trace metadata are processed.
+- Out of Office message text is read/displayed transiently and submitted to Exchange for Set/Schedule actions; it is not persisted.
+- All read-only lookup results are transient (displayed only, never persisted).
+- Audit CSV files contain operational metadata only.
+
+| Attribute | Value |
+|---|---|
+| Regulatory | Not SOX, PCI, ITAR, HIPAA, or FDA regulated |
+| Data Classification | Internal operational metadata |
+| Business Continuity | Low — manual PowerShell scripts remain available as fallback |
+| Tier | Tier 3 (internal productivity tool) |
+
+---
+
+## Backup and Data Retention
+
+- **Audit logs:** Daily CSV rotation on dedicated volume. Retained per corporate records policy.
+- **Application binaries:** Deployed from source control; recoverable via redeploy.
+- **Certificate (CN=EXO-Automation):** Managed via corporate PKI; renewal tracked separately.
+- **No database:** Application is stateless beyond audit CSV files.
+- **Disaster Recovery:** Redeploy from source control + restore audit logs from backup. Recovery time < 1 hour.
+
+---
+
+## Vulnerability Management
+
+- Application runs on IIS with No Managed Code app pool (ASP.NET Core in-process model).
+- Server patching follows corporate standards.
+- NuGet dependencies monitored for vulnerabilities via `dotnet list --vulnerable`.
+- No external JavaScript dependencies (Blazor Server renders entirely server-side).
+
+---
+
+## Test & Verification Baseline
+
+Automated test coverage includes:
+- Permission validation (self-grant prevention, protected-user enforcement)
+- Identity normalization (dot-insensitive, cross-format matching)
+- Protected-user cache refresh and fail-closed behavior
+- CSV formula injection sanitization
+- Lookup date/schedule validation
+- Exchange size parsing (all EXO output formats, non-US culture regression)
+
+Verification baseline: `dotnet build`, `dotnet test`, `dotnet format --verify-no-changes`.
+
+---
+
+## Out of Scope
 
 - Mailbox content access or eDiscovery
 - Distribution group management (future phase)
 - Direct Graph API operations
-- ServiceNow ticket validation (future phase)
+- ServiceNow ticket validation (future phase — ticket capture is mandatory, validation is not)
 - Multi-tenant support
-
----
-
-## Business Purpose & Use Cases
-
-### Business Purpose
-
-- Replace manual PowerShell script execution with a governed, auditable web interface.
-- Reduce operational errors (typos, wrong parameters, forgotten disconnects) in Exchange administration.
-- Enforce policy controls that scripts cannot guarantee (protected users, self-grant prevention).
-- Provide complete audit trail for compliance (who did what, when, from where, under which ticket).
-
-### Use Cases
-
-1. **Grant/revoke mailbox permissions** — Helpdesk receives ticket, adds Full Access or Send As, system logs and notifies.
-2. **Migration management** — IT staff checks eligibility, creates batch, monitors status, completes/stops migrations.
-3. **Troubleshooting** — Message trace for "did my email arrive?" questions; recipient lookup for mailbox location/type.
-4. **Compliance** — Delegation report shows current state of all permissions on a mailbox for auditors.
-5. **User management** — Set/clear OOF for terminated or on-leave employees.
-
-### System Classification
-
-| Attribute | Value |
-|---|---|
-| Replaces | Manual PowerShell scripts (no predecessor application) |
-| Regulatory | Not SOX, PCI, ITAR, HIPAA, or FDA regulated |
-| Data Classification | Internal (permission metadata only) |
-| Business Continuity | Low — manual scripts remain available as fallback |
-| Tier | Tier 3 (internal productivity tool) |
 
 ---
 
