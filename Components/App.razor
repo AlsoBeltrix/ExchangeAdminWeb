@@ -22,6 +22,18 @@
             }
             applyTheme();
             document.addEventListener('blazor:enhancedload', applyTheme);
+            document.addEventListener('pageshow', applyTheme);
+            // Re-apply after Blazor patches the DOM on circuit start
+            new MutationObserver(function(mutations) {
+                for (var m of mutations) {
+                    if (m.type === 'attributes' && m.attributeName === 'class') {
+                        var theme = localStorage.getItem('theme') || 'light';
+                        var hasDark = document.documentElement.classList.contains('dark');
+                        if (theme === 'dark' && !hasDark) document.documentElement.classList.add('dark');
+                        else if (theme !== 'dark' && hasDark) document.documentElement.classList.remove('dark');
+                    }
+                }
+            }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
         })();
     </script>
     <HeadOutlet />

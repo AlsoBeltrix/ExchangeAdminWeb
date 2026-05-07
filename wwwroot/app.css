@@ -86,9 +86,19 @@ html.dark .card-header {
 }
 
 html.dark .table {
-    --bs-table-bg: transparent;
+    --bs-table-bg: #1e2124;
+    --bs-table-color: #e0e0e0;
+    --bs-table-striped-bg: #262a2e;
+    --bs-table-striped-color: #e0e0e0;
+    --bs-table-hover-bg: #2c3136;
+    --bs-table-hover-color: #e0e0e0;
+    --bs-table-border-color: #3a3f44;
     color: #e0e0e0;
     border-color: #3a3f44;
+}
+
+html.dark .table th {
+    color: #e0e0e0;
 }
 
 html.dark .form-control,
