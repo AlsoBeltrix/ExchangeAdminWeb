@@ -1,5 +1,6 @@
 using ExchangeAdminWeb.Services;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -27,7 +28,12 @@ public class PermissionValidatorTests
             .Build();
 
         var logger = Substitute.For<ILogger<PermissionValidator>>();
-        return new PermissionValidator(config, logger);
+        var scopeFactory = Substitute.For<IServiceScopeFactory>();
+        var scope = Substitute.For<IServiceScope>();
+        var serviceProvider = Substitute.For<IServiceProvider>();
+        scopeFactory.CreateScope().Returns(scope);
+        scope.ServiceProvider.Returns(serviceProvider);
+        return new PermissionValidator(config, logger, scopeFactory);
     }
 
     // --- Self-grant validation ---

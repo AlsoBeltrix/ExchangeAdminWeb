@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 8 Blazor Server application for managing Exchange Online mailbox and calendar permissions through a self-service web interface.
+ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox and calendar permissions through a self-service web interface.
 
 ## Features
 
@@ -28,7 +28,7 @@ ASP.NET Core 8 Blazor Server application for managing Exchange Online mailbox an
 
 ### Server Prerequisites
 - **Windows Server** 2016+ (IIS with Windows Authentication)
-- **.NET 8 SDK** and **ASP.NET Core 8 Runtime (Windows Hosting Bundle)**
+- **.NET 10 SDK** and **ASP.NET Core 10 Runtime (Windows Hosting Bundle)**
 - **PowerShell 7.4+**
 - **ExchangeOnlineManagement PowerShell Module** (v3.0+)
 
@@ -53,13 +53,13 @@ ASP.NET Core 8 Blazor Server application for managing Exchange Online mailbox an
 
 ### 1. Install Prerequisites
 
-**Install .NET 8:**
+**Install .NET 10:**
 ```powershell
-# Download and install .NET 8 SDK
-# https://dotnet.microsoft.com/download/dotnet/8.0
+# Download and install .NET 10 SDK
+# https://dotnet.microsoft.com/download/dotnet/10.0
 
 # Download and install ASP.NET Core Windows Hosting Bundle
-# https://dotnet.microsoft.com/download/dotnet/8.0
+# https://dotnet.microsoft.com/download/dotnet/10.0
 ```
 
 **Install IIS Features:**
@@ -172,7 +172,7 @@ Users must be members of at least one allowed AD group:
 
 - Groups are checked using Windows role claims
 - Both simple names (`IT-Helpdesk`) and domain-qualified names (`DOMAIN\IT-Helpdesk`) are supported
-- Empty list = all authenticated users allowed (not recommended)
+- Empty list = all access denied (fail-closed). At least one group must be configured.
 
 ### Protected Users / Excluded Users
 
@@ -324,7 +324,7 @@ ExchangeAdminWeb/
 
 ### Tech Stack
 
-- **ASP.NET Core 8** - Blazor Server with Interactive Server rendering
+- **ASP.NET Core 10** - Blazor Server with Interactive Server rendering
 - **Authentication** - Windows Authentication (Negotiate/NTLM)
 - **Authorization** - Role-based with AD groups
 - **Exchange Operations** - PowerShell SDK with ExchangeOnlineManagement module

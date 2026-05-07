@@ -12,16 +12,18 @@ public class PermissionValidator
     private readonly IConfiguration _config;
     private readonly string[] _configuredExclusions;
     private readonly bool _preventSelfGrant;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
     private bool _initialized = false;
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
 
-    public PermissionValidator(IConfiguration config, ILogger<PermissionValidator> logger)
+    public PermissionValidator(IConfiguration config, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _config = config;
+        _scopeFactory = scopeFactory;
         _configuredExclusions = config.GetSection("Security:ExcludedUsers").Get<string[]>() ?? Array.Empty<string>();
         _preventSelfGrant = bool.Parse(config["Security:PreventSelfGrant"] ?? "true");
     }
@@ -33,7 +35,34 @@ public class PermissionValidator
         if (_excludedUsers.Contains(userIdentity))
             return true;
 
-        return _excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity));
+        if (_excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity)))
+            return true;
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver != null)
+            {
+                var targetId = await resolver.ResolveToObjectIdAsync(userIdentity);
+                if (targetId != null)
+                {
+                    foreach (var excluded in _excludedUsers)
+                    {
+                        var excludedId = await resolver.ResolveToObjectIdAsync(excluded);
+                        if (excludedId != null &&
+                            string.Equals(targetId, excludedId, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Identity resolution failed for exclusion check on {Identity}, falling back to string matching", userIdentity);
+        }
+
+        return false;
     }
 
     public async Task<string?> ValidateTargetMailboxAsync(string targetMailbox)
@@ -64,6 +93,42 @@ public class PermissionValidator
         {
             _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected})", currentUser, affectedUser);
             return "Access denied: You cannot grant permissions to yourself.";
+        }
+
+        return null;
+    }
+
+    public async Task<string?> ValidateSelfGrantAsync(string currentUser, string affectedUser)
+    {
+        if (!_preventSelfGrant)
+            return null;
+
+        if (IdentitiesMatch(currentUser, affectedUser))
+        {
+            _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected})", currentUser, affectedUser);
+            return "Access denied: You cannot grant permissions to yourself.";
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver != null)
+            {
+                var currentId = await resolver.ResolveToObjectIdAsync(currentUser);
+                var affectedId = await resolver.ResolveToObjectIdAsync(affectedUser);
+
+                if (currentId != null && affectedId != null &&
+                    string.Equals(currentId, affectedId, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) — resolved via ObjectId", currentUser, affectedUser);
+                    return "Access denied: You cannot grant permissions to yourself.";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Identity resolution failed for self-grant check, falling back to string matching");
         }
 
         return null;

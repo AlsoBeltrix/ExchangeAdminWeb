@@ -64,5 +64,8 @@
   "OnPremExchange": {
     "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
   },
+  "Application": {
+    "PathBase": "/ExchangeAdminWeb"
+  },
   "AllowedHosts": "*"
 }

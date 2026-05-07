@@ -60,7 +60,7 @@ Restrict application access to specific Active Directory groups:
 - Both formats are checked automatically
 
 **Behavior:**
-- If `AllowedGroups` is **empty or not configured**, all authenticated users are allowed (WARNING: not recommended for production)
+- If `AllowedGroups` is **empty or not configured**, all access is denied (fail-closed). At least one group must be configured.
 - If `AllowedGroups` contains values, only members of those groups can access the application
 - Non-members see a friendly Access Denied page with their username and contact information
 - Authorization failures are logged for security auditing

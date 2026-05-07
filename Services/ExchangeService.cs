@@ -10,7 +10,7 @@ using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
 
-public class ExchangeService : IExchangeService
+public class ExchangeService : IExchangeService, IIdentityResolver
 {
     private readonly string _appId;
     private readonly string _organization;
@@ -25,6 +25,8 @@ public class ExchangeService : IExchangeService
     private readonly string[] _adminNotificationEmails;
     private readonly string _onPremServerUri;
     private readonly DelineaService _delineaService;
+    private static readonly SemaphoreSlim _exchangeThrottle = new(5, 5);
+    private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
     public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService)
     {
@@ -253,7 +255,7 @@ public class ExchangeService : IExchangeService
 
                 if (isAdd)
                 {
-                    var selfGrantError = validator.ValidateSelfGrant(currentUser, row.User);
+                    var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
                     if (selfGrantError is not null)
                     {
                         // Log self-grant attempt to audit log
@@ -379,7 +381,7 @@ public class ExchangeService : IExchangeService
 
                 if (isSet)
                 {
-                    var selfGrantError = validator.ValidateSelfGrant(currentUser, row.User);
+                    var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
                     if (selfGrantError is not null)
                     {
                         // Log self-grant attempt to audit log
@@ -472,7 +474,7 @@ public class ExchangeService : IExchangeService
 
     public async Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction)
     {
-        return await Task.Run(async () =>
+        return await ThrottledAsync(() => Task.Run(async () =>
         {
             var result = new MigrationEligibilityResult
             {
@@ -661,7 +663,7 @@ public class ExchangeService : IExchangeService
             }
 
             return result;
-        });
+        }));
     }
 
     public async Task<MigrationBatchResult> CheckBulkMigrationEligibilityAsync(Stream csvStream, MigrationDirection direction)
@@ -703,25 +705,7 @@ public class ExchangeService : IExchangeService
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
-        // For ToOnPrem, resolve the target database before entering the synchronous RunAsync lambda
-        string? targetDatabase = null;
-        if (direction == MigrationDirection.ToOnPrem)
-        {
-            try
-            {
-                var databases = await GetOnPremDatabasesAsync();
-                if (databases.Count > 0)
-                {
-                    targetDatabase = databases.First();
-                    _logger.LogInformation("Selected least-loaded on-prem database: {Database}", targetDatabase);
-                }
-            }
-            catch (Exception dbEx)
-            {
-                _logger.LogWarning(dbEx, "Failed to query on-prem databases, falling back to configured value: {Database}", _onPremTargetDatabases);
-            }
-            targetDatabase ??= _onPremTargetDatabases;
-        }
+        string? targetDatabase = direction == MigrationDirection.ToOnPrem ? _onPremTargetDatabases : null;
 
         return await RunAsync(ps =>
         {
@@ -808,9 +792,9 @@ https://admin.exchange.microsoft.com/#/migration";
         });
     }
 
-    public Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
+    public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -894,12 +878,12 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch { /* best effort */ }
             }
-        });
+        }));
     }
 
-    public Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
+    public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -958,7 +942,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch { /* best effort */ }
             }
-        });
+        }));
     }
 
     // -------------------------------------------------------------------------
@@ -1087,9 +1071,9 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration batch '{batchName}' removed.", (string?)null));
     }
 
-    public Task<string?> GetMigrationUserReportAsync(string emailAddress)
+    public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -1156,12 +1140,12 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch { }
             }
-        });
+        }));
     }
 
-    public Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
+    public async Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -1207,7 +1191,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch { }
             }
-        });
+        }));
     }
 
     public static MigrationUserSearchResult MatchMigrationUser(
@@ -1247,9 +1231,9 @@ https://admin.exchange.microsoft.com/#/migration";
     // Lookup Operations
     // -------------------------------------------------------------------------
 
-    public Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
+    public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var result = new DelegationReportResult { EmailAddress = emailAddress };
             var iss = InitialSessionState.CreateDefault();
@@ -1336,12 +1320,12 @@ https://admin.exchange.microsoft.com/#/migration";
             }
 
             return result;
-        });
+        }));
     }
 
-    public Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter)
+    public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var response = new MessageTraceResponse();
             var iss = InitialSessionState.CreateDefault();
@@ -1432,12 +1416,12 @@ https://admin.exchange.microsoft.com/#/migration";
             }
 
             return response;
-        });
+        }));
     }
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
-        return await Task.Run(async () =>
+        return await ThrottledAsync(() => Task.Run(async () =>
         {
             var result = new RecipientInfoResult { EmailAddress = emailAddress };
             var iss = InitialSessionState.CreateDefault();
@@ -1582,12 +1566,12 @@ https://admin.exchange.microsoft.com/#/migration";
             }
 
             return result;
-        });
+        }));
     }
 
-    public Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
+    public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
-        return Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
             var iss = InitialSessionState.CreateDefault();
@@ -1636,7 +1620,7 @@ https://admin.exchange.microsoft.com/#/migration";
             }
 
             return result;
-        });
+        }));
     }
 
     public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
@@ -1730,7 +1714,7 @@ https://admin.exchange.microsoft.com/#/migration";
             return null;
         }
 
-        return await Task.Run(() =>
+        return await ThrottledAsync(() => Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -1793,72 +1777,9 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch { }
             }
-        });
+        }), _onPremThrottle);
     }
 
-    public async Task<List<string>> GetOnPremDatabasesAsync()
-    {
-        if (string.IsNullOrEmpty(_onPremServerUri))
-        {
-            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot query databases");
-            return new List<string>();
-        }
-
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
-        if (creds is null)
-        {
-            _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
-            return new List<string>();
-        }
-
-        return await Task.Run(() =>
-        {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
-            try
-            {
-                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
-
-                var dbScript = ScriptBlock.Create("Get-MailboxDatabase -Status -ErrorAction Stop | Where-Object { $_.Mounted -eq $true } | Sort-Object @{Expression={($_ | Get-Mailbox -ResultSize Unlimited).Count}} | Select-Object Name");
-                ps.AddCommand("Invoke-Command")
-                  .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
-                  .AddParameter("ScriptBlock", dbScript);
-                var dbResults = Invoke(ps);
-
-                var databases = dbResults
-                    .Select(r => r.Properties["Name"]?.Value?.ToString())
-                    .Where(n => !string.IsNullOrEmpty(n))
-                    .ToList();
-
-                _logger.LogInformation("Found {Count} on-prem databases: {Databases}", databases.Count, string.Join(", ", databases!));
-                return databases!;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to query on-prem databases");
-                return new List<string>();
-            }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
-                    if (session != null)
-                    {
-                        ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
-                        ps.Invoke();
-                    }
-                }
-                catch { }
-            }
-        });
-    }
 
     private void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
     {
@@ -1919,54 +1840,124 @@ https://admin.exchange.microsoft.com/#/migration";
         return fullPath;
     }
 
-    private Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
+    private async Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
     {
-        return Task.Run(() =>
+        if (!await _exchangeThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+            return PermissionResult.Fail("Exchange service is busy. Please try again shortly.");
+
+        try
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
-            try
+            return await Task.Run(() =>
             {
-                Connect(ps);
-                operation(ps);
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
 
-                if (successFormatter is not null)
-                {
-                    var (message, detail) = successFormatter();
-                    return new PermissionResult { Success = true, Message = message, Detail = detail };
-                }
-                return PermissionResult.Ok();
-            }
-            catch (Exception ex)
-            {
-                var psErrors = ps.Streams.Error
-                    .Select(e => e.Exception?.Message ?? e.ToString())
-                    .Where(m => !string.IsNullOrWhiteSpace(m))
-                    .ToList();
-
-                var primary = psErrors.FirstOrDefault() ?? ex.Message;
-                var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
-
-                _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                return PermissionResult.Fail(primary, detail);
-            }
-            finally
-            {
                 try
                 {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
+                    Connect(ps);
+                    operation(ps);
+
+                    if (successFormatter is not null)
+                    {
+                        var (message, detail) = successFormatter();
+                        return new PermissionResult { Success = true, Message = message, Detail = detail };
+                    }
+                    return PermissionResult.Ok();
                 }
-                catch { /* best effort */ }
-            }
-        });
+                catch (Exception ex)
+                {
+                    var psErrors = ps.Streams.Error
+                        .Select(e => e.Exception?.Message ?? e.ToString())
+                        .Where(m => !string.IsNullOrWhiteSpace(m))
+                        .ToList();
+
+                    var primary = psErrors.FirstOrDefault() ?? ex.Message;
+                    var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
+
+                    _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
+                    return PermissionResult.Fail(primary, detail);
+                }
+                finally
+                {
+                    try
+                    {
+                        ps.Commands.Clear();
+                        ps.AddCommand("Disconnect-ExchangeOnline")
+                          .AddParameter("Confirm", false);
+                        ps.Invoke();
+                    }
+                    catch { /* best effort */ }
+                }
+            });
+        }
+        finally
+        {
+            _exchangeThrottle.Release();
+        }
+    }
+
+    public async Task<string?> ResolveToObjectIdAsync(string identity)
+    {
+        try
+        {
+            return await ThrottledAsync(() => Task.Run(() =>
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                try
+                {
+                    Connect(ps);
+
+                    ps.AddCommand("Get-Recipient")
+                      .AddParameter("Identity", identity)
+                      .AddParameter("ErrorAction", "Stop");
+
+                    var results = Invoke(ps);
+                    var recipient = results.FirstOrDefault();
+                    return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
+                }
+                finally
+                {
+                    try
+                    {
+                        ps.Commands.Clear();
+                        ps.AddCommand("Disconnect-ExchangeOnline")
+                          .AddParameter("Confirm", false);
+                        ps.Invoke();
+                    }
+                    catch { }
+                }
+            }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve identity for {Identity}", identity);
+            return null;
+        }
+    }
+
+    private async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
+    {
+        var sem = throttle ?? _exchangeThrottle;
+        if (!await sem.WaitAsync(TimeSpan.FromMinutes(2)))
+            throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
+        try
+        {
+            return await operation();
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 
     private void Connect(PowerShell ps)

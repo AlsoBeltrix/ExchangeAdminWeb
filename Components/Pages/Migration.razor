@@ -10,6 +10,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject ILogger<ExchangeAdminWeb.Components.Pages.Migration> Logger
 @rendermode InteractiveServer
 
 <PageTitle>Exchange Migration</PageTitle>
@@ -741,6 +742,9 @@
                 Status = MigrationStatus.Ineligible
             };
             singleResult.IneligibilityReasons.Add($"Error: {ex.Message}");
+
+            Audit.LogMigrationCheck(currentUser, clientIpAddress, singleEmail.Trim(),
+                "Error", singleTicketNumber, ex.Message);
         }
         finally
         {
@@ -824,10 +828,20 @@
 
             var ipAddress = clientIpAddress;
 
-            // Send admin notification for bulk check
-            await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{migrationDirection}", "Bulk Operation", csvFile.Name,
-                $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, bulkTicketNumber, null);
+            Audit.LogMigrationAction(currentUser, ipAddress,
+                $"BulkEligibilityCheck_{migrationDirection}", csvFile.Name, true, bulkTicketNumber,
+                $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible");
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(
+                    currentUser, ipAddress, $"BulkMigrationEligibilityCheck_{migrationDirection}", "Bulk Operation", csvFile.Name,
+                    $"{bulkResult.EligibleUsers}/{bulkResult.TotalUsers} eligible", true, bulkTicketNumber, null);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for bulk eligibility check");
+            }
         }
         catch (Exception ex)
         {
@@ -838,6 +852,9 @@
                 Message = ex.Message,
                 Direction = migrationDirection
             };
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress,
+                $"BulkEligibilityCheck_{migrationDirection}", csvFile?.Name ?? "Unknown", false, bulkTicketNumber, ex.Message);
         }
         finally
         {
@@ -1049,7 +1066,10 @@
                     currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
                     "Migration", result.Success, ticket, result.Success ? null : result.Message);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for Migration_{Action} on {Target}", auditAction, target);
+            }
 
             if (result.Success)
             {
@@ -1098,7 +1118,10 @@
                     currentUser, clientIpAddress, $"Migration_{auditAction}", target, "N/A",
                     "Migration", result.Success, ticket, result.Success ? null : result.Message);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for Migration_{Action} on {Target}", auditAction, target);
+            }
 
             if (result.Success && expandedBatch != null)
                 batchUsers = await Exchange.GetMigrationBatchUsersAsync(expandedBatch);
@@ -1168,7 +1191,10 @@
                     $"{removed} batch(es)", "N/A", "Migration",
                     errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for Migration_ClearCompleted");
+            }
 
             var savedResult = batchActionResult;
             await LoadMigrationStatus();

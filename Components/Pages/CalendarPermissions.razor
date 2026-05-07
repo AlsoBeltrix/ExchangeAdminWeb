@@ -275,7 +275,7 @@
 
         if (tabIndex == 0)
         {
-            var selfGrantError = Validator.ValidateSelfGrant(currentUser, user);
+            var selfGrantError = await Validator.ValidateSelfGrantAsync(currentUser, user);
             if (selfGrantError is not null)
             {
                 // Log self-grant attempt to audit log

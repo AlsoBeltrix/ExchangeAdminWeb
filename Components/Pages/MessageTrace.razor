@@ -11,6 +11,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject ILogger<ExchangeAdminWeb.Components.Pages.MessageTrace> Logger
 
 <PageTitle>Message Trace</PageTitle>
 
@@ -147,7 +148,7 @@
     {
         if (end < start)
             return "End date must be after start date.";
-        if ((end - start).TotalDays > 10)
+        if ((end - start).TotalDays > 9)
             return "Date range cannot exceed 10 days.";
         if (start > DateTime.Today)
             return "Start date cannot be in the future.";
@@ -180,7 +181,10 @@
                     $"{response.Results.Count} results", "Lookup",
                     response.Error == null, "", response.Error);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for MessageTrace");
+            }
         }
         catch (Exception ex)
         {

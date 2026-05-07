@@ -60,11 +60,13 @@ try
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddScoped<IExchangeService, ExchangeService>();
+    builder.Services.AddScoped<IIdentityResolver>(sp => (IIdentityResolver)sp.GetRequiredService<IExchangeService>());
     builder.Services.AddScoped<ClientInfoService>();
 
     var app = builder.Build();
 
-    app.UsePathBase("/ExchangeAdminWeb");
+    var pathBase = builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb";
+    app.UsePathBase(pathBase);
 
     if (!app.Environment.IsDevelopment())
         app.UseExceptionHandler("/Error", createScopeForErrors: true);

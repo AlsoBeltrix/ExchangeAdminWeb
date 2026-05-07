@@ -12,6 +12,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject ILogger<ExchangeAdminWeb.Components.Pages.OutOfOffice> Logger
 
 <PageTitle>Out of Office</PageTitle>
 
@@ -260,6 +261,8 @@
         if (protectedError != null)
         {
             setResult = PermissionResult.Fail(protectedError);
+            Audit.LogMigrationAction(currentUser, clientIpAddress,
+                "SetOutOfOffice_Denied", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
             return;
         }
 
@@ -281,7 +284,10 @@
                     setEmail.Trim(), setResult.Success, ticketNumber.Trim(),
                     setResult.Success ? null : setResult.Message);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit log for SetOutOfOffice on {Target}", setEmail.Trim());
+            }
 
             try
             {
@@ -292,7 +298,10 @@
                     setResult.Success, ticketNumber.Trim(),
                     setResult.Success ? null : setResult.Message);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to send admin notification for SetOutOfOffice on {Target}", setEmail.Trim());
+            }
 
             if (setResult.Success)
             {
@@ -302,7 +311,10 @@
                         setEmail.Trim(), currentUser,
                         oofState == "Disabled" ? "disabled" : "enabled");
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to send OOF notification to {Target}", setEmail.Trim());
+                }
             }
         }
         catch (Exception ex)

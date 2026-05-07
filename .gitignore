@@ -46,3 +46,5 @@ Thumbs.db
 # Screenshots
 *.PNG
 *.png
+!docs/images/*.png
+!docs/images/*.PNG

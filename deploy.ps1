@@ -1,12 +1,13 @@
 #Requires -RunAsAdministrator
 
 param(
-    [string]$ParentSite  = "Default Web Site",
-    [string]$AppAlias    = "ExchangeAdminWeb",
-    [string]$AppPoolName = "ExchangeAdminWeb",
-    [string]$PublishPath = "D:\inetpub\ExchangeAdminWeb",
-    [string]$LogRoot     = "E:\WWWOutput",
-    [string]$CertSubject = "CN=EXO-Automation"
+    [string]$ParentSite      = "Default Web Site",
+    [string]$AppAlias        = "ExchangeAdminWeb",
+    [string]$AppPoolName     = "ExchangeAdminWeb",
+    [string]$ServiceAccount  = "ANALOG\SVC_SCRIPTADM",
+    [string]$PublishPath     = "D:\inetpub\ExchangeAdminWeb",
+    [string]$LogRoot         = "E:\WWWOutput",
+    [string]$CertSubject     = "CN=EXO-Automation"
 )
 
 function Write-Step    { param($m) Write-Host ">>> $m" -ForegroundColor Cyan }
@@ -65,6 +66,9 @@ if (Test-Path "IIS:\AppPools\$AppPoolName") {
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion        -Value ""
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.loadUserProfile -Value $true
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name startMode                    -Value "AlwaysRunning"
+Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType    -Value 3
+Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName        -Value $ServiceAccount
+Write-Host "       App pool identity: $ServiceAccount" -ForegroundColor DarkGray
 
 Write-Success "App pool configured"
 
@@ -124,7 +128,7 @@ if (-not $exoCert) {
         }
 
         if (Test-Path $keyPath) {
-            icacls $keyPath /grant "ANALOG\SVC_SCRIPTADM:(R)" | Out-Null
+            icacls $keyPath /grant "${ServiceAccount}:(R)" | Out-Null
             Write-Success "Private key access granted (thumbprint: $($exoCert.Thumbprint))"
         } else {
             Write-Warn "Private key file not found at expected location"
@@ -144,7 +148,7 @@ if (-not (Test-Path $AppLogFolder)) {
     New-Item -ItemType Directory -Path $AppLogFolder -Force | Out-Null
 }
 
-icacls $AppLogFolder /grant "ANALOG\SVC_SCRIPTADM:(OI)(CI)M" | Out-Null
+icacls $AppLogFolder /grant "${ServiceAccount}:(OI)(CI)M" | Out-Null
 Write-Success "Log folder access granted"
 
 # --- 7. Start app pool ---
