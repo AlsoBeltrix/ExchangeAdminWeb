@@ -196,7 +196,7 @@ All operations logged to CSV format:
 **Location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.csv`
 
 **Columns:**
-- TimestampUtc, User, TicketNumber, Action, TargetMailbox, AffectedUser, PermissionType, AutoMapping, AccessRight, Result, Error
+- TimestampUtc, User, IPAddress, TicketNumber, Action, TargetMailbox, AffectedUser, PermissionType, AutoMapping, AccessRight, Result, Error
 
 **Rotation:**
 - `daily` (default): New file each day

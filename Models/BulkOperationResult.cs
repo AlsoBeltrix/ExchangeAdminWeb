@@ -30,7 +30,7 @@ public class BulkOperationResult
             return "";
 
         var sanitized = field;
-        if (sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+        if (sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
             sanitized = "'" + sanitized;
 
         if (sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n') || sanitized.Contains('\r'))

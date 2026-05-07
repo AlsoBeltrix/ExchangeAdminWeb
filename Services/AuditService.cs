@@ -229,7 +229,7 @@ public class AuditService
             return "";
 
         var sanitized = field;
-        if (sanitized.Length > 0 && sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r')
+        if (sanitized.Length > 0 && sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
             sanitized = "'" + sanitized;
 
         if (sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n') || sanitized.Contains('\r'))

@@ -19,7 +19,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string _hybridEndpoint;
     private readonly string _cloudTargetDomain;
     private readonly string _onPremTargetDomain;
-    private readonly string _onPremTargetDatabases;
+    private readonly string[] _onPremTargetDatabases;
     private readonly long _cloudQuotaGB;
     private readonly string[] _excludedADGroups;
     private readonly string[] _adminNotificationEmails;
@@ -41,7 +41,8 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         _hybridEndpoint = config["Migration:HybridEndpoint"] ?? "hybrid1";
         _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "analog.mail.onmicrosoft.com";
         _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "analog.com";
-        _onPremTargetDatabases = config["Migration:OnPremTargetDatabases"] ?? "DAG2019";
+        var targetDbConfig = config["Migration:OnPremTargetDatabases"] ?? "DAG2019";
+        _onPremTargetDatabases = targetDbConfig.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         _cloudQuotaGB = long.Parse(config["Migration:CloudQuotaGB"] ?? "100");
         _excludedADGroups = config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
 
@@ -705,7 +706,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
-        string? targetDatabase = direction == MigrationDirection.ToOnPrem ? _onPremTargetDatabases : null;
+        string[]? targetDatabases = direction == MigrationDirection.ToOnPrem ? _onPremTargetDatabases : null;
 
         return await RunAsync(ps =>
         {
@@ -729,7 +730,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("Name", batchName)
                   .AddParameter("TargetEndpoint", _hybridEndpoint)
                   .AddParameter("TargetDeliveryDomain", _onPremTargetDomain)
-                  .AddParameter("TargetDatabases", new[] { targetDatabase })
+                  .AddParameter("TargetDatabases", targetDatabases)
                   .AddParameter("CSVData", csvBytes)
                   .AddParameter("NotificationEmails", _adminNotificationEmails)
                   .AddParameter("ErrorAction", "Stop");
@@ -965,8 +966,9 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         return RunAsync(ps =>
         {
-            ps.AddCommand("Complete-MigrationUser")
+            ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
+              .AddParameter("CompleteAfter", DateTime.UtcNow)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps);

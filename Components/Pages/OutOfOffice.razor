@@ -261,8 +261,15 @@
         if (protectedError != null)
         {
             setResult = PermissionResult.Fail(protectedError);
-            Audit.LogMigrationAction(currentUser, clientIpAddress,
-                "SetOutOfOffice_Denied", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress,
+                    "SetOutOfOffice_Denied", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit log for OOF protected-user denial on {Target}", setEmail.Trim());
+            }
             return;
         }
 

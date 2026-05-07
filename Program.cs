@@ -65,8 +65,11 @@ try
 
     var app = builder.Build();
 
-    var pathBase = builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb";
-    app.UsePathBase(pathBase);
+    var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');
+    if (string.IsNullOrWhiteSpace(pathBase) || pathBase == "/")
+        pathBase = "";
+    if (pathBase.Length > 0)
+        app.UsePathBase(pathBase);
 
     if (!app.Environment.IsDevelopment())
         app.UseExceptionHandler("/Error", createScopeForErrors: true);

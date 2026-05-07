@@ -8,6 +8,7 @@ namespace ExchangeAdminWeb.Services;
 public class PermissionValidator
 {
     private readonly HashSet<string> _excludedUsers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _excludedObjectIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
     private readonly string[] _configuredExclusions;
@@ -38,28 +39,24 @@ public class PermissionValidator
         if (_excludedUsers.Any(excluded => IdentitiesMatch(excluded, userIdentity)))
             return true;
 
-        try
+        if (_excludedObjectIds.Count > 0)
         {
-            using var scope = _scopeFactory.CreateScope();
-            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
-            if (resolver != null)
+            try
             {
-                var targetId = await resolver.ResolveToObjectIdAsync(userIdentity);
-                if (targetId != null)
+                using var scope = _scopeFactory.CreateScope();
+                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+                if (resolver != null)
                 {
-                    foreach (var excluded in _excludedUsers)
-                    {
-                        var excludedId = await resolver.ResolveToObjectIdAsync(excluded);
-                        if (excludedId != null &&
-                            string.Equals(targetId, excludedId, StringComparison.OrdinalIgnoreCase))
-                            return true;
-                    }
+                    var targetId = await resolver.ResolveToObjectIdAsync(userIdentity);
+                    if (targetId != null && _excludedObjectIds.Values
+                            .Any(id => string.Equals(id, targetId, StringComparison.OrdinalIgnoreCase)))
+                        return true;
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Identity resolution failed for exclusion check on {Identity}, falling back to string matching", userIdentity);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Identity resolution failed for exclusion check on {Identity}, falling back to string matching", userIdentity);
+            }
         }
 
         return false;
@@ -178,6 +175,28 @@ public class PermissionValidator
                     _excludedUsers.Add(member);
                     _logger.LogDebug("Excluded (from group {Group}): {Member}", trimmed, member);
                 }
+            }
+
+            _excludedObjectIds.Clear();
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+                if (resolver != null)
+                {
+                    foreach (var user in _excludedUsers)
+                    {
+                        var objectId = await resolver.ResolveToObjectIdAsync(user);
+                        if (objectId != null)
+                            _excludedObjectIds[user] = objectId;
+                    }
+                    _logger.LogInformation("Resolved {Count}/{Total} excluded identities to ObjectIds",
+                        _excludedObjectIds.Count, _excludedUsers.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve some excluded-user ObjectIds — string matching will be used as fallback");
             }
 
             _initFailed = false;

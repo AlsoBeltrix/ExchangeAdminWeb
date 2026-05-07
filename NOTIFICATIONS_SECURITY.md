@@ -210,6 +210,7 @@ All operations are logged to a shared application folder with configurable rotat
 **CSV Columns:**
 - TimestampUtc
 - User
+- IPAddress
 - TicketNumber
 - Action
 - TargetMailbox
@@ -222,8 +223,8 @@ All operations are logged to a shared application folder with configurable rotat
 
 Example log entry:
 ```csv
-TimestampUtc,User,TicketNumber,Action,TargetMailbox,AffectedUser,PermissionType,AutoMapping,AccessRight,Result,Error
-2026-04-29T14:23:45.1234567Z,jsmith,INC0001234,AddFullAccess+SendAs,helpdesk@analog.com,jdoe@analog.com,FullAccess+SendAs,True,,SUCCESS,
+TimestampUtc,User,IPAddress,TicketNumber,Action,TargetMailbox,AffectedUser,PermissionType,AutoMapping,AccessRight,Result,Error
+2026-04-29T14:23:45.1234567Z,jsmith,10.65.90.233,INC0001234,AddFullAccess+SendAs,helpdesk@analog.com,jdoe@analog.com,FullAccess+SendAs,True,,SUCCESS,
 ```
 
 ## Testing Email Configuration
