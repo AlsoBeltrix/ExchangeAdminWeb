@@ -59,7 +59,8 @@
             {
                 <div class="alert alert-info">
                     <strong>Note:</strong> Date ranges exceeding 10 days use a historical search.
-                    Results will be emailed to <strong>@userEmail</strong> when ready (typically 30 minutes to several hours).
+                    Results will be emailed to <strong>@(string.IsNullOrWhiteSpace(userEmail) ? "(unable to determine — see below)" : userEmail)</strong> when ready (typically 30 minutes to several hours).
+                    Subject filtering is not available for historical searches.
                 </div>
             }
 
@@ -161,6 +162,7 @@
 
         userEmail = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
             ?? user.FindFirst("email")?.Value
+            ?? user.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
             ?? "";
 
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
@@ -172,7 +174,7 @@
     {
         if (end < start)
             return "End date must be after start date.";
-        if ((end - start).TotalDays > 90)
+        if ((end - start).TotalDays > 89)
             return "Date range cannot exceed 90 days.";
         if (start > DateTime.Today)
             return "Start date cannot be in the future.";
@@ -301,6 +303,8 @@
     private static string CsvEscape(string value)
     {
         if (string.IsNullOrEmpty(value)) return "";
+        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
+            value = "'" + value;
         if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
             return "\"" + value.Replace("\"", "\"\"") + "\"";
         return value;

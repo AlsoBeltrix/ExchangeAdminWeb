@@ -26,7 +26,7 @@ public class MessageTraceDateValidationTests
     public void ExceedsNinetyDays_ReturnsError()
     {
         var result = MessageTrace.ValidateDateRange(
-            DateTime.Today.AddDays(-91), DateTime.Today);
+            DateTime.Today.AddDays(-90), DateTime.Today);
         Assert.Contains("90 days", result);
     }
 
@@ -47,10 +47,10 @@ public class MessageTraceDateValidationTests
     }
 
     [Fact]
-    public void ExactlyNinetyDays_IsValid()
+    public void EightyNineDays_IsValid()
     {
         var result = MessageTrace.ValidateDateRange(
-            DateTime.Today.AddDays(-90), DateTime.Today);
+            DateTime.Today.AddDays(-89), DateTime.Today);
         Assert.Null(result);
     }
 }
