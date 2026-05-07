@@ -1379,7 +1379,11 @@ https://admin.exchange.microsoft.com/#/migration";
                             Subject = subject,
                             Status = msg.Properties["Status"]?.Value?.ToString() ?? "",
                             MessageId = msg.Properties["MessageId"]?.Value?.ToString() ?? "",
-                            Size = msg.Properties["Size"]?.Value as long? ?? 0
+                            Size = msg.Properties["Size"]?.Value as long? ?? 0,
+                            FromIP = msg.Properties["FromIP"]?.Value?.ToString() ?? "",
+                            ToIP = msg.Properties["ToIP"]?.Value?.ToString() ?? "",
+                            MessageTraceId = msg.Properties["MessageTraceId"]?.Value?.ToString()
+                                ?? msg.Properties["MessageTraceID"]?.Value?.ToString() ?? ""
                         });
 
                         if (allResults.Count >= MessageTraceResponse.MaxResults)
@@ -1405,6 +1409,60 @@ https://admin.exchange.microsoft.com/#/migration";
             {
                 response.Error = ex.Message;
                 _logger.LogError(ex, "Error running message trace");
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
+                    ps.Invoke();
+                }
+                catch { }
+            }
+
+            return response;
+        }));
+    }
+
+    public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
+    {
+        return await ThrottledAsync(() => Task.Run(() =>
+        {
+            var response = new HistoricalSearchResponse();
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                Connect(ps);
+
+                ps.AddCommand("Start-HistoricalSearch")
+                  .AddParameter("StartDate", startDate)
+                  .AddParameter("EndDate", endDate)
+                  .AddParameter("ReportTitle", reportTitle)
+                  .AddParameter("ReportType", "MessageTrace")
+                  .AddParameter("NotifyAddress", new[] { notifyAddress })
+                  .AddParameter("ErrorAction", "Stop");
+
+                if (!string.IsNullOrWhiteSpace(sender))
+                    ps.AddParameter("SenderAddress", sender);
+                if (!string.IsNullOrWhiteSpace(recipient))
+                    ps.AddParameter("RecipientAddress", recipient);
+
+                var results = Invoke(ps);
+                var result = results.FirstOrDefault();
+                response.JobId = result?.Properties["JobId"]?.Value?.ToString();
+                response.Success = true;
+            }
+            catch (Exception ex)
+            {
+                response.Error = ex.Message;
+                _logger.LogError(ex, "Error starting historical search");
             }
             finally
             {

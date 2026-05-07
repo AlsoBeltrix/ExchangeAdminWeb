@@ -18,6 +18,14 @@ ServiceNow ticket validation is explicitly out of scope. I did not count "ticket
 - Outdated app packages remain: `Microsoft.AspNetCore.Authentication.Negotiate` 8.0.26 -> 10.0.7, `Microsoft.PowerShell.SDK` 7.4.15 -> 7.6.1, `Serilog.AspNetCore` 8.0.3 -> 10.0.0, `Serilog.Enrichers.Environment` 2.3.0 -> 3.0.1, `Serilog.Sinks.File` 5.0.0 -> 7.0.0.
 - Outdated test packages remain: `coverlet.collector` 6.0.4 -> 10.0.0, `Microsoft.NET.Test.Sdk` 17.14.1 -> 18.5.1.
 
+## Addendum - Dark Mode Persistence
+
+I missed the dark-mode persistence bug in the original review. Before the latest remediation, the toggle stored the selected theme in `localStorage`, but the page-level script only applied that value on the initial document load. Section navigation is done with Blazor `NavLink`/enhanced navigation, so moving between sections can patch server-rendered markup without re-running the initial theme script. The result is that `localStorage` can still contain `dark` while the document loses the `html.dark` class and renders the next section in light mode.
+
+Current HEAD `b9aa35d` appears to remediate this by extracting `applyTheme()` in `Components/App.razor`, running it on initial load, and also running it on `blazor:enhancedload` (`Components/App.razor:13`-`Components/App.razor:24`). `ThemeToggle` still toggles `html.dark` and writes the selected value to `localStorage` (`Components/Layout/ThemeToggle.razor:4`-`Components/Layout/ThemeToggle.razor:22`). This should preserve dark mode when moving between sections through the sidebar.
+
+Residual risk: there is no browser/integration test for this behavior. Add a UI test that toggles dark mode, navigates through at least two sections, and asserts both `document.documentElement.classList.contains("dark")` and the toggle state remain consistent.
+
 ## Findings
 
 ### High - Section-permission plan can bypass the base `AllowedGroups` gate
@@ -207,6 +215,7 @@ Recommendation: update docs to match the exact runtime header.
 - No tests cover protected group expansion, nested groups, or identity resolution caching.
 - No component/integration tests cover Blazor page action flows.
 - No tests are planned yet for section-policy composition: base gate AND section gate, missing/empty section fail-closed behavior, direct URL denial, hidden Nav/Home links, and denied Migration sub-actions.
+- No browser/UI test covers dark-mode persistence across Blazor enhanced navigation.
 
 ## Summary
 

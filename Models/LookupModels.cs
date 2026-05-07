@@ -29,6 +29,9 @@ public class MessageTraceResult
     public required string Status { get; set; }
     public required string MessageId { get; set; }
     public long Size { get; set; }
+    public string FromIP { get; set; } = "";
+    public string ToIP { get; set; } = "";
+    public string MessageTraceId { get; set; } = "";
 }
 
 public class MessageTraceResponse
@@ -39,6 +42,13 @@ public class MessageTraceResponse
     public string? Error { get; set; }
 
     public static readonly int MaxResults = 1000;
+}
+
+public class HistoricalSearchResponse
+{
+    public bool Success { get; set; }
+    public string? JobId { get; set; }
+    public string? Error { get; set; }
 }
 
 public class RecipientInfoResult

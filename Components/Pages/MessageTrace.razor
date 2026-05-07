@@ -6,18 +6,17 @@
 @rendermode InteractiveServer
 @inject IExchangeService Exchange
 @inject AuditService Audit
-@inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
-@inject ILogger<ExchangeAdminWeb.Components.Pages.MessageTrace> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Message Trace</PageTitle>
 
 <div class="container-fluid mt-4">
     <h2>Message Trace</h2>
-    <p class="text-muted">Search recent mail flow (up to 10 days)</p>
+    <p class="text-muted">Search mail flow by sender, recipient, and date range</p>
 
     <div class="card">
         <div class="card-body">
@@ -56,9 +55,24 @@
                 </div>
             </div>
 
+            @if (IsHistoricalRange)
+            {
+                <div class="alert alert-info">
+                    <strong>Note:</strong> Date ranges exceeding 10 days use a historical search.
+                    Results will be emailed to <strong>@userEmail</strong> when ready (typically 30 minutes to several hours).
+                </div>
+            }
+
             @if (validationError != null)
             {
                 <div class="alert alert-danger">@validationError</div>
+            }
+
+            @if (historicalSubmitted)
+            {
+                <div class="alert alert-success">
+                    Historical search submitted successfully. Results will be emailed to <strong>@userEmail</strong> when processing is complete.
+                </div>
             }
 
             @if (response?.Error != null)
@@ -76,7 +90,10 @@
 
                 @if (response.Results.Any())
                 {
-                    <p class="text-muted mb-2">@response.Results.Count result(s)</p>
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <p class="text-muted mb-0">@response.Results.Count result(s)</p>
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
+                    </div>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped">
                             <thead>
@@ -121,10 +138,13 @@
     private bool isLoading = false;
     private string? validationError;
     private MessageTraceResponse? response;
+    private bool historicalSubmitted = false;
     private string currentUser = "";
+    private string userEmail = "";
     private string clientIpAddress = "Unknown";
 
     private bool IsFormValid => !string.IsNullOrWhiteSpace(sender) || !string.IsNullOrWhiteSpace(recipient);
+    private bool IsHistoricalRange => (endDate - startDate).TotalDays > 9;
 
     protected override async Task OnInitializedAsync()
     {
@@ -139,6 +159,10 @@
             return;
         }
 
+        userEmail = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+            ?? user.FindFirst("email")?.Value
+            ?? "";
+
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
@@ -148,8 +172,8 @@
     {
         if (end < start)
             return "End date must be after start date.";
-        if ((end - start).TotalDays > 9)
-            return "Date range cannot exceed 10 days.";
+        if ((end - start).TotalDays > 90)
+            return "Date range cannot exceed 90 days.";
         if (start > DateTime.Today)
             return "Start date cannot be in the future.";
         return null;
@@ -160,9 +184,29 @@
         validationError = ValidateDateRange(startDate, endDate);
         if (validationError != null) return;
 
+        historicalSubmitted = false;
         isLoading = true;
         response = null;
 
+        try
+        {
+            if (IsHistoricalRange)
+            {
+                await RunHistoricalSearch();
+            }
+            else
+            {
+                await RunRealtimeTrace();
+            }
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task RunRealtimeTrace()
+    {
         try
         {
             response = await Exchange.GetMessageTraceAsync(
@@ -173,27 +217,93 @@
 
             var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, response.Error == null, response.Error);
-
-            try
-            {
-                await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, "MessageTrace", target,
-                    $"{response.Results.Count} results", "Lookup",
-                    response.Error == null, "", response.Error);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Failed to send admin notification for MessageTrace");
-            }
         }
         catch (Exception ex)
         {
             response = new MessageTraceResponse { Error = ex.Message };
         }
-        finally
+    }
+
+    private async Task RunHistoricalSearch()
+    {
+        var notifyAddress = userEmail;
+        if (string.IsNullOrWhiteSpace(notifyAddress))
         {
-            isLoading = false;
+            validationError = "Your email address could not be determined. Historical searches require a notification address.";
+            return;
         }
+
+        var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
+        var reportTitle = $"MessageTrace_{currentUser}_{startDate:yyyyMMdd}-{endDate:yyyyMMdd}";
+
+        try
+        {
+            var result = await Exchange.StartHistoricalSearchAsync(
+                string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
+                string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
+                startDate, endDate.AddDays(1),
+                notifyAddress, reportTitle);
+
+            if (result.Success)
+            {
+                historicalSubmitted = true;
+            }
+            else
+            {
+                response = new MessageTraceResponse { Error = result.Error ?? "Failed to submit historical search." };
+            }
+
+            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, result.Success, result.Error);
+        }
+        catch (Exception ex)
+        {
+            response = new MessageTraceResponse { Error = ex.Message };
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        if (response?.Results == null || !response.Results.Any()) return;
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Origin Date-Time,Sender Address,Recipient Address,Message Subject,Status,Message ID,Message Size,Sender IP,Recipient IP,Message Trace ID");
+
+        foreach (var msg in response.Results)
+        {
+            sb.Append(msg.Received.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.SenderAddress));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.RecipientAddress));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.Subject));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.Status));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.MessageId));
+            sb.Append(',');
+            sb.Append(msg.Size);
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.FromIP));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.ToIP));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.MessageTraceId));
+            sb.AppendLine();
+        }
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var filename = $"MessageTrace_{startDate:yyyyMMdd}-{endDate:yyyyMMdd}.csv";
+        await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+    }
+
+    private static string CsvEscape(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "";
+        if (value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        return value;
     }
 
     private static string GetStatusBadge(string status) => status switch
