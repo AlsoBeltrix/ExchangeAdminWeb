@@ -61,7 +61,7 @@ Write-Step "Configuring app pool: $AppPoolName"
 
 $needsPassword = $false
 if (Test-Path "IIS:\AppPools\$AppPoolName") {
-    $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName).Value
+    $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel).userName
     if ($existingUser -ne $ServiceAccount) {
         Write-Warn "App pool identity changing: $existingUser -> $ServiceAccount"
         $needsPassword = $true
