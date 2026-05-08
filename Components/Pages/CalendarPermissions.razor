@@ -17,16 +17,10 @@
 <PageTitle>Calendar Permissions</PageTitle>
 
 <div class="container-fluid">
-    <div class="alert alert-info py-2 mb-3"><small>All permission changes are logged for audit purposes. Affected users may receive email notifications.</small></div>
-    <h1 class="mb-4">Calendar Permissions</h1>
-
-    <div class="alert alert-info mb-4">
-        <strong>ℹ️ Notice:</strong> All actions performed in this application are logged for audit purposes.
-        @if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false"))
-        {
-            <text> End users will receive email notifications when permissions are granted or removed.</text>
-        }
+    <div class="alert alert-info py-2 mb-3">
+        <small>All permission changes are logged for audit purposes.@if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false")){<text> Affected users will receive email notifications when permissions are granted or removed.</text>}</small>
     </div>
+    <h1 class="mb-4">Calendar Permissions</h1>
 
     <ul class="nav nav-tabs mb-4">
         <li class="nav-item">

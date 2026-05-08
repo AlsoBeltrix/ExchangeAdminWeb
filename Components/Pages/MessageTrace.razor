@@ -42,7 +42,7 @@
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <label class="form-label">Subject Contains</label>
-                    <input type="text" class="form-control" @bind="subjectFilter" placeholder="(optional)" disabled="@isLoading" />
+                    <input type="text" class="form-control" @bind="subjectFilter" placeholder="@(IsHistoricalRange ? "(not available for historical search)" : "(optional)")" disabled="@(isLoading || IsHistoricalRange)" />
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
                     <button class="btn btn-primary" @onclick="RunTrace"
@@ -179,6 +179,8 @@
             return "Date range cannot exceed 90 days.";
         if (start > DateTime.Today)
             return "Start date cannot be in the future.";
+        if (end > DateTime.Today)
+            return "End date cannot be in the future.";
         return null;
     }
 
