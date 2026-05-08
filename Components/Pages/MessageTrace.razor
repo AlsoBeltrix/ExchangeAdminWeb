@@ -171,6 +171,12 @@
             : ClientInfo.GetIpForUser(currentUser);
     }
 
+    private static DateTime EffectiveEndDate(DateTime end)
+    {
+        var inclusive = end.AddDays(1);
+        return inclusive > DateTime.Now ? DateTime.Now : inclusive;
+    }
+
     public static string? ValidateDateRange(DateTime start, DateTime end)
     {
         if (end < start)
@@ -220,7 +226,7 @@
             response = await Exchange.GetMessageTraceAsync(
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
-                startDate, endDate.AddDays(1),
+                startDate, EffectiveEndDate(endDate),
                 string.IsNullOrWhiteSpace(subjectFilter) ? null : subjectFilter.Trim());
 
             var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
@@ -249,7 +255,7 @@
             var result = await Exchange.StartHistoricalSearchAsync(
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
-                startDate, endDate.AddDays(1),
+                startDate, EffectiveEndDate(endDate),
                 notifyAddress, reportTitle);
 
             if (result.Success)

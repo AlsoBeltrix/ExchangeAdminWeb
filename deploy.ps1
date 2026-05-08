@@ -59,12 +59,18 @@ Write-Success "Published to $PublishPath"
 
 Write-Step "Configuring app pool: $AppPoolName"
 
-$poolIsNew = $false
+$needsPassword = $false
 if (Test-Path "IIS:\AppPools\$AppPoolName") {
-    Write-Warn "App pool exists -- reconfiguring"
+    $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName).Value
+    if ($existingUser -ne $ServiceAccount) {
+        Write-Warn "App pool identity changing: $existingUser -> $ServiceAccount"
+        $needsPassword = $true
+    } else {
+        Write-Warn "App pool exists -- reconfiguring"
+    }
 } else {
     New-WebAppPool -Name $AppPoolName | Out-Null
-    $poolIsNew = $true
+    $needsPassword = $true
 }
 
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion        -Value ""
@@ -78,7 +84,7 @@ if ($ServiceAccountPassword) {
         [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
     Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password -Value $plainPassword
     Write-Host "       App pool identity: $ServiceAccount (password set)" -ForegroundColor DarkGray
-} elseif ($poolIsNew) {
+} elseif ($needsPassword) {
     $ServiceAccountPassword = Read-Host -Prompt "Enter password for $ServiceAccount" -AsSecureString
     $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
