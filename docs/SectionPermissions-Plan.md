@@ -62,13 +62,13 @@ A user with only `MigrationCheck` sees: eligibility panels + read-only batch sta
 
 ### Migration Sub-Permission Hierarchy
 
-`MigrationCreate` and `MigrationManage` policies include `MigrationCheck` groups in their composition. This means a user who can create batches can implicitly access the page. The policy registration composes:
+`MigrationCreate` and `MigrationManage` policies are composed of three AND requirements: base groups + MigrationCheck groups + operation groups. ASP.NET Core requires all requirements to succeed, so:
 
-- `MigrationCheck`: base groups + MigrationCheck groups
-- `MigrationCreate`: base groups + MigrationCheck groups + MigrationCreate groups
-- `MigrationManage`: base groups + MigrationCheck groups + MigrationManage groups
+- `MigrationCheck`: base groups AND MigrationCheck groups
+- `MigrationCreate`: base groups AND MigrationCheck groups AND MigrationCreate groups
+- `MigrationManage`: base groups AND MigrationCheck groups AND MigrationManage groups
 
-This avoids needing to check two policies at every action callsite — the operation policy alone is sufficient for server-side enforcement.
+A user must be in all three group sets to pass the operation policy. This means a MigrationCheck-only user cannot pass `MigrationCreate` (they fail the MigrationCreate group requirement). The operation policy alone is sufficient for server-side enforcement — no need to check two policies at each callsite.
 
 ## Behavior Rules
 
@@ -147,7 +147,8 @@ options.AddPolicy("GroupPolicy", groupPolicy);
 options.FallbackPolicy = groupPolicy;
 
 // Section policies: base gate + section gate
-foreach (var section in expectedSections)
+var migrationSubPolicies = new[] { "MigrationCreate", "MigrationManage" };
+foreach (var section in expectedSections.Except(migrationSubPolicies))
 {
     var sectionGroups = GroupsFor(section);
     options.AddPolicy(section, policy => policy
@@ -156,22 +157,22 @@ foreach (var section in expectedSections)
         .AddRequirements(new GroupAuthorizationRequirement(sectionGroups, section)));
 }
 
-// Migration sub-permission hierarchy: MigrationCreate/Manage include MigrationCheck groups
-var migCheckGroups = GroupsFor("MigrationCheck");
+// Migration sub-permission hierarchy: three separate AND requirements
+// User must be in base groups AND MigrationCheck groups AND operation groups
 options.AddPolicy("MigrationCreate", policy => policy
     .RequireAuthenticatedUser()
     .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-    .AddRequirements(new GroupAuthorizationRequirement(
-        migCheckGroups.Union(GroupsFor("MigrationCreate")).Distinct().ToArray(), "MigrationCreate")));
+    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
+    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCreate"), "MigrationCreate")));
 
 options.AddPolicy("MigrationManage", policy => policy
     .RequireAuthenticatedUser()
     .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-    .AddRequirements(new GroupAuthorizationRequirement(
-        migCheckGroups.Union(GroupsFor("MigrationManage")).Distinct().ToArray(), "MigrationManage")));
+    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
+    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationManage"), "MigrationManage")));
 ```
 
-Note: The `foreach` registers MigrationCreate/MigrationManage with section-only groups first, then the two explicit registrations overwrite those with the composed groups. Alternatively, exclude them from the loop.
+ASP.NET Core evaluates all requirements as AND — every requirement must succeed. This means a user needs membership in base groups AND MigrationCheck groups AND the operation-specific group to pass. A MigrationCheck-only user cannot pass `MigrationCreate` because they fail the MigrationCreate requirement.
 
 ### 3. Page-Level Authorization — Both Attribute and Explicit Check
 
