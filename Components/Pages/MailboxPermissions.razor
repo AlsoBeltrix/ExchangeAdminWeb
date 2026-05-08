@@ -1,6 +1,6 @@
 @page "/mailbox-permissions"
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize(Policy = "GroupPolicy")]
+@attribute [Authorize(Policy = "MailboxPermissions")]
 @rendermode InteractiveServer
 @inject IExchangeService Exchange
 @inject AuditService Audit
@@ -228,7 +228,7 @@
         currentUser = user.Identity?.Name ?? "Unknown";
 
         // CRITICAL: Explicitly check authorization - [Authorize] attribute is not reliably enforced
-        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "MailboxPermissions");
         if (!authResult.Succeeded)
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);

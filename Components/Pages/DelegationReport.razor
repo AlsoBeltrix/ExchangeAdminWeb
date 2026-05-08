@@ -2,7 +2,7 @@
 @using ExchangeAdminWeb.Models
 @using ExchangeAdminWeb.Services
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize(Policy = "GroupPolicy")]
+@attribute [Authorize(Policy = "DelegationReport")]
 @rendermode InteractiveServer
 @inject IExchangeService Exchange
 @inject AuditService Audit
@@ -115,7 +115,7 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
-        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "DelegationReport");
         if (!authResult.Succeeded)
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);

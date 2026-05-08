@@ -2,7 +2,7 @@
 @using ExchangeAdminWeb.Models
 @using ExchangeAdminWeb.Services
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize(Policy = "GroupPolicy")]
+@attribute [Authorize(Policy = "MigrationCheck")]
 @inject IExchangeService Exchange
 @inject AuditService Audit
 @inject EmailService Email
@@ -130,13 +130,16 @@
                                     </div>
                                 </div>
 
-                                <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@isCreating">
-                                    @if (isCreating)
-                                    {
-                                        <span class="spinner-border spinner-border-sm me-2"></span>
-                                    }
-                                    Create Migration Batch
-                                </button>
+                                @if (canCreate)
+                                {
+                                    <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@isCreating">
+                                        @if (isCreating)
+                                        {
+                                            <span class="spinner-border spinner-border-sm me-2"></span>
+                                        }
+                                        Create Migration Batch
+                                    </button>
+                                }
                             </div>
                         </div>
                     }
@@ -278,13 +281,16 @@
                                     </div>
                                 </div>
 
-                                <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@isCreating">
-                                    @if (isCreating)
-                                    {
-                                        <span class="spinner-border spinner-border-sm me-2"></span>
-                                    }
-                                    Create Migration Batch
-                                </button>
+                                @if (canCreate)
+                                {
+                                    <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@isCreating">
+                                        @if (isCreating)
+                                        {
+                                            <span class="spinner-border spinner-border-sm me-2"></span>
+                                        }
+                                        Create Migration Batch
+                                    </button>
+                                }
                             </div>
                         </div>
                     }
@@ -335,7 +341,7 @@
                         </div>
                     </div>
                     <div>
-                        @if (migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
+                        @if (canManage && migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
                             || (b.TotalCount == 0)) == true)
                         {
                             <button class="btn btn-sm btn-outline-secondary me-2" disabled="@(actionInProgress != null || pendingActionLabel != null)"
@@ -459,7 +465,7 @@
                                             }
                                         </td>
                                         <td class="text-end text-nowrap">
-                                            @if (batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                            @if (canManage && batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
                                             {
                                                 <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                         @onclick="() => CompleteBatch(batch.BatchName)">
@@ -550,31 +556,34 @@
                                                                         </td>
                                                                         <td class="text-end text-nowrap">
                                                                             @{ var s = user.Status; var e = user.EmailAddress; }
-                                                                            @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                                                            @if (canManage)
                                                                             {
-                                                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                                                                        @onclick="() => CompleteUser(e)">Complete</button>
-                                                                            }
-                                                                            @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
-                                                                            {
-                                                                                <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                                                                        @onclick="() => ApproveUser(e)">Approve</button>
-                                                                            }
-                                                                            @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
-                                                                            {
-                                                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                                                                        @onclick="() => PauseUser(e)">Pause</button>
-                                                                            }
-                                                                            @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
-                                                                                || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
-                                                                            {
-                                                                                <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                                                                        @onclick="() => ResumeUser(e)">Resume</button>
-                                                                            }
-                                                                            @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
-                                                                            {
-                                                                                <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                                                                        @onclick="() => ClearUser(e)">Clear</button>
+                                                                                @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
+                                                                                {
+                                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                            @onclick="() => CompleteUser(e)">Complete</button>
+                                                                                }
+                                                                                @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
+                                                                                {
+                                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                            @onclick="() => ApproveUser(e)">Approve</button>
+                                                                                }
+                                                                                @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
+                                                                                {
+                                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                            @onclick="() => PauseUser(e)">Pause</button>
+                                                                                }
+                                                                                @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+                                                                                    || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
+                                                                                {
+                                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                            @onclick="() => ResumeUser(e)">Resume</button>
+                                                                                }
+                                                                                @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
+                                                                                {
+                                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                            @onclick="() => ClearUser(e)">Clear</button>
+                                                                                }
                                                                             }
                                                                             @if (s.Equals("Failed", StringComparison.OrdinalIgnoreCase)
                                                                                 || s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase)
@@ -644,6 +653,8 @@
     private int tabIndex = 0;
     private bool isLoading = false;
     private bool isCreating = false;
+    private bool canCreate = false;
+    private bool canManage = false;
     private string currentUser = "Unknown";
     private string clientIpAddress = "Unknown";
 
@@ -697,13 +708,15 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
-        // CRITICAL: Explicitly check authorization - [Authorize] attribute is not reliably enforced
-        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "MigrationCheck");
         if (!authResult.Succeeded)
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
+
+        canCreate = (await AuthorizationService.AuthorizeAsync(user, "MigrationCreate")).Succeeded;
+        canManage = (await AuthorizationService.AuthorizeAsync(user, "MigrationManage")).Succeeded;
 
         // Try scoped instance first, then fall back to cached value
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
@@ -755,6 +768,10 @@
 
     private async Task CreateSingleMigrationBatch()
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
+            return;
+
         if (singleResult == null || singleResult.Status != MigrationStatus.Eligible || string.IsNullOrWhiteSpace(singleTicketNumber))
             return;
 
@@ -865,6 +882,10 @@
 
     private async Task CreateMigrationBatch()
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
+            return;
+
         if (bulkResult == null || bulkResult.EligibleUsers == 0 || string.IsNullOrWhiteSpace(bulkTicketNumber))
             return;
 
@@ -1039,6 +1060,10 @@
 
     private async Task ExecuteBatchAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+            return;
+
         actionInProgress = target;
         batchActionResult = null;
 
@@ -1091,6 +1116,10 @@
 
     private async Task ExecuteUserAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+            return;
+
         actionInProgress = target;
         batchActionResult = null;
 
@@ -1145,6 +1174,10 @@
 
     private async Task ClearCompletedBatches(string ticket)
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+            return;
+
         if (migrationBatches == null) return;
 
         actionInProgress = "clearing";

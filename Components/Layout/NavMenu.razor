@@ -1,3 +1,5 @@
+@using Microsoft.AspNetCore.Authorization
+
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">Exchange Admin</a>
@@ -13,40 +15,68 @@
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
             </NavLink>
         </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="mailbox-permissions">
-                <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span> Mailbox Permissions
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="calendar-permissions">
-                <span class="bi bi-calendar-fill-nav-menu" aria-hidden="true"></span> Calendar Permissions
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="migration">
-                <span class="bi bi-arrow-left-right-nav-menu" aria-hidden="true"></span> Migration
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="delegation-report">
-                <span class="bi bi-people-fill-nav-menu" aria-hidden="true"></span> Delegation Report
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="message-trace">
-                <span class="bi bi-envelope-fill-nav-menu" aria-hidden="true"></span> Message Trace
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="recipient-lookup">
-                <span class="bi bi-search-nav-menu" aria-hidden="true"></span> Recipient Lookup
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="out-of-office">
-                <span class="bi bi-clock-fill-nav-menu" aria-hidden="true"></span> Out of Office
-            </NavLink>
-        </div>
+        <AuthorizeView Policy="MailboxPermissions">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="mailbox-permissions">
+                        <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span> Mailbox Permissions
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="CalendarPermissions">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="calendar-permissions">
+                        <span class="bi bi-calendar-fill-nav-menu" aria-hidden="true"></span> Calendar Permissions
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="MigrationCheck">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="migration">
+                        <span class="bi bi-arrow-left-right-nav-menu" aria-hidden="true"></span> Migration
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="DelegationReport">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="delegation-report">
+                        <span class="bi bi-people-fill-nav-menu" aria-hidden="true"></span> Delegation Report
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="MessageTrace">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="message-trace">
+                        <span class="bi bi-envelope-fill-nav-menu" aria-hidden="true"></span> Message Trace
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="RecipientLookup">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="recipient-lookup">
+                        <span class="bi bi-search-nav-menu" aria-hidden="true"></span> Recipient Lookup
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
+        <AuthorizeView Policy="OutOfOffice">
+            <Authorized>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="out-of-office">
+                        <span class="bi bi-clock-fill-nav-menu" aria-hidden="true"></span> Out of Office
+                    </NavLink>
+                </div>
+            </Authorized>
+        </AuthorizeView>
     </nav>
 </div>

@@ -39,7 +39,18 @@
     "AllowedGroups": [
       "DOMAIN\\IT-Helpdesk",
       "DOMAIN\\Exchange-Admins"
-    ]
+    ],
+    "SectionAccess": {
+      "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
+      "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
+      "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+      "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+      "MigrationManage": ["DOMAIN\\Exchange-Admins"],
+      "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
+    }
   },
   "Migration": {
     "HybridEndpoint": "hybrid1",

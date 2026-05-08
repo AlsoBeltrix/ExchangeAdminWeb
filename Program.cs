@@ -25,6 +25,27 @@ try
     if (allowedGroups.Length == 0)
         Log.Warning("Security:AllowedGroups is empty or missing — all users will be denied access until configured");
 
+    var sectionAccess = builder.Configuration
+        .GetSection("Security:SectionAccess")
+        .Get<Dictionary<string, string[]>>() ?? new();
+
+    var expectedSections = new[] {
+        "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
+        "MigrationCreate", "MigrationManage", "DelegationReport",
+        "MessageTrace", "RecipientLookup", "OutOfOffice"
+    };
+
+    string[] GroupsFor(string section)
+    {
+        if (sectionAccess.TryGetValue(section, out var groups) && groups.Length > 0)
+            return groups;
+        Log.Warning("SectionAccess:{Section} is empty — access denied until configured", section);
+        return Array.Empty<string>();
+    }
+
+    foreach (var missing in expectedSections.Where(s => !sectionAccess.ContainsKey(s)))
+        Log.Warning("SectionAccess:{Section} is not configured — access denied until configured", missing);
+
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
 
@@ -39,6 +60,28 @@ try
 
         options.AddPolicy("GroupPolicy", groupPolicy);
         options.FallbackPolicy = groupPolicy;
+
+        var migrationSubPolicies = new[] { "MigrationCreate", "MigrationManage" };
+        foreach (var section in expectedSections.Except(migrationSubPolicies))
+        {
+            var sectionGroups = GroupsFor(section);
+            options.AddPolicy(section, policy => policy
+                .RequireAuthenticatedUser()
+                .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+                .AddRequirements(new GroupAuthorizationRequirement(sectionGroups, section)));
+        }
+
+        options.AddPolicy("MigrationCreate", policy => policy
+            .RequireAuthenticatedUser()
+            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
+            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCreate"), "MigrationCreate")));
+
+        options.AddPolicy("MigrationManage", policy => policy
+            .RequireAuthenticatedUser()
+            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
+            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationManage"), "MigrationManage")));
     });
 
     builder.Services.AddCascadingAuthenticationState();

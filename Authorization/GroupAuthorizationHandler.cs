@@ -10,10 +10,12 @@ namespace ExchangeAdminWeb.Authorization;
 public class GroupAuthorizationRequirement : IAuthorizationRequirement
 {
     public string[] AllowedGroups { get; }
+    public string SectionName { get; }
 
-    public GroupAuthorizationRequirement(string[] allowedGroups)
+    public GroupAuthorizationRequirement(string[] allowedGroups, string sectionName = "Application")
     {
         AllowedGroups = allowedGroups;
+        SectionName = sectionName;
     }
 }
 
@@ -39,8 +41,8 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
 
         if (requirement.AllowedGroups.Length == 0)
         {
-            _logger.LogError("No allowed groups configured (Security:AllowedGroups) — denying all access. Configure at least one AD group.");
-            context.Fail(new AuthorizationFailureReason(this, "No allowed groups configured. Contact your administrator."));
+            _logger.LogError("SectionAccess:{Section} has no groups configured — denying all access", requirement.SectionName);
+            context.Fail(new AuthorizationFailureReason(this, $"No groups configured for {requirement.SectionName}. Contact your administrator."));
             return Task.CompletedTask;
         }
 
@@ -66,10 +68,10 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             }
         }
 
-        _logger.LogWarning("User {User} DENIED ACCESS - not member of allowed groups: {Groups}",
-            userName, string.Join(", ", requirement.AllowedGroups));
+        _logger.LogWarning("User {User} denied access to {Section} — not in groups: {Groups}",
+            userName, requirement.SectionName, string.Join(", ", requirement.AllowedGroups));
 
-        context.Fail(new AuthorizationFailureReason(this, $"User {userName} is not a member of any allowed group"));
+        context.Fail(new AuthorizationFailureReason(this, $"User {userName} is not a member of any allowed group for {requirement.SectionName}"));
         return Task.CompletedTask;
     }
 }
