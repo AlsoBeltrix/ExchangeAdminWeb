@@ -1,6 +1,6 @@
 # Code Review - 2026-05-07
 
-Review target: `ce1d249` (`Add section-level permissions plan to docs/`).
+Review target: `3f269c5` (`Consolidate duplicate notices; fix historical search subject/date validation`).
 
 ## Scope
 
@@ -10,11 +10,11 @@ ServiceNow ticket validation is explicitly out of scope. I did not count "ticket
 
 ## Verification
 
-- `dotnet build ExchangeAdminWeb.csproj --no-restore` passed with 0 warnings and 0 errors.
-- `dotnet test ExchangeAdminWeb.Tests\ExchangeAdminWeb.Tests.csproj --no-restore` passed: 85 tests.
-- `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore` passed.
-- `dotnet list ... package --vulnerable --include-transitive` found no vulnerable packages for app or tests.
-- `dotnet list ... package --deprecated` found no deprecated packages for app or tests.
+- Latest commit `3f269c5`: `dotnet build ExchangeAdminWeb.csproj --no-restore` passed with 0 warnings and 0 errors.
+- Latest commit `3f269c5`: `dotnet test ExchangeAdminWeb.Tests\ExchangeAdminWeb.Tests.csproj --no-restore` passed: 85 tests.
+- Latest commit `3f269c5`: `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore` passed.
+- Prior package checks found no vulnerable packages for app or tests. The latest commit did not change package references.
+- Prior package checks found no deprecated packages for app or tests. The latest commit did not change package references.
 - Outdated app packages remain: `Microsoft.AspNetCore.Authentication.Negotiate` 8.0.26 -> 10.0.7, `Microsoft.PowerShell.SDK` 7.4.15 -> 7.6.1, `Serilog.AspNetCore` 8.0.3 -> 10.0.0, `Serilog.Enrichers.Environment` 2.3.0 -> 3.0.1, `Serilog.Sinks.File` 5.0.0 -> 7.0.0.
 - Outdated test packages remain: `coverlet.collector` 6.0.4 -> 10.0.0, `Microsoft.NET.Test.Sdk` 17.14.1 -> 18.5.1.
 
@@ -22,9 +22,89 @@ ServiceNow ticket validation is explicitly out of scope. I did not count "ticket
 
 I missed the dark-mode persistence bug in the original review. Before the latest remediation, the toggle stored the selected theme in `localStorage`, but the page-level script only applied that value on the initial document load. Section navigation is done with Blazor `NavLink`/enhanced navigation, so moving between sections can patch server-rendered markup without re-running the initial theme script. The result is that `localStorage` can still contain `dark` while the document loses the `html.dark` class and renders the next section in light mode.
 
-Current HEAD `b9aa35d` appears to remediate this by extracting `applyTheme()` in `Components/App.razor`, running it on initial load, and also running it on `blazor:enhancedload` (`Components/App.razor:13`-`Components/App.razor:24`). `ThemeToggle` still toggles `html.dark` and writes the selected value to `localStorage` (`Components/Layout/ThemeToggle.razor:4`-`Components/Layout/ThemeToggle.razor:22`). This should preserve dark mode when moving between sections through the sidebar.
+Commits `b9aa35d` and `7a94a35` appear to remediate this by extracting `applyTheme()` in `Components/App.razor`, running it on initial load, `blazor:enhancedload`, and `pageshow`, and reapplying the stored theme if Blazor patches the document element class (`Components/App.razor:13`-`Components/App.razor:36`). `7a94a35` also fixed dark-mode striped table readability through Bootstrap table variables (`wwwroot/app.css:88`-`wwwroot/app.css:101`). `ThemeToggle` still toggles `html.dark` and writes the selected value to `localStorage` (`Components/Layout/ThemeToggle.razor:4`-`Components/Layout/ThemeToggle.razor:22`). This should preserve dark mode when moving between sections through the sidebar.
 
 Residual risk: there is no browser/integration test for this behavior. Add a UI test that toggles dark mode, navigates through at least two sections, and asserts both `document.documentElement.classList.contains("dark")` and the toggle state remain consistent.
+
+## Addendum - Message Trace Historical Search
+
+Commit `7c4baee` added automatic historical search submission for Message Trace ranges over 10 days, removed admin notification email from lookup operations, and added CSV export for real-time trace results. The cmdlet choice is directionally correct: Microsoft documents `Get-MessageTrace` for recent trace data and `Start-HistoricalSearch` for older message data. Commits `509f3d5` and `3f269c5` addressed several review findings in this area, but there are still residual gaps.
+
+References:
+- https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/get-messagetrace?view=exchange-ps
+- https://learn.microsoft.com/en-us/powershell/module/exchangepowershell/start-historicalsearch?view=exchange-ps
+
+### Medium - Historical Message Trace notification address is only partially resolved
+
+`509f3d5` added UPN as a fallback after email claims (`Components/Pages/MessageTrace.razor:164`-`Components/Pages/MessageTrace.razor:167`), so this is better than the original email-claim-only version. If neither email nor UPN is present, `RunHistoricalSearch` still refuses to submit the search (`Components/Pages/MessageTrace.razor:232`-`Components/Pages/MessageTrace.razor:239`). Microsoft also requires `NotifyAddress` to be an internal recipient in an accepted domain, and this path does not validate that the resolved claim is a valid notification recipient before submitting it.
+
+Impact: historical search can still fail for users whose Windows-auth claims do not include mail/UPN, or for environments where the UPN is not routable/accepted for Exchange notifications.
+
+Recommendation: resolve the notification SMTP address explicitly from Exchange/AD using the current Windows identity, or validate a user-supplied/internal address before submission.
+
+### Remediated - Historical Message Trace subject field is disabled in historical mode
+
+`509f3d5` added visible copy that subject filtering is not available for historical searches. `3f269c5` now disables the `Subject Contains` input whenever `IsHistoricalRange` is true and changes the placeholder to explain that subject filtering is unavailable (`Components/Pages/MessageTrace.razor:43`-`Components/Pages/MessageTrace.razor:45`). Historical submission still sends only sender, recipient, start date, end date, notify address, and title (`Components/Pages/MessageTrace.razor:246`-`Components/Pages/MessageTrace.razor:250`; `Services/ExchangeService.cs:1444`-`Services/ExchangeService.cs:1455`).
+
+Residual risk: if a user enters a subject filter in real-time mode and then expands the date range into historical mode, the disabled input can still display the stale subject value. The search correctly ignores it, but the UI can still be slightly misleading unless the value is cleared on mode change or the disabled state is visually explicit enough.
+
+Recommendation: no blocking fix is required. Add a component/UI test for this branch, and consider clearing `subjectFilter` when switching into historical mode.
+
+### Medium - Historical date validation only partially rejects future end-date submissions
+
+`509f3d5` fixed the 90-day off-by-one by changing the local limit to `> 89` days before the `endDate.AddDays(1)` submission. `3f269c5` added an explicit `end > DateTime.Today` rejection (`Components/Pages/MessageTrace.razor:174`-`Components/Pages/MessageTrace.razor:183`). That prevents users from selecting tomorrow or later.
+
+The remaining issue is that submission still passes `endDate.AddDays(1)` to `StartHistoricalSearchAsync` (`Components/Pages/MessageTrace.razor:246`-`Components/Pages/MessageTrace.razor:250`). If the selected end date is today, the actual submitted exclusive end timestamp is tomorrow at midnight. That can still be a future `EndDate`, and Microsoft documents historical searches as covering message data aged between roughly 1-4 hours and 90 days old.
+
+Impact: Exchange can still reject a locally accepted historical search when the inclusive date picker value is today, even though the selected date itself is not in the future.
+
+Recommendation: validate the actual submitted `[startDate, endExclusive)` range. For date-only UI values, clamp the submitted end to the current time or reject historical searches whose inclusive end date is today until the data is old enough for historical search.
+
+### Low - Historical search quota and async lifecycle are not surfaced
+
+Microsoft documents tenant limits for historical searches, including a daily submission quota and a per-file row limit. The UI automatically switches to historical search for ranges over 10 days (`Components/Pages/MessageTrace.razor:198`-`Components/Pages/MessageTrace.razor:200`) and only tells the user that results will be emailed later (`Components/Pages/MessageTrace.razor:59`-`Components/Pages/MessageTrace.razor:65`). It does not warn that submissions consume quota, provide a job ID, or offer a way to inspect existing historical jobs.
+
+Impact: users can burn tenant historical-search quota without realizing it, and support has little in-app context if a submitted search is delayed or never arrives.
+
+Recommendation: show the returned job ID when available, add copy about async processing/quota, and consider a minimal historical-job status view or link to the Exchange admin workflow.
+
+### Remediated - Message Trace CSV formula hardening
+
+`509f3d5` added formula-prefix hardening for exported Message Trace CSV fields that start with `=`, `+`, `-`, `@`, tab, CR, or LF (`Components/Pages/MessageTrace.razor:306`-`Components/Pages/MessageTrace.razor:313`). This matches the audit/bulk CSV mitigation pattern.
+
+Residual risk: there are still no tests covering Message Trace CSV export shape or formula hardening.
+
+## Addendum - Per-Section Audit Notices
+
+Commit `928aa85` adds contextual audit notices to Mailbox, Calendar, Migration, Out of Office, Delegation Report, Message Trace, and Recipient Lookup pages. Commit `5591951` corrects the most important wording issues: Mailbox/Calendar stopped unconditionally saying affected users "will" receive notifications, and Migration now says "Migration actions" rather than "All migration operations." Commit `3f269c5` removes the duplicate Mailbox/Calendar notice blocks. The lookup/search notices align with the current code: Delegation Report, Message Trace, Historical Search, Recipient Lookup, and OOF status checks write lookup audit entries.
+
+### Remediated - Duplicate Mailbox/Calendar audit notices were removed
+
+`3f269c5` consolidates Mailbox and Calendar down to one audit notice each (`Components/Pages/MailboxPermissions.razor:20`-`Components/Pages/MailboxPermissions.razor:21`, `Components/Pages/CalendarPermissions.razor:20`-`Components/Pages/CalendarPermissions.razor:21`). The duplicate-copy issue from `928aa85` is closed.
+
+### Low - Mailbox/Calendar notification sentence is still broad on bulk tabs
+
+The remaining Mailbox and Calendar notices conditionally append "Affected users will receive email notifications when permissions are granted or removed" whenever `Email:NotifyUsersOnPermissionGrant` is true (`Components/Pages/MailboxPermissions.razor:20`-`Components/Pages/MailboxPermissions.razor:21`, `Components/Pages/CalendarPermissions.razor:20`-`Components/Pages/CalendarPermissions.razor:21`). That is accurate for successful single operations because those paths call `SendUserNotificationAsync` and `SendOwnerNotificationAsync` (`Components/Pages/MailboxPermissions.razor:332`-`Components/Pages/MailboxPermissions.razor:339`, `Components/Pages/CalendarPermissions.razor:330`-`Components/Pages/CalendarPermissions.razor:338`). It is still too broad for bulk operations: the bulk paths send only the admin summary notification and do not notify every affected user/owner (`Components/Pages/MailboxPermissions.razor:397`-`Components/Pages/MailboxPermissions.razor:400`, `Components/Pages/CalendarPermissions.razor:396`-`Components/Pages/CalendarPermissions.razor:399`).
+
+Impact: when notification config is enabled, users can reasonably infer that bulk permission grants/removals send per-user notifications even though the code does not do that.
+
+Recommendation: either make the notification sentence tab-aware, or change it to "For single permission changes, affected users will receive email notifications..." when the setting is enabled.
+
+### Remediated - Migration notice no longer overstates all operations
+
+`5591951` changes the Migration banner to "Migration actions are logged for audit purposes, including eligibility checks, batch creation, and status changes" (`Components/Pages/Migration.razor:19`). This is materially better than the prior "All migration operations" wording because it no longer implies that read-only status/report views are also audited.
+
+Residual risk: the earlier audit-boundary gap remains: migration status loading, batch detail expansion, user search, and migration report retrieval are still not written to the audit CSV.
+
+Recommendation: either audit the read-only migration views or keep documentation explicit that only eligibility checks and mutating migration actions are audited.
+
+## Remediation Status Notes
+
+The detailed findings below preserve the original review context. Current status after commits `b9aa35d`, `7a94a35`, `509f3d5`, `928aa85`, `5591951`, and `3f269c5`:
+
+- Remediated: `Complete-MigrationUser` was replaced with `Set-MigrationUser -CompleteAfter`; OOF protected-user denial audit is guarded; audit/bulk/Message Trace CSV formula hardening is present; PathBase normalization was improved; audit column docs include `IPAddress`; the Home card no longer claims Delegation Report includes Send on Behalf; dark mode persistence and dark table readability are improved; duplicate Mailbox/Calendar audit notices were removed; the Migration audit banner no longer overstates audit behavior; historical Message Trace disables subject input in historical mode.
+- Partially remediated: historical Message Trace has UPN fallback, selected future end-date rejection, and 90-day off-by-one handling, but still lacks robust notification-address resolution, validation/clamping of the actual submitted end timestamp, quota/job lifecycle surfacing, and parameter-level tests. `OnPremTargetDatabases` is now split into a string array, but the sample/default still uses `DAG2019` and there is still no validation that values are mailbox database identities. Protected-user ObjectIds are cached after initialization, but group expansion remains direct-only and self-grant checks still perform live identity lookups. Per-section audit notices exist, but Mailbox/Calendar notification wording is still too broad on bulk tabs when user notifications are enabled.
+- Still open: IIS app pool identity setup, operation-level PowerShell timeout/cancellation, email notification failure semantics, section-level permissions implementation, section-permission plan inconsistencies, migration read audit boundary, direct/nested protected group coverage, client IP forwarding/cache cleanup, and ServiceNow dead/stale wiring.
 
 ## Findings
 
@@ -216,7 +296,10 @@ Recommendation: update docs to match the exact runtime header.
 - No component/integration tests cover Blazor page action flows.
 - No tests are planned yet for section-policy composition: base gate AND section gate, missing/empty section fail-closed behavior, direct URL denial, hidden Nav/Home links, and denied Migration sub-actions.
 - No browser/UI test covers dark-mode persistence across Blazor enhanced navigation.
+- No tests cover Message Trace historical-search branching, notification-address resolution, actual submitted end-date clamping/rejection, quota/job messaging, or `Start-HistoricalSearch` parameter emission.
+- No tests cover Message Trace CSV export escaping, formula hardening, or downloaded CSV shape.
+- No component/UI tests cover the audit notices, including bulk-vs-single notification wording and the historical subject disabled state.
 
 ## Summary
 
-The app builds cleanly and core helper tests are passing. The biggest remaining risks are runtime integration risks: IIS identity setup, Exchange migration cmdlet correctness, on-prem target database assumptions, and lack of true PowerShell operation timeouts. The prior review also overstated some remediation because it did not distinguish queue timeout from operation timeout, or configured database name from actual database discovery.
+The app builds cleanly and the existing helper tests are passing. The duplicate Mailbox/Calendar notices are removed, but the remaining conditional notification sentence is still too broad on bulk tabs. Historical Message Trace is improved, with the subject field disabled in historical mode and selected future dates rejected, but it still needs stronger notification-address resolution, validation or clamping of the actual submitted end timestamp, quota/job messaging, and parameter-level tests. The biggest remaining platform risks are IIS identity setup, on-prem target database assumptions, and lack of true PowerShell operation timeouts.

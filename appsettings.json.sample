@@ -45,7 +45,7 @@
     "HybridEndpoint": "hybrid1",
     "CloudTargetDeliveryDomain": "yourorg.mail.onmicrosoft.com",
     "OnPremTargetDeliveryDomain": "yourcompany.com",
-    "OnPremTargetDatabases": "DAG2019",
+    "OnPremTargetDAG": "DAG2019",
     "CloudQuotaGB": 100,
     "ExcludedADGroups": [
       "SEC_ITAR_USERS"

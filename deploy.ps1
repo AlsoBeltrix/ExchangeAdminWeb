@@ -5,6 +5,7 @@ param(
     [string]$AppAlias        = "ExchangeAdminWeb",
     [string]$AppPoolName     = "ExchangeAdminWeb",
     [string]$ServiceAccount  = "ANALOG\SVC_SCRIPTADM",
+    [securestring]$ServiceAccountPassword,
     [string]$PublishPath     = "D:\inetpub\ExchangeAdminWeb",
     [string]$LogRoot         = "E:\WWWOutput",
     [string]$CertSubject     = "CN=EXO-Automation"
@@ -16,6 +17,12 @@ function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow 
 function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; exit 1 }
 
 $ProjectRoot = $PSScriptRoot
+
+if (-not $ServiceAccountPassword) {
+    $ServiceAccountPassword = Read-Host -Prompt "Enter password for $ServiceAccount" -AsSecureString
+}
+$plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb - Deploy" -ForegroundColor Magenta
@@ -68,6 +75,7 @@ Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.loadUserProfile
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name startMode                    -Value "AlwaysRunning"
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType    -Value 3
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName        -Value $ServiceAccount
+Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password        -Value $plainPassword
 Write-Host "       App pool identity: $ServiceAccount" -ForegroundColor DarkGray
 
 Write-Success "App pool configured"
@@ -159,7 +167,13 @@ Write-Success "App pool started"
 
 # --- Done ---
 
-$parentUrl = (Get-WebBinding -Name $ParentSite | Select-Object -First 1).bindingInformation -replace '^\*:', 'http://localhost:'
+$httpsBinding = Get-WebBinding -Name $ParentSite | Where-Object { $_.protocol -eq 'https' } | Select-Object -First 1
+if ($httpsBinding) {
+    $parentUrl = $httpsBinding.bindingInformation -replace '^\*:', 'https://localhost:'
+} else {
+    $parentUrl = (Get-WebBinding -Name $ParentSite | Select-Object -First 1).bindingInformation -replace '^\*:', 'http://localhost:'
+    Write-Warn "No HTTPS binding found on '$ParentSite'. Ensure HTTPS is configured for production use."
+}
 Write-Host ""
 Write-Host "Deploy complete." -ForegroundColor Green
 Write-Host ("  URL : " + $parentUrl + "/$AppAlias") -ForegroundColor Cyan

@@ -19,7 +19,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string _hybridEndpoint;
     private readonly string _cloudTargetDomain;
     private readonly string _onPremTargetDomain;
-    private readonly string[] _onPremTargetDatabases;
+    private readonly string _onPremTargetDAG;
     private readonly long _cloudQuotaGB;
     private readonly string[] _excludedADGroups;
     private readonly string[] _adminNotificationEmails;
@@ -41,8 +41,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         _hybridEndpoint = config["Migration:HybridEndpoint"] ?? "hybrid1";
         _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "analog.mail.onmicrosoft.com";
         _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "analog.com";
-        var targetDbConfig = config["Migration:OnPremTargetDatabases"] ?? "DAG2019";
-        _onPremTargetDatabases = targetDbConfig.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        _onPremTargetDAG = config["Migration:OnPremTargetDAG"] ?? "";
         _cloudQuotaGB = long.Parse(config["Migration:CloudQuotaGB"] ?? "100");
         _excludedADGroups = config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
 
@@ -706,7 +705,13 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
-        string[]? targetDatabases = direction == MigrationDirection.ToOnPrem ? _onPremTargetDatabases : null;
+        string[]? targetDatabases = null;
+        if (direction == MigrationDirection.ToOnPrem)
+        {
+            targetDatabases = await ResolveDagDatabasesAsync();
+            if (targetDatabases == null || targetDatabases.Length == 0)
+                return PermissionResult.Fail("Unable to resolve target databases from DAG. Check OnPremExchange and Migration:OnPremTargetDAG configuration.");
+        }
 
         return await RunAsync(ps =>
         {
@@ -1840,6 +1845,86 @@ https://admin.exchange.microsoft.com/#/migration";
         }), _onPremThrottle);
     }
 
+    private async Task<string[]?> ResolveDagDatabasesAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_onPremTargetDAG))
+        {
+            _logger.LogError("Migration:OnPremTargetDAG is not configured — cannot resolve target databases");
+            return null;
+        }
+
+        if (string.IsNullOrEmpty(_onPremServerUri))
+        {
+            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot resolve DAG databases");
+            return null;
+        }
+
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+        {
+            _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
+            return null;
+        }
+
+        return await ThrottledAsync(() => Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+
+                var script = ScriptBlock.Create(
+                    "param($DagName) Get-MailboxDatabase | Where-Object { $_.MasterServerOrAvailabilityGroup -eq $DagName -and $_.Recovery -eq $false } | Select-Object Name");
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
+                  .AddParameter("ScriptBlock", script)
+                  .AddParameter("ArgumentList", new object[] { _onPremTargetDAG });
+                var results = Invoke(ps);
+
+                var databases = results
+                    .Select(r => r.Properties["Name"]?.Value?.ToString())
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Cast<string>()
+                    .ToArray();
+
+                if (databases.Length == 0)
+                {
+                    _logger.LogWarning("No databases found for DAG '{DagName}'", _onPremTargetDAG);
+                    return (string[]?)null;
+                }
+
+                _logger.LogInformation("Resolved {Count} databases from DAG '{DagName}': {Databases}",
+                    databases.Length, _onPremTargetDAG, string.Join(", ", databases));
+
+                return databases;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to resolve databases for DAG '{DagName}'", _onPremTargetDAG);
+                return null;
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (session != null)
+                    {
+                        ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
+                        ps.Invoke();
+                    }
+                }
+                catch { }
+            }
+        }), _onPremThrottle);
+    }
 
     private void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
     {
