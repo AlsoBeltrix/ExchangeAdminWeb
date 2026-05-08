@@ -189,6 +189,9 @@
         validationError = ValidateDateRange(startDate, endDate);
         if (validationError != null) return;
 
+        if (IsHistoricalRange)
+            subjectFilter = "";
+
         historicalSubmitted = false;
         isLoading = true;
         response = null;
@@ -246,7 +249,7 @@
             var result = await Exchange.StartHistoricalSearchAsync(
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
-                startDate, endDate.AddDays(1),
+                startDate, endDate,
                 notifyAddress, reportTitle);
 
             if (result.Success)
