@@ -18,11 +18,6 @@ function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; ex
 
 $ProjectRoot = $PSScriptRoot
 
-if (-not $ServiceAccountPassword) {
-    $ServiceAccountPassword = Read-Host -Prompt "Enter password for $ServiceAccount" -AsSecureString
-}
-$plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
-    [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb - Deploy" -ForegroundColor Magenta
@@ -64,10 +59,12 @@ Write-Success "Published to $PublishPath"
 
 Write-Step "Configuring app pool: $AppPoolName"
 
+$poolIsNew = $false
 if (Test-Path "IIS:\AppPools\$AppPoolName") {
     Write-Warn "App pool exists -- reconfiguring"
 } else {
     New-WebAppPool -Name $AppPoolName | Out-Null
+    $poolIsNew = $true
 }
 
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name managedRuntimeVersion        -Value ""
@@ -75,8 +72,21 @@ Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.loadUserProfile
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name startMode                    -Value "AlwaysRunning"
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.identityType    -Value 3
 Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.userName        -Value $ServiceAccount
-Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password        -Value $plainPassword
-Write-Host "       App pool identity: $ServiceAccount" -ForegroundColor DarkGray
+
+if ($ServiceAccountPassword) {
+    $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
+    Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password -Value $plainPassword
+    Write-Host "       App pool identity: $ServiceAccount (password set)" -ForegroundColor DarkGray
+} elseif ($poolIsNew) {
+    $ServiceAccountPassword = Read-Host -Prompt "Enter password for $ServiceAccount" -AsSecureString
+    $plainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+        [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($ServiceAccountPassword))
+    Set-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel.password -Value $plainPassword
+    Write-Host "       App pool identity: $ServiceAccount (password set)" -ForegroundColor DarkGray
+} else {
+    Write-Host "       App pool identity: $ServiceAccount (credentials retained)" -ForegroundColor DarkGray
+}
 
 Write-Success "App pool configured"
 
