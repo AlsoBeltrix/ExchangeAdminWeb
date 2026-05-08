@@ -9,10 +9,13 @@ Assign different AD groups granular access to individual sections and operations
 - One flat `Security:AllowedGroups` array gates access to the entire application
 - A single `GroupPolicy` (fallback policy) checks membership in any of those groups
 - All pages use `@attribute [Authorize(Policy = "GroupPolicy")]`
+- Every page also explicitly calls `AuthorizationService.AuthorizeAsync(user, "GroupPolicy")` in `OnInitializedAsync` as defense-in-depth
 - NavMenu and Home cards show all links unconditionally
-- Out of Office does not enforce the same protected-user restrictions as Mailbox/Calendar Permissions
+- Out of Office already enforces protected-user restrictions on set/clear via `ValidateTargetMailboxAsync`
 
 ## Proposed Configuration
+
+In `appsettings.json.sample` (and production `appsettings.json` at deploy time):
 
 ```json
 "Security": {
@@ -39,9 +42,9 @@ Assign different AD groups granular access to individual sections and operations
 |---------------------|----------------------------------------------------------------------|
 | `MailboxPermissions` | Full page: grant/revoke Full Access, Send As; single + bulk CSV      |
 | `CalendarPermissions`| Full page: set/remove calendar sharing; single + bulk CSV            |
-| `MigrationCheck`     | Single and bulk eligibility checks (read-only)                       |
-| `MigrationCreate`    | Create new migration batches                                         |
-| `MigrationManage`    | Start, stop, complete, remove, pause, resume batches; complete user, approve skipped items, clear user, clear completed |
+| `MigrationCheck`     | Page access + single/bulk eligibility checks (read-only) + batch status view + user search + reports |
+| `MigrationCreate`    | "Create Migration Batch" buttons inside eligibility results panels   |
+| `MigrationManage`    | Batch actions (Start, Stop, Complete, Remove, Pause, Resume, Clear Completed) + per-user actions (Complete User, Approve Skipped Items, Clear User) |
 | `DelegationReport`   | View delegation assignments for a mailbox                            |
 | `MessageTrace`       | Run message trace queries                                            |
 | `RecipientLookup`    | Look up mailbox details, sizes, archive status                       |
@@ -49,20 +52,23 @@ Assign different AD groups granular access to individual sections and operations
 
 ### Migration Page Behavior
 
-The Migration page is one Razor component with multiple tabs. Access is layered:
+The Migration page is one Razor component. Access is layered:
 
-- `MigrationCheck` grants access to the page and the eligibility check tabs
-- `MigrationCreate` additionally shows the "Create Batch" tab (requires `MigrationCheck` implicitly — you can't create a batch you can't check)
-- `MigrationManage` additionally shows batch action buttons (Start, Stop, Complete, Remove, Pause, Resume, Clear Completed) and per-user actions (Complete User, Approve Skipped Items, Clear User)
-- Viewing batch status (the list of current batches), user search, and migration reports come with any migration access (`MigrationCheck` is sufficient)
+- `MigrationCheck` grants access to the page, eligibility check panels, read-only batch status list, user search, and migration reports
+- `MigrationCreate` additionally renders the "Create Migration Batch" buttons that appear inside the single/bulk eligibility result panels after a check passes
+- `MigrationManage` additionally renders batch action buttons (Start, Stop, Complete, Remove, Pause, Resume, Clear Completed) and per-user action buttons (Complete User, Approve Skipped Items, Clear User)
 
-A user with only `MigrationCheck` sees: eligibility tabs + read-only batch status list + user search + reports (no action buttons).
+A user with only `MigrationCheck` sees: eligibility panels + read-only batch status + user search + reports — no create or action buttons.
 
-### Out of Office — Protected-User Enforcement
+### Migration Sub-Permission Hierarchy
 
-OOF set/clear already validates protected users via `ValidateTargetMailboxAsync` in `SetOof`. OOF status reads (checking current OOF state) are allowed for protected users — this is read-only and non-destructive.
+`MigrationCreate` and `MigrationManage` policies include `MigrationCheck` groups in their composition. This means a user who can create batches can implicitly access the page. The policy registration composes:
 
-The same user-protection rules that prevent modifying the CEO's mailbox permissions also prevent changing their OOF settings. This is already implemented and tested.
+- `MigrationCheck`: base groups + MigrationCheck groups
+- `MigrationCreate`: base groups + MigrationCheck groups + MigrationCreate groups
+- `MigrationManage`: base groups + MigrationCheck groups + MigrationManage groups
+
+This avoids needing to check two policies at every action callsite — the operation policy alone is sufficient for server-side enforcement.
 
 ## Behavior Rules
 
@@ -72,29 +78,54 @@ The same user-protection rules that prevent modifying the CEO's mailbox permissi
 - Startup logs a warning for each unconfigured section: `"SectionAccess:{Section} is empty — access denied until configured"`
 - Home page cards are **hidden** for sections the user cannot access
 - NavMenu links are **hidden** for sections the user cannot access
-- Direct URL navigation to a denied section shows a "You do not have access to this feature" page
+- Direct URL navigation to a denied section shows a "You do not have access to this feature" page (the existing `AccessDenied.razor` with updated wording)
 
 ## Implementation Approach
 
-### 1. Configuration Model
+### 1. GroupAuthorizationRequirement — Add Section Name
+
+Add a `SectionName` property so the handler can produce meaningful denial logs:
 
 ```csharp
-public class SectionAccessOptions
+public class GroupAuthorizationRequirement : IAuthorizationRequirement
 {
-    public Dictionary<string, string[]> SectionAccess { get; set; } = new();
+    public string[] AllowedGroups { get; }
+    public string SectionName { get; }
+
+    public GroupAuthorizationRequirement(string[] allowedGroups, string sectionName = "Application")
+    {
+        AllowedGroups = allowedGroups;
+        SectionName = sectionName;
+    }
 }
 ```
 
-Bound from `Security:SectionAccess` at startup. Startup validates that all expected keys are present and logs warnings for any missing.
+Update `GroupAuthorizationHandler` denial logging:
 
-### 2. Authorization Policies (Base + Section composition)
+```csharp
+// Empty-list case:
+_logger.LogError("SectionAccess:{Section} has no groups configured — denying all access", requirement.SectionName);
+context.Fail(new AuthorizationFailureReason(this, $"No groups configured for {requirement.SectionName}. Contact your administrator."));
 
-Every section policy **must** include both the base `AllowedGroups` requirement AND the section group requirement. This prevents a user who is in a section group but NOT in `AllowedGroups` from bypassing the base gate:
+// User not in group case:
+_logger.LogWarning("User {User} denied access to {Section} — not in groups: {Groups}",
+    userName, requirement.SectionName, string.Join(", ", requirement.AllowedGroups));
+```
+
+The existing base-gate requirement uses `SectionName = "Application"` (default). Section requirements use their section key.
+
+### 2. Policy Registration (Program.cs)
 
 ```csharp
 var sectionAccess = builder.Configuration
     .GetSection("Security:SectionAccess")
     .Get<Dictionary<string, string[]>>() ?? new();
+
+var expectedSections = new[] {
+    "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
+    "MigrationCreate", "MigrationManage", "DelegationReport",
+    "MessageTrace", "RecipientLookup", "OutOfOffice"
+};
 
 string[] GroupsFor(string section)
 {
@@ -104,60 +135,118 @@ string[] GroupsFor(string section)
     return Array.Empty<string>();
 }
 
-// Each section policy requires BOTH base app access AND section access
-options.AddPolicy("MailboxPermissions", policy => policy
+foreach (var missing in expectedSections.Where(s => !sectionAccess.ContainsKey(s)))
+    Log.Warning("SectionAccess:{Section} is not configured — access denied until configured", missing);
+
+// Base gate (unchanged — used by Home and as fallback)
+var groupPolicy = new AuthorizationPolicyBuilder()
     .RequireAuthenticatedUser()
     .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MailboxPermissions"))));
+    .Build();
+options.AddPolicy("GroupPolicy", groupPolicy);
+options.FallbackPolicy = groupPolicy;
 
-options.AddPolicy("CalendarPermissions", policy => policy
+// Section policies: base gate + section gate
+foreach (var section in expectedSections)
+{
+    var sectionGroups = GroupsFor(section);
+    options.AddPolicy(section, policy => policy
+        .RequireAuthenticatedUser()
+        .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+        .AddRequirements(new GroupAuthorizationRequirement(sectionGroups, section)));
+}
+
+// Migration sub-permission hierarchy: MigrationCreate/Manage include MigrationCheck groups
+var migCheckGroups = GroupsFor("MigrationCheck");
+options.AddPolicy("MigrationCreate", policy => policy
     .RequireAuthenticatedUser()
     .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-    .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("CalendarPermissions"))));
+    .AddRequirements(new GroupAuthorizationRequirement(
+        migCheckGroups.Union(GroupsFor("MigrationCreate")).Distinct().ToArray(), "MigrationCreate")));
 
-// ... same pattern for all sections
+options.AddPolicy("MigrationManage", policy => policy
+    .RequireAuthenticatedUser()
+    .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+    .AddRequirements(new GroupAuthorizationRequirement(
+        migCheckGroups.Union(GroupsFor("MigrationManage")).Distinct().ToArray(), "MigrationManage")));
 ```
 
-The fallback policy (`GroupPolicy`) remains as the base gate for the Home page and any future pages that don't have section-specific policies.
+Note: The `foreach` registers MigrationCreate/MigrationManage with section-only groups first, then the two explicit registrations overwrite those with the composed groups. Alternatively, exclude them from the loop.
 
-`GroupAuthorizationHandler` needs no changes — it already handles empty group lists by denying, and ASP.NET Core evaluates all requirements (both must pass).
+### 3. Page-Level Authorization — Both Attribute and Explicit Check
 
-### 3. Page-Level Authorization
+Each page changes **both** the `@attribute` and the explicit `AuthorizationService.AuthorizeAsync` check in `OnInitializedAsync`:
 
-Each page references its section policy:
-
+**Before (all pages):**
 ```razor
-@attribute [Authorize(Policy = "MailboxPermissions")]    @* MailboxPermissions.razor *@
-@attribute [Authorize(Policy = "CalendarPermissions")]   @* CalendarPermissions.razor *@
-@attribute [Authorize(Policy = "MigrationCheck")]        @* Migration.razor (base access) *@
-@attribute [Authorize(Policy = "DelegationReport")]      @* DelegationReport.razor *@
-@attribute [Authorize(Policy = "MessageTrace")]          @* MessageTrace.razor *@
-@attribute [Authorize(Policy = "RecipientLookup")]       @* RecipientLookup.razor *@
-@attribute [Authorize(Policy = "OutOfOffice")]           @* OutOfOffice.razor *@
+@attribute [Authorize(Policy = "GroupPolicy")]
+
+// In OnInitializedAsync:
+var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
 ```
 
-### 4. Migration Page — In-Page Policy Checks
-
-Migration.razor uses `IAuthorizationService` to check sub-permissions at render time:
-
+**After (example: MailboxPermissions):**
 ```razor
-@code {
-    private bool canCreate;
-    private bool canManage;
+@attribute [Authorize(Policy = "MailboxPermissions")]
 
-    protected override async Task OnInitializedAsync()
-    {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        var user = authState.User;
-        canCreate = (await AuthorizationService.AuthorizeAsync(user, "MigrationCreate")).Succeeded;
-        canManage = (await AuthorizationService.AuthorizeAsync(user, "MigrationManage")).Succeeded;
-    }
+// In OnInitializedAsync:
+var authResult = await AuthorizationService.AuthorizeAsync(user, "MailboxPermissions");
+```
+
+Full mapping:
+
+| Page | Policy |
+|------|--------|
+| `Home.razor` | `"GroupPolicy"` (unchanged — base gate only) |
+| `MailboxPermissions.razor` | `"MailboxPermissions"` |
+| `CalendarPermissions.razor` | `"CalendarPermissions"` |
+| `Migration.razor` | `"MigrationCheck"` |
+| `DelegationReport.razor` | `"DelegationReport"` |
+| `MessageTrace.razor` | `"MessageTrace"` |
+| `RecipientLookup.razor` | `"RecipientLookup"` |
+| `OutOfOffice.razor` | `"OutOfOffice"` |
+
+### 4. Migration Page — In-Page Sub-Permission Checks
+
+In `OnInitializedAsync`, after the base page-level check:
+
+```csharp
+canCreate = (await AuthorizationService.AuthorizeAsync(user, "MigrationCreate")).Succeeded;
+canManage = (await AuthorizationService.AuthorizeAsync(user, "MigrationManage")).Succeeded;
+```
+
+**UI gating:** Hide creation and management controls:
+- "Create Migration Batch" buttons (lines ~133, ~281): wrap in `@if (canCreate) { ... }`
+- Batch action buttons (Start, Stop, Complete, Remove, etc.): wrap in `@if (canManage) { ... }`
+- Per-user action buttons (Complete User, Approve Skipped, Clear User): wrap in `@if (canManage) { ... }`
+
+**Server-side enforcement (defense in depth):** Every mutating method re-checks the policy before executing:
+
+```csharp
+private async Task CreateSingleMigrationBatch()
+{
+    var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+    if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
+        return;
+    // ... existing logic
 }
 ```
 
-- Create Batch tab/button: rendered only if `canCreate`
-- Batch action buttons (Start/Stop/Complete/Remove/Clear): rendered only if `canManage`
-- Server-side methods also check before executing (defense in depth — don't rely solely on UI hiding)
+Methods requiring `MigrationCreate`:
+- `CreateSingleMigrationBatch()`
+- `CreateMigrationBatch()`
+
+Methods requiring `MigrationManage`:
+- `ExecuteBatchAction(...)` — gates Start, Stop, Complete, Remove, Pause, Resume
+- `ExecuteUserAction(...)` — gates Complete User, Approve Skipped Items, Clear User
+- `ClearCompletedBatches(...)`
+
+Methods with no additional check (read-only, gated by page-level `MigrationCheck`):
+- `LoadMigrationStatus()`
+- `ToggleBatchDetails(...)`
+- `RefreshBatchUsers(...)`
+- `SearchUser()`
+- `LoadUserReport(...)`
 
 ### 5. NavMenu Visibility
 
@@ -191,86 +280,51 @@ Migration.razor uses `IAuthorizationService` to check sub-permissions at render 
 
 Same pattern — each card wrapped in `<AuthorizeView Policy="...">`.
 
-### 7. Section Denied — Blazor Routing
+### 7. Access Denied Page
 
-Blazor Server uses `AuthorizeRouteView` in `Routes.razor`. When a page's `[Authorize(Policy = "...")]` fails, the existing `<NotAuthorized>` block already fires and redirects to `/access-denied`. No middleware redirect is needed — the Blazor authorization pipeline handles it.
+Use the existing `AccessDenied.razor` — no new `SectionDenied.razor`. Update the message to be generic enough for both cases:
 
-**Change needed:** The existing `AccessDenied.razor` says "You do not have permission to access this application." For section denials (user is authenticated and in `AllowedGroups` but not in the section group), the message should distinguish between "no app access" and "no feature access." Two approaches:
+> "You do not have permission to access this page. If you believe you should have access, contact your Exchange administrator."
 
-**Option A (preferred):** Pass a query parameter `?reason=section` when the denial comes from a section policy vs. the base policy. `Routes.razor` already navigates to `/access-denied` — add `?reason=section` there. The AccessDenied page shows a different message based on the query param:
-- No param / `reason=app`: "You do not have permission to access this application."
-- `reason=section`: "You do not have access to this feature. Contact your Exchange administrator to request access."
+Navigation to access-denied uses relative path (`"access-denied"`, not `"/access-denied"`) to preserve `/ExchangeAdminWeb` path-base hosting.
 
-**Option B:** A separate `SectionDenied.razor` at `/section-denied`. Each section page's authorization check would redirect to this instead. Downside: duplicated page, harder to keep in sync.
+### 8. Audit/Logging
 
-Since the `<NotAuthorized>` block in `Routes.razor` fires for ALL policy failures (base or section), and we can't easily distinguish which policy failed at that point, the simplest approach is: update the AccessDenied page message to be generic enough for both cases ("You do not have permission to access this page"). The logged-in user display and AD group note remain. No routing change needed.
+Section denials are logged by `GroupAuthorizationHandler` using the `SectionName` property:
 
-### 8. Server-Side Action Checks (Defense in Depth)
-
-UI hiding (`canCreate`/`canManage` booleans) prevents rendering buttons, but a crafted SignalR message could still invoke the method. Every mutating action must re-check the policy server-side before executing.
-
-**Pattern:** At the top of each protected method, call `AuthorizationService.AuthorizeAsync` and return early if denied:
-
-```csharp
-private async Task CreateSingleMigrationBatch()
-{
-    var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-    if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-        return;
-    // ... existing logic
-}
+```
+[WRN] User ANALOG\jsmith denied access to MigrationManage — not in groups: ANALOG\ExchangeWebAdmins
 ```
 
-**Methods requiring `MigrationCreate` check:**
-- `CreateSingleMigrationBatch()`
-- `CreateMigrationBatch()`
-
-**Methods requiring `MigrationManage` check:**
-- `ExecuteBatchAction(...)` — gates Start, Stop, Complete, Remove, Pause, Resume
-- `ExecuteUserAction(...)` — gates Complete User, Approve Skipped Items, Clear User
-- `ClearCompletedBatches(...)`
-
-**Methods with no additional check needed (read-only, gated by page-level `MigrationCheck`):**
-- `LoadMigrationStatus()`
-- `ToggleBatchDetails(...)`
-- `RefreshBatchUsers(...)`
-- `SearchUser()`
-- `LoadUserReport(...)`
-
-### 9. Audit Logging
-
-Log section denials:
-```
-[WRN] User ANALOG\jsmith denied access to section MigrationManage — not in groups: ANALOG\ExchangeWebAdmins
-```
-
-The existing per-action audit log continues recording what actions were performed. Section-level denials are infrastructure/security log entries, not audit CSV rows.
+These are Serilog structured log entries, not audit CSV rows. The audit CSV continues recording executed actions only.
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `appsettings.json` | Add `SectionAccess` under `Security` |
-| `appsettings.json.sample` | Same |
-| `Program.cs` | Register per-section policies |
-| `Components/Pages/Home.razor` | Wrap cards in `<AuthorizeView>` |
-| `Components/Pages/MailboxPermissions.razor` | Change policy to `"MailboxPermissions"` |
-| `Components/Pages/CalendarPermissions.razor` | Change policy to `"CalendarPermissions"` |
-| `Components/Pages/Migration.razor` | Base policy `"MigrationCheck"`; in-page checks for Create/Manage |
-| `Components/Pages/DelegationReport.razor` | Change policy to `"DelegationReport"` |
-| `Components/Pages/MessageTrace.razor` | Change policy to `"MessageTrace"` |
-| `Components/Pages/RecipientLookup.razor` | Change policy to `"RecipientLookup"` |
-| `Components/Pages/OutOfOffice.razor` | Change policy to `"OutOfOffice"` |
+| `appsettings.json.sample` | Add `SectionAccess` under `Security` |
+| `Authorization/GroupAuthorizationHandler.cs` | Add `SectionName` to requirement; update handler log messages |
+| `Program.cs` | Register per-section policies with startup validation |
 | `Components/Layout/NavMenu.razor` | Wrap links in `<AuthorizeView Policy="...">` |
-| `Components/Pages/SectionDenied.razor` (new) | "No access to this feature" page |
+| `Components/Pages/Home.razor` | Wrap cards in `<AuthorizeView Policy="...">`; keep explicit check as `"GroupPolicy"` |
+| `Components/Pages/MailboxPermissions.razor` | Change attribute + explicit check to `"MailboxPermissions"` |
+| `Components/Pages/CalendarPermissions.razor` | Change attribute + explicit check to `"CalendarPermissions"` |
+| `Components/Pages/Migration.razor` | Base policy `"MigrationCheck"`; add `canCreate`/`canManage`; gate UI + server-side |
+| `Components/Pages/DelegationReport.razor` | Change attribute + explicit check to `"DelegationReport"` |
+| `Components/Pages/MessageTrace.razor` | Change attribute + explicit check to `"MessageTrace"` |
+| `Components/Pages/RecipientLookup.razor` | Change attribute + explicit check to `"RecipientLookup"` |
+| `Components/Pages/OutOfOffice.razor` | Change attribute + explicit check to `"OutOfOffice"` |
+| `Components/Pages/AccessDenied.razor` | Update message wording |
 | `README.md` | Document `SectionAccess` configuration |
+
+**Deployment note:** Production `appsettings.json` at `D:\inetpub\ExchangeAdminWeb` must receive the new `Security:SectionAccess` block before deploy. The sample file is the tracked template; the production file is not in source control.
 
 ## Validation at Startup
 
 On startup, log warnings for:
-- Any section key missing from `SectionAccess` (lists expected keys)
+- Any expected section key missing from `SectionAccess`
 - Any section key present but with empty group list
-- Both cases result in that section being denied to all users
+- Both cases result in that section being denied to all users (fail-closed)
 
 ## Example Access Matrix
 
@@ -280,3 +334,16 @@ On startup, log warnings for:
 | ANALOG\iam               | X       | X        | X        |           |           | X          | X        | X         | X   |
 | ANALOG\MigrationTeam     |         |          | X        | X         |           |            |          |           |     |
 | ANALOG\Helpdesk          |         |          |          |           |           | X          | X        | X         |     |
+
+## Implementation Order
+
+1. `GroupAuthorizationHandler.cs` — add `SectionName`, update logging
+2. `Program.cs` — register section policies with hierarchy and startup validation
+3. `appsettings.json.sample` — add `SectionAccess` block
+4. Each page component — change attribute + explicit check
+5. `Migration.razor` — add `canCreate`/`canManage` + gate UI + server-side checks
+6. `NavMenu.razor` — wrap links
+7. `Home.razor` — wrap cards
+8. `AccessDenied.razor` — update message
+9. `README.md` — document configuration
+10. Build + test + manual verify nav/home hiding + verify denial redirect
