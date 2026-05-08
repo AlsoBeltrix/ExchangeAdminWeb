@@ -136,7 +136,7 @@
         if (!authResult.Succeeded)
         {
             // Force redirect to access denied
-            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
 

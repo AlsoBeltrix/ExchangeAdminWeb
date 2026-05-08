@@ -130,7 +130,7 @@
         var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
         if (!authResult.Succeeded)
         {
-            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
 

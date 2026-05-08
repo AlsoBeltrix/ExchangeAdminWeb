@@ -72,8 +72,12 @@ try
         app.UsePathBase(pathBase);
 
     if (!app.Environment.IsDevelopment())
+    {
         app.UseExceptionHandler("/Error", createScopeForErrors: true);
+        app.UseHsts();
+    }
 
+    app.UseHttpsRedirection();
     app.UseStaticFiles();
     app.UseAuthentication();
     app.UseAuthorization();

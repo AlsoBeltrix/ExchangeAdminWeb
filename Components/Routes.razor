@@ -6,7 +6,7 @@
             <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)">
                 <NotAuthorized>
                     @{
-                        Navigation.NavigateTo("/access-denied", true);
+                        Navigation.NavigateTo("access-denied", true);
                     }
                 </NotAuthorized>
             </AuthorizeRouteView>

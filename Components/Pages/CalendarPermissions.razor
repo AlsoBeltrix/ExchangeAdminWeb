@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @inject IConfiguration Config
 @inject ServiceNowService ServiceNow
+@inject ILogger<ExchangeAdminWeb.Components.Pages.CalendarPermissions> Logger
 
 <PageTitle>Calendar Permissions</PageTitle>
 
@@ -226,7 +227,7 @@
         var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
         if (!authResult.Succeeded)
         {
-            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
 
@@ -264,6 +265,17 @@
         if (validationError is not null)
         {
             result = PermissionResult.Fail(validationError);
+            try
+            {
+                var action = tabIndex == 0 ? "SetCalendar_Denied" : "RemoveCalendar_Denied";
+                Audit.LogCalendarPermission(
+                    currentUser, clientIpAddress, action, target, user,
+                    tabIndex == 0 ? accessRight.ToString() : "", false, ticket, errorDetail: validationError);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target);
+            }
             isLoading = false;
             return;
         }

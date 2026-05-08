@@ -152,7 +152,7 @@ Email notifications are sent to a configured admin distribution list for:
 | Permission add/remove (mailbox, calendar) | Security awareness — sensitive access changes |
 | Migration operations (create, complete, stop, resume, remove, clear) | Operational awareness |
 | Out of Office set/schedule/clear | Awareness of changes to user mailboxes |
-| Message trace searches | Visibility into who is tracing whose email |
+| Message trace searches | Audit-only (no admin email) |
 
 ### End-User Notifications
 
@@ -184,7 +184,7 @@ This ensures affected users are aware of changes made to their mailbox by helpde
 - CSV audit output sanitizes formula-injection characters.
 - Blazor Server renders all user-provided content with automatic HTML encoding — no raw HTML output.
 - Out of Office message display strips HTML tags before rendering (defense-in-depth against stored XSS in Exchange OOF messages).
-- Message trace limits user-selected date ranges to 10 days and caps backend paging at 10 pages / 2,000 scanned messages, with a 1,000-result display cap.
+- Message trace uses real-time `Get-MessageTrace` for ranges up to 10 days (results in-page, capped at 1,000) and `Start-HistoricalSearch` for ranges over 10 days (results emailed to user, up to 90 days).
 - Exchange mailbox size parsing uses culture-invariant numeric parsing so server locale cannot distort values.
 
 ---
@@ -218,7 +218,7 @@ This ensures affected users are aware of changes made to their mailbox by helpde
 | Feature | Description | Admin Notification |
 |---|---|---|
 | Delegation Report | Full Access, Send As, Calendar permissions for a mailbox | No |
-| Message Trace | Sender/recipient message delivery status lookup | Yes |
+| Message Trace | Sender/recipient message delivery status lookup | No |
 | Recipient Lookup | Type, location (cloud/on-prem), size, archive, forwarding | No |
 | Out of Office Check | Current auto-reply status and message text | No |
 

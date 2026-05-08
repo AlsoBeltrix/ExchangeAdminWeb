@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @inject IConfiguration Config
 @inject ServiceNowService ServiceNow
+@inject ILogger<ExchangeAdminWeb.Components.Pages.MailboxPermissions> Logger
 
 <PageTitle>Mailbox Permissions</PageTitle>
 
@@ -230,7 +231,7 @@
         var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
         if (!authResult.Succeeded)
         {
-            Navigation.NavigateTo("/access-denied", forceLoad: true);
+            Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
 
@@ -268,6 +269,19 @@
         if (validationError is not null)
         {
             result = PermissionResult.Fail(validationError);
+            try
+            {
+                var perms = new List<string>();
+                if (grantFullAccess) perms.Add("FullAccess");
+                if (grantSendAs) perms.Add("SendAs");
+                Audit.LogMailboxPermission(
+                    currentUser, clientIpAddress, $"{(tabIndex == 0 ? "Add" : "Remove")}_Denied", target, user,
+                    string.Join("+", perms), false, ticket, errorDetail: validationError);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target);
+            }
             isLoading = false;
             return;
         }
