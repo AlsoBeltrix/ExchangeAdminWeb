@@ -29,6 +29,10 @@ try
         .GetSection("Security:SectionAccess")
         .Get<Dictionary<string, string[]>>() ?? new();
 
+    var sectionAccessConfigured = sectionAccess.Count > 0;
+    if (!sectionAccessConfigured)
+        Log.Information("Security:SectionAccess is not configured — all sections default to AllowedGroups");
+
     var expectedSections = new[] {
         "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
         "MigrationCreate", "MigrationManage", "DelegationReport",
@@ -37,14 +41,19 @@ try
 
     string[] GroupsFor(string section)
     {
+        if (!sectionAccessConfigured)
+            return allowedGroups;
         if (sectionAccess.TryGetValue(section, out var groups) && groups.Length > 0)
             return groups;
         Log.Warning("SectionAccess:{Section} is empty — access denied until configured", section);
         return Array.Empty<string>();
     }
 
-    foreach (var missing in expectedSections.Where(s => !sectionAccess.ContainsKey(s)))
-        Log.Warning("SectionAccess:{Section} is not configured — access denied until configured", missing);
+    if (sectionAccessConfigured)
+    {
+        foreach (var missing in expectedSections.Where(s => !sectionAccess.ContainsKey(s)))
+            Log.Warning("SectionAccess:{Section} is not configured — access denied until configured", missing);
+    }
 
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
