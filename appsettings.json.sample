@@ -38,7 +38,8 @@
     "PreventSelfGrant": true,
     "AllowedGroups": [
       "DOMAIN\\IT-Helpdesk",
-      "DOMAIN\\Exchange-Admins"
+      "DOMAIN\\Exchange-Admins",
+      "DOMAIN\\Migration-Team"
     ],
     "SectionAccess": {
       "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],

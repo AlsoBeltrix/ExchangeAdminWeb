@@ -117,8 +117,20 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
     "PreventSelfGrant": true,
     "AllowedGroups": [
       "DOMAIN\\IT-Helpdesk",
-      "DOMAIN\\Exchange-Admins"
-    ]
+      "DOMAIN\\Exchange-Admins",
+      "DOMAIN\\Migration-Team"
+    ],
+    "SectionAccess": {
+      "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
+      "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
+      "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+      "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+      "MigrationManage": ["DOMAIN\\Exchange-Admins"],
+      "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+      "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
+    }
   }
 }
 ```
@@ -161,18 +173,42 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 ### Group-Based Authorization
 
-Users must be members of at least one allowed AD group:
+Users must be members of at least one `AllowedGroups` entry to access the application at all:
 
 ```json
 "AllowedGroups": [
   "DOMAIN\\IT-Helpdesk",
-  "DOMAIN\\Exchange-Admins"
+  "DOMAIN\\Exchange-Admins",
+  "DOMAIN\\Migration-Team"
 ]
 ```
 
 - Groups are checked using Windows role claims
 - Both simple names (`IT-Helpdesk`) and domain-qualified names (`DOMAIN\IT-Helpdesk`) are supported
 - Empty list = all access denied (fail-closed). At least one group must be configured.
+
+### Section-Level Access (SectionAccess)
+
+Each application feature is independently gated by AD group membership. A user must pass **both** the base `AllowedGroups` check **and** the section-specific group check:
+
+```json
+"SectionAccess": {
+  "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
+  "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
+  "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+  "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+  "MigrationManage": ["DOMAIN\\Exchange-Admins"],
+  "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+  "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+  "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
+  "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
+}
+```
+
+- **Fail-closed:** missing or empty section keys deny access to that feature for all users
+- **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
+- NavMenu links and Home page cards are hidden for unauthorized sections
+- Any group listed in a section must also appear in `AllowedGroups` to be effective
 
 ### Protected Users / Excluded Users
 

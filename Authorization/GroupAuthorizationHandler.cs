@@ -41,7 +41,10 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
 
         if (requirement.AllowedGroups.Length == 0)
         {
-            _logger.LogError("SectionAccess:{Section} has no groups configured — denying all access", requirement.SectionName);
+            if (requirement.SectionName == "Application")
+                _logger.LogError("Security:AllowedGroups is empty — denying all access until configured");
+            else
+                _logger.LogError("SectionAccess:{Section} has no groups configured — denying all access", requirement.SectionName);
             context.Fail(new AuthorizationFailureReason(this, $"No groups configured for {requirement.SectionName}. Contact your administrator."));
             return Task.CompletedTask;
         }
