@@ -48,3 +48,6 @@ Thumbs.db
 *.png
 !docs/images/*.png
 !docs/images/*.PNG
+
+docs/ArchitectureDesignReview*
+docs/NOTIFICATIONS_SECURITY.md
