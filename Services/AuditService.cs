@@ -212,6 +212,34 @@ public class AuditService
         WriteLog(csvLine);
     }
 
+    public void LogSettingsChange(
+        string performedBy,
+        string ipAddress,
+        string section,
+        string[] previousGroups,
+        string[] newGroups)
+    {
+        var removed = previousGroups.Except(newGroups, StringComparer.OrdinalIgnoreCase).ToArray();
+        var added = newGroups.Except(previousGroups, StringComparer.OrdinalIgnoreCase).ToArray();
+        var detail = $"Added:[{string.Join(";", added)}] Removed:[{string.Join(";", removed)}]";
+
+        var csvLine = BuildCsvLine(
+            DateTime.UtcNow.ToString("O"),
+            SamName(performedBy),
+            ipAddress,
+            "",
+            "UpdateSectionAccess",
+            section,
+            "N/A",
+            "AdminSettings",
+            "",
+            detail,
+            "SUCCESS",
+            "");
+
+        WriteLog(csvLine);
+    }
+
     private string BuildCsvLine(params string[] fields)
     {
         var sb = new StringBuilder();

@@ -1,0 +1,330 @@
+@page "/admin-settings"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "AdminSettings")]
+@rendermode InteractiveServer
+@inject SectionAccessService SectionAccess
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<AdminSettings> Logger
+
+<PageTitle>Admin Settings</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Section Access Management</h1>
+
+    <div class="alert alert-info mb-4">
+        <strong>Configure which AD groups can access each application section.</strong>
+        Changes take effect immediately without application restart.
+        If no groups are configured for a section, access is denied to all users.
+    </div>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show">
+            @statusMessage
+            <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+        </div>
+    }
+
+    @if (!sectionAccessConfigured)
+    {
+        <div class="alert alert-warning mb-4">
+            <strong>Section access is not configured.</strong>
+            All sections currently fall back to the base <code>Security:AllowedGroups</code> gate.
+            Configure per-section groups below to enable granular access control.
+        </div>
+    }
+
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <strong>Base Access Groups</strong>
+                    <span class="text-muted ms-2">(Security:AllowedGroups &mdash; not editable here)</span>
+                </div>
+                <div class="card-body">
+                    @if (allowedGroups.Length == 0)
+                    {
+                        <span class="text-danger">Not configured</span>
+                    }
+                    else
+                    {
+                        @foreach (var g in allowedGroups)
+                        {
+                            <span class="badge bg-secondary me-1">@g</span>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <strong>Admin Groups</strong>
+                    <span class="text-muted ms-2">(Security:AdminGroups &mdash; not editable here)</span>
+                </div>
+                <div class="card-body">
+                    @if (adminGroups.Length == 0)
+                    {
+                        <span class="text-danger">Not configured</span>
+                    }
+                    else
+                    {
+                        @foreach (var g in adminGroups)
+                        {
+                            <span class="badge bg-primary me-1">@g</span>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Per-Section Access</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveAll" disabled="@saving">
+                @if (saving)
+                {
+                    <span class="spinner-border spinner-border-sm me-1"></span>
+                }
+                Save All Changes
+            </button>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th style="width: 200px;">Section</th>
+                        <th>Allowed Groups</th>
+                        <th style="width: 300px;">Add Group</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var sectionName in sections)
+                    {
+                        <tr>
+                            <td><strong>@sectionName</strong></td>
+                            <td>
+                                @if (editState.TryGetValue(sectionName, out var groups) && groups.Count > 0)
+                                {
+                                    @foreach (var group in groups.ToList())
+                                    {
+                                        var capturedSection = sectionName;
+                                        var capturedGroup = group;
+                                        var isIneffective = ineffectiveGroups.Contains(capturedGroup);
+                                        <span class="badge @(isIneffective ? "bg-warning text-dark" : "bg-light text-dark") border me-1 mb-1"
+                                              style="font-size: 0.8em;"
+                                              title="@(isIneffective ? "Not in AllowedGroups — users will still be denied by base gate" : "")">
+                                            @capturedGroup
+                                            <span role="button" class="ms-1 text-danger"
+                                                  style="cursor:pointer; font-weight:bold;"
+                                                  @onclick="() => RemoveGroup(capturedSection, capturedGroup)">&times;</span>
+                                        </span>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-muted fst-italic">
+                                        @(sectionAccessConfigured ? "No groups (access denied)" : "Inherits base groups")
+                                    </span>
+                                }
+                            </td>
+                            <td>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
+                                           value="@newGroupInputs[sectionName]"
+                                           @oninput="(e) => newGroupInputs[sectionName] = e.Value?.ToString() ?? string.Empty"
+                                           @onkeydown="(e) => HandleKeyDown(e, sectionName)" />
+                                    <button class="btn btn-outline-success" type="button"
+                                            @onclick="() => AddGroup(sectionName)">Add</button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = string.Empty;
+    private bool authChecked;
+    private bool saving;
+    private string? statusMessage;
+    private bool statusIsError;
+    private bool sectionAccessConfigured;
+    private string[] allowedGroups = Array.Empty<string>();
+    private string[] adminGroups = Array.Empty<string>();
+
+    private readonly string[] sections = new[]
+    {
+        "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
+        "MigrationCreate", "MigrationManage", "DelegationReport",
+        "MessageTrace", "RecipientLookup", "OutOfOffice"
+    };
+
+    private Dictionary<string, List<string>> editState = new();
+    private Dictionary<string, string> newGroupInputs = new();
+    private HashSet<string> ineffectiveGroups = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        LoadCurrentState();
+        authChecked = true;
+    }
+
+    private void LoadCurrentState()
+    {
+        allowedGroups = SectionAccess.GetAllowedGroups();
+        adminGroups = SectionAccess.GetAdminGroups();
+        sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
+
+        var current = SectionAccess.GetSectionAccess();
+        editState = new Dictionary<string, List<string>>();
+        newGroupInputs = new Dictionary<string, string>();
+        ineffectiveGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var section in sections)
+        {
+            var sectionGroups = current.TryGetValue(section, out var groups)
+                ? new List<string>(groups)
+                : new List<string>();
+            editState[section] = sectionGroups;
+            newGroupInputs[section] = string.Empty;
+
+            foreach (var g in sectionGroups)
+            {
+                if (!IsInAllowedGroups(g))
+                    ineffectiveGroups.Add(g);
+            }
+        }
+    }
+
+    private void AddGroup(string section)
+    {
+        var input = newGroupInputs[section]?.Trim();
+        if (string.IsNullOrWhiteSpace(input)) return;
+
+        if (!editState[section].Contains(input, StringComparer.OrdinalIgnoreCase))
+        {
+            editState[section].Add(input);
+
+            if (!IsInAllowedGroups(input))
+            {
+                ineffectiveGroups.Add(input);
+                statusMessage = $"Warning: \"{input}\" is not in AllowedGroups. Users in this group will still be denied by the base access gate.";
+                statusIsError = true;
+            }
+        }
+        newGroupInputs[section] = string.Empty;
+    }
+
+    private bool IsInAllowedGroups(string group)
+    {
+        var normalized = group.Contains('\\') ? group.Split('\\')[1] : group;
+        return allowedGroups.Any(g =>
+            g.Equals(group, StringComparison.OrdinalIgnoreCase) ||
+            (g.Contains('\\') ? g.Split('\\')[1] : g).Equals(normalized, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void RemoveGroup(string section, string group)
+    {
+        editState[section].Remove(group);
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e, string section)
+    {
+        if (e.Key == "Enter")
+            AddGroup(section);
+    }
+
+    private async Task SaveAll()
+    {
+        saving = true;
+        statusMessage = null;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Authorization check failed. You may have been removed from AdminGroups.";
+                statusIsError = true;
+                return;
+            }
+
+            var previousState = SectionAccess.GetSectionAccess();
+            var newState = new Dictionary<string, string[]>();
+
+            foreach (var section in sections)
+            {
+                newState[section] = editState[section].ToArray();
+            }
+
+            SectionAccess.SaveSectionAccess(newState);
+
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            foreach (var section in sections)
+            {
+                var prev = previousState.TryGetValue(section, out var p) ? p : Array.Empty<string>();
+                var curr = newState.TryGetValue(section, out var c) ? c : Array.Empty<string>();
+
+                if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        Audit.LogSettingsChange(currentUser, ip, section, prev, curr);
+                    }
+                    catch (Exception auditEx)
+                    {
+                        Logger.LogError(auditEx, "Failed to audit section access change for {Section}", section);
+                    }
+                }
+            }
+
+            sectionAccessConfigured = true;
+            statusMessage = "Section access configuration saved successfully.";
+            statusIsError = false;
+            Logger.LogInformation("User {User} updated section access configuration", currentUser);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+            Logger.LogError(ex, "Failed to save section access configuration");
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

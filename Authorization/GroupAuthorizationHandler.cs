@@ -1,31 +1,39 @@
+using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 
 namespace ExchangeAdminWeb.Authorization;
 
-/// <summary>
-/// Custom authorization handler that checks if user is member of allowed AD groups
-/// Handles both DOMAIN\GroupName and GroupName formats
-/// </summary>
 public class GroupAuthorizationRequirement : IAuthorizationRequirement
 {
     public string[] AllowedGroups { get; }
     public string SectionName { get; }
+    public bool ResolveDynamically { get; }
 
     public GroupAuthorizationRequirement(string[] allowedGroups, string sectionName = "Application")
     {
         AllowedGroups = allowedGroups;
         SectionName = sectionName;
+        ResolveDynamically = false;
+    }
+
+    public GroupAuthorizationRequirement(string sectionName, bool dynamic)
+    {
+        AllowedGroups = Array.Empty<string>();
+        SectionName = sectionName;
+        ResolveDynamically = dynamic;
     }
 }
 
 public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorizationRequirement>
 {
     private readonly ILogger<GroupAuthorizationHandler> _logger;
+    private readonly SectionAccessService _sectionAccessService;
 
-    public GroupAuthorizationHandler(ILogger<GroupAuthorizationHandler> logger)
+    public GroupAuthorizationHandler(ILogger<GroupAuthorizationHandler> logger, SectionAccessService sectionAccessService)
     {
         _logger = logger;
+        _sectionAccessService = sectionAccessService;
     }
 
     protected override Task HandleRequirementAsync(
@@ -35,11 +43,14 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
         var user = context.User;
         var userName = user.Identity?.Name ?? "Unknown";
 
-        // Log all role claims for debugging
         var roleClaims = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
         _logger.LogDebug("User {User} has role claims: {Roles}", userName, string.Join(", ", roleClaims));
 
-        if (requirement.AllowedGroups.Length == 0)
+        var groups = requirement.ResolveDynamically
+            ? _sectionAccessService.GetGroupsForSection(requirement.SectionName)
+            : requirement.AllowedGroups;
+
+        if (groups.Length == 0)
         {
             if (requirement.SectionName == "Application")
                 _logger.LogError("Security:AllowedGroups is empty — denying all access until configured");
@@ -49,17 +60,14 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             return Task.CompletedTask;
         }
 
-        // Check if user has any of the allowed groups
-        foreach (var allowedGroup in requirement.AllowedGroups)
+        foreach (var allowedGroup in groups)
         {
-            // Normalize the allowed group name (remove DOMAIN\ prefix if present)
             var normalizedAllowedGroup = allowedGroup.Contains('\\')
                 ? allowedGroup.Split('\\')[1]
                 : allowedGroup;
 
-            // Check if user has this role (with or without domain prefix)
-            var hasRole = user.IsInRole(allowedGroup) // Try exact match first
-                || user.IsInRole(normalizedAllowedGroup) // Try without domain
+            var hasRole = user.IsInRole(allowedGroup)
+                || user.IsInRole(normalizedAllowedGroup)
                 || roleClaims.Any(r => r.Equals(allowedGroup, StringComparison.OrdinalIgnoreCase))
                 || roleClaims.Any(r => r.Equals(normalizedAllowedGroup, StringComparison.OrdinalIgnoreCase));
 
@@ -72,7 +80,7 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
         }
 
         _logger.LogWarning("User {User} denied access to {Section} — not in groups: {Groups}",
-            userName, requirement.SectionName, string.Join(", ", requirement.AllowedGroups));
+            userName, requirement.SectionName, string.Join(", ", groups));
 
         context.Fail(new AuthorizationFailureReason(this, $"User {userName} is not a member of any allowed group for {requirement.SectionName}"));
         return Task.CompletedTask;

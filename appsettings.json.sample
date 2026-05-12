@@ -41,6 +41,9 @@
       "DOMAIN\\Exchange-Admins",
       "DOMAIN\\Migration-Team"
     ],
+    "AdminGroups": [
+      "DOMAIN\\Exchange-Admins"
+    ],
     "SectionAccess": {
       "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
       "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],

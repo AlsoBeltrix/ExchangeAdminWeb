@@ -14,6 +14,9 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
+    // Section access config is read directly by SectionAccessService (not via IConfiguration)
+    // to ensure fail-closed behavior on parse errors and correct override semantics.
+
     builder.Host.UseSerilog((ctx, services, config) => config
         .ReadFrom.Configuration(ctx.Configuration)
         .ReadFrom.Services(services)
@@ -25,13 +28,9 @@ try
     if (allowedGroups.Length == 0)
         Log.Warning("Security:AllowedGroups is empty or missing — all users will be denied access until configured");
 
-    var sectionAccess = builder.Configuration
-        .GetSection("Security:SectionAccess")
-        .Get<Dictionary<string, string[]>>() ?? new();
-
-    var sectionAccessConfigured = sectionAccess.Count > 0;
-    if (!sectionAccessConfigured)
-        Log.Information("Security:SectionAccess is not configured — all sections default to AllowedGroups");
+    var adminGroups = builder.Configuration.GetSection("Security:AdminGroups").Get<string[]>() ?? Array.Empty<string>();
+    if (adminGroups.Length == 0)
+        Log.Warning("Security:AdminGroups is empty or missing — admin settings page will be inaccessible until configured");
 
     var expectedSections = new[] {
         "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
@@ -39,25 +38,10 @@ try
         "MessageTrace", "RecipientLookup", "OutOfOffice"
     };
 
-    string[] GroupsFor(string section)
-    {
-        if (!sectionAccessConfigured)
-            return allowedGroups;
-        if (sectionAccess.TryGetValue(section, out var groups) && groups.Length > 0)
-            return groups;
-        Log.Warning("SectionAccess:{Section} is empty — access denied until configured", section);
-        return Array.Empty<string>();
-    }
-
-    if (sectionAccessConfigured)
-    {
-        foreach (var missing in expectedSections.Where(s => !sectionAccess.ContainsKey(s)))
-            Log.Warning("SectionAccess:{Section} is not configured — access denied until configured", missing);
-    }
-
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
 
+    builder.Services.AddSingleton<SectionAccessService>();
     builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
 
     builder.Services.AddAuthorization(options =>
@@ -70,27 +54,33 @@ try
         options.AddPolicy("GroupPolicy", groupPolicy);
         options.FallbackPolicy = groupPolicy;
 
+        // Section policies: static base gate + dynamic section gate
         var migrationSubPolicies = new[] { "MigrationCreate", "MigrationManage" };
         foreach (var section in expectedSections.Except(migrationSubPolicies))
         {
-            var sectionGroups = GroupsFor(section);
             options.AddPolicy(section, policy => policy
                 .RequireAuthenticatedUser()
                 .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-                .AddRequirements(new GroupAuthorizationRequirement(sectionGroups, section)));
+                .AddRequirements(new GroupAuthorizationRequirement(section, dynamic: true)));
         }
 
+        // Migration hierarchy: base gate + dynamic MigrationCheck + dynamic sub-permission
         options.AddPolicy("MigrationCreate", policy => policy
             .RequireAuthenticatedUser()
             .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
-            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCreate"), "MigrationCreate")));
+            .AddRequirements(new GroupAuthorizationRequirement("MigrationCheck", dynamic: true))
+            .AddRequirements(new GroupAuthorizationRequirement("MigrationCreate", dynamic: true)));
 
         options.AddPolicy("MigrationManage", policy => policy
             .RequireAuthenticatedUser()
             .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationCheck"), "MigrationCheck"))
-            .AddRequirements(new GroupAuthorizationRequirement(GroupsFor("MigrationManage"), "MigrationManage")));
+            .AddRequirements(new GroupAuthorizationRequirement("MigrationCheck", dynamic: true))
+            .AddRequirements(new GroupAuthorizationRequirement("MigrationManage", dynamic: true)));
+
+        // Admin page: AdminGroups only (no base AllowedGroups gate)
+        options.AddPolicy("AdminSettings", policy => policy
+            .RequireAuthenticatedUser()
+            .AddRequirements(new GroupAuthorizationRequirement(adminGroups, "AdminSettings")));
     });
 
     builder.Services.AddCascadingAuthenticationState();
