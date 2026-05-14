@@ -39,8 +39,8 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
         // Migration configuration
         _hybridEndpoint = config["Migration:HybridEndpoint"] ?? "hybrid1";
-        _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "analog.mail.onmicrosoft.com";
-        _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "analog.com";
+        _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "example.mail.onmicrosoft.com";
+        _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "example.com";
         _onPremTargetDAG = config["Migration:OnPremTargetDAG"] ?? "";
         _cloudQuotaGB = long.Parse(config["Migration:CloudQuotaGB"] ?? "100");
         _excludedADGroups = config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();

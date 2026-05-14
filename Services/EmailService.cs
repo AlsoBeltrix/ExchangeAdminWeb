@@ -28,7 +28,7 @@ public class EmailService
         _smtpUser = config["Email:SmtpUsername"] ?? "";
         _smtpPass = config["Email:SmtpPassword"] ?? "";
         _smtpUseSsl = bool.Parse(config["Email:SmtpUseSsl"] ?? "false");
-        _fromAddress = config["Email:FromAddress"] ?? "noreply@analog.com";
+        _fromAddress = config["Email:FromAddress"] ?? "noreply@example.com";
         _fromName = config["Email:FromName"] ?? "Exchange Admin";
         _adminEmail = config["Email:AdminNotificationEmail"] ?? "";
         _notifyUsers = bool.Parse(config["Email:NotifyUsersOnPermissionGrant"] ?? "false");
@@ -156,7 +156,7 @@ public class EmailService
         </div>
         <div class=""footer"">
             <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
-            <p>© {DateTime.Now.Year} Analog Devices. All rights reserved.</p>
+            <p>© {DateTime.Now.Year} Your organization. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -238,7 +238,7 @@ public class EmailService
         </div>
         <div class=""footer"">
             <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
-            <p>© {DateTime.Now.Year} Analog Devices. All rights reserved.</p>
+            <p>© {DateTime.Now.Year} Your organization. All rights reserved.</p>
         </div>
     </div>
 </body>

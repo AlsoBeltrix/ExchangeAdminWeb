@@ -296,7 +296,7 @@ public class AuditService
         return $"exchangeadmin_{suffix}.csv";
     }
 
-    // Strips domain prefix: "ANALOG\mcoelho" → "mcoelho", "mcoelho" → "mcoelho"
+    // Strips domain prefix: "DOMAIN\jdoe" -> "jdoe", "jdoe" -> "jdoe"
     private static string SamName(string identity) =>
         identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 }

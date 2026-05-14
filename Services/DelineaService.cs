@@ -89,7 +89,7 @@ public class DelineaService
                 return null;
             }
 
-            return (username!, password!, domain ?? "ANALOG");
+            return (username!, password!, domain ?? "DOMAIN");
         }
         catch (Exception ex)
         {
@@ -107,7 +107,7 @@ public class DelineaService
             return;
         }
 
-        // Authenticate using SDK client credentials (same as SecretServerCore.ps1)
+        // Authenticate using SDK client credentials.
         var authBody = new FormUrlEncodedContent(new[]
         {
             new KeyValuePair<string, string>("grant_type", "client_credentials"),

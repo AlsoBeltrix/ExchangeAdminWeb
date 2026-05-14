@@ -89,13 +89,13 @@ public class AuditServiceTests : IDisposable
     [Fact]
     public void LogMailboxPermission_StripsDomainPrefix()
     {
-        _audit.LogMailboxPermission(@"ANALOG\mcoelho", "10.0.0.1", "AddFullAccess",
+        _audit.LogMailboxPermission(@"DOMAIN\jdoe", "10.0.0.1", "AddFullAccess",
             "target@co.com", "user@co.com", "FullAccess", true, "INC001");
 
         var lines = ReadLogLines();
-        // Should contain "mcoelho" not "ANALOG\mcoelho"
-        Assert.DoesNotContain("ANALOG", lines[1]);
-        Assert.Contains("mcoelho", lines[1]);
+        // Should contain "jdoe" not "DOMAIN\jdoe"
+        Assert.DoesNotContain("DOMAIN", lines[1]);
+        Assert.Contains("jdoe", lines[1]);
     }
 
     // --- CSV escaping ---

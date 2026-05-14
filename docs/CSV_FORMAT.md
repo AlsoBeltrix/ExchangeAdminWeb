@@ -12,16 +12,16 @@
 ### Example - Add Permissions
 ```csv
 Target,User,FullAccess,SendAs,AutoMapping
-helpdesk@analog.com,jsmith,Yes,Yes,Yes
-finance@analog.com,jdoe,Yes,No,No
-sales@analog.com,ANALOG\bwilson,No,Yes,
+helpdesk@example.com,jsmith,Yes,Yes,Yes
+finance@example.com,jdoe,Yes,No,No
+sales@example.com,DOMAIN\bwilson,No,Yes,
 ```
 
 ### Example - Remove Permissions
 ```csv
 Target,User,FullAccess,SendAs
-helpdesk@analog.com,jsmith,Yes,Yes
-finance@analog.com,jdoe,Yes,No
+helpdesk@example.com,jsmith,Yes,Yes
+finance@example.com,jdoe,Yes,No
 ```
 
 ---
@@ -53,16 +53,16 @@ finance@analog.com,jdoe,Yes,No
 ### Example - Set Permissions
 ```csv
 Target,User,AccessRight
-exec@analog.com,assistant@analog.com,Editor
-manager@analog.com,team@analog.com,Reviewer
-sales@analog.com,finance@analog.com,LimitedDetails
+exec@example.com,assistant@example.com,Editor
+manager@example.com,team@example.com,Reviewer
+sales@example.com,finance@example.com,LimitedDetails
 ```
 
 ### Example - Remove Permissions
 ```csv
 Target,User
-exec@analog.com,oldassistant@analog.com
-manager@analog.com,exemployee@analog.com
+exec@example.com,oldassistant@example.com
+manager@example.com,exemployee@example.com
 ```
 
 ---
@@ -70,9 +70,9 @@ manager@analog.com,exemployee@analog.com
 ## Notes
 
 - **Identity Formats**: All `Target` and `User` fields accept:
-  - SMTP address: `user@analog.com`
-  - UPN: `user@analog.onmicrosoft.com`
-  - SamAccountName: `ANALOG\user` or just `user`
+  - SMTP address: `user@example.com`
+  - UPN: `user@example.onmicrosoft.com`
+  - SamAccountName: `DOMAIN\user` or just `user`
 
 - **Calendar Folders**: The app automatically detects the correct calendar folder name for each mailbox (handles international/localized folder names like "Kalender", "Calendrier", etc.)
 

@@ -42,7 +42,7 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Email Address</label>
-                        <input type="email" class="form-control" @bind="singleEmail" placeholder="user@analog.com" disabled="@isLoading" />
+                        <input type="email" class="form-control" @bind="singleEmail" placeholder="user@example.com" disabled="@isLoading" />
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Migration Direction</label>
@@ -170,7 +170,7 @@
                     <div class="col-md-4">
                         <label class="form-label">CSV File (EmailAddress column required)</label>
                         <InputFile class="form-control" OnChange="HandleCsvUpload" disabled="@isLoading" accept=".csv" />
-                        <small class="text-muted">Format: EmailAddress<br />user1@analog.com<br />user2@analog.com</small>
+                        <small class="text-muted">Format: EmailAddress<br />user1@example.com<br />user2@example.com</small>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Migration Direction</label>

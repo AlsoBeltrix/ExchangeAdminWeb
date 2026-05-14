@@ -43,6 +43,9 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Local/private cleanup archive
+_not_for_github/
+
 # Screenshots
 *.PNG
 *.png
@@ -50,4 +53,7 @@ Thumbs.db
 !docs/images/*.PNG
 
 docs/ArchitectureDesignReview*
-
+docs/CodeReview-*.md
+docs/NOTIFICATIONS_SECURITY.md
+docs/SectionPermissions-Plan.md
+examplescripts/

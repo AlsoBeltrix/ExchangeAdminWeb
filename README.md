@@ -46,8 +46,8 @@ ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox a
 - Users must be authenticated via Windows Authentication (domain-joined)
 - **ActiveDirectory PowerShell Module** (RSAT-AD-PowerShell) required for migration eligibility checks
 - **IIS App Pool Identity** must have AD read permissions to query user group memberships
-  - Default: Uses ApplicationPoolIdentity (inherits from computer account)
-  - Recommended: Configure app pool to run as domain service account with AD read access
+  - The deployment script defaults to a placeholder domain service account (`DOMAIN\svc_exchangeadmin`) and prompts for its password on first install
+  - Override `-ServiceAccount` or configure IIS manually if using ApplicationPoolIdentity, a gMSA, or another domain service account
 
 ## Installation
 
@@ -217,7 +217,7 @@ Prevent modifications to specific mailboxes:
 ```json
 "ExcludedUsers": [
   "C-Suite",
-  "vincent.roche@analog.com"
+  "ceo@example.com"
 ]
 ```
 
@@ -261,7 +261,7 @@ helpdesk@company.com,john.doe@company.com,Yes,Yes,Yes
 finance@company.com,jane.smith@company.com,Yes,No,No
 ```
 
-See [CSV_FORMAT.md](CSV_FORMAT.md) for complete documentation.
+See [docs/CSV_FORMAT.md](docs/CSV_FORMAT.md) for complete documentation.
 
 ### CSV Format - Calendar Permissions
 
@@ -280,12 +280,7 @@ exec@company.com,old-assistant@company.com
 
 ## Security Features
 
-See [NOTIFICATIONS_SECURITY.md](NOTIFICATIONS_SECURITY.md) for complete documentation on:
-- Email notification configuration
-- Group-based access control
-- Self-grant prevention
-- Protected user lists
-- Audit logging format
+Configure email notifications, group-based access control, self-grant prevention, protected user lists, and audit logging in `appsettings.json`.
 
 ## Troubleshooting
 
@@ -316,13 +311,13 @@ See [NOTIFICATIONS_SECURITY.md](NOTIFICATIONS_SECURITY.md) for complete document
 ### Migration eligibility checks show AD group warning
 - Ensure ActiveDirectory PowerShell module is installed: `Install-WindowsFeature RSAT-AD-PowerShell`
 - Verify IIS app pool identity has AD read permissions
-- If using ApplicationPoolIdentity (default), ensure server computer account has domain access
+- If using ApplicationPoolIdentity, ensure server computer account has domain access
 - **To use domain service account:**
   ```powershell
   Import-Module WebAdministration
   Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.identityType -Value 3
   Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.userName -Value "DOMAIN\svc_exchangeadmin"
-  Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.password -Value "password"
+  Set-ItemProperty "IIS:\AppPools\ExchangeAdminWeb" -Name processModel.password -Value "<secure-password>"
   ```
 - Check application logs for detailed AD errors: `D:\inetpub\ExchangeAdminWeb\logs\app-*.log`
 - Test AD access: Run `Get-ADUser -Identity username` in PowerShell as the app pool identity
@@ -370,7 +365,7 @@ ExchangeAdminWeb/
 
 ## License
 
-Internal use only - Analog Devices, Inc.
+For internal administrative use. Configure all environment-specific settings before deployment.
 
 ## Support
 

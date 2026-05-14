@@ -70,7 +70,7 @@
     "Enabled": false,
     "InstanceUrl": "https://yourinstance.service-now.com",
     "Username": "api_user",
-    "Password": "api_password"
+    "Password": ""
   },
   "Delinea": {
     "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
