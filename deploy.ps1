@@ -40,6 +40,22 @@ function Write-Success { param($m) Write-Host " OK  $m" -ForegroundColor Green }
 function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow }
 function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; exit 1 }
 
+function Start-AppPoolWithRetry {
+    param([string]$Name, [int]$MaxAttempts = 5, [int]$DelaySeconds = 3)
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            $state = (Get-ItemProperty "IIS:\AppPools\$Name").State
+            if ($state -eq 'Started') { return }
+            Start-WebAppPool -Name $Name -ErrorAction Stop
+            return
+        } catch {
+            if ($i -eq $MaxAttempts) { throw }
+            Write-Host "       Pool not ready, retrying in ${DelaySeconds}s ($i/$MaxAttempts)..." -ForegroundColor DarkGray
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+}
+
 function Prompt-Value {
     param([string]$Name, [string]$Prompt, [string]$Default)
     if ($NonInteractive) { return $Default }
@@ -300,8 +316,8 @@ if ($isUpgrade) {
     Write-Success "Config backed up to $BackupDir\$backupName"
 
     Write-Step "Stopping app pool"
-    Stop-WebAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
+    Start-Sleep -Seconds 3
 
     try {
         Write-Step "Deploying files (robocopy /MIR)"
@@ -369,7 +385,7 @@ if ($isUpgrade) {
         Write-Success "Configuration reconciled"
     } finally {
         Write-Step "Starting app pool"
-        Start-WebAppPool -Name $AppPoolName
+        Start-AppPoolWithRetry -Name $AppPoolName
         Write-Success "App pool started"
     }
 
@@ -412,8 +428,8 @@ if ($isUpgrade) {
 
     # Stop pool before file swap
     Write-Step "Stopping app pool for file deployment"
-    Stop-WebAppPool -Name $AppPoolName -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
+    Start-Sleep -Seconds 3
 
     try {
         # Deploy files
@@ -498,9 +514,8 @@ if ($isUpgrade) {
         $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
         Write-Success "appsettings.json generated"
     } finally {
-        # Always restart pool even if config generation fails
         Write-Step "Starting app pool"
-        Start-WebAppPool -Name $AppPoolName
+        Start-AppPoolWithRetry -Name $AppPoolName
         Write-Success "App pool started"
     }
 }
