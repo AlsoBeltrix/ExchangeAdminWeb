@@ -1786,8 +1786,9 @@ https://admin.exchange.microsoft.com/#/migration";
         bool discard = false;
         try
         {
-            return await Task.Run(() =>
+            var (result, hadConnectionError) = await Task.Run(() =>
             {
+                ConnectionErrorFlag = false;
                 var ps = pooled.PowerShell;
                 try
                 {
@@ -1796,15 +1797,12 @@ https://admin.exchange.microsoft.com/#/migration";
                     if (successFormatter is not null)
                     {
                         var (message, detail) = successFormatter();
-                        return new PermissionResult { Success = true, Message = message, Detail = detail };
+                        return (new PermissionResult { Success = true, Message = message, Detail = detail }, ConnectionErrorFlag);
                     }
-                    return PermissionResult.Ok();
+                    return (PermissionResult.Ok(), ConnectionErrorFlag);
                 }
                 catch (Exception ex)
                 {
-                    if (IsConnectionError(ex))
-                        discard = true;
-
                     var psErrors = ps.Streams.Error
                         .Select(e => e.Exception?.Message ?? e.ToString())
                         .Where(m => !string.IsNullOrWhiteSpace(m))
@@ -1814,9 +1812,12 @@ https://admin.exchange.microsoft.com/#/migration";
                     var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
 
                     _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                    return PermissionResult.Fail(primary, detail);
+                    return (PermissionResult.Fail(primary, detail), IsConnectionError(ex) || ConnectionErrorFlag);
                 }
             });
+
+            discard = hadConnectionError;
+            return result;
         }
         finally
         {
@@ -1868,11 +1869,14 @@ https://admin.exchange.microsoft.com/#/migration";
         bool discard = false;
         try
         {
-            var result = await Task.Run(() => query(pooled.PowerShell));
+            var (result, hadConnectionError) = await Task.Run(() =>
+            {
+                ConnectionErrorFlag = false;
+                var r = query(pooled.PowerShell);
+                return (r, ConnectionErrorFlag);
+            });
 
-            if (pooled.PowerShell.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-                discard = true;
-
+            discard = hadConnectionError;
             return result;
         }
         catch (Exception ex) when (IsConnectionError(ex))
@@ -1888,6 +1892,8 @@ https://admin.exchange.microsoft.com/#/migration";
                 _exoPool.Return(pooled);
         }
     }
+
+    [ThreadStatic] private static bool ConnectionErrorFlag;
 
     private static bool IsConnectionError(Exception? ex) =>
         ex != null && (
@@ -1916,14 +1922,17 @@ https://admin.exchange.microsoft.com/#/migration";
         }
         catch (RuntimeException ex)
         {
+            if (IsConnectionError(ex))
+                ConnectionErrorFlag = true;
             throw new InvalidOperationException(ex.Message, ex);
         }
 
         if (ps.HadErrors)
         {
-            var msg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message
-                   ?? ps.Streams.Error.FirstOrDefault()?.ToString()
-                   ?? "An unknown error occurred.";
+            var err = ps.Streams.Error.FirstOrDefault();
+            var msg = err?.Exception?.Message ?? err?.ToString() ?? "An unknown error occurred.";
+            if (IsConnectionError(err?.Exception))
+                ConnectionErrorFlag = true;
             throw new InvalidOperationException(msg);
         }
 
@@ -1934,6 +1943,8 @@ https://admin.exchange.microsoft.com/#/migration";
     private static Collection<PSObject> InvokeOptional(PowerShell ps)
     {
         var result = ps.Invoke();
+        if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
+            ConnectionErrorFlag = true;
         ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;

@@ -201,16 +201,17 @@
 
         try
         {
-            var lines = File.ReadAllLines(filePath);
+            const int maxEvents = 500;
+            var buffer = new Queue<AuditEvent>(maxEvents + 1);
             var index = 0;
-            foreach (var line in lines.Reverse())
+            foreach (var line in File.ReadLines(filePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 try
                 {
                     var doc = JsonDocument.Parse(line);
                     var root = doc.RootElement;
-                    allEvents.Add(new AuditEvent
+                    buffer.Enqueue(new AuditEvent
                     {
                         Index = index++,
                         Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
@@ -222,9 +223,14 @@
                         Result = TryGetString(root, "result") ?? "",
                         RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
                     });
+                    if (buffer.Count > maxEvents)
+                        buffer.Dequeue();
                 }
                 catch { }
             }
+            allEvents = buffer.Reverse().ToList();
+            for (int i = 0; i < allEvents.Count; i++)
+                allEvents[i].Index = i;
         }
         catch (Exception ex)
         {
