@@ -4,7 +4,7 @@ param(
     [string]$ParentSite          = "Default Web Site",
     [string]$AppAlias            = "ExchangeAdminWeb",
     [string]$AppPoolName         = "ExchangeAdminWeb",
-    [string]$ServiceAccount      = "DOMAIN\svc_exchangeadmin",
+    [string]$ServiceAccount,
     [securestring]$ServiceAccountPassword,
     [string]$PublishPath         = "D:\inetpub\ExchangeAdminWeb",
     [string]$LogRoot             = "E:\WWWOutput",
@@ -166,11 +166,20 @@ $poolExists = Test-Path "IIS:\AppPools\$AppPoolName"
 
 if ($poolExists) {
     $existingUser = (Get-ItemProperty "IIS:\AppPools\$AppPoolName" -Name processModel).userName
-    if ($existingUser -ne $ServiceAccount) {
+    if (-not $ServiceAccount) {
+        $ServiceAccount = $existingUser
+    } elseif ($existingUser -ne $ServiceAccount) {
         Write-Warn "App pool identity changing: $existingUser -> $ServiceAccount"
         $needsPassword = $true
     }
 } else {
+    if (-not $ServiceAccount) {
+        if ($NonInteractive) {
+            Write-Fail "ServiceAccount is required for new app pool but not supplied."
+        }
+        $ServiceAccount = Prompt-Value "ServiceAccount" "App pool service account (DOMAIN\username)"
+        if (-not $ServiceAccount) { Write-Fail "ServiceAccount is required." }
+    }
     $needsPassword = $true
 }
 

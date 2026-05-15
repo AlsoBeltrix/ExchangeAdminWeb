@@ -89,7 +89,13 @@ public class DelineaService
                 return null;
             }
 
-            return (username!, password!, domain ?? "DOMAIN");
+            if (string.IsNullOrEmpty(domain))
+            {
+                _logger.LogError("Secret {SecretId} missing Domain field — cannot construct on-prem credential", _exchangeSecretId);
+                return null;
+            }
+
+            return (username!, password!, domain);
         }
         catch (Exception ex)
         {

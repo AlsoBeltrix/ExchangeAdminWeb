@@ -20,7 +20,7 @@ ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox a
 - **Group-based Authorization** - Restrict access to specific AD groups
 - **Self-grant Prevention** - Users cannot grant themselves permissions
 - **Protected User Lists** - Block modifications to C-suite/executive mailboxes (with AD group expansion)
-- **Audit Logging** - CSV format logs with full operation details
+- **Audit Logging** - JSONL format logs with full operation details
 - **Email Notifications** - Admin notifications on all operations, optional user notifications
 - **Ticket Number Requirement** - All operations require a service ticket number
 
@@ -46,8 +46,8 @@ ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox a
 - Users must be authenticated via Windows Authentication (domain-joined)
 - **ActiveDirectory PowerShell Module** (RSAT-AD-PowerShell) required for migration eligibility checks
 - **IIS App Pool Identity** must have AD read permissions to query user group memberships
-  - The deployment script defaults to a placeholder domain service account (`DOMAIN\svc_exchangeadmin`) and prompts for its password on first install
-  - Override `-ServiceAccount` or configure IIS manually if using ApplicationPoolIdentity, a gMSA, or another domain service account
+  - The deployment script requires `-ServiceAccount` on fresh install (prompts interactively if omitted); on upgrade it retains the existing app pool identity
+  - Configure IIS manually if using ApplicationPoolIdentity or a gMSA instead
 
 ## Installation
 
@@ -227,12 +227,22 @@ Prevent modifications to specific mailboxes:
 
 ### Audit Logging
 
-All operations logged to CSV format:
+All operations logged as JSON Lines (.jsonl):
 
-**Location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.csv`
+**Location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
 
-**Columns:**
-- TimestampUtc, User, IPAddress, TicketNumber, Action, TargetMailbox, AffectedUser, PermissionType, AutoMapping, AccessRight, Result, Error
+**Common fields:** `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
+
+**Category-specific fields:**
+- MailboxPermission: `target`, `affectedUser`, `permissionType`, `autoMapping`
+- CalendarPermission: `target`, `affectedUser`, `accessRight`
+- MigrationCheck: `target`, `status`, `reasons`
+- MigrationBatch: `batchName`, `direction`, `userCount`, `autoStart`, `autoComplete`
+- MigrationAction: `target`
+- Lookup: `target`
+- AdminSettings: `section`, `added`, `removed`
+
+Null fields are omitted. `error` appears only on failure.
 
 **Rotation:**
 - `daily` (default): New file each day
@@ -344,7 +354,7 @@ ExchangeAdminWeb/
 ├── Models/            # Data models and enums
 ├── Services/          # Business logic
 │   ├── ExchangeService.cs      # PowerShell EXO operations
-│   ├── AuditService.cs         # CSV audit logging
+│   ├── AuditService.cs         # JSONL audit logging
 │   ├── EmailService.cs         # SMTP notifications
 │   └── PermissionValidator.cs  # Security validation
 ├── wwwroot/           # Static assets
