@@ -1,5 +1,6 @@
 using System.Globalization;
-using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -8,7 +9,11 @@ public class AuditService
     private readonly string _logFolder;
     private readonly string _rotationPeriod;
     private readonly object _lock = new();
-    private static readonly string CsvHeader = "TimestampUtc,User,IPAddress,TicketNumber,Action,TargetMailbox,AffectedUser,PermissionType,AutoMapping,AccessRight,Result,Error";
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
 
     public AuditService(IConfiguration config)
     {
@@ -17,36 +22,6 @@ public class AuditService
         _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
 
         Directory.CreateDirectory(_logFolder);
-        MigrateOldLogFormatIfNeeded();
-    }
-
-    private void MigrateOldLogFormatIfNeeded()
-    {
-        try
-        {
-            // Check if current log file exists and has old format (no IPAddress column)
-            var currentLogFile = Path.Combine(_logFolder, GetLogFilename());
-
-            if (File.Exists(currentLogFile))
-            {
-                var firstLine = File.ReadLines(currentLogFile).FirstOrDefault();
-                // Old format: "TimestampUtc,User,TicketNumber,Action..."
-                // New format: "TimestampUtc,User,IPAddress,TicketNumber,Action..."
-                if (firstLine != null && firstLine.StartsWith("TimestampUtc,User,TicketNumber"))
-                {
-                    // Old format detected - rename it
-                    var backupName = currentLogFile.Replace(".csv", $"_old_format_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
-                    File.Move(currentLogFile, backupName);
-
-                    // Log will be recreated with new header on next write
-                    Console.WriteLine($"[AuditService] Migrated old log format to: {Path.GetFileName(backupName)}");
-                }
-            }
-        }
-        catch
-        {
-            // Don't fail startup if log migration fails
-        }
     }
 
     public void LogMailboxPermission(
@@ -61,21 +36,23 @@ public class AuditService
         bool? autoMapping = null,
         string? errorDetail = null)
     {
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            ticketNumber,
-            action,
-            targetMailbox,
-            affectedUser,
-            permissionType,
-            autoMapping?.ToString() ?? "",
-            "",
-            success ? "SUCCESS" : "FAILED",
-            errorDetail ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "MailboxPermission",
+            ["result"] = success ? "Success" : "Failed",
+            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["target"] = targetMailbox,
+            ["affectedUser"] = affectedUser,
+            ["permissionType"] = permissionType,
+            ["autoMapping"] = autoMapping,
+            ["error"] = success ? null : errorDetail
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogCalendarPermission(
@@ -89,21 +66,22 @@ public class AuditService
         string ticketNumber,
         string? errorDetail = null)
     {
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            ticketNumber,
-            action,
-            targetMailbox,
-            affectedUser,
-            "Calendar",
-            "",
-            accessRight ?? "",
-            success ? "SUCCESS" : "FAILED",
-            errorDetail ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "CalendarPermission",
+            ["result"] = success ? "Success" : "Failed",
+            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["target"] = targetMailbox,
+            ["affectedUser"] = affectedUser,
+            ["accessRight"] = accessRight,
+            ["error"] = success ? null : errorDetail
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogMigrationCheck(
@@ -114,21 +92,21 @@ public class AuditService
         string ticketNumber,
         string? reasons = null)
     {
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            ticketNumber,
-            "CheckMigrationEligibility",
-            emailAddress,
-            "N/A",
-            "Migration",
-            "",
-            status,
-            status == "Eligible" ? "SUCCESS" : "INELIGIBLE",
-            reasons ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = "CheckMigrationEligibility",
+            ["category"] = "MigrationCheck",
+            ["result"] = status == "Eligible" ? "Success" : "Ineligible",
+            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["target"] = emailAddress,
+            ["status"] = status,
+            ["reasons"] = reasons
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogMigrationBatch(
@@ -143,22 +121,24 @@ public class AuditService
         bool success,
         string? errorDetail = null)
     {
-        var options = $"Users:{userCount},AutoStart:{autoStart},AutoComplete:{autoComplete}";
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            ticketNumber,
-            $"CreateMigrationBatch_{direction}",
-            batchName,
-            "N/A",
-            "Migration",
-            "",
-            options,
-            success ? "SUCCESS" : "FAILED",
-            errorDetail ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = $"CreateMigrationBatch_{direction}",
+            ["category"] = "MigrationBatch",
+            ["result"] = success ? "Success" : "Failed",
+            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["batchName"] = batchName,
+            ["direction"] = direction,
+            ["userCount"] = userCount,
+            ["autoStart"] = autoStart,
+            ["autoComplete"] = autoComplete,
+            ["error"] = success ? null : errorDetail
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogMigrationAction(
@@ -170,21 +150,20 @@ public class AuditService
         string ticketNumber = "",
         string? errorDetail = null)
     {
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            ticketNumber,
-            action,
-            target,
-            "N/A",
-            "Migration",
-            "",
-            "",
-            success ? "SUCCESS" : "FAILED",
-            errorDetail ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "MigrationAction",
+            ["result"] = success ? "Success" : "Failed",
+            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
+            ["target"] = target,
+            ["error"] = success ? null : errorDetail
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogLookupAction(
@@ -195,21 +174,19 @@ public class AuditService
         bool success,
         string? errorDetail = null)
     {
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            "",
-            action,
-            target,
-            "N/A",
-            "Lookup",
-            "",
-            "",
-            success ? "SUCCESS" : "FAILED",
-            errorDetail ?? "");
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "Lookup",
+            ["result"] = success ? "Success" : "Failed",
+            ["target"] = target,
+            ["error"] = success ? null : errorDetail
+        };
 
-        WriteLog(csvLine);
+        WriteEvent(evt);
     }
 
     public void LogSettingsChange(
@@ -221,66 +198,32 @@ public class AuditService
     {
         var removed = previousGroups.Except(newGroups, StringComparer.OrdinalIgnoreCase).ToArray();
         var added = newGroups.Except(previousGroups, StringComparer.OrdinalIgnoreCase).ToArray();
-        var detail = $"Added:[{string.Join(";", added)}] Removed:[{string.Join(";", removed)}]";
 
-        var csvLine = BuildCsvLine(
-            DateTime.UtcNow.ToString("O"),
-            SamName(performedBy),
-            ipAddress,
-            "",
-            "UpdateSectionAccess",
-            section,
-            "N/A",
-            "AdminSettings",
-            "",
-            detail,
-            "SUCCESS",
-            "");
-
-        WriteLog(csvLine);
-    }
-
-    private string BuildCsvLine(params string[] fields)
-    {
-        var sb = new StringBuilder();
-        for (int i = 0; i < fields.Length; i++)
+        var evt = new Dictionary<string, object?>
         {
-            if (i > 0) sb.Append(',');
-            sb.Append(EscapeCsvField(fields[i]));
-        }
-        return sb.ToString();
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = "UpdateSectionAccess",
+            ["category"] = "AdminSettings",
+            ["result"] = "Success",
+            ["section"] = section,
+            ["added"] = added.Length > 0 ? added : null,
+            ["removed"] = removed.Length > 0 ? removed : null
+        };
+
+        WriteEvent(evt);
     }
 
-    private string EscapeCsvField(string field)
+    private void WriteEvent(Dictionary<string, object?> evt)
     {
-        if (string.IsNullOrEmpty(field))
-            return "";
-
-        var sanitized = field;
-        if (sanitized.Length > 0 && sanitized[0] is '=' or '+' or '-' or '@' or '\t' or '\r' or '\n')
-            sanitized = "'" + sanitized;
-
-        if (sanitized.Contains(',') || sanitized.Contains('"') || sanitized.Contains('\n') || sanitized.Contains('\r'))
-        {
-            return $"\"{sanitized.Replace("\"", "\"\"")}\"";
-        }
-
-        return sanitized;
-    }
-
-    private void WriteLog(string csvLine)
-    {
-        var filename = GetLogFilename();
-        var logPath = Path.Combine(_logFolder, filename);
+        var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
+        var json = JsonSerializer.Serialize(filtered, JsonOpts);
+        var logPath = Path.Combine(_logFolder, GetLogFilename());
 
         lock (_lock)
         {
-            if (!File.Exists(logPath))
-            {
-                File.WriteAllText(logPath, CsvHeader + Environment.NewLine);
-            }
-
-            File.AppendAllText(logPath, csvLine + Environment.NewLine);
+            File.AppendAllText(logPath, json + "\n");
         }
     }
 
@@ -293,10 +236,9 @@ public class AuditService
             "monthly" => now.ToString("yyyyMM"),
             _ => now.ToString("yyyyMMdd")
         };
-        return $"exchangeadmin_{suffix}.csv";
+        return $"exchangeadmin_{suffix}.jsonl";
     }
 
-    // Strips domain prefix: "DOMAIN\jdoe" -> "jdoe", "jdoe" -> "jdoe"
     private static string SamName(string identity) =>
         identity.Contains('\\') ? identity.Split('\\')[1] : identity;
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using Microsoft.Extensions.Configuration;
 
@@ -27,34 +28,34 @@ public class AuditServiceTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, true); }
-        catch { /* cleanup best effort */ }
+        catch { }
     }
 
     private string GetCurrentLogPath()
     {
         var dir = Path.Combine(_tempDir, "ExchangeAdminWeb");
-        var files = Directory.GetFiles(dir, "exchangeadmin_*.csv");
+        var files = Directory.GetFiles(dir, "exchangeadmin_*.jsonl");
         Assert.Single(files);
         return files[0];
     }
 
-    private string[] ReadLogLines()
+    private JsonDocument[] ReadEvents()
     {
         var path = GetCurrentLogPath();
-        return File.ReadAllLines(path);
+        return File.ReadAllLines(path)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Select(l => JsonDocument.Parse(l))
+            .ToArray();
     }
 
-    // --- CSV header ---
-
     [Fact]
-    public void LogMailboxPermission_CreatesFileWithHeader()
+    public void LogMailboxPermission_CreatesJsonlFile()
     {
         _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com",
             "user@co.com", "FullAccess", true, "INC001");
 
-        var lines = ReadLogLines();
-        Assert.True(lines.Length >= 2);
-        Assert.StartsWith("TimestampUtc,User,IPAddress,TicketNumber", lines[0]);
+        var events = ReadEvents();
+        Assert.Single(events);
     }
 
     [Fact]
@@ -63,16 +64,18 @@ public class AuditServiceTests : IDisposable
         _audit.LogMailboxPermission("DOMAIN\\admin", "192.168.1.1", "AddFullAccess",
             "target@co.com", "user@co.com", "FullAccess", true, "INC001", autoMapping: true);
 
-        var lines = ReadLogLines();
-        var dataLine = lines[1];
-        Assert.Contains("admin", dataLine);
-        Assert.Contains("192.168.1.1", dataLine);
-        Assert.Contains("INC001", dataLine);
-        Assert.Contains("AddFullAccess", dataLine);
-        Assert.Contains("target@co.com", dataLine);
-        Assert.Contains("user@co.com", dataLine);
-        Assert.Contains("FullAccess", dataLine);
-        Assert.Contains("SUCCESS", dataLine);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("admin", root.GetProperty("user").GetString());
+        Assert.Equal("192.168.1.1", root.GetProperty("ip").GetString());
+        Assert.Equal("INC001", root.GetProperty("ticket").GetString());
+        Assert.Equal("AddFullAccess", root.GetProperty("action").GetString());
+        Assert.Equal("target@co.com", root.GetProperty("target").GetString());
+        Assert.Equal("user@co.com", root.GetProperty("affectedUser").GetString());
+        Assert.Equal("FullAccess", root.GetProperty("permissionType").GetString());
+        Assert.Equal("MailboxPermission", root.GetProperty("category").GetString());
+        Assert.Equal("Success", root.GetProperty("result").GetString());
+        Assert.True(root.GetProperty("autoMapping").GetBoolean());
     }
 
     [Fact]
@@ -81,9 +84,10 @@ public class AuditServiceTests : IDisposable
         _audit.LogMailboxPermission("admin", "10.0.0.1", "AddSendAs", "target@co.com",
             "user@co.com", "SendAs", false, "INC002", errorDetail: "Mailbox not found");
 
-        var lines = ReadLogLines();
-        Assert.Contains("FAILED", lines[1]);
-        Assert.Contains("Mailbox not found", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("Failed", root.GetProperty("result").GetString());
+        Assert.Equal("Mailbox not found", root.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -92,39 +96,32 @@ public class AuditServiceTests : IDisposable
         _audit.LogMailboxPermission(@"DOMAIN\jdoe", "10.0.0.1", "AddFullAccess",
             "target@co.com", "user@co.com", "FullAccess", true, "INC001");
 
-        var lines = ReadLogLines();
-        // Should contain "jdoe" not "DOMAIN\jdoe"
-        Assert.DoesNotContain("DOMAIN", lines[1]);
-        Assert.Contains("jdoe", lines[1]);
-    }
-
-    // --- CSV escaping ---
-
-    [Fact]
-    public void LogMailboxPermission_EscapesCommasInErrorDetail()
-    {
-        _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com",
-            "user@co.com", "FullAccess", false, "INC001",
-            errorDetail: "Error: first, second, third");
-
-        var lines = ReadLogLines();
-        // The error detail with commas should be quoted
-        Assert.Contains("\"Error: first, second, third\"", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("jdoe", root.GetProperty("user").GetString());
     }
 
     [Fact]
-    public void LogMailboxPermission_EscapesQuotesInErrorDetail()
+    public void LogMailboxPermission_SuccessOmitsErrorField()
     {
         _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com",
-            "user@co.com", "FullAccess", false, "INC001",
-            errorDetail: "Error: \"something\" failed");
+            "user@co.com", "FullAccess", true, "INC001");
 
-        var lines = ReadLogLines();
-        // Quotes should be escaped as double quotes
-        Assert.Contains("\"\"something\"\"", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.False(root.TryGetProperty("error", out _));
     }
 
-    // --- Calendar logging ---
+    [Fact]
+    public void LogMailboxPermission_EmptyTicketOmitsField()
+    {
+        _audit.LogMailboxPermission("admin", "10.0.0.1", "AddFullAccess", "target@co.com",
+            "user@co.com", "FullAccess", true, "");
+
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.False(root.TryGetProperty("ticket", out _));
+    }
 
     [Fact]
     public void LogCalendarPermission_WritesCorrectFields()
@@ -132,13 +129,12 @@ public class AuditServiceTests : IDisposable
         _audit.LogCalendarPermission("admin", "10.0.0.1", "SetCalendar", "target@co.com",
             "user@co.com", "Reviewer", true, "REQ001");
 
-        var lines = ReadLogLines();
-        Assert.Contains("Calendar", lines[1]);
-        Assert.Contains("Reviewer", lines[1]);
-        Assert.Contains("SUCCESS", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("CalendarPermission", root.GetProperty("category").GetString());
+        Assert.Equal("Reviewer", root.GetProperty("accessRight").GetString());
+        Assert.Equal("Success", root.GetProperty("result").GetString());
     }
-
-    // --- Multiple writes append ---
 
     [Fact]
     public void MultipleWrites_AppendToSameFile()
@@ -148,11 +144,9 @@ public class AuditServiceTests : IDisposable
         _audit.LogMailboxPermission("admin", "10.0.0.1", "Add", "t2@co.com",
             "u2@co.com", "SendAs", true, "INC002");
 
-        var lines = ReadLogLines();
-        Assert.Equal(3, lines.Length); // header + 2 data lines
+        var events = ReadEvents();
+        Assert.Equal(2, events.Length);
     }
-
-    // --- Write failure propagates (no silent swallowing) ---
 
     [Fact]
     public void LogMailboxPermission_ThrowsOnWriteFailure()
@@ -160,26 +154,24 @@ public class AuditServiceTests : IDisposable
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                // Point to a path that can't possibly be written
                 ["Audit:LogRoot"] = @"Z:\nonexistent\path\that\does\not\exist"
             })
             .Build();
 
-        // AuditService constructor calls Directory.CreateDirectory which will throw
         Assert.ThrowsAny<Exception>(() => new AuditService(config));
     }
-
-    // --- Migration logging ---
 
     [Fact]
     public void LogMigrationCheck_WritesCorrectFields()
     {
         _audit.LogMigrationCheck("admin", "10.0.0.1", "user@co.com", "Eligible", "REQ001");
 
-        var lines = ReadLogLines();
-        Assert.Contains("CheckMigrationEligibility", lines[1]);
-        Assert.Contains("Eligible", lines[1]);
-        Assert.Contains("SUCCESS", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("CheckMigrationEligibility", root.GetProperty("action").GetString());
+        Assert.Equal("MigrationCheck", root.GetProperty("category").GetString());
+        Assert.Equal("Eligible", root.GetProperty("status").GetString());
+        Assert.Equal("Success", root.GetProperty("result").GetString());
     }
 
     [Fact]
@@ -188,9 +180,10 @@ public class AuditServiceTests : IDisposable
         _audit.LogMigrationCheck("admin", "10.0.0.1", "user@co.com", "Ineligible", "REQ001",
             reasons: "Mailbox too large");
 
-        var lines = ReadLogLines();
-        Assert.Contains("INELIGIBLE", lines[1]);
-        Assert.Contains("Mailbox too large", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("Ineligible", root.GetProperty("result").GetString());
+        Assert.Equal("Mailbox too large", root.GetProperty("reasons").GetString());
     }
 
     [Fact]
@@ -199,10 +192,15 @@ public class AuditServiceTests : IDisposable
         _audit.LogMigrationBatch("admin", "10.0.0.1", "batch-2026", "ToCloud",
             5, true, false, "INC001", true);
 
-        var lines = ReadLogLines();
-        Assert.Contains("CreateMigrationBatch_ToCloud", lines[1]);
-        Assert.Contains("batch-2026", lines[1]);
-        Assert.Contains("SUCCESS", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("CreateMigrationBatch_ToCloud", root.GetProperty("action").GetString());
+        Assert.Equal("MigrationBatch", root.GetProperty("category").GetString());
+        Assert.Equal("batch-2026", root.GetProperty("batchName").GetString());
+        Assert.Equal(5, root.GetProperty("userCount").GetInt32());
+        Assert.True(root.GetProperty("autoStart").GetBoolean());
+        Assert.False(root.GetProperty("autoComplete").GetBoolean());
+        Assert.Equal("Success", root.GetProperty("result").GetString());
     }
 
     [Fact]
@@ -211,8 +209,10 @@ public class AuditServiceTests : IDisposable
         _audit.LogMigrationAction("admin", "10.0.0.1", "CompleteMigrationBatch",
             "batch-2026", true, "INC001");
 
-        var lines = ReadLogLines();
-        Assert.Contains("CompleteMigrationBatch", lines[1]);
-        Assert.Contains("batch-2026", lines[1]);
+        var events = ReadEvents();
+        var root = events[0].RootElement;
+        Assert.Equal("CompleteMigrationBatch", root.GetProperty("action").GetString());
+        Assert.Equal("MigrationAction", root.GetProperty("category").GetString());
+        Assert.Equal("batch-2026", root.GetProperty("target").GetString());
     }
 }
