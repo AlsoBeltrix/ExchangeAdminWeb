@@ -238,7 +238,17 @@ public class PermissionValidator
                   .AddParameter("Identity", identity)
                   .AddParameter("ErrorAction", "Stop");
 
-                var recipients = Invoke(ps);
+                Collection<PSObject> recipients;
+                try
+                {
+                    recipients = Invoke(ps);
+                }
+                catch (Exception ex) when (ex.Message.Contains("couldn't be found"))
+                {
+                    _logger.LogInformation("Excluded entry '{Identity}' not found in EXO — kept as literal match", identity);
+                    return;
+                }
+
                 if (recipients.Count == 0)
                     return;
 
