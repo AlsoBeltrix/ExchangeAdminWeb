@@ -74,15 +74,16 @@
     {
         <div class="table-responsive">
             <table class="table table-sm table-hover">
-                <thead class="table-light">
+                <thead>
                     <tr>
-                        <th style="width: 160px;">Time</th>
+                        <th style="width: 80px;">Time</th>
                         <th>User</th>
+                        <th>IP</th>
                         <th>Action</th>
                         <th>Category</th>
                         <th>Target</th>
                         <th>Result</th>
-                        <th style="width: 40px;"></th>
+                        <th style="width: 30px;"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -92,8 +93,9 @@
                         <tr @onclick="() => ToggleExpand(evtId)" style="cursor: pointer;">
                             <td><small>@evt.Time</small></td>
                             <td>@evt.User</td>
+                            <td><small>@evt.Ip</small></td>
                             <td>@evt.Action</td>
-                            <td><span class="badge bg-light text-dark border">@evt.Category</span></td>
+                            <td>@evt.Category</td>
                             <td><small class="text-break">@evt.Target</small></td>
                             <td>
                                 <span class="badge @(evt.Result == "Success" ? "bg-success" : evt.Result == "Failed" ? "bg-danger" : "bg-warning text-dark")">
@@ -105,7 +107,7 @@
                         @if (expandedRow == evtId)
                         {
                             <tr>
-                                <td colspan="7" class="bg-light">
+                                <td colspan="8" class="bg-light">
                                     <pre class="mb-0 p-2" style="font-size: 0.8em; white-space: pre-wrap;">@evt.RawJson</pre>
                                 </td>
                             </tr>
@@ -213,6 +215,7 @@
                         Index = index++,
                         Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
                         User = TryGetString(root, "user") ?? "",
+                        Ip = TryGetString(root, "ip") ?? "",
                         Action = TryGetString(root, "action") ?? "",
                         Category = TryGetString(root, "category") ?? "",
                         Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
@@ -273,6 +276,7 @@
         public int Index { get; set; }
         public string Time { get; set; } = "";
         public string User { get; set; } = "";
+        public string Ip { get; set; } = "";
         public string Action { get; set; } = "";
         public string Category { get; set; } = "";
         public string Target { get; set; } = "";

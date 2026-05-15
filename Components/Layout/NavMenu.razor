@@ -88,7 +88,7 @@
                 </div>
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="admin-event-log">
-                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Event Log
+                        Event Log
                     </NavLink>
                 </div>
             </Authorized>
@@ -97,7 +97,7 @@
         <div class="nav-item px-3 mt-auto pt-3 border-top">
             <small class="text-muted d-block" style="font-size: 0.7em; line-height: 1.4;">
                 @{ var contactEmail = Config["Application:ContactEmail"]; }
-                v0.9.6
+                v0.9.7
                 @if (!string.IsNullOrEmpty(contactEmail))
                 {
                     <text> | Issues? <a href="mailto:@contactEmail">@contactEmail</a></text>

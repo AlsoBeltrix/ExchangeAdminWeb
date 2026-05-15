@@ -101,6 +101,7 @@ try
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
+    builder.Services.AddSingleton<ExoConnectionPool>();
     builder.Services.AddScoped<IExchangeService, ExchangeService>();
     builder.Services.AddScoped<IIdentityResolver>(sp => (IIdentityResolver)sp.GetRequiredService<IExchangeService>());
     builder.Services.AddScoped<ClientInfoService>();

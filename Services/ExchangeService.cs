@@ -25,10 +25,10 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string[] _adminNotificationEmails;
     private readonly string _onPremServerUri;
     private readonly DelineaService _delineaService;
-    private static readonly SemaphoreSlim _exchangeThrottle = new(5, 5);
+    private readonly ExoConnectionPool _exoPool;
     private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
-    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService)
+    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool)
     {
         _appId = config["ExchangeOnline:AppId"]
             ?? throw new InvalidOperationException("ExchangeOnline:AppId is not configured.");
@@ -54,6 +54,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
         _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "";
         _delineaService = delineaService;
+        _exoPool = exoPool;
     }
 
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
@@ -474,37 +475,26 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
     public async Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction)
     {
-        return await ThrottledAsync(() => Task.Run(async () =>
+        var result = await RunPooledQueryAsync(ps =>
         {
-            var result = new MigrationEligibilityResult
+            var r = new MigrationEligibilityResult
             {
                 EmailAddress = emailAddress,
                 Status = MigrationStatus.Eligible
             };
 
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
             try
             {
-                Connect(ps);
-
-                // Check 1: Does user have an active migration?
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
                 var migUser = InvokeOptional(ps);
                 if (migUser.Any())
                 {
-                    result.Status = MigrationStatus.Ineligible;
-                    result.IneligibilityReasons.Add("Migration already in progress");
+                    r.Status = MigrationStatus.Ineligible;
+                    r.IneligibilityReasons.Add("Migration already in progress");
                 }
 
-                // Check 2: Is user a cloud mailbox?
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
@@ -517,23 +507,18 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                     isCloudMailbox = recipientType?.Contains("UserMailbox") == true || recipientType?.Contains("SharedMailbox") == true;
                 }
 
-                // Apply direction-specific checks
                 if (direction == MigrationDirection.ToCloud)
                 {
-                    // Migrating TO cloud - user should NOT already be in cloud
                     if (isCloudMailbox)
                     {
-                        result.Status = MigrationStatus.Ineligible;
-                        result.IneligibilityReasons.Add("Already a cloud mailbox");
+                        r.Status = MigrationStatus.Ineligible;
+                        r.IneligibilityReasons.Add("Already a cloud mailbox");
                     }
 
-                    // Check for excluded AD groups (ITAR, etc.) - ONLY for ToCloud migrations
-                    // ITAR users cannot have data in the cloud but CAN migrate back to on-prem
                     if (_excludedADGroups.Length > 0)
                     {
                         try
                         {
-                            // Get recipient info to find SamAccountName
                             ps.AddCommand("Get-Recipient")
                               .AddParameter("Identity", emailAddress)
                               .AddParameter("ErrorAction", "Stop");
@@ -542,13 +527,11 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
                             if (!string.IsNullOrEmpty(samAccountName))
                             {
-                                // Import Active Directory module
                                 ps.AddCommand("Import-Module")
                                   .AddParameter("Name", "ActiveDirectory")
                                   .AddParameter("ErrorAction", "Stop");
                                 Invoke(ps);
 
-                                // Get AD user with group memberships
                                 ps.AddCommand("Get-ADUser")
                                   .AddParameter("Identity", samAccountName)
                                   .AddParameter("Properties", "memberOf")
@@ -558,7 +541,6 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
                                 if (memberOf != null)
                                 {
-                                    // Convert memberOf to string array
                                     var groups = new List<string>();
                                     if (memberOf is System.Collections.IEnumerable enumerable)
                                     {
@@ -569,14 +551,12 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                                         }
                                     }
 
-                                    // Check each excluded group
                                     foreach (var excludedGroup in _excludedADGroups)
                                     {
-                                        // Check if any group DN contains the excluded group name
                                         if (groups.Any(g => g.Contains(excludedGroup, StringComparison.OrdinalIgnoreCase)))
                                         {
-                                            result.Status = MigrationStatus.Ineligible;
-                                            result.IneligibilityReasons.Add($"Member of excluded group: {excludedGroup}");
+                                            r.Status = MigrationStatus.Ineligible;
+                                            r.IneligibilityReasons.Add($"Member of excluded group: {excludedGroup}");
                                             _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", emailAddress, excludedGroup);
                                         }
                                     }
@@ -589,81 +569,69 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Error checking AD group membership for {Email} - check skipped. Ensure ActiveDirectory module is installed and app pool has AD access.", emailAddress);
-                            // Don't fail eligibility check if AD is unavailable - log warning instead
-                            result.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
+                            _logger.LogError(ex, "Error checking AD group membership for {Email} - check skipped.", emailAddress);
+                            r.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
                         }
-                    }
-
-                    // Check on-prem mailbox size against cloud quota
-                    try
-                    {
-                        var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
-
-                        if (sizeResult is not null)
-                        {
-                            var (mailboxGB, archiveGB) = sizeResult.Value;
-                            var totalGB = mailboxGB + archiveGB;
-                            result.MailboxSizeGB = mailboxGB;
-                            result.ArchiveSizeGB = archiveGB;
-                            result.CloudQuotaGB = _cloudQuotaGB;
-
-                            _logger.LogInformation("On-prem sizes for {Email}: Mailbox={MailboxGB:F2} GB, Archive={ArchiveGB:F2} GB, Total={TotalGB:F2} GB, Quota={QuotaGB} GB",
-                                emailAddress, mailboxGB, archiveGB, totalGB, _cloudQuotaGB);
-
-                            if (totalGB > _cloudQuotaGB)
-                            {
-                                result.Status = MigrationStatus.Ineligible;
-                                result.IneligibilityReasons.Add($"Mailbox + archive size ({totalGB:F2} GB) exceeds cloud quota ({_cloudQuotaGB} GB)");
-                            }
-                        }
-                        else
-                        {
-                            result.Status = MigrationStatus.Ineligible;
-                            _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} - marking ineligible", emailAddress);
-                            result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
-                        }
-                    }
-                    catch (Exception sizeEx)
-                    {
-                        result.Status = MigrationStatus.Ineligible;
-                        _logger.LogError(sizeEx, "Error checking on-prem mailbox size for {Email}", emailAddress);
-                        result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
                     }
                 }
-                else // ToOnPrem
+                else
                 {
-                    // Migrating TO on-prem - user MUST be in cloud
                     if (!isCloudMailbox)
                     {
-                        result.Status = MigrationStatus.Ineligible;
-                        result.IneligibilityReasons.Add("Not a cloud mailbox (must be in Exchange Online to migrate back to on-premises)");
+                        r.Status = MigrationStatus.Ineligible;
+                        r.IneligibilityReasons.Add("Not a cloud mailbox (must be in Exchange Online to migrate back to on-premises)");
                     }
-
-                    // NOTE: AD group checks (SEC_ITAR_USERS, etc.) are NOT applicable for ToOnPrem migrations
-                    // ITAR users are allowed to migrate back to on-premises
                 }
             }
             catch (Exception ex)
             {
-                result.Status = MigrationStatus.Ineligible;
-                result.IneligibilityReasons.Add($"Error checking eligibility: {ex.Message}");
+                r.Status = MigrationStatus.Ineligible;
+                r.IneligibilityReasons.Add($"Error checking eligibility: {ex.Message}");
                 _logger.LogError(ex, "Error checking migration eligibility for {Email}", emailAddress);
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
-            return result;
-        }));
+            return r;
+        });
+
+        if (direction == MigrationDirection.ToCloud && result.Status == MigrationStatus.Eligible)
+        {
+            try
+            {
+                var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
+
+                if (sizeResult is not null)
+                {
+                    var (mailboxGB, archiveGB) = sizeResult.Value;
+                    var totalGB = mailboxGB + archiveGB;
+                    result.MailboxSizeGB = mailboxGB;
+                    result.ArchiveSizeGB = archiveGB;
+                    result.CloudQuotaGB = _cloudQuotaGB;
+
+                    _logger.LogInformation("On-prem sizes for {Email}: Mailbox={MailboxGB:F2} GB, Archive={ArchiveGB:F2} GB, Total={TotalGB:F2} GB, Quota={QuotaGB} GB",
+                        emailAddress, mailboxGB, archiveGB, totalGB, _cloudQuotaGB);
+
+                    if (totalGB > _cloudQuotaGB)
+                    {
+                        result.Status = MigrationStatus.Ineligible;
+                        result.IneligibilityReasons.Add($"Mailbox + archive size ({totalGB:F2} GB) exceeds cloud quota ({_cloudQuotaGB} GB)");
+                    }
+                }
+                else
+                {
+                    result.Status = MigrationStatus.Ineligible;
+                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} - marking ineligible", emailAddress);
+                    result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
+                }
+            }
+            catch (Exception sizeEx)
+            {
+                result.Status = MigrationStatus.Ineligible;
+                _logger.LogError(sizeEx, "Error checking on-prem mailbox size for {Email}", emailAddress);
+                result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+            }
+        }
+
+        return result;
     }
 
     public async Task<MigrationBatchResult> CheckBulkMigrationEligibilityAsync(Stream csvStream, MigrationDirection direction)
@@ -800,21 +768,12 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
             var batches = new List<MigrationBatchInfo>();
 
             try
             {
-                Connect(ps);
-
                 // Get all migration batches
                 ps.AddCommand("Get-MigrationBatch")
                   .AddParameter("ErrorAction", "Ignore");
@@ -873,37 +832,17 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to retrieve migration batches");
                 return new List<MigrationBatchInfo>();
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { /* best effort */ }
-            }
-        }));
+        });
     }
 
     public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
             var users = new List<MigrationUserInfo>();
 
             try
             {
-                Connect(ps);
-
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("BatchId", batchName)
                   .AddParameter("ErrorAction", "Ignore");
@@ -937,18 +876,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to retrieve migration users for batch {BatchName}", batchName);
                 return new List<MigrationUserInfo>();
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { /* best effort */ }
-            }
-        }));
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -1080,19 +1008,10 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
             try
             {
-                Connect(ps);
-
                 ps.AddCommand("Get-MigrationUserStatistics")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("IncludeReport", true)
@@ -1136,35 +1055,15 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to get migration report for {Email}", emailAddress);
                 return (string?)$"Error retrieving report: {ex.Message}";
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
-        }));
+        });
     }
 
     public async Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
-
             try
             {
-                Connect(ps);
-
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("ResultSize", "Unlimited")
                   .AddParameter("ErrorAction", "Stop");
@@ -1187,18 +1086,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogWarning(ex, "Failed to search migration users for {Term}", searchTerm);
                 return MigrationUserSearchResult.Failed(ex.Message);
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline")
-                      .AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
-        }));
+        });
     }
 
     public static MigrationUserSearchResult MatchMigrationUser(
@@ -1240,20 +1128,12 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
             var result = new DelegationReportResult { EmailAddress = emailAddress };
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
 
             try
             {
-                Connect(ps);
-
                 // Full Access
                 ps.AddCommand("Get-MailboxPermission")
                   .AddParameter("Identity", emailAddress)
@@ -1315,37 +1195,19 @@ https://admin.exchange.microsoft.com/#/migration";
                 result.Error = ex.Message;
                 _logger.LogError(ex, "Error getting delegation report for {Email}", emailAddress);
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
             return result;
-        }));
+        });
     }
 
     public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
             var response = new MessageTraceResponse();
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
 
             try
             {
-                Connect(ps);
-
                 var allResults = new List<MessageTraceResult>();
                 var page = 1;
                 const int pageSize = 200;
@@ -1415,37 +1277,19 @@ https://admin.exchange.microsoft.com/#/migration";
                 response.Error = ex.Message;
                 _logger.LogError(ex, "Error running message trace");
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
             return response;
-        }));
+        });
     }
 
     public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
             var response = new HistoricalSearchResponse();
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
 
             try
             {
-                Connect(ps);
-
                 ps.AddCommand("Start-HistoricalSearch")
                   .AddParameter("StartDate", startDate)
                   .AddParameter("EndDate", endDate)
@@ -1469,38 +1313,19 @@ https://admin.exchange.microsoft.com/#/migration";
                 response.Error = ex.Message;
                 _logger.LogError(ex, "Error starting historical search");
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
             return response;
-        }));
+        });
     }
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
-        return await ThrottledAsync(() => Task.Run(async () =>
+        var result = await RunPooledQueryAsync(ps =>
         {
-            var result = new RecipientInfoResult { EmailAddress = emailAddress };
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
+            var r = new RecipientInfoResult { EmailAddress = emailAddress };
 
             try
             {
-                Connect(ps);
-
-                // Get-Recipient for basic info
                 ps.AddCommand("Get-Recipient")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
@@ -1509,13 +1334,13 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 if (recip == null)
                 {
-                    result.Error = $"Recipient '{emailAddress}' not found.";
-                    return result;
+                    r.Error = $"Recipient '{emailAddress}' not found.";
+                    return r;
                 }
 
-                result.DisplayName = recip.Properties["DisplayName"]?.Value?.ToString();
-                result.RecipientType = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
-                result.WhenCreated = recip.Properties["WhenCreated"]?.Value as DateTime?;
+                r.DisplayName = recip.Properties["DisplayName"]?.Value?.ToString();
+                r.RecipientType = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
+                r.WhenCreated = recip.Properties["WhenCreated"]?.Value as DateTime?;
 
                 var emailAddresses = recip.Properties["EmailAddresses"]?.Value;
                 if (emailAddresses is System.Collections.IEnumerable addrs)
@@ -1523,20 +1348,18 @@ https://admin.exchange.microsoft.com/#/migration";
                     foreach (var addr in addrs)
                     {
                         var s = addr?.ToString();
-                        if (s != null) result.EmailAddresses.Add(s);
+                        if (s != null) r.EmailAddresses.Add(s);
                     }
                 }
 
-                // Determine location
-                var typeDetails = result.RecipientType ?? "";
+                var typeDetails = r.RecipientType ?? "";
                 if (typeDetails.Contains("Remote", StringComparison.OrdinalIgnoreCase))
-                    result.MailboxLocation = "On-Premises";
+                    r.MailboxLocation = "On-Premises";
                 else if (typeDetails.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
-                    result.MailboxLocation = "Cloud";
+                    r.MailboxLocation = "Cloud";
                 else
-                    result.MailboxLocation = "Unknown";
+                    r.MailboxLocation = "Unknown";
 
-                // Try Get-Mailbox for more details (cloud mailboxes only)
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
@@ -1545,10 +1368,9 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 if (mbx != null)
                 {
-                    result.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
+                    r.ForwardingAddress = mbx.Properties["ForwardingSmtpAddress"]?.Value?.ToString()
                         ?? mbx.Properties["ForwardingAddress"]?.Value?.ToString();
 
-                    // Get-Mailbox | Get-MailboxStatistics for primary mailbox
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
@@ -1558,19 +1380,18 @@ https://admin.exchange.microsoft.com/#/migration";
                         var stat = stats.FirstOrDefault();
                         if (stat != null)
                         {
-                            result.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
-                            result.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
-                            result.LastLogonTime = stat.Properties["LastLogonTime"]?.Value as DateTime?;
-                            result.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
-                            result.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
+                            r.ItemCount = ParseLong(stat.Properties["ItemCount"]?.Value);
+                            r.DeletedItemCount = ParseLong(stat.Properties["DeletedItemCount"]?.Value);
+                            r.LastLogonTime = stat.Properties["LastLogonTime"]?.Value as DateTime?;
+                            r.MailboxSizeGB = ParseSizeToGB(stat.Properties["TotalItemSize"]?.Value?.ToString());
+                            r.DeletedItemSizeGB = ParseSizeToGB(stat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
                     catch (Exception ex)
                     {
-                        result.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
+                        r.Warnings.Add($"Could not retrieve mailbox statistics: {ex.Message}");
                     }
 
-                    // Get-Mailbox | Get-MailboxStatistics -Archive — errors if no archive exists
                     try
                     {
                         ps.AddCommand("Get-MailboxStatistics")
@@ -1581,75 +1402,59 @@ https://admin.exchange.microsoft.com/#/migration";
                         var archiveStat = archiveStats.FirstOrDefault();
                         if (archiveStat != null)
                         {
-                            result.ArchiveEnabled = true;
-                            result.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
-                            result.ArchiveDeletedItemCount = ParseLong(archiveStat.Properties["DeletedItemCount"]?.Value);
-                            result.ArchiveSizeGB = ParseSizeToGB(archiveStat.Properties["TotalItemSize"]?.Value?.ToString());
-                            result.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
+                            r.ArchiveEnabled = true;
+                            r.ArchiveItemCount = ParseLong(archiveStat.Properties["ItemCount"]?.Value);
+                            r.ArchiveDeletedItemCount = ParseLong(archiveStat.Properties["DeletedItemCount"]?.Value);
+                            r.ArchiveSizeGB = ParseSizeToGB(archiveStat.Properties["TotalItemSize"]?.Value?.ToString());
+                            r.ArchiveDeletedItemSizeGB = ParseSizeToGB(archiveStat.Properties["TotalDeletedItemSize"]?.Value?.ToString());
                         }
                     }
                     catch
                     {
-                        // No archive — expected error, not a warning
-                    }
-                }
-                else if (result.MailboxLocation == "On-Premises")
-                {
-                    try
-                    {
-                        var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
-                        if (onPremSize != null)
-                        {
-                            result.MailboxSizeGB = onPremSize.Value.mailboxSizeGB;
-                            result.ArchiveSizeGB = onPremSize.Value.archiveSizeGB;
-                        }
-                        else
-                        {
-                            result.Warnings.Add("On-premises mailbox size unavailable (connection not configured).");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                result.Error = ex.Message;
+                r.Error = ex.Message;
                 _logger.LogError(ex, "Error getting recipient info for {Email}", emailAddress);
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
-            return result;
-        }));
+            return r;
+        });
+
+        if (result.Error == null && result.MailboxLocation == "On-Premises")
+        {
+            try
+            {
+                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
+                if (onPremSize != null)
+                {
+                    result.MailboxSizeGB = onPremSize.Value.mailboxSizeGB;
+                    result.ArchiveSizeGB = onPremSize.Value.archiveSizeGB;
+                }
+                else
+                {
+                    result.Warnings.Add("On-premises mailbox size unavailable (connection not configured).");
+                }
+            }
+            catch (Exception ex)
+            {
+                result.Warnings.Add($"Could not retrieve on-premises mailbox size: {ex.Message}");
+            }
+        }
+
+        return result;
     }
 
     public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
-        return await ThrottledAsync(() => Task.Run(() =>
+        return await RunPooledQueryAsync(ps =>
         {
             var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
 
             try
             {
-                Connect(ps);
-
                 ps.AddCommand("Get-MailboxAutoReplyConfiguration")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
@@ -1673,19 +1478,9 @@ https://admin.exchange.microsoft.com/#/migration";
                 result.Error = ex.Message;
                 _logger.LogError(ex, "Error getting OOF status for {Email}", emailAddress);
             }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { }
-            }
 
             return result;
-        }));
+        });
     }
 
     public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
@@ -1987,23 +1782,14 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private async Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
     {
-        if (!await _exchangeThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
-            return PermissionResult.Fail("Exchange service is busy. Please try again shortly.");
-
+        var pooled = await _exoPool.BorrowAsync();
         try
         {
             return await Task.Run(() =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
-
+                var ps = pooled.PowerShell;
                 try
                 {
-                    Connect(ps);
                     operation(ps);
 
                     if (successFormatter is not null)
@@ -2026,62 +1812,40 @@ https://admin.exchange.microsoft.com/#/migration";
                     _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
                     return PermissionResult.Fail(primary, detail);
                 }
-                finally
-                {
-                    try
-                    {
-                        ps.Commands.Clear();
-                        ps.AddCommand("Disconnect-ExchangeOnline")
-                          .AddParameter("Confirm", false);
-                        ps.Invoke();
-                    }
-                    catch { /* best effort */ }
-                }
             });
+        }
+        catch (Exception ex) when (IsConnectionError(ex))
+        {
+            _exoPool.Discard(pooled);
+            pooled = null;
+            return PermissionResult.Fail($"Exchange connection error: {ex.Message}");
         }
         finally
         {
-            _exchangeThrottle.Release();
+            if (pooled != null)
+                _exoPool.Return(pooled);
         }
     }
+
+    private static bool IsConnectionError(Exception ex) =>
+        ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
+        ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase);
 
     public async Task<string?> ResolveToObjectIdAsync(string identity)
     {
         try
         {
-            return await ThrottledAsync(() => Task.Run(() =>
+            return await RunPooledQueryAsync(ps =>
             {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
+                ps.AddCommand("Get-Recipient")
+                  .AddParameter("Identity", identity)
+                  .AddParameter("ErrorAction", "Stop");
 
-                try
-                {
-                    Connect(ps);
-
-                    ps.AddCommand("Get-Recipient")
-                      .AddParameter("Identity", identity)
-                      .AddParameter("ErrorAction", "Stop");
-
-                    var results = Invoke(ps);
-                    var recipient = results.FirstOrDefault();
-                    return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
-                }
-                finally
-                {
-                    try
-                    {
-                        ps.Commands.Clear();
-                        ps.AddCommand("Disconnect-ExchangeOnline")
-                          .AddParameter("Confirm", false);
-                        ps.Invoke();
-                    }
-                    catch { }
-                }
-            }));
+                var results = Invoke(ps);
+                var recipient = results.FirstOrDefault();
+                return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
+            });
         }
         catch (Exception ex)
         {
@@ -2092,88 +1856,34 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
     {
-        var sem = throttle ?? _exchangeThrottle;
-        if (!await sem.WaitAsync(TimeSpan.FromMinutes(2)))
-            throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
+        if (throttle != null)
+        {
+            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2)))
+                throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
+            try { return await operation(); }
+            finally { throttle.Release(); }
+        }
+        return await operation();
+    }
+
+    private async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, T> query)
+    {
+        var pooled = await _exoPool.BorrowAsync();
         try
         {
-            return await operation();
+            return await Task.Run(() => query(pooled.PowerShell));
+        }
+        catch (Exception ex) when (IsConnectionError(ex))
+        {
+            _exoPool.Discard(pooled);
+            pooled = null;
+            throw;
         }
         finally
         {
-            sem.Release();
+            if (pooled != null)
+                _exoPool.Return(pooled);
         }
-    }
-
-    private void Connect(PowerShell ps)
-    {
-        var cert = FindCertificate();
-
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ExchangeOnlineManagement")
-          .AddParameter("ErrorAction", "Stop");
-        Invoke(ps);
-
-        _logger.LogInformation("Connecting to EXO: AppId={AppId}, Thumbprint={Thumbprint}, Org={Org}",
-            _appId, cert.Thumbprint, _organization);
-
-        ps.AddCommand("Connect-ExchangeOnline")
-          .AddParameter("AppId", _appId)
-          .AddParameter("CertificateThumbprint", cert.Thumbprint)
-          .AddParameter("Organization", _organization)
-          .AddParameter("ShowBanner", false)
-          .AddParameter("ErrorAction", "Stop");
-
-        try
-        {
-            var result = ps.Invoke();
-            foreach (var warn in ps.Streams.Warning)
-                _logger.LogWarning("EXO Connect warning: {Msg}", warn.Message);
-            foreach (var err in ps.Streams.Error)
-                _logger.LogError("EXO Connect error: {Msg} | Exception: {Ex}", err.ToString(), err.Exception?.Message);
-            foreach (var info in ps.Streams.Information)
-                _logger.LogInformation("EXO Connect info: {Msg}", info.MessageData?.ToString());
-
-            _logger.LogInformation("EXO Connect finished. HadErrors={HadErrors}, ErrorCount={ErrorCount}",
-                ps.HadErrors, ps.Streams.Error.Count);
-
-            if (ps.Streams.Error.Count > 0)
-            {
-                var msg = ps.Streams.Error.First().Exception?.Message
-                       ?? ps.Streams.Error.First().ToString();
-                ps.Commands.Clear();
-                throw new InvalidOperationException(msg);
-            }
-            ps.Commands.Clear();
-        }
-        catch (RuntimeException ex)
-        {
-            ps.Commands.Clear();
-            throw new InvalidOperationException($"EXO Connect failed: {ex.Message}", ex);
-        }
-    }
-
-    private X509Certificate2 FindCertificate()
-    {
-        var locations = new[] { StoreLocation.LocalMachine, StoreLocation.CurrentUser };
-
-        foreach (var location in locations)
-        {
-            using var store = new X509Store(StoreName.My, location);
-            store.Open(OpenFlags.ReadOnly);
-
-            var cert = store.Certificates
-                .Find(X509FindType.FindBySubjectDistinguishedName, _certSubject, validOnly: false)
-                .OfType<X509Certificate2>()
-                .Where(c => c.HasPrivateKey)
-                .OrderByDescending(c => c.NotBefore)
-                .FirstOrDefault();
-
-            if (cert is not null) return cert;
-        }
-
-        throw new InvalidOperationException(
-            $"Certificate '{_certSubject}' with a private key was not found in LocalMachine\\My or CurrentUser\\My.");
     }
 
     private static string ValidateMailbox(PowerShell ps, string mailbox)
