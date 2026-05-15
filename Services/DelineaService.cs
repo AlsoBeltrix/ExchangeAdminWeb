@@ -21,13 +21,12 @@ public class DelineaService
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
         _exchangeSecretId = int.Parse(config["Delinea:ExchangeSecretId"] ?? throw new InvalidOperationException("Delinea:ExchangeSecretId not configured"));
 
-        // Read API credentials from Windows Credential Manager (non-fatal if missing)
-        var (username, password) = CredentialManagerService.ReadCredential("Delinea_Client");
+        var credentialTarget = config["Delinea:CredentialTarget"] ?? "DelineaSecretServer";
+        var (username, password) = CredentialManagerService.ReadCredential(credentialTarget);
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            _logger.LogWarning("Delinea API credentials not found in Windows Credential Manager (target: Delinea_Client). On-prem Exchange features will be unavailable. " +
-                "Store credentials in PasswordVault under resource 'Delinea_Client' with the SDK client ID as username and client secret as password.");
+            _logger.LogWarning("Delinea API credentials not found in Windows Credential Manager (target: {Target}). On-prem Exchange features will be unavailable.", credentialTarget);
             _apiUsername = string.Empty;
             _apiKey = string.Empty;
         }
