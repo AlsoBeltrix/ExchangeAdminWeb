@@ -222,7 +222,9 @@ public class PermissionValidator
 
         await Task.Run(() =>
         {
-            using var runspace = RunspaceFactory.CreateRunspace();
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
             runspace.Open();
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
