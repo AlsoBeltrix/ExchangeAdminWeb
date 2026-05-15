@@ -46,20 +46,28 @@ public sealed class ExoConnectionPool : IDisposable
         if (!await _slots.WaitAsync(TimeSpan.FromMinutes(2), ct))
             throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
 
-        if (_available.TryTake(out var pooled))
+        try
         {
-            if (DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
+            if (_available.TryTake(out var pooled))
             {
-                pooled.LastUsed = DateTime.UtcNow;
-                pooled.PowerShell.Commands.Clear();
-                pooled.PowerShell.Streams.ClearStreams();
-                return pooled;
+                if (DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
+                {
+                    pooled.LastUsed = DateTime.UtcNow;
+                    pooled.PowerShell.Commands.Clear();
+                    pooled.PowerShell.Streams.ClearStreams();
+                    return pooled;
+                }
+
+                DestroyRunspace(pooled);
             }
 
-            DestroyRunspace(pooled);
+            return CreateConnected();
         }
-
-        return CreateConnected();
+        catch
+        {
+            _slots.Release();
+            throw;
+        }
     }
 
     public void Return(PooledRunspace runspace)
@@ -142,24 +150,21 @@ public sealed class ExoConnectionPool : IDisposable
 
     private void CleanupIdle(object? state)
     {
-        var stale = new List<PooledRunspace>();
-        var keep = new List<PooledRunspace>();
-
+        var snapshot = new List<PooledRunspace>();
         while (_available.TryTake(out var item))
+            snapshot.Add(item);
+
+        foreach (var item in snapshot)
         {
             if (DateTime.UtcNow - item.LastUsed > _idleTimeout)
-                stale.Add(item);
+            {
+                DestroyRunspace(item);
+                _logger.LogInformation("EXO pool: disposed idle connection");
+            }
             else
-                keep.Add(item);
-        }
-
-        foreach (var item in keep)
-            _available.Add(item);
-
-        foreach (var item in stale)
-        {
-            DestroyRunspace(item);
-            _logger.LogInformation("EXO pool: disposed idle connection");
+            {
+                _available.Add(item);
+            }
         }
     }
 

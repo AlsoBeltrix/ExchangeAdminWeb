@@ -1783,6 +1783,7 @@ https://admin.exchange.microsoft.com/#/migration";
     private async Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
     {
         var pooled = await _exoPool.BorrowAsync();
+        bool discard = false;
         try
         {
             return await Task.Run(() =>
@@ -1801,6 +1802,9 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
                 catch (Exception ex)
                 {
+                    if (IsConnectionError(ex))
+                        discard = true;
+
                     var psErrors = ps.Streams.Error
                         .Select(e => e.Exception?.Message ?? e.ToString())
                         .Where(m => !string.IsNullOrWhiteSpace(m))
@@ -1814,23 +1818,15 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
             });
         }
-        catch (Exception ex) when (IsConnectionError(ex))
-        {
-            _exoPool.Discard(pooled);
-            pooled = null;
-            return PermissionResult.Fail($"Exchange connection error: {ex.Message}");
-        }
         finally
         {
-            if (pooled != null)
+            if (discard)
+                _exoPool.Discard(pooled);
+            else
                 _exoPool.Return(pooled);
         }
     }
 
-    private static bool IsConnectionError(Exception ex) =>
-        ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
-        ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
-        ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase);
 
     public async Task<string?> ResolveToObjectIdAsync(string identity)
     {
@@ -1869,22 +1865,35 @@ https://admin.exchange.microsoft.com/#/migration";
     private async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, T> query)
     {
         var pooled = await _exoPool.BorrowAsync();
+        bool discard = false;
         try
         {
-            return await Task.Run(() => query(pooled.PowerShell));
+            var result = await Task.Run(() => query(pooled.PowerShell));
+
+            if (pooled.PowerShell.Streams.Error.Any(e => IsConnectionError(e.Exception)))
+                discard = true;
+
+            return result;
         }
         catch (Exception ex) when (IsConnectionError(ex))
         {
-            _exoPool.Discard(pooled);
-            pooled = null;
+            discard = true;
             throw;
         }
         finally
         {
-            if (pooled != null)
+            if (discard)
+                _exoPool.Discard(pooled);
+            else
                 _exoPool.Return(pooled);
         }
     }
+
+    private static bool IsConnectionError(Exception? ex) =>
+        ex != null && (
+            ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase));
 
     private static string ValidateMailbox(PowerShell ps, string mailbox)
     {
