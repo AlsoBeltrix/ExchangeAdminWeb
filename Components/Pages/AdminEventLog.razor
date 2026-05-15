@@ -1,0 +1,282 @@
+@page "/admin-event-log"
+@using System.Text.Json
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "AdminSettings")]
+@rendermode InteractiveServer
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject IConfiguration Config
+@inject ILogger<AdminEventLog> Logger
+
+<PageTitle>Event Log</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Event Log</h1>
+
+    <div class="row mb-3 g-2 align-items-end">
+        <div class="col-auto">
+            <label class="form-label mb-0">Date</label>
+            <input type="date" class="form-control form-control-sm" @bind="selectedDate" @bind:event="onchange" @bind:after="LoadEvents" />
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">Category</label>
+            <select class="form-select form-select-sm" @bind="selectedCategory" @bind:after="ApplyFilters">
+                <option value="">All</option>
+                <option value="MailboxPermission">MailboxPermission</option>
+                <option value="CalendarPermission">CalendarPermission</option>
+                <option value="MigrationCheck">MigrationCheck</option>
+                <option value="MigrationBatch">MigrationBatch</option>
+                <option value="MigrationAction">MigrationAction</option>
+                <option value="Lookup">Lookup</option>
+                <option value="AdminSettings">AdminSettings</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">User</label>
+            <input type="text" class="form-control form-control-sm" placeholder="Filter by user" @bind="userFilter" @bind:event="oninput" @bind:after="ApplyFilters" />
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">Result</label>
+            <select class="form-select form-select-sm" @bind="selectedResult" @bind:after="ApplyFilters">
+                <option value="">All</option>
+                <option value="Success">Success</option>
+                <option value="Failed">Failed</option>
+                <option value="Ineligible">Ineligible</option>
+            </select>
+        </div>
+        <div class="col-auto pt-4">
+            <span class="badge bg-secondary">@filteredEvents.Count events</span>
+        </div>
+    </div>
+
+    @if (loadError != null)
+    {
+        <div class="alert alert-warning">@loadError</div>
+    }
+    else if (filteredEvents.Count == 0)
+    {
+        <div class="alert alert-info">No events found for the selected filters.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 160px;">Time</th>
+                        <th>User</th>
+                        <th>Action</th>
+                        <th>Category</th>
+                        <th>Target</th>
+                        <th>Result</th>
+                        <th style="width: 40px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var evt in GetPage())
+                    {
+                        var evtId = evt.Index;
+                        <tr @onclick="() => ToggleExpand(evtId)" style="cursor: pointer;">
+                            <td><small>@evt.Time</small></td>
+                            <td>@evt.User</td>
+                            <td>@evt.Action</td>
+                            <td><span class="badge bg-light text-dark border">@evt.Category</span></td>
+                            <td><small class="text-break">@evt.Target</small></td>
+                            <td>
+                                <span class="badge @(evt.Result == "Success" ? "bg-success" : evt.Result == "Failed" ? "bg-danger" : "bg-warning text-dark")">
+                                    @evt.Result
+                                </span>
+                            </td>
+                            <td>@(expandedRow == evtId ? "▲" : "▼")</td>
+                        </tr>
+                        @if (expandedRow == evtId)
+                        {
+                            <tr>
+                                <td colspan="7" class="bg-light">
+                                    <pre class="mb-0 p-2" style="font-size: 0.8em; white-space: pre-wrap;">@evt.RawJson</pre>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (totalPages > 1)
+        {
+            <nav>
+                <ul class="pagination pagination-sm">
+                    <li class="page-item @(currentPage == 1 ? "disabled" : "")">
+                        <button class="page-link" @onclick="() => SetPage(currentPage - 1)">Prev</button>
+                    </li>
+                    @for (int i = 1; i <= totalPages; i++)
+                    {
+                        var pageNum = i;
+                        <li class="page-item @(currentPage == pageNum ? "active" : "")">
+                            <button class="page-link" @onclick="() => SetPage(pageNum)">@pageNum</button>
+                        </li>
+                    }
+                    <li class="page-item @(currentPage == totalPages ? "disabled" : "")">
+                        <button class="page-link" @onclick="() => SetPage(currentPage + 1)">Next</button>
+                    </li>
+                </ul>
+            </nav>
+        }
+    }
+</div>
+
+@code {
+    private bool authChecked;
+    private DateOnly selectedDate = DateOnly.FromDateTime(DateTime.Today);
+    private string selectedCategory = "";
+    private string userFilter = "";
+    private string selectedResult = "";
+    private string? loadError;
+    private int currentPage = 1;
+    private int expandedRow = -1;
+    private const int PageSize = 50;
+
+    private List<AuditEvent> allEvents = new();
+    private List<AuditEvent> filteredEvents = new();
+    private int totalPages => Math.Max(1, (int)Math.Ceiling(filteredEvents.Count / (double)PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        authChecked = true;
+        LoadEvents();
+    }
+
+    private void LoadEvents()
+    {
+        loadError = null;
+        allEvents = new List<AuditEvent>();
+        expandedRow = -1;
+        currentPage = 1;
+
+        var logRoot = Config["Audit:LogRoot"] ?? @"E:\WWWOutput";
+        var logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
+
+        var rotationPeriod = Config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
+        var date = selectedDate.ToDateTime(TimeOnly.MinValue);
+        var suffix = rotationPeriod switch
+        {
+            "weekly" => $"{date.Year}W{System.Globalization.ISOWeek.GetWeekOfYear(date):D2}",
+            "monthly" => date.ToString("yyyyMM"),
+            _ => date.ToString("yyyyMMdd")
+        };
+
+        var filePath = Path.Combine(logFolder, $"exchangeadmin_{suffix}.jsonl");
+
+        if (!File.Exists(filePath))
+        {
+            loadError = $"No log file found for {selectedDate:yyyy-MM-dd}";
+            filteredEvents = new();
+            return;
+        }
+
+        try
+        {
+            var lines = File.ReadAllLines(filePath);
+            var index = 0;
+            foreach (var line in lines.Reverse())
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                try
+                {
+                    var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+                    allEvents.Add(new AuditEvent
+                    {
+                        Index = index++,
+                        Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
+                        User = TryGetString(root, "user") ?? "",
+                        Action = TryGetString(root, "action") ?? "",
+                        Category = TryGetString(root, "category") ?? "",
+                        Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
+                        Result = TryGetString(root, "result") ?? "",
+                        RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
+                    });
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Error reading log: {ex.Message}";
+            Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
+        }
+
+        ApplyFilters();
+    }
+
+    private void ApplyFilters()
+    {
+        currentPage = 1;
+        expandedRow = -1;
+        filteredEvents = allEvents.Where(e =>
+            (string.IsNullOrEmpty(selectedCategory) || e.Category.Equals(selectedCategory, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(userFilter) || e.User.Contains(userFilter, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(selectedResult) || e.Result.Equals(selectedResult, StringComparison.OrdinalIgnoreCase))
+        ).ToList();
+    }
+
+    private List<AuditEvent> GetPage() =>
+        filteredEvents.Skip((currentPage - 1) * PageSize).Take(PageSize).ToList();
+
+    private void SetPage(int page)
+    {
+        if (page >= 1 && page <= totalPages)
+        {
+            currentPage = page;
+            expandedRow = -1;
+        }
+    }
+
+    private void ToggleExpand(int index) =>
+        expandedRow = expandedRow == index ? -1 : index;
+
+    private static string? TryGetString(JsonElement root, string prop) =>
+        root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.String ? val.GetString() : null;
+
+    private static string FormatTimestamp(string iso)
+    {
+        if (DateTimeOffset.TryParse(iso, out var dt))
+            return dt.ToLocalTime().ToString("HH:mm:ss");
+        return iso;
+    }
+
+    private class AuditEvent
+    {
+        public int Index { get; set; }
+        public string Time { get; set; } = "";
+        public string User { get; set; } = "";
+        public string Action { get; set; } = "";
+        public string Category { get; set; } = "";
+        public string Target { get; set; } = "";
+        public string Result { get; set; } = "";
+        public string RawJson { get; set; } = "";
+    }
+}

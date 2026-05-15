@@ -80,7 +80,8 @@
     "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
   },
   "Application": {
-    "PathBase": "/ExchangeAdminWeb"
+    "PathBase": "/ExchangeAdminWeb",
+    "ContactEmail": "exchangeadmin@yourcompany.com"
   },
   "AllowedHosts": "*"
 }
