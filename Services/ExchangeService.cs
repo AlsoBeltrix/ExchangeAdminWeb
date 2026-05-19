@@ -517,20 +517,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
                     if (_excludedADGroups.Length > 0)
                     {
-                        try
-                        {
-                            ps.AddCommand("Get-Recipient")
-                              .AddParameter("Identity", emailAddress)
-                              .AddParameter("ErrorAction", "Stop");
-                            var recipient = Invoke(ps);
-                            var samAccountName = recipient.FirstOrDefault()?.Properties["SamAccountName"]?.Value?.ToString();
-                            r.SamAccountName = samAccountName;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error resolving SamAccountName for {Email} - AD group check skipped.", emailAddress);
-                            r.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
-                        }
+                        r.NeedsAdGroupCheck = true;
                     }
                 }
                 else
@@ -552,7 +539,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
             return r;
         });
 
-        if (direction == MigrationDirection.ToCloud && !string.IsNullOrEmpty(result.SamAccountName) && _excludedADGroups.Length > 0)
+        if (direction == MigrationDirection.ToCloud && result.NeedsAdGroupCheck)
         {
             try
             {
@@ -1889,7 +1876,7 @@ https://admin.exchange.microsoft.com/#/migration";
         ps.Commands.Clear();
 
         ps.AddCommand("Get-ADUser")
-          .AddParameter("Identity", result.SamAccountName)
+          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress}'")
           .AddParameter("Properties", "memberOf")
           .AddParameter("ErrorAction", "Stop");
         var adUser = ps.Invoke();
