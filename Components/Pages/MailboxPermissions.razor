@@ -514,9 +514,19 @@
                 ? await Exchange.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
                 : await Exchange.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
 
-            Audit.LogMailboxPermission(
-                currentUser, clientIpAddress, action, target, user, permType,
-                opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message);
+            var actionVerb = tabIndex == 0 ? "Add" : "Remove";
+            if (fullAccess)
+            {
+                var faSuccess = opResult.Success || (opResult.Detail?.Contains("FullAccess") == true);
+                Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
+                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message);
+            }
+            if (sendAs)
+            {
+                var saSuccess = opResult.Success || (opResult.Detail?.Contains("SendAs") == true);
+                Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
+                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message);
+            }
 
             await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, action, target, user, permType,
@@ -525,8 +535,9 @@
             if (opResult.Success)
             {
                 var isGrant = tabIndex == 0;
-                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
-                await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+                var notifyPerm = opResult.Detail ?? permType;
+                await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant);
+                await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant);
             }
 
             result = opResult;
