@@ -299,6 +299,40 @@ Null fields are omitted. `error` appears only on failure.
 - `weekly`: New file each week
 - `monthly`: New file each month
 
+### Delinea Secret Server (On-Prem Credentials)
+
+On-prem Exchange operations retrieve credentials from Delinea Secret Server:
+
+```json
+"Delinea": {
+  "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
+  "ExchangeSecretId": 0,
+  "CredentialTarget": "Delinea_Client"
+}
+```
+
+| Key | Purpose |
+|-----|---------|
+| `SecretServerUrl` | Base URL of Delinea/Thycotic Secret Server |
+| `ExchangeSecretId` | Secret ID containing on-prem Exchange service account (Username, Password, Domain fields) |
+| `CredentialTarget` | Windows Credential Manager entry name storing Delinea API client credentials |
+
+The secret must contain fields named `Username`, `Password`, and `Domain`.
+
+### Application Settings
+
+```json
+"Application": {
+  "PathBase": "/ExchangeAdminWeb",
+  "ContactEmail": "exchangeadmin@yourcompany.com"
+}
+```
+
+| Key | Purpose |
+|-----|---------|
+| `Application:PathBase` | IIS sub-application path |
+| `Application:ContactEmail` | Displayed in the UI as the support contact (nav footer) |
+
 ### Email Notifications
 
 **Admin Notifications (always sent):**

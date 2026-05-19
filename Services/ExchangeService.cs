@@ -1772,7 +1772,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
 
                 if (failures.Count > 0 && successes.Count > 0)
-                    return new PermissionResult { Success = true, Message = $"Partial: granted {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+                    return new PermissionResult { Success = false, Message = $"Partial: granted {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
                 if (failures.Count > 0)
                     return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
                 return new PermissionResult { Success = true, Message = $"{user} has been granted {string.Join(" and ", successes)} on {targetMailbox} (on-premises)." };
@@ -1854,7 +1854,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 }
 
                 if (failures.Count > 0 && successes.Count > 0)
-                    return new PermissionResult { Success = true, Message = $"Partial: removed {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+                    return new PermissionResult { Success = false, Message = $"Partial: removed {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
                 if (failures.Count > 0)
                     return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
                 return new PermissionResult { Success = true, Message = $"{string.Join(" and ", successes)} removed for {user} on {targetMailbox} (on-premises)." };
