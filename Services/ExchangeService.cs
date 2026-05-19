@@ -1680,6 +1680,238 @@ https://admin.exchange.microsoft.com/#/migration";
         }), _onPremThrottle);
     }
 
+    // -------------------------------------------------------------------------
+    // On-Prem Permission Operations
+    // -------------------------------------------------------------------------
+
+    public async Task<string> GetMailboxLocationAsync(string identity)
+    {
+        return await RunPooledQueryAsync(ps =>
+        {
+            ps.AddCommand("Get-Recipient")
+              .AddParameter("Identity", identity)
+              .AddParameter("ErrorAction", "Stop");
+            var results = Invoke(ps);
+            var recip = results.FirstOrDefault()
+                ?? throw new InvalidOperationException($"Recipient '{identity}' not found.");
+
+            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "";
+            if (type.Contains("Remote", StringComparison.OrdinalIgnoreCase))
+                return "OnPrem";
+            if (type.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
+                return "Cloud";
+            return "Unknown";
+        });
+    }
+
+    public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                if (fullAccess)
+                {
+                    var script = ScriptBlock.Create("param($Identity, $User) Add-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
+                    ps.AddCommand("Invoke-Command")
+                      .AddParameter("Session", session)
+                      .AddParameter("ScriptBlock", script)
+                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                    Invoke(ps);
+                }
+
+                if (sendAs)
+                {
+                    var script = ScriptBlock.Create("param($Identity, $Trustee) Add-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                    ps.AddCommand("Invoke-Command")
+                      .AddParameter("Session", session)
+                      .AddParameter("ScriptBlock", script)
+                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                    Invoke(ps);
+                }
+
+                var perms = new List<string>();
+                if (fullAccess) perms.Add("FullAccess");
+                if (sendAs) perms.Add("SendAs");
+                return new PermissionResult { Success = true, Message = $"{user} has been granted {string.Join(" and ", perms)} on {targetMailbox} (on-premises)." };
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    var s = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (s != null) { ps.AddCommand("Remove-PSSession").AddParameter("Session", s); ps.Invoke(); }
+                }
+                catch { }
+            }
+        }), _onPremThrottle);
+    }
+
+    public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                if (fullAccess)
+                {
+                    var script = ScriptBlock.Create("param($Identity, $User) Remove-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
+                    ps.AddCommand("Invoke-Command")
+                      .AddParameter("Session", session)
+                      .AddParameter("ScriptBlock", script)
+                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                    Invoke(ps);
+                }
+
+                if (sendAs)
+                {
+                    var script = ScriptBlock.Create("param($Identity, $Trustee) Remove-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                    ps.AddCommand("Invoke-Command")
+                      .AddParameter("Session", session)
+                      .AddParameter("ScriptBlock", script)
+                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                    Invoke(ps);
+                }
+
+                var perms = new List<string>();
+                if (fullAccess) perms.Add("FullAccess");
+                if (sendAs) perms.Add("SendAs");
+                return new PermissionResult { Success = true, Message = $"{string.Join(" and ", perms)} removed for {user} on {targetMailbox} (on-premises)." };
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    var s = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (s != null) { ps.AddCommand("Remove-PSSession").AddParameter("Session", s); ps.Invoke(); }
+                }
+                catch { }
+            }
+        }), _onPremThrottle);
+    }
+
+    public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, string user, string accessRight)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                var script = ScriptBlock.Create(@"
+                    param($Identity, $User, $AccessRights)
+                    try {
+                        Set-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -AccessRights $AccessRights -ErrorAction Stop
+                    } catch {
+                        Add-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -AccessRights $AccessRights -ErrorAction Stop
+                    }");
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", session)
+                  .AddParameter("ScriptBlock", script)
+                  .AddParameter("ArgumentList", new object[] { targetMailbox, user, accessRight });
+                Invoke(ps);
+
+                return new PermissionResult { Success = true, Message = $"{user} granted {accessRight} on {targetMailbox} calendar (on-premises)." };
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    var s = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (s != null) { ps.AddCommand("Remove-PSSession").AddParameter("Session", s); ps.Invoke(); }
+                }
+                catch { }
+            }
+        }), _onPremThrottle);
+    }
+
+    public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, string user)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                var script = ScriptBlock.Create(@"
+                    param($Identity, $User)
+                    Remove-MailboxFolderPermission -Identity ""$Identity`:\Calendar"" -User $User -Confirm:$false -ErrorAction Stop");
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", session)
+                  .AddParameter("ScriptBlock", script)
+                  .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                Invoke(ps);
+
+                return new PermissionResult { Success = true, Message = $"Calendar permissions removed for {user} on {targetMailbox} (on-premises)." };
+            }
+            finally
+            {
+                try
+                {
+                    ps.Commands.Clear();
+                    var s = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                    if (s != null) { ps.AddCommand("Remove-PSSession").AddParameter("Session", s); ps.Invoke(); }
+                }
+                catch { }
+            }
+        }), _onPremThrottle);
+    }
+
     private void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')

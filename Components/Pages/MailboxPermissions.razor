@@ -147,6 +147,24 @@
         </div>
     }
 
+    @if (onPremConfirmPending)
+    {
+        <div class="row mt-3">
+            <div class="col-md-8">
+                <div class="alert alert-warning" role="alert">
+                    <strong>@onPremTarget</strong> is an on-premises mailbox. This will execute against the on-prem Exchange server.
+                    <div class="mt-2">
+                        <button class="btn btn-warning btn-sm me-2" @onclick="ConfirmOnPrem" disabled="@isLoading">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Continue
+                        </button>
+                        <button class="btn btn-secondary btn-sm" @onclick="CancelOnPrem">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
     @if (result is not null)
     {
         <div class="row mt-3">
@@ -241,11 +259,27 @@
             : ClientInfo.GetIpForUser(currentUser);
     }
 
+    private bool onPremConfirmPending;
+    private string? onPremTarget;
+
     private void SetTab(int index)
     {
         tabIndex = index;
         result = null;
         bulkResult = null;
+        onPremConfirmPending = false;
+    }
+
+    private async Task ConfirmOnPrem()
+    {
+        onPremConfirmPending = false;
+        await ExecuteOnPrem();
+    }
+
+    private void CancelOnPrem()
+    {
+        onPremConfirmPending = false;
+        onPremTarget = null;
     }
 
     private async Task SubmitSingle()
@@ -321,6 +355,24 @@
 
         try
         {
+            var location = await Exchange.GetMailboxLocationAsync(target);
+            if (location == "OnPrem")
+            {
+                var onPremAuth = await AuthorizationService.AuthorizeAsync(
+                    (await AuthStateProvider.GetAuthenticationStateAsync()).User, "MailboxPermissionsOnPrem");
+                if (!onPremAuth.Succeeded)
+                {
+                    result = PermissionResult.Fail($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team.");
+                    isLoading = false;
+                    return;
+                }
+
+                onPremTarget = target;
+                onPremConfirmPending = true;
+                isLoading = false;
+                return;
+            }
+
             var opResult = tabIndex == 0
                 ? await Exchange.AddMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs, autoMapping)
                 : await Exchange.RemoveMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs);
@@ -420,6 +472,48 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task ExecuteOnPrem()
+    {
+        isLoading = true;
+        result = null;
+
+        var target = targetMailbox.Trim();
+        var user = affectedUser.Trim();
+        var ticket = ticketNumber.Trim();
+
+        try
+        {
+            var opResult = tabIndex == 0
+                ? await Exchange.AddMailboxPermissionsOnPremAsync(target, user, grantFullAccess, grantSendAs)
+                : await Exchange.RemoveMailboxPermissionsOnPremAsync(target, user, grantFullAccess, grantSendAs);
+
+            var perms = new List<string>();
+            if (grantFullAccess) perms.Add("FullAccess");
+            if (grantSendAs) perms.Add("SendAs");
+            var permType = string.Join("+", perms);
+            var action = $"OnPrem_{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
+
+            Audit.LogMailboxPermission(
+                currentUser, clientIpAddress, action, target, user, permType,
+                opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message);
+
+            await Email.SendAdminNotificationAsync(
+                currentUser, clientIpAddress, action, target, user, permType,
+                opResult.Success, ticket, opResult.Success ? null : opResult.Message);
+
+            result = opResult;
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+            onPremTarget = null;
         }
     }
 

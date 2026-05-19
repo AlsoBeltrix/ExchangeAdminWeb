@@ -175,9 +175,10 @@
 
     private readonly string[] sections = new[]
     {
-        "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
-        "MigrationCreate", "MigrationManage", "DelegationReport",
-        "MessageTrace", "RecipientLookup", "OutOfOffice"
+        "MailboxPermissions", "MailboxPermissionsOnPrem",
+        "CalendarPermissions", "CalendarPermissionsOnPrem",
+        "MigrationCheck", "MigrationCreate", "MigrationManage",
+        "DelegationReport", "MessageTrace", "RecipientLookup", "OutOfOffice"
     };
 
     private Dictionary<string, List<string>> editState = new();

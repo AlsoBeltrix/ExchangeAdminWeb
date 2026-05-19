@@ -35,7 +35,8 @@ try
     var expectedSections = new[] {
         "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
         "MigrationCreate", "MigrationManage", "DelegationReport",
-        "MessageTrace", "RecipientLookup", "OutOfOffice"
+        "MessageTrace", "RecipientLookup", "OutOfOffice",
+        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
     };
 
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)

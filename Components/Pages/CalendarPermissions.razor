@@ -146,6 +146,24 @@
         </div>
     }
 
+    @if (onPremConfirmPending)
+    {
+        <div class="row mt-3">
+            <div class="col-md-8">
+                <div class="alert alert-warning" role="alert">
+                    <strong>@onPremTarget</strong> is an on-premises mailbox. This will execute against the on-prem Exchange server.
+                    <div class="mt-2">
+                        <button class="btn btn-warning btn-sm me-2" @onclick="ConfirmOnPrem" disabled="@isLoading">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Continue
+                        </button>
+                        <button class="btn btn-secondary btn-sm" @onclick="CancelOnPrem">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
     @if (result is not null)
     {
         <div class="row mt-3">
@@ -237,11 +255,27 @@
             : ClientInfo.GetIpForUser(currentUser);
     }
 
+    private bool onPremConfirmPending;
+    private string? onPremTarget;
+
     private void SetTab(int index)
     {
         tabIndex = index;
         result = null;
         bulkResult = null;
+        onPremConfirmPending = false;
+    }
+
+    private async Task ConfirmOnPrem()
+    {
+        onPremConfirmPending = false;
+        await ExecuteOnPrem();
+    }
+
+    private void CancelOnPrem()
+    {
+        onPremConfirmPending = false;
+        onPremTarget = null;
     }
 
     private async Task SubmitSingle()
@@ -309,6 +343,24 @@
 
         try
         {
+            var location = await Exchange.GetMailboxLocationAsync(target);
+            if (location == "OnPrem")
+            {
+                var onPremAuth = await AuthorizationService.AuthorizeAsync(
+                    (await AuthStateProvider.GetAuthenticationStateAsync()).User, "CalendarPermissionsOnPrem");
+                if (!onPremAuth.Succeeded)
+                {
+                    result = PermissionResult.Fail($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team.");
+                    isLoading = false;
+                    return;
+                }
+
+                onPremTarget = target;
+                onPremConfirmPending = true;
+                isLoading = false;
+                return;
+            }
+
             PermissionResult opResult;
             string action;
             string? level;
@@ -417,6 +469,56 @@
         finally
         {
             isLoading = false;
+        }
+    }
+
+    private async Task ExecuteOnPrem()
+    {
+        isLoading = true;
+        result = null;
+
+        var target = targetMailbox.Trim();
+        var user = affectedUser.Trim();
+        var ticket = ticketNumber.Trim();
+
+        try
+        {
+            PermissionResult opResult;
+            string action;
+            string? level;
+
+            if (tabIndex == 0)
+            {
+                opResult = await Exchange.SetCalendarPermissionOnPremAsync(target, user, accessRight.ToString());
+                action = "OnPrem_SetCalendar";
+                level = accessRight.ToString();
+            }
+            else
+            {
+                opResult = await Exchange.RemoveCalendarPermissionOnPremAsync(target, user);
+                action = "OnPrem_RemoveCalendar";
+                level = null;
+            }
+
+            Audit.LogCalendarPermission(
+                currentUser, clientIpAddress, action, target, user, level,
+                opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message);
+
+            await Email.SendAdminNotificationAsync(
+                currentUser, clientIpAddress, action, target, user,
+                level ?? "Remove", opResult.Success, ticket,
+                opResult.Success ? null : opResult.Message);
+
+            result = opResult;
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+            onPremTarget = null;
         }
     }
 

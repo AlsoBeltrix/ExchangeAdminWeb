@@ -30,4 +30,9 @@ public interface IExchangeService
     Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress);
     Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress);
     Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime);
+    Task<string> GetMailboxLocationAsync(string identity);
+    Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs);
+    Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs);
+    Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, string user, string accessRight);
+    Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, string user);
 }
