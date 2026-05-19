@@ -524,52 +524,11 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                               .AddParameter("ErrorAction", "Stop");
                             var recipient = Invoke(ps);
                             var samAccountName = recipient.FirstOrDefault()?.Properties["SamAccountName"]?.Value?.ToString();
-
-                            if (!string.IsNullOrEmpty(samAccountName))
-                            {
-                                ps.AddCommand("Import-Module")
-                                  .AddParameter("Name", "ActiveDirectory")
-                                  .AddParameter("ErrorAction", "Stop");
-                                Invoke(ps);
-
-                                ps.AddCommand("Get-ADUser")
-                                  .AddParameter("Identity", samAccountName)
-                                  .AddParameter("Properties", "memberOf")
-                                  .AddParameter("ErrorAction", "Stop");
-                                var adUser = Invoke(ps);
-                                var memberOf = adUser.FirstOrDefault()?.Properties["memberOf"]?.Value;
-
-                                if (memberOf != null)
-                                {
-                                    var groups = new List<string>();
-                                    if (memberOf is System.Collections.IEnumerable enumerable)
-                                    {
-                                        foreach (var item in enumerable)
-                                        {
-                                            if (item != null)
-                                                groups.Add(item.ToString() ?? string.Empty);
-                                        }
-                                    }
-
-                                    foreach (var excludedGroup in _excludedADGroups)
-                                    {
-                                        if (groups.Any(g => g.Contains(excludedGroup, StringComparison.OrdinalIgnoreCase)))
-                                        {
-                                            r.Status = MigrationStatus.Ineligible;
-                                            r.IneligibilityReasons.Add($"Member of excluded group: {excludedGroup}");
-                                            _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", emailAddress, excludedGroup);
-                                        }
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                _logger.LogWarning("Could not find SamAccountName for {Email} - AD group check skipped", emailAddress);
-                            }
+                            r.SamAccountName = samAccountName;
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Error checking AD group membership for {Email} - check skipped.", emailAddress);
+                            _logger.LogError(ex, "Error resolving SamAccountName for {Email} - AD group check skipped.", emailAddress);
                             r.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
                         }
                     }
@@ -592,6 +551,19 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
             return r;
         });
+
+        if (direction == MigrationDirection.ToCloud && !string.IsNullOrEmpty(result.SamAccountName) && _excludedADGroups.Length > 0)
+        {
+            try
+            {
+                CheckAdGroupMembership(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking AD group membership for {Email}", emailAddress);
+                result.IneligibilityReasons.Add($"Warning: Could not verify AD group membership ({ex.Message})");
+            }
+        }
 
         if (direction == MigrationDirection.ToCloud && result.Status == MigrationStatus.Eligible)
         {
@@ -1900,6 +1872,52 @@ https://admin.exchange.microsoft.com/#/migration";
             ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase));
+
+    private void CheckAdGroupMembership(MigrationEligibilityResult result)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module")
+          .AddParameter("Name", "ActiveDirectory")
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", result.SamAccountName)
+          .AddParameter("Properties", "memberOf")
+          .AddParameter("ErrorAction", "Stop");
+        var adUser = ps.Invoke();
+        ps.Commands.Clear();
+
+        var memberOf = adUser.FirstOrDefault()?.Properties["memberOf"]?.Value;
+        if (memberOf == null) return;
+
+        var groups = new List<string>();
+        if (memberOf is System.Collections.IEnumerable enumerable)
+        {
+            foreach (var item in enumerable)
+            {
+                if (item != null)
+                    groups.Add(item.ToString() ?? string.Empty);
+            }
+        }
+
+        foreach (var excludedGroup in _excludedADGroups)
+        {
+            if (groups.Any(g => g.Contains(excludedGroup, StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Status = MigrationStatus.Ineligible;
+                result.IneligibilityReasons.Add($"Member of excluded group: {excludedGroup}");
+                _logger.LogWarning("User {Email} is ineligible for cloud migration - member of {Group}", result.EmailAddress, excludedGroup);
+            }
+        }
+    }
 
     private static string ValidateMailbox(PowerShell ps, string mailbox)
     {

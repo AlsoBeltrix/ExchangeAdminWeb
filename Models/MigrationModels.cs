@@ -10,6 +10,7 @@ public class MigrationEligibilityResult
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
     public long CloudQuotaGB { get; set; } = 100;
     public bool ExceedsQuota => TotalSizeGB > CloudQuotaGB;
+    internal string? SamAccountName { get; set; }
 }
 
 public class MigrationBatchResult

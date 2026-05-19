@@ -8,8 +8,8 @@ public class DelineaService
     private readonly HttpClient _httpClient;
     private readonly ILogger<DelineaService> _logger;
     private readonly string _secretServerUrl;
-    private readonly string _apiUsername;
-    private readonly string _apiKey;
+    private string _apiUsername = string.Empty;
+    private string _apiKey = string.Empty;
     private readonly int _exchangeSecretId;
     private string? _accessToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
@@ -21,12 +21,18 @@ public class DelineaService
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
         _exchangeSecretId = int.Parse(config["Delinea:ExchangeSecretId"] ?? throw new InvalidOperationException("Delinea:ExchangeSecretId not configured"));
 
-        var credentialTarget = config["Delinea:CredentialTarget"] ?? "DelineaSecretServer";
-        var (username, password) = CredentialManagerService.ReadCredential(credentialTarget);
+        _credentialTarget = config["Delinea:CredentialTarget"] ?? "DelineaSecretServer";
+        LoadCredentials();
+    }
+
+    private readonly string _credentialTarget;
+
+    private void LoadCredentials()
+    {
+        var (username, password) = CredentialManagerService.ReadCredential(_credentialTarget);
 
         if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
         {
-            _logger.LogWarning("Delinea API credentials not found in Windows Credential Manager (target: {Target}). On-prem Exchange features will be unavailable.", credentialTarget);
             _apiUsername = string.Empty;
             _apiKey = string.Empty;
         }
@@ -34,7 +40,6 @@ public class DelineaService
         {
             _apiUsername = username;
             _apiKey = password;
-            _logger.LogInformation("Loaded Delinea API credentials from Windows Credential Manager for user: {User}", username);
         }
     }
 
@@ -42,8 +47,13 @@ public class DelineaService
     {
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
         {
-            _logger.LogWarning("Delinea credentials not configured — cannot retrieve Exchange credentials");
-            return null;
+            LoadCredentials();
+            if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
+            {
+                _logger.LogWarning("Delinea credentials not found in Credential Manager (target: {Target})", _credentialTarget);
+                return null;
+            }
+            _logger.LogInformation("Delinea credentials loaded on retry from Credential Manager");
         }
 
         try

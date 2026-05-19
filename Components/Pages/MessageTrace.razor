@@ -58,10 +58,16 @@
 
             @if (IsHistoricalRange)
             {
-                <div class="alert alert-info">
-                    <strong>Note:</strong> Date ranges exceeding 10 days use a historical search.
-                    Results will be emailed to <strong>@(string.IsNullOrWhiteSpace(userEmail) ? "(unable to determine — see below)" : userEmail)</strong> when ready (typically 30 minutes to several hours).
+                <div class="alert alert-info mb-3">
+                    <strong>Historical search:</strong> Standard message trace only covers the last 10 days.
+                    Older searches are submitted as background jobs and results are emailed when ready (30 min to several hours).
                     Subject filtering is not available for historical searches.
+                </div>
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Send report to</label>
+                        <input type="email" class="form-control" @bind="reportEmail" placeholder="your.email@analog.com" disabled="@isLoading" />
+                    </div>
                 </div>
             }
 
@@ -73,7 +79,7 @@
             @if (historicalSubmitted)
             {
                 <div class="alert alert-success">
-                    Historical search submitted successfully. Results will be emailed to <strong>@userEmail</strong> when processing is complete.
+                    Historical search submitted successfully. Results will be emailed to <strong>@reportEmail</strong> when processing is complete.
                 </div>
             }
 
@@ -145,6 +151,8 @@
     private string userEmail = "";
     private string clientIpAddress = "Unknown";
 
+    private string reportEmail = "";
+
     private bool IsFormValid => !string.IsNullOrWhiteSpace(sender) || !string.IsNullOrWhiteSpace(recipient);
     private bool IsHistoricalRange => (endDate - startDate).TotalDays > 9;
 
@@ -165,6 +173,7 @@
             ?? user.FindFirst("email")?.Value
             ?? user.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
             ?? "";
+        reportEmail = userEmail;
 
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
@@ -240,10 +249,10 @@
 
     private async Task RunHistoricalSearch()
     {
-        var notifyAddress = userEmail;
-        if (string.IsNullOrWhiteSpace(notifyAddress))
+        var notifyAddress = reportEmail?.Trim();
+        if (string.IsNullOrWhiteSpace(notifyAddress) || !notifyAddress.Contains('@'))
         {
-            validationError = "Your email address could not be determined. Historical searches require a notification address.";
+            validationError = "A valid email address is required for historical search results delivery.";
             return;
         }
 
