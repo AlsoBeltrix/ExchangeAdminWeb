@@ -257,6 +257,9 @@
 
     private bool onPremConfirmPending;
     private string? onPremTarget;
+    private string? onPremUser;
+    private string? onPremTicket;
+    private CalendarAccessRight onPremAccessRight;
 
     private void SetTab(int index)
     {
@@ -356,6 +359,9 @@
                 }
 
                 onPremTarget = target;
+                onPremUser = user;
+                onPremTicket = ticket;
+                onPremAccessRight = accessRight;
                 onPremConfirmPending = true;
                 isLoading = false;
                 return;
@@ -477,28 +483,39 @@
         isLoading = true;
         result = null;
 
-        var target = targetMailbox.Trim();
-        var user = affectedUser.Trim();
-        var ticket = ticketNumber.Trim();
+        var target = onPremTarget!;
+        var user = onPremUser!;
+        var ticket = onPremTicket!;
+
+        string action;
+        string? level;
+
+        if (tabIndex == 0)
+        {
+            action = "OnPrem_SetCalendar";
+            level = onPremAccessRight.ToString();
+        }
+        else
+        {
+            action = "OnPrem_RemoveCalendar";
+            level = null;
+        }
 
         try
         {
-            PermissionResult opResult;
-            string action;
-            string? level;
+            var authCheck = await AuthorizationService.AuthorizeAsync(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User, "CalendarPermissionsOnPrem");
+            if (!authCheck.Succeeded)
+            {
+                result = PermissionResult.Fail("Authorization denied for on-prem operations.");
+                return;
+            }
 
+            PermissionResult opResult;
             if (tabIndex == 0)
-            {
-                opResult = await Exchange.SetCalendarPermissionOnPremAsync(target, user, accessRight.ToString());
-                action = "OnPrem_SetCalendar";
-                level = accessRight.ToString();
-            }
+                opResult = await Exchange.SetCalendarPermissionOnPremAsync(target, user, onPremAccessRight.ToString());
             else
-            {
                 opResult = await Exchange.RemoveCalendarPermissionOnPremAsync(target, user);
-                action = "OnPrem_RemoveCalendar";
-                level = null;
-            }
 
             Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
@@ -509,10 +526,21 @@
                 level ?? "Remove", opResult.Success, ticket,
                 opResult.Success ? null : opResult.Message);
 
+            if (opResult.Success)
+            {
+                var isGrant = tabIndex == 0;
+                var permType = isGrant ? $"Calendar {level}" : "Calendar Access";
+                await Email.SendUserNotificationAsync(user, $"{target} (Calendar)", currentUser, permType, isGrant);
+                await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+            }
+
             result = opResult;
         }
         catch (Exception ex)
         {
+            Audit.LogCalendarPermission(
+                currentUser, clientIpAddress, action, target, user, level,
+                false, ticket, errorDetail: ex.Message);
             result = PermissionResult.Fail(ex.Message);
         }
         finally

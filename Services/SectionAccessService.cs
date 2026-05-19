@@ -31,11 +31,16 @@ public class SectionAccessService
 
     public string[] GetAdminGroups() => _adminGroups;
 
+    private static readonly HashSet<string> _failClosedSections = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
+    };
+
     public string[] GetGroupsForSection(string section)
     {
         var (data, source) = ReadSectionAccess();
         if (source == SectionAccessSource.None)
-            return _allowedGroups;
+            return _failClosedSections.Contains(section) ? Array.Empty<string>() : _allowedGroups;
 
         return data.TryGetValue(section, out var groups) ? groups : Array.Empty<string>();
     }

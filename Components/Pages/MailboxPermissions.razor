@@ -261,6 +261,10 @@
 
     private bool onPremConfirmPending;
     private string? onPremTarget;
+    private string? onPremUser;
+    private string? onPremTicket;
+    private bool onPremFullAccess;
+    private bool onPremSendAs;
 
     private void SetTab(int index)
     {
@@ -368,6 +372,10 @@
                 }
 
                 onPremTarget = target;
+                onPremUser = user;
+                onPremTicket = ticket;
+                onPremFullAccess = grantFullAccess;
+                onPremSendAs = grantSendAs;
                 onPremConfirmPending = true;
                 isLoading = false;
                 return;
@@ -480,21 +488,31 @@
         isLoading = true;
         result = null;
 
-        var target = targetMailbox.Trim();
-        var user = affectedUser.Trim();
-        var ticket = ticketNumber.Trim();
+        var target = onPremTarget!;
+        var user = onPremUser!;
+        var ticket = onPremTicket!;
+        var fullAccess = onPremFullAccess;
+        var sendAs = onPremSendAs;
+
+        var perms = new List<string>();
+        if (fullAccess) perms.Add("FullAccess");
+        if (sendAs) perms.Add("SendAs");
+        var permType = string.Join("+", perms);
+        var action = $"OnPrem_{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
 
         try
         {
-            var opResult = tabIndex == 0
-                ? await Exchange.AddMailboxPermissionsOnPremAsync(target, user, grantFullAccess, grantSendAs)
-                : await Exchange.RemoveMailboxPermissionsOnPremAsync(target, user, grantFullAccess, grantSendAs);
+            var authCheck = await AuthorizationService.AuthorizeAsync(
+                (await AuthStateProvider.GetAuthenticationStateAsync()).User, "MailboxPermissionsOnPrem");
+            if (!authCheck.Succeeded)
+            {
+                result = PermissionResult.Fail("Authorization denied for on-prem operations.");
+                return;
+            }
 
-            var perms = new List<string>();
-            if (grantFullAccess) perms.Add("FullAccess");
-            if (grantSendAs) perms.Add("SendAs");
-            var permType = string.Join("+", perms);
-            var action = $"OnPrem_{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
+            var opResult = tabIndex == 0
+                ? await Exchange.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
+                : await Exchange.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
 
             Audit.LogMailboxPermission(
                 currentUser, clientIpAddress, action, target, user, permType,
@@ -504,10 +522,20 @@
                 currentUser, clientIpAddress, action, target, user, permType,
                 opResult.Success, ticket, opResult.Success ? null : opResult.Message);
 
+            if (opResult.Success)
+            {
+                var isGrant = tabIndex == 0;
+                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
+                await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+            }
+
             result = opResult;
         }
         catch (Exception ex)
         {
+            Audit.LogMailboxPermission(
+                currentUser, clientIpAddress, action, target, user, permType,
+                false, ticket, errorDetail: ex.Message);
             result = PermissionResult.Fail(ex.Message);
         }
         finally
