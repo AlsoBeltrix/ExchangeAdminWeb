@@ -530,12 +530,12 @@
                     saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message);
             }
 
-            var anySuccess = opResult.Success || succeeded.Length > 0;
+            var isPartial = !opResult.Success && succeeded.Length > 0;
             await Email.SendAdminNotificationAsync(
-                currentUser, clientIpAddress, action, target, user, permType,
-                anySuccess, ticket, anySuccess && opResult.Success ? null : opResult.Message);
+                currentUser, clientIpAddress, isPartial ? $"{action}_PARTIAL" : action, target, user, permType,
+                opResult.Success, ticket, opResult.Success ? null : opResult.Message);
 
-            if (anySuccess)
+            if (opResult.Success || succeeded.Length > 0)
             {
                 var isGrant = tabIndex == 0;
                 var notifyPerm = string.Join("+", succeeded.Length > 0 ? succeeded : new[] { permType });
