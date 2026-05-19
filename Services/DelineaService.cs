@@ -21,7 +21,7 @@ public class DelineaService
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
         _exchangeSecretId = int.Parse(config["Delinea:ExchangeSecretId"] ?? throw new InvalidOperationException("Delinea:ExchangeSecretId not configured"));
 
-        _credentialTarget = config["Delinea:CredentialTarget"] ?? "DelineaSecretServer";
+        _credentialTarget = config["Delinea:CredentialTarget"] ?? "Delinea_Client";
         LoadCredentials();
     }
 
@@ -126,7 +126,7 @@ public class DelineaService
         var authBody = new FormUrlEncodedContent(new[]
         {
             new KeyValuePair<string, string>("grant_type", "client_credentials"),
-            new KeyValuePair<string, string>("client_id", _apiUsername),
+            new KeyValuePair<string, string>("client_id", $"sdk-client-{_apiUsername}"),
             new KeyValuePair<string, string>("client_secret", _apiKey)
         });
 

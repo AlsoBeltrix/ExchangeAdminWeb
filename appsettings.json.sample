@@ -75,7 +75,7 @@
   "Delinea": {
     "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
     "ExchangeSecretId": 0,
-    "CredentialTarget": "DelineaSecretServer"
+    "CredentialTarget": "Delinea_Client"
   },
   "OnPremExchange": {
     "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
