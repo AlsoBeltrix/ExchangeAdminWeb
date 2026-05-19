@@ -208,7 +208,9 @@ public class PermissionValidator
         {
             _excludedUsers.Clear();
             _initFailed = true;
-            _logger.LogError(ex, "Failed to initialize permission validator — all operations on protected targets will be blocked until resolved.");
+            _initialized = true;
+            _lastRefresh = DateTime.UtcNow;
+            _logger.LogError(ex, "Failed to initialize permission validator — all operations on protected targets will be blocked until app pool recycle.");
         }
         finally
         {

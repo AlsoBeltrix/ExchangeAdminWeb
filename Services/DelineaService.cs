@@ -13,6 +13,7 @@ public class DelineaService
     private readonly int _exchangeSecretId;
     private string? _accessToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
+    private readonly SemaphoreSlim _tokenLock = new(1, 1);
 
     public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger)
     {
@@ -58,11 +59,11 @@ public class DelineaService
 
         try
         {
-            // Ensure we have a valid access token
-            await EnsureAccessTokenAsync();
+            var token = await GetAccessTokenAsync();
 
-            // Get the secret
-            var response = await _httpClient.GetAsync($"{_secretServerUrl}/api/v1/secrets/{_exchangeSecretId}");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{_exchangeSecretId}");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var response = await _httpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -71,9 +72,8 @@ public class DelineaService
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            var secret = JsonDocument.Parse(content);
+            using var secret = JsonDocument.Parse(content);
 
-            // Extract fields
             var items = secret.RootElement.GetProperty("items");
             string? username = null;
             string? password = null;
@@ -113,42 +113,44 @@ public class DelineaService
         }
     }
 
-    private async Task EnsureAccessTokenAsync()
+    private async Task<string> GetAccessTokenAsync()
     {
-        // Check if token is still valid (with 5 minute buffer)
-        if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
+        await _tokenLock.WaitAsync();
+        try
         {
-            _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
-            return;
+            if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
+                return _accessToken;
+
+            var authBody = new FormUrlEncodedContent(new[]
+            {
+                new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                new KeyValuePair<string, string>("client_id", $"sdk-client-{_apiUsername}"),
+                new KeyValuePair<string, string>("client_secret", _apiKey)
+            });
+
+            var authResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", authBody);
+
+            if (!authResponse.IsSuccessStatusCode)
+            {
+                var errorBody = await authResponse.Content.ReadAsStringAsync();
+                _logger.LogError("Delinea auth failed: {Status} | ClientId: sdk-client-{User} | Response: {Body}",
+                    authResponse.StatusCode, _apiUsername, errorBody);
+                throw new InvalidOperationException($"Failed to authenticate to Delinea Secret Server: {authResponse.StatusCode}");
+            }
+
+            var tokenContent = await authResponse.Content.ReadAsStringAsync();
+            using var tokenDoc = JsonDocument.Parse(tokenContent);
+
+            _accessToken = tokenDoc.RootElement.GetProperty("access_token").GetString()!;
+            var expiresIn = tokenDoc.RootElement.GetProperty("expires_in").GetInt32();
+            _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn);
+
+            _logger.LogInformation("Successfully authenticated to Delinea Secret Server");
+            return _accessToken;
         }
-
-        // Authenticate using SDK client credentials.
-        var authBody = new FormUrlEncodedContent(new[]
+        finally
         {
-            new KeyValuePair<string, string>("grant_type", "client_credentials"),
-            new KeyValuePair<string, string>("client_id", $"sdk-client-{_apiUsername}"),
-            new KeyValuePair<string, string>("client_secret", _apiKey)
-        });
-
-        var authResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", authBody);
-
-        if (!authResponse.IsSuccessStatusCode)
-        {
-            var errorBody = await authResponse.Content.ReadAsStringAsync();
-            _logger.LogError("Delinea auth failed: {Status} | ClientId: sdk-client-{User} | Response: {Body}",
-                authResponse.StatusCode, _apiUsername, errorBody);
-            throw new InvalidOperationException($"Failed to authenticate to Delinea Secret Server: {authResponse.StatusCode}");
+            _tokenLock.Release();
         }
-
-        var tokenContent = await authResponse.Content.ReadAsStringAsync();
-        var tokenDoc = JsonDocument.Parse(tokenContent);
-
-        _accessToken = tokenDoc.RootElement.GetProperty("access_token").GetString();
-        var expiresIn = tokenDoc.RootElement.GetProperty("expires_in").GetInt32();
-        _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn);
-
-        _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _accessToken);
-
-        _logger.LogInformation("Successfully authenticated to Delinea Secret Server");
     }
 }

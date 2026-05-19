@@ -2148,7 +2148,8 @@ https://admin.exchange.microsoft.com/#/migration";
         ps.Commands.Clear();
 
         ps.AddCommand("Get-ADUser")
-          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress}'")
+          .AddParameter("Filter", $"UserPrincipalName -eq '{result.EmailAddress.Replace("'", "''")}'")
+
           .AddParameter("Properties", "memberOf")
           .AddParameter("ErrorAction", "Stop");
         var adUser = ps.Invoke();

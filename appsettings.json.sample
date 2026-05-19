@@ -49,6 +49,8 @@
       "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
       "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
       "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
+      "MailboxPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
+      "CalendarPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
       "MigrationManage": ["DOMAIN\\Exchange-Admins"],
       "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
       "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
