@@ -1724,30 +1724,50 @@ https://admin.exchange.microsoft.com/#/migration";
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
+                var successes = new List<string>();
+                var failures = new List<string>();
+
                 if (fullAccess)
                 {
-                    var script = ScriptBlock.Create("param($Identity, $User) Add-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", session)
-                      .AddParameter("ScriptBlock", script)
-                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
-                    Invoke(ps);
+                    try
+                    {
+                        var script = ScriptBlock.Create("param($Identity, $User) Add-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
+                        ps.AddCommand("Invoke-Command")
+                          .AddParameter("Session", session)
+                          .AddParameter("ScriptBlock", script)
+                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                        Invoke(ps);
+                        successes.Add("FullAccess");
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"FullAccess: {ex.Message}");
+                    }
                 }
 
                 if (sendAs)
                 {
-                    var script = ScriptBlock.Create("param($Identity, $Trustee) Add-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", session)
-                      .AddParameter("ScriptBlock", script)
-                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
-                    Invoke(ps);
+                    try
+                    {
+                        var script = ScriptBlock.Create("param($Identity, $Trustee) Add-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                        ps.AddCommand("Invoke-Command")
+                          .AddParameter("Session", session)
+                          .AddParameter("ScriptBlock", script)
+                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                        Invoke(ps);
+                        successes.Add("SendAs");
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"SendAs: {ex.Message}");
+                    }
                 }
 
-                var perms = new List<string>();
-                if (fullAccess) perms.Add("FullAccess");
-                if (sendAs) perms.Add("SendAs");
-                return new PermissionResult { Success = true, Message = $"{user} has been granted {string.Join(" and ", perms)} on {targetMailbox} (on-premises)." };
+                if (failures.Count > 0 && successes.Count > 0)
+                    return new PermissionResult { Success = false, Message = $"Partial success on {targetMailbox} (on-premises). Granted: {string.Join(", ", successes)}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+                if (failures.Count > 0)
+                    return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
+                return new PermissionResult { Success = true, Message = $"{user} has been granted {string.Join(" and ", successes)} on {targetMailbox} (on-premises)." };
             }
             finally
             {
@@ -1782,30 +1802,50 @@ https://admin.exchange.microsoft.com/#/migration";
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
+                var successes = new List<string>();
+                var failures = new List<string>();
+
                 if (fullAccess)
                 {
-                    var script = ScriptBlock.Create("param($Identity, $User) Remove-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", session)
-                      .AddParameter("ScriptBlock", script)
-                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
-                    Invoke(ps);
+                    try
+                    {
+                        var script = ScriptBlock.Create("param($Identity, $User) Remove-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
+                        ps.AddCommand("Invoke-Command")
+                          .AddParameter("Session", session)
+                          .AddParameter("ScriptBlock", script)
+                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                        Invoke(ps);
+                        successes.Add("FullAccess");
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"FullAccess: {ex.Message}");
+                    }
                 }
 
                 if (sendAs)
                 {
-                    var script = ScriptBlock.Create("param($Identity, $Trustee) Remove-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", session)
-                      .AddParameter("ScriptBlock", script)
-                      .AddParameter("ArgumentList", new object[] { targetMailbox, user });
-                    Invoke(ps);
+                    try
+                    {
+                        var script = ScriptBlock.Create("param($Identity, $Trustee) Remove-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
+                        ps.AddCommand("Invoke-Command")
+                          .AddParameter("Session", session)
+                          .AddParameter("ScriptBlock", script)
+                          .AddParameter("ArgumentList", new object[] { targetMailbox, user });
+                        Invoke(ps);
+                        successes.Add("SendAs");
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add($"SendAs: {ex.Message}");
+                    }
                 }
 
-                var perms = new List<string>();
-                if (fullAccess) perms.Add("FullAccess");
-                if (sendAs) perms.Add("SendAs");
-                return new PermissionResult { Success = true, Message = $"{string.Join(" and ", perms)} removed for {user} on {targetMailbox} (on-premises)." };
+                if (failures.Count > 0 && successes.Count > 0)
+                    return new PermissionResult { Success = false, Message = $"Partial success on {targetMailbox} (on-premises). Removed: {string.Join(", ", successes)}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+                if (failures.Count > 0)
+                    return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
+                return new PermissionResult { Success = true, Message = $"{string.Join(" and ", successes)} removed for {user} on {targetMailbox} (on-premises)." };
             }
             finally
             {

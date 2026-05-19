@@ -141,7 +141,7 @@
                                 else
                                 {
                                     <span class="text-muted fst-italic">
-                                        @(sectionAccessConfigured ? "No groups (access denied)" : "Inherits base groups")
+                                        @(sectionAccessConfigured || IsFailClosedSection(sectionName) ? "No groups (access denied)" : "Inherits base groups")
                                     </span>
                                 }
                             </td>
@@ -247,6 +247,13 @@
         }
         newGroupInputs[section] = string.Empty;
     }
+
+    private static readonly HashSet<string> _failClosedSections = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
+    };
+
+    private static bool IsFailClosedSection(string sectionName) => _failClosedSections.Contains(sectionName);
 
     private bool IsInAllowedGroups(string group)
     {
