@@ -134,6 +134,9 @@ public class DelineaService
 
         if (!authResponse.IsSuccessStatusCode)
         {
+            var errorBody = await authResponse.Content.ReadAsStringAsync();
+            _logger.LogError("Delinea auth failed: {Status} | ClientId: sdk-client-{User} | Response: {Body}",
+                authResponse.StatusCode, _apiUsername, errorBody);
             throw new InvalidOperationException($"Failed to authenticate to Delinea Secret Server: {authResponse.StatusCode}");
         }
 

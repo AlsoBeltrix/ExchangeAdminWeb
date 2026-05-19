@@ -19,7 +19,10 @@ public static class CredentialManagerService
                 string? password = null;
 
                 if (cred.CredentialBlob != IntPtr.Zero && cred.CredentialBlobSize > 0)
+                {
                     password = Marshal.PtrToStringUni(cred.CredentialBlob, (int)cred.CredentialBlobSize / 2);
+                    password = password?.TrimEnd('\0');
+                }
 
                 return (username, password);
             }
