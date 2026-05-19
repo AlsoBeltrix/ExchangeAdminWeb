@@ -126,7 +126,7 @@ public class DelineaService
         var authBody = new FormUrlEncodedContent(new[]
         {
             new KeyValuePair<string, string>("grant_type", "client_credentials"),
-            new KeyValuePair<string, string>("client_id", $"sdk-client-{_apiUsername}"),
+            new KeyValuePair<string, string>("client_id", _apiUsername),
             new KeyValuePair<string, string>("client_secret", _apiKey)
         });
 
