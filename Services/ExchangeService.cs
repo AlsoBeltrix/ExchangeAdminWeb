@@ -198,7 +198,9 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<MailboxPermissionCsvRow>().ToList();
+        var records = csv.GetRecords<MailboxPermissionCsvRow>().Take(201).ToList();
+        if (records.Count > 200)
+            return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;
@@ -352,7 +354,9 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<CalendarPermissionCsvRow>().ToList();
+        var records = csv.GetRecords<CalendarPermissionCsvRow>().Take(201).ToList();
+        if (records.Count > 200)
+            return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;

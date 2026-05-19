@@ -471,6 +471,7 @@ if ($isUpgrade) {
             Delinea = [ordered]@{
                 SecretServerUrl = $DelineaUrl
                 ExchangeSecretId = $DelineaSecretId
+                CredentialTarget = "Delinea_Client"
             }
             Audit = [ordered]@{
                 LogRoot = $LogRoot
@@ -507,6 +508,7 @@ if ($isUpgrade) {
             }
             Application = [ordered]@{
                 PathBase = $PathBase
+                ContactEmail = $AdminEmail
             }
             AllowedHosts = "*"
         }
