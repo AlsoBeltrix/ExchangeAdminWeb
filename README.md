@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox and calendar permissions through a self-service web interface.
+ASP.NET Core 10 Blazor Server application for managing Exchange Online (and on-premises) mailbox and calendar permissions through a self-service web interface.
 
 ## Features
 
@@ -8,12 +8,41 @@ ASP.NET Core 10 Blazor Server application for managing Exchange Online mailbox a
 - **Full Access** - Grant/revoke full mailbox access with optional AutoMapping
 - **Send As** - Grant/revoke Send As permissions
 - Single operations and bulk CSV upload support
+- On-premises mailbox support for authorized power users (see below)
 
 ### Calendar Permissions
 - Set calendar sharing permissions (Owner, Editor, Reviewer, Limited Details, etc.)
 - Remove calendar permissions
 - Automatic calendar folder detection (supports international/localized folder names)
 - Single operations and bulk CSV upload support
+- On-premises mailbox support for authorized power users (see below)
+
+### On-Premises Permission Operations
+
+When a target mailbox is detected as on-premises:
+
+- **Regular users** see an escalation message directing them to contact the Exchange team.
+- **Power users** (members of the `MailboxPermissionsOnPrem` or `CalendarPermissionsOnPrem` section-access groups) are prompted with a confirmation dialog and can proceed.
+- Execution uses an on-prem PowerShell remoting session (`New-PSSession`) authenticated with credentials retrieved from Delinea Secret Server at runtime.
+- Concurrency is throttled to 2 simultaneous on-prem operations.
+
+### Admin Settings Page (`/admin-settings`)
+
+A web UI for managing section-level access control, gated by `Security:AdminGroups`.
+
+- View and edit which AD groups can access each application section.
+- Changes are persisted to `config/sectionaccess.json` and take effect immediately (no restart required).
+- If the fragment file does not exist, the service falls back to `Security:SectionAccess` in `appsettings.json`.
+- **Fail-closed behavior:** if a section key is missing or empty, access is denied to all users for that section.
+- All changes are audit-logged under the `AdminSettings` category.
+
+### Admin Event Log Page (`/admin-event-log`)
+
+A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
+
+- Browse audit events by date (one file per rotation period).
+- Filter by category, user, IP address, and result (Success/Failed).
+- Displays full event detail in an expandable JSON view.
 
 ### Security & Compliance
 - **Windows Authentication** - Seamless SSO with Active Directory
@@ -169,6 +198,13 @@ Add-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/windowsAuthentication' -Name 'useAppPoolCredentials' -Value 'True' -PSPath 'IIS:\' -Location 'Default Web Site/ExchangeAdminWeb'
 ```
 
+## Architecture
+
+- **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled.
+- **On-Prem Throttle:** On-premises Exchange operations are limited to 2 concurrent PSSession connections.
+- **Blazor Server:** Interactive Server rendering mode with per-circuit state.
+- **Audit:** Append-only JSONL files rotated daily/weekly/monthly; read by the admin event log viewer.
+
 ## Configuration Details
 
 ### Group-Based Authorization
@@ -187,6 +223,16 @@ Users must be members of at least one `AllowedGroups` entry to access the applic
 - Both simple names (`IT-Helpdesk`) and domain-qualified names (`DOMAIN\IT-Helpdesk`) are supported
 - Empty list = all access denied (fail-closed). At least one group must be configured.
 
+### Admin Groups
+
+Members of `Security:AdminGroups` can access the Admin Settings and Admin Event Log pages:
+
+```json
+"AdminGroups": ["DOMAIN\\Exchange-Admins"]
+```
+
+- Empty or missing = admin pages are inaccessible to everyone (fail-closed).
+
 ### Section-Level Access (SectionAccess)
 
 Each application feature is independently gated by AD group membership. A user must pass **both** the base `AllowedGroups` check **and** the section-specific group check:
@@ -195,6 +241,8 @@ Each application feature is independently gated by AD group membership. A user m
 "SectionAccess": {
   "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
   "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
+  "MailboxPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
+  "CalendarPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
   "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
   "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
   "MigrationManage": ["DOMAIN\\Exchange-Admins"],
@@ -206,9 +254,11 @@ Each application feature is independently gated by AD group membership. A user m
 ```
 
 - **Fail-closed:** missing or empty section keys deny access to that feature for all users
+- **On-prem sections** (`MailboxPermissionsOnPrem`, `CalendarPermissionsOnPrem`) are always fail-closed even when no `SectionAccess` configuration exists at all
 - **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
 - NavMenu links and Home page cards are hidden for unauthorized sections
 - Any group listed in a section must also appear in `AllowedGroups` to be effective
+- Section access can be managed at runtime via the Admin Settings page, which writes to `config/sectionaccess.json` (takes precedence over `appsettings.json`)
 
 ### Protected Users / Excluded Users
 
