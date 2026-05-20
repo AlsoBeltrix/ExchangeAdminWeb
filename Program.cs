@@ -1,6 +1,7 @@
 using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Components;
 using ExchangeAdminWeb.Middleware;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
@@ -32,56 +33,18 @@ try
     if (adminGroups.Length == 0)
         Log.Warning("Security:AdminGroups is empty or missing — admin settings page will be inaccessible until configured");
 
-    var expectedSections = new[] {
-        "MailboxPermissions", "CalendarPermissions", "MigrationCheck",
-        "MigrationCreate", "MigrationManage", "DelegationReport",
-        "MessageTrace", "RecipientLookup", "OutOfOffice",
-        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
-    };
+    var catalog = new ModuleCatalog();
 
     builder.Services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
         .AddNegotiate();
 
+    builder.Services.AddSingleton(catalog);
     builder.Services.AddSingleton<SectionAccessService>();
     builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
 
     builder.Services.AddAuthorization(options =>
     {
-        var groupPolicy = new AuthorizationPolicyBuilder()
-            .RequireAuthenticatedUser()
-            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-            .Build();
-
-        options.AddPolicy("GroupPolicy", groupPolicy);
-        options.FallbackPolicy = groupPolicy;
-
-        // Section policies: static base gate + dynamic section gate
-        var migrationSubPolicies = new[] { "MigrationCreate", "MigrationManage" };
-        foreach (var section in expectedSections.Except(migrationSubPolicies))
-        {
-            options.AddPolicy(section, policy => policy
-                .RequireAuthenticatedUser()
-                .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-                .AddRequirements(new GroupAuthorizationRequirement(section, dynamic: true)));
-        }
-
-        // Migration hierarchy: base gate + dynamic MigrationCheck + dynamic sub-permission
-        options.AddPolicy("MigrationCreate", policy => policy
-            .RequireAuthenticatedUser()
-            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-            .AddRequirements(new GroupAuthorizationRequirement("MigrationCheck", dynamic: true))
-            .AddRequirements(new GroupAuthorizationRequirement("MigrationCreate", dynamic: true)));
-
-        options.AddPolicy("MigrationManage", policy => policy
-            .RequireAuthenticatedUser()
-            .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-            .AddRequirements(new GroupAuthorizationRequirement("MigrationCheck", dynamic: true))
-            .AddRequirements(new GroupAuthorizationRequirement("MigrationManage", dynamic: true)));
-
-        // Admin page: AdminGroups only (no base AllowedGroups gate)
-        options.AddPolicy("AdminSettings", policy => policy
-            .RequireAuthenticatedUser()
-            .AddRequirements(new GroupAuthorizationRequirement(adminGroups, "AdminSettings")));
+        catalog.ConfigureAuthorizationPolicies(options, allowedGroups, adminGroups);
     });
 
     builder.Services.AddCascadingAuthenticationState();
