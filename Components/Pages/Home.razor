@@ -1,11 +1,13 @@
 @page "/"
 @using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Modules
 @attribute [Authorize(Policy = "GroupPolicy")]
 @rendermode InteractiveServer
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject IConfiguration Config
+@inject ModuleCatalog Catalog
 
 <PageTitle>Exchange Admin</PageTitle>
 
@@ -39,137 +41,42 @@
     </div>
 
     <div class="row g-4">
-        <AuthorizeView Policy="MailboxPermissions">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Mailbox Permissions</h5>
-                            <p class="card-text text-muted">
-                                Grant or revoke <strong>Full Access</strong> and <strong>Send As</strong> permissions on Exchange Online mailboxes.
-                            </p>
-                            <a href="mailbox-permissions" class="btn btn-primary">Open</a>
+        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule))
+        {
+            <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
+                <Authorized>
+                    <div class="col-md-4">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">@module.DisplayName</h5>
+                                <p class="card-text text-muted">@module.Description</p>
+                                <a href="@module.Route" class="btn btn-primary">Open</a>
+                            </div>
                         </div>
                     </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="CalendarPermissions">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Calendar Permissions</h5>
-                            <p class="card-text text-muted">
-                                Set or remove calendar sharing permissions on Exchange Online mailboxes.
-                            </p>
-                            <a href="calendar-permissions" class="btn btn-primary">Open</a>
+                </Authorized>
+            </AuthorizeView>
+        }
+        @{ var adminModules = Catalog.GetOrdered().Where(m => m.IsSystemModule).ToList(); }
+        @if (adminModules.Any())
+        {
+            <AuthorizeView Policy="@adminModules.First().MainPermission.PolicyAlias">
+                <Authorized>
+                    @foreach (var module in adminModules)
+                    {
+                        <div class="col-md-4">
+                            <div class="card h-100 border-warning">
+                                <div class="card-body">
+                                    <h5 class="card-title">@module.DisplayName</h5>
+                                    <p class="card-text text-muted">@module.Description</p>
+                                    <a href="@module.Route" class="btn btn-warning">Open</a>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="MigrationCheck">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Exchange Migration</h5>
-                            <p class="card-text text-muted">
-                                Check migration eligibility and create migration batches for Exchange Online and on-premises mailboxes.
-                            </p>
-                            <a href="migration" class="btn btn-primary">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="DelegationReport">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Delegation Report</h5>
-                            <p class="card-text text-muted">
-                                View current mailbox delegation assignments including Full Access, Send As, and Calendar permissions.
-                            </p>
-                            <a href="delegation-report" class="btn btn-primary">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="MessageTrace">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Message Trace</h5>
-                            <p class="card-text text-muted">
-                                Search message delivery logs by sender, recipient, date range, and subject.
-                            </p>
-                            <a href="message-trace" class="btn btn-primary">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="RecipientLookup">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Recipient Lookup</h5>
-                            <p class="card-text text-muted">
-                                Look up mailbox details including size, quotas, archive status, and recipient type.
-                            </p>
-                            <a href="recipient-lookup" class="btn btn-primary">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="OutOfOffice">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100">
-                        <div class="card-body">
-                            <h5 class="card-title">Out of Office</h5>
-                            <p class="card-text text-muted">
-                                View or configure automatic reply (out of office) settings for Exchange Online mailboxes.
-                            </p>
-                            <a href="out-of-office" class="btn btn-primary">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
-        <AuthorizeView Policy="AdminSettings">
-            <Authorized>
-                <div class="col-md-4">
-                    <div class="card h-100 border-warning">
-                        <div class="card-body">
-                            <h5 class="card-title">Admin Settings</h5>
-                            <p class="card-text text-muted">
-                                Configure which AD groups have access to each application section.
-                            </p>
-                            <a href="admin-settings" class="btn btn-warning">Open</a>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card h-100 border-warning">
-                        <div class="card-body">
-                            <h5 class="card-title">Event Log</h5>
-                            <p class="card-text text-muted">
-                                View audit trail of all actions performed through this application.
-                            </p>
-                            <a href="admin-event-log" class="btn btn-warning">Open</a>
-                        </div>
-                    </div>
-                </div>
-            </Authorized>
-        </AuthorizeView>
+                    }
+                </Authorized>
+            </AuthorizeView>
+        }
     </div>
 </div>
 

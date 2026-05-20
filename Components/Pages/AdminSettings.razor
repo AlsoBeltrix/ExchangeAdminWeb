@@ -1,5 +1,6 @@
 @page "/admin-settings"
 @using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Modules
 @attribute [Authorize(Policy = "AdminSettings")]
 @rendermode InteractiveServer
 @inject SectionAccessService SectionAccess
@@ -9,6 +10,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<AdminSettings> Logger
+@inject ModuleCatalog Catalog
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -173,13 +175,7 @@
     private string[] allowedGroups = Array.Empty<string>();
     private string[] adminGroups = Array.Empty<string>();
 
-    private readonly string[] sections = new[]
-    {
-        "MailboxPermissions", "MailboxPermissionsOnPrem",
-        "CalendarPermissions", "CalendarPermissionsOnPrem",
-        "MigrationCheck", "MigrationCreate", "MigrationManage",
-        "DelegationReport", "MessageTrace", "RecipientLookup", "OutOfOffice"
-    };
+    private string[] sections = Array.Empty<string>();
 
     private Dictionary<string, List<string>> editState = new();
     private Dictionary<string, string> newGroupInputs = new();
@@ -204,6 +200,7 @@
 
     private void LoadCurrentState()
     {
+        sections = Catalog.GetConfigurablePolicyAliases().ToArray();
         allowedGroups = SectionAccess.GetAllowedGroups();
         adminGroups = SectionAccess.GetAdminGroups();
         sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
@@ -248,12 +245,12 @@
         newGroupInputs[section] = string.Empty;
     }
 
-    private static readonly HashSet<string> _failClosedSections = new(StringComparer.OrdinalIgnoreCase)
+    private bool IsFailClosedSection(string sectionName)
     {
-        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
-    };
-
-    private static bool IsFailClosedSection(string sectionName) => _failClosedSections.Contains(sectionName);
+        var module = Catalog.GetByPolicyAlias(sectionName);
+        if (module == null) return false;
+        return module.GranularPermissions.Any(gp => gp.PolicyAlias.Equals(sectionName, StringComparison.OrdinalIgnoreCase));
+    }
 
     private bool IsInAllowedGroups(string group)
     {
