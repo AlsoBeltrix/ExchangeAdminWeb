@@ -288,6 +288,49 @@ if (-not (Test-Path $configFolder)) {
 icacls $configFolder /grant "${ServiceAccount}:(OI)(CI)M" | Out-Null
 Write-Success "Config folder ACL set: $configFolder"
 
+# --- Ensure IIS auth settings (idempotent, runs on both upgrade and fresh) ---
+
+Write-Step "Verifying IIS web application and authentication"
+
+$iisLocation = "$ParentSite/$AppAlias"
+$existingApp = Get-WebApplication -Name $AppAlias -Site $ParentSite -ErrorAction SilentlyContinue
+if (-not $existingApp) {
+    if (-not (Test-Path $PublishPath)) {
+        New-Item -ItemType Directory -Path $PublishPath -Force | Out-Null
+    }
+    New-WebApplication -Name $AppAlias -Site $ParentSite -PhysicalPath $PublishPath -ApplicationPool $AppPoolName | Out-Null
+    Write-Success "Web application created: $ParentSite/$AppAlias"
+    $existingApp = Get-WebApplication -Name $AppAlias -Site $ParentSite
+}
+if ($existingApp) {
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication" `
+        -Name enabled -Value $true -PSPath "IIS:\" -Location $iisLocation
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication" `
+        -Name useKernelMode -Value $false -PSPath "IIS:\" -Location $iisLocation
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication" `
+        -Name useAppPoolCredentials -Value $true -PSPath "IIS:\" -Location $iisLocation
+    # Remove Negotiate provider - forces NTLM which works without SPN registration
+    $providers = Get-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication/providers" `
+        -Name "." -PSPath "IIS:\" -Location $iisLocation
+    $hasNegotiate = $providers.Collection | Where-Object { $_.Value -eq "Negotiate" }
+    if ($hasNegotiate) {
+        Remove-WebConfigurationProperty `
+            -Filter "system.webServer/security/authentication/windowsAuthentication/providers" `
+            -Name "." -PSPath "IIS:\" -Location $iisLocation `
+            -AtElement @{value="Negotiate"}
+    }
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/anonymousAuthentication" `
+        -Name enabled -Value $false -PSPath "IIS:\" -Location $iisLocation
+    Write-Success "IIS auth: Windows Auth (NTLM), kernel mode off, app pool credentials, anonymous off"
+} else {
+    Write-Host "       Web application not yet created - auth will be set during install" -ForegroundColor DarkGray
+}
+
 # --- Publish to staging ---
 
 Write-Step "Publishing application"
@@ -419,7 +462,16 @@ if ($isUpgrade) {
     Set-WebConfigurationProperty `
         -Filter "system.webServer/security/authentication/windowsAuthentication" `
         -Name enabled -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
-
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication" `
+        -Name useKernelMode -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+    Set-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication" `
+        -Name useAppPoolCredentials -Value $true -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
+    Remove-WebConfigurationProperty `
+        -Filter "system.webServer/security/authentication/windowsAuthentication/providers" `
+        -Name "." -PSPath "IIS:\" -Location "$ParentSite/$AppAlias" `
+        -AtElement @{value="Negotiate"} -ErrorAction SilentlyContinue
     Set-WebConfigurationProperty `
         -Filter "system.webServer/security/authentication/anonymousAuthentication" `
         -Name enabled -Value $false -PSPath "IIS:\" -Location "$ParentSite/$AppAlias"
