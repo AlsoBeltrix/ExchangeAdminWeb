@@ -318,6 +318,10 @@
             var previous = Enablement.GetAllEnablement();
             Enablement.SaveEnablement(moduleEnablement);
 
+            statusMessage = "Module enablement saved.";
+            statusIsError = false;
+            Logger.LogInformation("User {User} updated module enablement", currentUser);
+
             var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
             {
@@ -325,15 +329,18 @@
                 var curr = moduleEnablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
                 if (prev != curr)
                 {
-                    Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
-                        prev ? new[] { "Enabled" } : Array.Empty<string>(),
-                        curr ? new[] { "Enabled" } : Array.Empty<string>());
+                    try
+                    {
+                        Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
+                            prev ? new[] { "Enabled" } : Array.Empty<string>(),
+                            curr ? new[] { "Enabled" } : Array.Empty<string>());
+                    }
+                    catch (Exception auditEx)
+                    {
+                        Logger.LogError(auditEx, "Failed to audit module enablement change for {Module}", module.Id);
+                    }
                 }
             }
-
-            statusMessage = "Module enablement saved.";
-            statusIsError = false;
-            Logger.LogInformation("User {User} updated module enablement", currentUser);
         }
         catch (Exception ex)
         {

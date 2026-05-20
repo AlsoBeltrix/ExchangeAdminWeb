@@ -67,9 +67,30 @@ public class ModuleEnablementService
                     toSave[module.Id] = module.EnabledByDefault;
             }
 
-            var json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_configFilePath, json);
-            _logger.LogInformation("Module enablement saved to {Path}", _configFilePath);
+            var configDir = Path.GetDirectoryName(_configFilePath)!;
+            var tempPath = Path.Combine(configDir, $"modules-enabled.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                var json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(tempPath, json);
+
+                var validation = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(tempPath));
+                if (validation == null)
+                    throw new InvalidOperationException("Generated enablement file failed validation");
+
+                if (File.Exists(_configFilePath))
+                    File.Replace(tempPath, _configFilePath, null);
+                else
+                    File.Move(tempPath, _configFilePath);
+
+                _logger.LogInformation("Module enablement saved to {Path}", _configFilePath);
+            }
+            finally
+            {
+                if (File.Exists(tempPath))
+                    try { File.Delete(tempPath); } catch { }
+            }
         }
     }
 
@@ -86,8 +107,11 @@ public class ModuleEnablementService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to read module enablement file — treating all as enabled");
-            return new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            _logger.LogError(ex, "Module enablement file corrupt - all modules disabled until fixed");
+            var disabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+                disabled[module.Id] = false;
+            return disabled;
         }
     }
 }
