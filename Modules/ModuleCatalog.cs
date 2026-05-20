@@ -85,21 +85,11 @@ public sealed class ModuleCatalog
             {
                 if (!registered.Add(gp.PolicyAlias)) continue;
 
-                if (module.Id == "Migration")
-                {
-                    options.AddPolicy(gp.PolicyAlias, policy => policy
-                        .RequireAuthenticatedUser()
-                        .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-                        .AddRequirements(new GroupAuthorizationRequirement(mainAlias, dynamic: true))
-                        .AddRequirements(new GroupAuthorizationRequirement(gp.PolicyAlias, dynamic: true)));
-                }
-                else
-                {
-                    options.AddPolicy(gp.PolicyAlias, policy => policy
-                        .RequireAuthenticatedUser()
-                        .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
-                        .AddRequirements(new GroupAuthorizationRequirement(gp.PolicyAlias, dynamic: true)));
-                }
+                options.AddPolicy(gp.PolicyAlias, policy => policy
+                    .RequireAuthenticatedUser()
+                    .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
+                    .AddRequirements(new GroupAuthorizationRequirement(mainAlias, dynamic: true))
+                    .AddRequirements(new GroupAuthorizationRequirement(gp.PolicyAlias, dynamic: true)));
             }
         }
     }
