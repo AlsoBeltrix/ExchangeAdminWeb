@@ -61,36 +61,45 @@ Example permissions:
 
 ## Configuration Shape
 
-Replace the current section-only fragment with a module-aware fragment at `config/modules.json`:
+Keep `config/sectionaccess.json` as the permission store (unchanged from v1). Add a separate enablement file:
 
+**Permission groups:** `config/sectionaccess.json` (existing, unchanged)
 ```json
 {
-  "Modules": {
-    "MailboxPermissions": {
-      "Enabled": true,
-      "Permissions": {
-        "Access": ["DOMAIN\\Exchange-Admins"]
-      }
-    },
-    "Migration": {
-      "Enabled": true,
-      "Permissions": {
-        "Access": ["DOMAIN\\Migration-Team"],
-        "Create": ["DOMAIN\\Migration-Team"],
-        "Manage": ["DOMAIN\\Exchange-Admins"]
-      }
+  "Security": {
+    "SectionAccess": {
+      "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
+      "MailboxPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
+      "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
+      "CalendarPermissionsOnPrem": ["DOMAIN\\Exchange-Admins"],
+      "MigrationCheck": ["DOMAIN\\Migration-Team"],
+      "MigrationCreate": ["DOMAIN\\Migration-Team"],
+      "MigrationManage": ["DOMAIN\\Exchange-Admins"]
     }
   }
 }
 ```
 
+**Module enablement:** `config/modules-enabled.json` (new)
+```json
+{
+  "MailboxPermissions": true,
+  "CalendarPermissions": true,
+  "Migration": true,
+  "DelegationReport": true,
+  "MessageTrace": true,
+  "RecipientLookup": true,
+  "OutOfOffice": true
+}
+```
+
 Behavior:
 
-- If `config/modules.json` exists, it is authoritative for module enablement and module permissions.
-- If it is corrupt, module authorization fails closed.
-- If a module is missing from the fragment, use the module descriptor's `EnabledByDefault` for enablement and the base `Security:AllowedGroups` fallback for permissions during migration only.
-- Once the module config is saved from the admin UI, write all known modules and permissions explicitly.
-- Preserve a one-time compatibility path from `Security:SectionAccess` and `config/sectionaccess.json`.
+- If `config/modules-enabled.json` is absent, all modules use their descriptor's `EnabledByDefault` (all true for existing modules).
+- If corrupt, all modules are treated as enabled (fail-open for enablement since permissions still gate access).
+- System modules (`AdminSettings`, `AdminEventLog`) are always enabled regardless of file content.
+- Permission groups continue to be read from `config/sectionaccess.json` via `SectionAccessService` (no change).
+- The catalog maps policy aliases (e.g., `MailboxPermissionsOnPrem`) to granular permission descriptors (e.g., `MailboxPermissions.OnPrem`).
 
 `Security:AllowedGroups` remains the base application gate.
 
@@ -158,7 +167,7 @@ The page should show:
 - Each module's main permission row.
 - Granular permissions nested under the module's main permission.
 - Warning badges for groups that are not in `Security:AllowedGroups`.
-- Save-all behavior with atomic write to `config/modules.json`.
+- Save-all behavior: enablement to `config/modules-enabled.json`, permissions to `config/sectionaccess.json` (existing).
 - Audit entries for module enablement changes.
 - Audit entries for module permission changes.
 
@@ -170,23 +179,25 @@ Adapt existing sections as modules:
 
 | Current Section | Module Id | Main Permission | Granular Permissions |
 | --- | --- | --- | --- |
-| Mailbox Permissions | `MailboxPermissions` | `Access` | None |
-| Calendar Permissions | `CalendarPermissions` | `Access` | None |
+| Mailbox Permissions | `MailboxPermissions` | `Access` | `OnPrem` |
+| Calendar Permissions | `CalendarPermissions` | `Access` | `OnPrem` |
 | Exchange Migration | `Migration` | `Access` | `Create`, `Manage` |
 | Delegation Report | `DelegationReport` | `Access` | None |
 | Message Trace | `MessageTrace` | `Access` | None |
 | Recipient Lookup | `RecipientLookup` | `Access` | None |
 | Out of Office | `OutOfOffice` | `Access` | None |
-| Admin Settings | `AdminSettings` | `Access` | System/admin only |
-| Admin Event Log | `AdminEventLog` | `Access` | System/admin only |
+| Admin Settings | `AdminSettings` | `Access` | System/non-disableable |
+| Admin Event Log | `AdminEventLog` | `Access` | System/non-disableable |
 
-Compatibility aliases:
+Compatibility aliases (must remain during transition so existing page attributes and tests work):
 
+- `MailboxPermissions` maps to `MailboxPermissions.Access`.
+- `MailboxPermissionsOnPrem` maps to `MailboxPermissions.OnPrem`.
+- `CalendarPermissions` maps to `CalendarPermissions.Access`.
+- `CalendarPermissionsOnPrem` maps to `CalendarPermissions.OnPrem`.
 - `MigrationCheck` maps to `Migration.Access`.
 - `MigrationCreate` maps to `Migration.Create`.
 - `MigrationManage` maps to `Migration.Manage`.
-
-These aliases should remain during the transition so existing page attributes and tests can be migrated incrementally.
 
 ## Code Structure
 
@@ -322,16 +333,21 @@ The spec should document:
 
 Include a sample module skeleton.
 
-## Implementation Phases
+## Implementation Phases (v2 Scope)
 
-1. Add module descriptors, module catalog, and module config service with no UI behavior change.
-2. Generate authorization policies from descriptors while preserving current policy aliases.
-3. Convert `NavMenu.razor` and `Home.razor` to catalog-driven rendering.
-4. Replace `AdminSettings.razor` fixed section table with module enablement and nested permission editing.
-5. Move current pages into module folders and attach descriptors.
-6. Split `ExchangeService` into module-specific services.
-7. Publish `docs/AdminModuleSpec.md` and a sample skeleton module.
-8. Remove legacy `SectionAccess` after migration has been proven.
+1. Add static module descriptors, module catalog, and permission definitions including granular permissions and aliases for existing policy names. No UI behavior change.
+2. Generate authorization policies from the catalog while preserving current page `[Authorize]` attributes during transition.
+3. Drive `NavMenu.razor`, `Home.razor`, and `AdminSettings.razor` from the catalog (remove hardcoded section lists).
+4. Add module enable/disable toggles to admin UI. Store enablement state separately from `config/sectionaccess.json` (e.g., `config/modules-enabled.json`). Keep section permission groups in `sectionaccess.json` unchanged.
+5. Mark `AdminSettings` and `AdminEventLog` as system modules that cannot be disabled.
+6. Extract `IMigrationService` from `ExchangeService` as the first service split (migration is the largest coherent section at ~400 lines).
+7. Write `docs/AdminModuleSpec.md` after one module is fully converted, so the spec reflects the actual pattern.
+
+**Deferred:**
+- Moving pages into `Modules/` folder structure (high churn, low value).
+- Replacing `config/sectionaccess.json` with `config/modules.json` (current store works, don't obsolete it).
+- External assembly loading (no use case).
+- Module installation from admin UI.
 
 ## Verification Plan
 
