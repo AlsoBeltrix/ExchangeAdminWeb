@@ -1,3 +1,4 @@
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
@@ -29,11 +30,19 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
 {
     private readonly ILogger<GroupAuthorizationHandler> _logger;
     private readonly SectionAccessService _sectionAccessService;
+    private readonly ModuleCatalog _catalog;
+    private readonly ModuleEnablementService _enablement;
 
-    public GroupAuthorizationHandler(ILogger<GroupAuthorizationHandler> logger, SectionAccessService sectionAccessService)
+    public GroupAuthorizationHandler(
+        ILogger<GroupAuthorizationHandler> logger,
+        SectionAccessService sectionAccessService,
+        ModuleCatalog catalog,
+        ModuleEnablementService enablement)
     {
         _logger = logger;
         _sectionAccessService = sectionAccessService;
+        _catalog = catalog;
+        _enablement = enablement;
     }
 
     protected override Task HandleRequirementAsync(
@@ -42,6 +51,18 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
     {
         var user = context.User;
         var userName = user.Identity?.Name ?? "Unknown";
+
+        if (requirement.ResolveDynamically)
+        {
+            var module = _catalog.GetByPolicyAlias(requirement.SectionName);
+            if (module != null && !_enablement.IsModuleEnabled(module.Id))
+            {
+                _logger.LogWarning("User {User} denied access to {Section} — module {Module} is disabled",
+                    userName, requirement.SectionName, module.Id);
+                context.Fail(new AuthorizationFailureReason(this, $"Module {module.DisplayName} is currently disabled."));
+                return Task.CompletedTask;
+            }
+        }
 
         var roleClaims = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
         _logger.LogDebug("User {User} has role claims: {Roles}", userName, string.Join(", ", roleClaims));

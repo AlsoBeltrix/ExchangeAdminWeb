@@ -302,13 +302,38 @@
             AddGroup(section);
     }
 
-    private void SaveEnablement()
+    private async Task SaveEnablement()
     {
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Authorization check failed.";
+                statusIsError = true;
+                return;
+            }
+
+            var previous = Enablement.GetAllEnablement();
             Enablement.SaveEnablement(moduleEnablement);
+
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
+            {
+                var prev = previous.GetValueOrDefault(module.Id, module.EnabledByDefault);
+                var curr = moduleEnablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
+                if (prev != curr)
+                {
+                    Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
+                        prev ? new[] { "Enabled" } : Array.Empty<string>(),
+                        curr ? new[] { "Enabled" } : Array.Empty<string>());
+                }
+            }
+
             statusMessage = "Module enablement saved.";
             statusIsError = false;
+            Logger.LogInformation("User {User} updated module enablement", currentUser);
         }
         catch (Exception ex)
         {
