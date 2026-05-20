@@ -249,7 +249,8 @@
     {
         var module = Catalog.GetByPolicyAlias(sectionName);
         if (module == null) return false;
-        return module.GranularPermissions.Any(gp => gp.PolicyAlias.Equals(sectionName, StringComparison.OrdinalIgnoreCase));
+        return module.GranularPermissions.Any(gp =>
+            gp.PolicyAlias.Equals(sectionName, StringComparison.OrdinalIgnoreCase) && gp.FailClosed);
     }
 
     private bool IsInAllowedGroups(string group)

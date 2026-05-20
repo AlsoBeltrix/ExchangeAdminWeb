@@ -107,7 +107,7 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "MailboxPermissions"),
-            GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem")]
+            GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)]
         },
         new()
         {
@@ -120,7 +120,7 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "CalendarPermissions"),
-            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem")]
+            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)]
         },
         new()
         {
