@@ -1,6 +1,7 @@
 @page "/"
 @using Microsoft.AspNetCore.Authorization
 @using ExchangeAdminWeb.Modules
+@using ExchangeAdminWeb.Services
 @attribute [Authorize(Policy = "GroupPolicy")]
 @rendermode InteractiveServer
 @inject AuthenticationStateProvider AuthStateProvider
@@ -8,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject IConfiguration Config
 @inject ModuleCatalog Catalog
+@inject ModuleEnablementService Enablement
 
 <PageTitle>Exchange Admin</PageTitle>
 
@@ -41,7 +43,7 @@
     </div>
 
     <div class="row g-4">
-        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule))
+        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && Enablement.IsModuleEnabled(m.Id)))
         {
             <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
                 <Authorized>

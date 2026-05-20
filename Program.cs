@@ -39,6 +39,7 @@ try
         .AddNegotiate();
 
     builder.Services.AddSingleton(catalog);
+    builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();
     builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
 

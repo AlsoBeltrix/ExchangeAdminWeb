@@ -1,0 +1,93 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using ExchangeAdminWeb.Modules;
+
+namespace ExchangeAdminWeb.Services;
+
+public class ModuleEnablementService
+{
+    private readonly string _configFilePath;
+    private readonly ModuleCatalog _catalog;
+    private readonly ILogger<ModuleEnablementService> _logger;
+    private readonly object _writeLock = new();
+
+    public ModuleEnablementService(ModuleCatalog catalog, IWebHostEnvironment env, ILogger<ModuleEnablementService> logger)
+    {
+        _catalog = catalog;
+        _logger = logger;
+        var configDir = Path.Combine(env.ContentRootPath, "config");
+        _configFilePath = Path.Combine(configDir, "modules-enabled.json");
+        Directory.CreateDirectory(configDir);
+    }
+
+    public bool IsModuleEnabled(string moduleId)
+    {
+        var module = _catalog.GetById(moduleId);
+        if (module == null) return false;
+        if (module.IsSystemModule) return true;
+
+        var state = ReadState();
+        if (state.TryGetValue(moduleId, out var enabled))
+            return enabled;
+
+        return module.EnabledByDefault;
+    }
+
+    public Dictionary<string, bool> GetAllEnablement()
+    {
+        var state = ReadState();
+        var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var module in _catalog.GetAll())
+        {
+            if (module.IsSystemModule)
+            {
+                result[module.Id] = true;
+                continue;
+            }
+
+            result[module.Id] = state.TryGetValue(module.Id, out var enabled)
+                ? enabled
+                : module.EnabledByDefault;
+        }
+
+        return result;
+    }
+
+    public void SaveEnablement(Dictionary<string, bool> enablement)
+    {
+        lock (_writeLock)
+        {
+            var toSave = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+            {
+                if (enablement.TryGetValue(module.Id, out var enabled))
+                    toSave[module.Id] = enabled;
+                else
+                    toSave[module.Id] = module.EnabledByDefault;
+            }
+
+            var json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_configFilePath, json);
+            _logger.LogInformation("Module enablement saved to {Path}", _configFilePath);
+        }
+    }
+
+    private Dictionary<string, bool> ReadState()
+    {
+        if (!File.Exists(_configFilePath))
+            return new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var json = File.ReadAllText(_configFilePath);
+            return JsonSerializer.Deserialize<Dictionary<string, bool>>(json)
+                ?? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read module enablement file — treating all as enabled");
+            return new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+}

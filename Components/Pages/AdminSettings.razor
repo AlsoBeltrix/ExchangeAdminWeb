@@ -11,6 +11,7 @@
 @inject ClientInfoService ClientInfo
 @inject ILogger<AdminSettings> Logger
 @inject ModuleCatalog Catalog
+@inject ModuleEnablementService Enablement
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -97,6 +98,33 @@
         </div>
     </div>
 
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Module Enablement</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveEnablement" disabled="@saving">Save Enablement</button>
+        </div>
+        <div class="card-body">
+            <div class="row g-2">
+                @foreach (var module in Catalog.GetOrdered())
+                {
+                    var moduleId = module.Id;
+                    <div class="col-md-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="enable-@moduleId"
+                                   checked="@moduleEnablement[moduleId]"
+                                   disabled="@module.IsSystemModule"
+                                   @onchange="(e) => moduleEnablement[moduleId] = (bool)(e.Value ?? false)" />
+                            <label class="form-check-label" for="enable-@moduleId">
+                                @module.DisplayName
+                                @if (module.IsSystemModule) { <span class="text-muted">(system)</span> }
+                            </label>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Per-Section Access</strong>
@@ -176,6 +204,7 @@
     private string[] adminGroups = Array.Empty<string>();
 
     private string[] sections = Array.Empty<string>();
+    private Dictionary<string, bool> moduleEnablement = new();
 
     private Dictionary<string, List<string>> editState = new();
     private Dictionary<string, string> newGroupInputs = new();
@@ -201,6 +230,7 @@
     private void LoadCurrentState()
     {
         sections = Catalog.GetConfigurablePolicyAliases().ToArray();
+        moduleEnablement = Enablement.GetAllEnablement();
         allowedGroups = SectionAccess.GetAllowedGroups();
         adminGroups = SectionAccess.GetAdminGroups();
         sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
@@ -270,6 +300,21 @@
     {
         if (e.Key == "Enter")
             AddGroup(section);
+    }
+
+    private void SaveEnablement()
+    {
+        try
+        {
+            Enablement.SaveEnablement(moduleEnablement);
+            statusMessage = "Module enablement saved.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save enablement: {ex.Message}";
+            statusIsError = true;
+        }
     }
 
     private async Task SaveAll()
