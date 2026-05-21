@@ -102,6 +102,68 @@ public class EmailService
         }
     }
 
+    public async Task SendAdminNotificationAsync(
+        string performedBy,
+        string ipAddress,
+        string action,
+        bool success,
+        string ticketNumber,
+        IReadOnlyDictionary<string, string> details,
+        string? errorDetail = null)
+    {
+        if (string.IsNullOrWhiteSpace(_adminEmail))
+        {
+            _logger.LogWarning("Admin notification email not configured, skipping notification");
+            return;
+        }
+
+        var subject = $"[Admin] {action} - {(success ? "SUCCESS" : "FAILED")} - Ticket #{ticketNumber}";
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+
+        var detailRows = string.Join("\n", details.Select(kv =>
+            $"<tr><td>{h(kv.Key)}</td><td>{h(kv.Value)}</td></tr>"));
+
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; }}
+        .header {{ background: {(success ? "#28a745" : "#dc3545")}; color: white; padding: 10px; }}
+        .content {{ padding: 20px; }}
+        table {{ border-collapse: collapse; width: 100%; }}
+        td {{ padding: 8px; border-bottom: 1px solid #ddd; }}
+        td:first-child {{ font-weight: bold; width: 150px; }}
+    </style>
+</head>
+<body>
+    <div class=""header"">
+        <h2>{(success ? "✓" : "✗")} {h(action)}</h2>
+    </div>
+    <div class=""content"">
+        <table>
+            <tr><td>Ticket Number</td><td><strong>{h(ticketNumber)}</strong></td></tr>
+            <tr><td>Action</td><td>{h(action)}</td></tr>
+            <tr><td>Status</td><td>{(success ? "SUCCESS" : "FAILED")}</td></tr>
+            {detailRows}
+            <tr><td>Performed By</td><td>{h(performedBy)}</td></tr>
+            <tr><td>IP Address</td><td>{h(ipAddress)}</td></tr>
+            <tr><td>Timestamp (UTC)</td><td>{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}</td></tr>
+            {(string.IsNullOrWhiteSpace(errorDetail) ? "" : $"<tr><td>Error</td><td style=\"color: red;\">{h(errorDetail)}</td></tr>")}
+        </table>
+    </div>
+</body>
+</html>";
+
+        var adminEmails = _adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e));
+
+        foreach (var email in adminEmails)
+        {
+            await SendEmailAsync(email, subject, body);
+        }
+    }
+
     public async Task SendUserNotificationAsync(
         string userEmail,
         string targetMailbox,

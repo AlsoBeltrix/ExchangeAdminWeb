@@ -300,8 +300,11 @@
             try
             {
                 await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
-                    "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
-                    result.Success, ticket, result.Success ? null : result.Message);
+                    result.Success, ticket, new Dictionary<string, string>
+                    {
+                        ["Target Group"] = "Comms-10k",
+                        ["Members"] = $"{result.InitialCount} -> {result.FinalCount}"
+                    }, result.Success ? null : result.Message);
             }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for Comms10k replace"); }
 
@@ -313,7 +316,7 @@
         {
             result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
             try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "attempted", false, ticket, ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", "Comms-10k", "ERROR", "BroadcastDL", false, ticket, ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k" }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }

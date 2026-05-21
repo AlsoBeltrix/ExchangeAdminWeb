@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject GroupManagementService GroupService
 @inject AuditService Audit
+@inject EmailService Email
 @inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -254,6 +255,7 @@
             opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
             try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup.Name}:{newMember.Trim()}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim(), ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
             {
@@ -287,6 +289,7 @@
             opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
             try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup.Name}:{member}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member, ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
                 memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
