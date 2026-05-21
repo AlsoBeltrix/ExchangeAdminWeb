@@ -28,7 +28,9 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly ExoConnectionPool _exoPool;
     private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
-    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool)
+    private readonly ModuleConfigService _moduleConfig;
+
+    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool, ModuleConfigService moduleConfig)
     {
         _appId = config["ExchangeOnline:AppId"]
             ?? throw new InvalidOperationException("ExchangeOnline:AppId is not configured.");
@@ -36,14 +38,18 @@ public class ExchangeService : IExchangeService, IIdentityResolver
             ?? throw new InvalidOperationException("ExchangeOnline:Organization is not configured.");
         _certSubject = config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
         _logger = logger;
+        _moduleConfig = moduleConfig;
 
-        // Migration configuration
-        _hybridEndpoint = config["Migration:HybridEndpoint"] ?? "hybrid1";
-        _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "example.mail.onmicrosoft.com";
-        _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "example.com";
-        _onPremTargetDAG = config["Migration:OnPremTargetDAG"] ?? "";
-        _cloudQuotaGB = long.Parse(config["Migration:CloudQuotaGB"] ?? "100");
-        _excludedADGroups = config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
+        // Migration configuration — module config takes precedence over appsettings
+        _hybridEndpoint = moduleConfig.GetValue("Migration", "HybridEndpoint") ?? config["Migration:HybridEndpoint"] ?? "hybrid1";
+        _cloudTargetDomain = moduleConfig.GetValue("Migration", "CloudTargetDeliveryDomain") ?? config["Migration:CloudTargetDeliveryDomain"] ?? "example.mail.onmicrosoft.com";
+        _onPremTargetDomain = moduleConfig.GetValue("Migration", "OnPremTargetDeliveryDomain") ?? config["Migration:OnPremTargetDeliveryDomain"] ?? "example.com";
+        _onPremTargetDAG = moduleConfig.GetValue("Migration", "OnPremTargetDAG") ?? config["Migration:OnPremTargetDAG"] ?? "";
+        _cloudQuotaGB = long.Parse(moduleConfig.GetValue("Migration", "CloudQuotaGB") ?? config["Migration:CloudQuotaGB"] ?? "100");
+        var excludedGroups = moduleConfig.GetValue("Migration", "ExcludedADGroups");
+        _excludedADGroups = !string.IsNullOrEmpty(excludedGroups)
+            ? excludedGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
 
         // Admin notification emails
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";

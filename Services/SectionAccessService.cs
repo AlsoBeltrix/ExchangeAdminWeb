@@ -23,6 +23,7 @@ public class SectionAccessService
 
         _allowedGroups = config.GetSection("Security:AllowedGroups").Get<string[]>() ?? Array.Empty<string>();
         _adminGroups = config.GetSection("Security:AdminGroups").Get<string[]>() ?? Array.Empty<string>();
+        _failClosedSections = BuildFailClosedSet();
 
         Directory.CreateDirectory(_configDir);
     }
@@ -31,10 +32,25 @@ public class SectionAccessService
 
     public string[] GetAdminGroups() => _adminGroups;
 
-    private static readonly HashSet<string> _failClosedSections = new(StringComparer.OrdinalIgnoreCase)
+    private readonly HashSet<string> _failClosedSections;
+
+    private HashSet<string> BuildFailClosedSet()
     {
-        "MailboxPermissionsOnPrem", "CalendarPermissionsOnPrem"
-    };
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var catalog = new Modules.ModuleCatalog();
+            foreach (var module in catalog.GetAll())
+            {
+                if (module.MainPermission.FailClosed)
+                    set.Add(module.MainPermission.PolicyAlias);
+                foreach (var gp in module.GranularPermissions.Where(p => p.FailClosed))
+                    set.Add(gp.PolicyAlias);
+            }
+        }
+        catch { }
+        return set;
+    }
 
     public string[] GetGroupsForSection(string section)
     {

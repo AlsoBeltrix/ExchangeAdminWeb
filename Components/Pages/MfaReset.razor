@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject MfaResetService MfaService
 @inject AuditService Audit
+@inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -203,6 +204,14 @@
 
         try
         {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = new MfaResetResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                return;
+            }
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "MfaReset");
             if (!authCheck.Succeeded)
@@ -214,15 +223,15 @@
             var upn = userPrincipalName.Trim();
             result = await MfaService.ResetAllMethodsAsync(upn);
 
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MfaReset", upn, result.Success,
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "MfaReset", upn, result.Success, ticket,
                 result.Success ? null : result.Message);
 
-            Logger.LogInformation("User {Admin} reset MFA for {Target}: {Result}", currentUser, upn, result.Message);
+            Logger.LogInformation("User {Admin} reset MFA for {Target} (ticket {Ticket}): {Result}", currentUser, upn, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new MfaResetResult { Success = false, Message = ex.Message };
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MfaReset", userPrincipalName.Trim(), false, ex.Message);
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "MfaReset", userPrincipalName.Trim(), false, ticketNumber.Trim(), ex.Message);
         }
         finally
         {

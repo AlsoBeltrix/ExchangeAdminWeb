@@ -199,9 +199,9 @@ public sealed class ModuleCatalog
             Route = "mfa-reset",
             IconCss = "bi bi-person-fill-nav-menu",
             SortOrder = 750,
-            EnabledByDefault = true,
+            EnabledByDefault = false,
             IsSystemModule = false,
-            MainPermission = new("Access", "MfaReset"),
+            MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("TenantId", "Azure AD Tenant ID", "Your Entra tenant GUID"),
                 new("ClientId", "App Registration Client ID", "Graph API app registration"),

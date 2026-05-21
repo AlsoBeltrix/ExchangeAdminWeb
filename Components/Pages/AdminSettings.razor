@@ -13,6 +13,7 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 @inject ModuleConfigService ModuleConfig
+@inject GraphClientService GraphClient
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -363,14 +364,38 @@
         moduleConfigState[moduleId][key] = value;
     }
 
-    private void SaveModuleConfig()
+    private async Task SaveModuleConfig()
     {
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Authorization check failed.";
+                statusIsError = true;
+                return;
+            }
+
             foreach (var (moduleId, config) in moduleConfigState)
+            {
                 ModuleConfig.SaveModuleConfig(moduleId, config);
 
-            statusMessage = "Module configuration saved.";
+                try
+                {
+                    var ip = ClientInfo.GetIpForUser(currentUser);
+                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{moduleId}",
+                        Array.Empty<string>(), config.Where(kv => !string.IsNullOrEmpty(kv.Value)).Select(kv => kv.Key).ToArray());
+                }
+                catch (Exception auditEx)
+                {
+                    Logger.LogError(auditEx, "Failed to audit module config change for {Module}", moduleId);
+                }
+            }
+
+            GraphClient.ReloadConfig();
+
+            statusMessage = "Module configuration saved. Changes take effect on next operation.";
             statusIsError = false;
             Logger.LogInformation("User {User} updated module configuration", currentUser);
         }
