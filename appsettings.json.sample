@@ -82,6 +82,11 @@
   "OnPremExchange": {
     "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
   },
+  "MicrosoftGraph": {
+    "TenantId": "YOUR-TENANT-ID",
+    "ClientId": "YOUR-GRAPH-APP-CLIENT-ID",
+    "CredentialTarget": "Graph_MFAResets"
+  },
   "Application": {
     "PathBase": "/ExchangeAdminWeb",
     "ContactEmail": "exchangeadmin@yourcompany.com"

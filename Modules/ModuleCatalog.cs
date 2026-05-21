@@ -185,6 +185,18 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "MfaReset",
+            DisplayName = "MFA Reset",
+            Description = "Reset multi-factor authentication methods for users, forcing re-registration at next sign-in.",
+            Route = "mfa-reset",
+            IconCss = "bi bi-person-fill-nav-menu",
+            SortOrder = 750,
+            EnabledByDefault = true,
+            IsSystemModule = false,
+            MainPermission = new("Access", "MfaReset")
+        },
+        new()
+        {
             Id = "AdminSettings",
             DisplayName = "Admin Settings",
             Description = "Configure which AD groups have access to each application section.",

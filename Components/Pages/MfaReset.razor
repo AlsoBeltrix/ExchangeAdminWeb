@@ -1,0 +1,233 @@
+@page "/mfa-reset"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "MfaReset")]
+@rendermode InteractiveServer
+@inject MfaResetService MfaService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<MfaReset> Logger
+
+<PageTitle>MFA Reset</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>All MFA reset operations are logged for audit purposes. Users will need to re-register their MFA methods at next sign-in.</small>
+    </div>
+    <h1 class="mb-4">MFA Reset</h1>
+
+    @if (!MfaService.IsAvailable)
+    {
+        <div class="alert alert-danger">Microsoft Graph API is not configured. Contact your administrator.</div>
+        return;
+    }
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">User Principal Name</label>
+                        <div class="input-group">
+                            <input type="email" class="form-control" @bind="userPrincipalName" placeholder="user@analog.com"
+                                   disabled="@isLoading" @onkeydown="HandleKeyDown" />
+                            <button class="btn btn-primary" @onclick="ListMethods" disabled="@(isLoading || string.IsNullOrWhiteSpace(userPrincipalName))">
+                                @if (isLoading && !resetConfirmPending) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                List Methods
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Ticket Number</label>
+                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (resetConfirmPending)
+    {
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="alert alert-warning">
+                    <strong>Confirm MFA Reset for @userPrincipalName</strong>
+                    <p class="mb-2">This will remove @methods.Count authentication method(s). The user will be required to re-register MFA at their next sign-in.</p>
+                    <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReset" disabled="@isLoading">
+                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Reset MFA
+                    </button>
+                    <button class="btn btn-secondary btn-sm" @onclick="CancelReset">Cancel</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (result != null)
+    {
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="alert @(result.Success ? "alert-success" : "alert-danger") alert-dismissible">
+                    @result.Message
+                    <button type="button" class="btn-close" @onclick="() => result = null"></button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (methods.Count > 0)
+    {
+        <div class="row mt-3">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Authentication Methods for @userPrincipalName</strong>
+                        <button class="btn btn-danger btn-sm" @onclick="ConfirmReset"
+                                disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                            Reset All Methods
+                        </button>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Detail</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var method in methods)
+                                {
+                                    <tr>
+                                        <td>@method.MethodType</td>
+                                        <td><small class="text-muted">@method.Detail</small></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private string userPrincipalName = "";
+    private string ticketNumber = "";
+    private bool resetConfirmPending;
+    private List<AuthMethod> methods = new();
+    private MfaResetResult? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "MfaReset");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(userPrincipalName))
+            _ = ListMethods();
+    }
+
+    private async Task ListMethods()
+    {
+        isLoading = true;
+        result = null;
+        methods = new();
+        resetConfirmPending = false;
+
+        try
+        {
+            methods = await MfaService.GetUserMethodsAsync(userPrincipalName.Trim());
+            if (methods.Count == 0)
+                result = new MfaResetResult { Success = true, Message = "No MFA methods registered for this user." };
+        }
+        catch (Exception ex)
+        {
+            result = new MfaResetResult { Success = false, Message = $"Error: {ex.Message}" };
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ConfirmReset()
+    {
+        resetConfirmPending = true;
+    }
+
+    private void CancelReset()
+    {
+        resetConfirmPending = false;
+    }
+
+    private async Task ExecuteReset()
+    {
+        isLoading = true;
+        resetConfirmPending = false;
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "MfaReset");
+            if (!authCheck.Succeeded)
+            {
+                result = new MfaResetResult { Success = false, Message = "Authorization denied." };
+                return;
+            }
+
+            var upn = userPrincipalName.Trim();
+            result = await MfaService.ResetAllMethodsAsync(upn);
+
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MfaReset", upn, result.Success,
+                result.Success ? null : result.Message);
+
+            Logger.LogInformation("User {Admin} reset MFA for {Target}: {Result}", currentUser, upn, result.Message);
+        }
+        catch (Exception ex)
+        {
+            result = new MfaResetResult { Success = false, Message = ex.Message };
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MfaReset", userPrincipalName.Trim(), false, ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+            methods = new();
+        }
+    }
+}

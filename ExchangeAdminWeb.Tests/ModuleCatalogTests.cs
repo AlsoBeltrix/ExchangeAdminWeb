@@ -10,7 +10,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(9, _catalog.GetAll().Count);
+        Assert.Equal(10, _catalog.GetAll().Count);
     }
 
     [Fact]
@@ -76,8 +76,9 @@ public class ModuleCatalogTests
         Assert.Contains("MessageTrace", aliases);
         Assert.Contains("RecipientLookup", aliases);
         Assert.Contains("OutOfOffice", aliases);
+        Assert.Contains("MfaReset", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
-        Assert.Equal(11, aliases.Count);
+        Assert.Equal(12, aliases.Count);
     }
 
     [Fact]

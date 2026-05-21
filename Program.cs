@@ -61,6 +61,15 @@ try
             client.DefaultRequestHeaders.Add("Accept", "application/json");
         });
 
+    builder.Services.AddHttpClient("MicrosoftGraph")
+        .ConfigureHttpClient(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
+    builder.Services.AddSingleton<GraphClientService>();
+    builder.Services.AddSingleton<MfaResetService>();
+
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<PermissionValidator>();
