@@ -7,7 +7,6 @@ public class MfaResetService
     private readonly ILogger<MfaResetService> _logger;
     private readonly ModuleConfigService _moduleConfig;
     private readonly IHttpClientFactory _httpClientFactory;
-    private GraphTokenClient? _graph;
 
     public MfaResetService(ILogger<MfaResetService> logger, ModuleConfigService moduleConfig, IHttpClientFactory httpClientFactory)
     {
@@ -18,14 +17,11 @@ public class MfaResetService
 
     private GraphTokenClient GetGraphClient()
     {
-        if (_graph != null && _graph.IsConfigured) return _graph;
-
         var tenantId = _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
         var clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
         var credTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
 
-        _graph = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
-        return _graph;
+        return new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
     public bool IsAvailable => GetGraphClient().IsConfigured;

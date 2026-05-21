@@ -11,7 +11,6 @@ public class GroupManagementService : ExchangeServiceBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
-    private GraphTokenClient? _graph;
 
     public GroupManagementService(
         ExoConnectionPool exoPool,
@@ -29,14 +28,11 @@ public class GroupManagementService : ExchangeServiceBase
 
     private GraphTokenClient GetGraphClient()
     {
-        if (_graph != null && _graph.IsConfigured) return _graph;
-
         var tenantId = _moduleConfig.GetValue("GroupManagement", "GraphTenantId") ?? "";
         var clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId") ?? "";
         var credTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget") ?? "Graph_GroupManagement";
 
-        _graph = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
-        return _graph;
+        return new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
@@ -75,8 +71,9 @@ public class GroupManagementService : ExchangeServiceBase
         {
             try
             {
-                var encoded = Uri.EscapeDataString(searchTerm);
-                using var graphResult = await GetGraphClient().GetAsync($"/groups?$filter=groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{encoded}') or startsWith(mail,'{encoded}'))&$top=25&$select=id,displayName,mail,groupTypes");
+                var odataEscaped = searchTerm.Replace("'", "''");
+                var filterQuery = Uri.EscapeDataString($"groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{odataEscaped}') or startsWith(mail,'{odataEscaped}'))");
+                using var graphResult = await GetGraphClient().GetAsync($"/groups?$filter={filterQuery}&$top=25&$select=id,displayName,mail,groupTypes");
                 if (graphResult != null)
                 {
                     foreach (var g in graphResult.RootElement.GetProperty("value").EnumerateArray())
@@ -209,9 +206,10 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var resolvedDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
 
             ps.AddCommand("Get-ADGroupMember")
-              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Identity", resolvedDn)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             var members = ps.Invoke();
@@ -261,8 +259,8 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var resolvedGroupDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
 
-            // Resolve member by UPN or email
             ps.AddCommand("Get-ADUser")
               .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
               .AddParameter("Credential", credential)
@@ -276,7 +274,7 @@ public class GroupManagementService : ExchangeServiceBase
                 throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
 
             ps.AddCommand("Add-ADGroupMember")
-              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Identity", resolvedGroupDn)
               .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
@@ -307,6 +305,7 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var resolvedGroupDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
 
             ps.AddCommand("Get-ADUser")
               .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
@@ -321,7 +320,7 @@ public class GroupManagementService : ExchangeServiceBase
                 throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
 
             ps.AddCommand("Remove-ADGroupMember")
-              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Identity", resolvedGroupDn)
               .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
               .AddParameter("Credential", credential)
               .AddParameter("Confirm", false)
@@ -388,6 +387,24 @@ public class GroupManagementService : ExchangeServiceBase
         return success
             ? new PermissionResult { Success = true, Message = $"{member} removed from {displayName} (M365 Group)." }
             : PermissionResult.Fail($"Failed to remove {member} from {displayName}.");
+    }
+
+    private static string ResolveAdGroupIdentity(PowerShell ps, string groupName, PSCredential credential)
+    {
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Filter", $"Name -eq '{groupName.Replace("'", "''")}'")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var groups = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (groups.Count == 0)
+            throw new InvalidOperationException($"AD group '{groupName}' not found.");
+        if (groups.Count > 1)
+            throw new InvalidOperationException($"Ambiguous: '{groupName}' matches {groups.Count} AD groups.");
+
+        return groups[0].Properties["DistinguishedName"]?.Value?.ToString()
+            ?? throw new InvalidOperationException($"Could not resolve DN for group '{groupName}'.");
     }
 
     private static PSCredential CreateCredential(string username, string password, string domain)

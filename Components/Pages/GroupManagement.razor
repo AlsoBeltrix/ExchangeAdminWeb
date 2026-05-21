@@ -267,6 +267,7 @@
         {
             opResult = PermissionResult.Fail(ex.Message);
             try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup!.Name}:{newMember.Trim()}", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = newMember.Trim() }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }
@@ -298,6 +299,7 @@
         {
             opResult = PermissionResult.Fail(ex.Message);
             try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup!.Name}:{member}", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = member }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }
