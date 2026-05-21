@@ -27,6 +27,7 @@ public class ModuleConfigService
     public string? GetValue(string moduleId, string key)
     {
         var config = ReadConfig();
+        if (config == null) return null;
         if (config.TryGetValue(moduleId, out var moduleConfig))
         {
             if (moduleConfig.TryGetValue(key, out var value))
@@ -38,6 +39,7 @@ public class ModuleConfigService
     public Dictionary<string, string> GetModuleConfig(string moduleId)
     {
         var config = ReadConfig();
+        if (config == null) return new(StringComparer.OrdinalIgnoreCase);
         return config.TryGetValue(moduleId, out var moduleConfig)
             ? new Dictionary<string, string>(moduleConfig, StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -60,7 +62,7 @@ public class ModuleConfigService
     {
         lock (_writeLock)
         {
-            var config = ReadConfig();
+            var config = ReadConfig() ?? new(StringComparer.OrdinalIgnoreCase);
             config[moduleId] = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
 
             var configDir = Path.GetDirectoryName(_configFilePath)!;
@@ -81,6 +83,7 @@ public class ModuleConfigService
                 else
                     File.Move(tempPath, _configFilePath);
 
+                IsCorrupt = false;
                 _logger.LogInformation("Module config for {Module} saved", moduleId);
             }
             finally
@@ -91,22 +94,27 @@ public class ModuleConfigService
         }
     }
 
-    private Dictionary<string, Dictionary<string, string>> ReadConfig()
+    private Dictionary<string, Dictionary<string, string>>? ReadConfig()
     {
         if (!File.Exists(_configFilePath))
+        {
+            IsCorrupt = false;
             return new(StringComparer.OrdinalIgnoreCase);
+        }
 
         try
         {
             var json = File.ReadAllText(_configFilePath);
-            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json)
+            var result = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json)
                 ?? new(StringComparer.OrdinalIgnoreCase);
+            IsCorrupt = false;
+            return result;
         }
         catch (Exception ex)
         {
             IsCorrupt = true;
             _logger.LogError(ex, "Module config file corrupt - modules will appear unconfigured until file is fixed or re-saved");
-            return new(StringComparer.OrdinalIgnoreCase);
+            return null;
         }
     }
 }
