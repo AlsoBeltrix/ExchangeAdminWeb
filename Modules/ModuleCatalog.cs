@@ -206,7 +206,7 @@ public sealed class ModuleCatalog
             ConfigFields = [
                 new("GraphTenantId", "Azure AD Tenant ID", "For M365 Group management (same tenant as MFA Reset)", Required: false),
                 new("GraphClientId", "Graph App Client ID", "App with Group.ReadWrite.All permission", Required: false),
-                new("GraphCredentialTarget", "Graph Credential Vault Target", "PasswordVault resource name", Required: false, DefaultValue: "Graph_MFAResets")
+                new("GraphCredentialTarget", "Graph Credential Vault Target", "PasswordVault resource name", Required: false, DefaultValue: "Graph_GroupManagement")
             ]
         },
         new()
