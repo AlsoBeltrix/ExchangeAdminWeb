@@ -199,9 +199,9 @@ public sealed class ModuleCatalog
             Route = "group-management",
             IconCss = "bi bi-people-fill-nav-menu",
             SortOrder = 150,
-            EnabledByDefault = true,
+            EnabledByDefault = false,
             IsSystemModule = false,
-            MainPermission = new("Access", "GroupManagement"),
+            MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("GraphTenantId", "Azure AD Tenant ID", "For M365 Group management (same tenant as MFA Reset)", Required: false),

@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject GroupManagementService GroupService
 @inject AuditService Audit
+@inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -139,7 +140,7 @@
                                         <td>
                                             @if (!selectedGroup.IsDirSynced || canManageOnPrem)
                                             {
-                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member.Email)" disabled="@isLoading">Remove</button>
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member.Email)" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">Remove</button>
                                             }
                                         </td>
                                     </tr>
@@ -241,21 +242,23 @@
         opResult = null;
         try
         {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid) { opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}"); return; }
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
             if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
 
-            opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId);
+            opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember",
-                $"{selectedGroup.Name}:{newMember.Trim()}", opResult.Success, ticketNumber.Trim(),
-                opResult.Success ? null : opResult.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup.Name}:{newMember.Trim()}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
             {
                 newMember = "";
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
             }
         }
         catch (Exception ex)
@@ -272,19 +275,21 @@
         opResult = null;
         try
         {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid) { opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}"); return; }
+
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
             if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
 
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId);
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember",
-                $"{selectedGroup.Name}:{member}", opResult.Success, ticketNumber.Trim(),
-                opResult.Success ? null : opResult.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup.Name}:{member}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
         }
         catch (Exception ex)
         {

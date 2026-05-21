@@ -68,7 +68,6 @@ try
         });
 
     builder.Services.AddSingleton<ModuleConfigService>();
-    builder.Services.AddSingleton<GraphClientService>();
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<GroupManagementService>();

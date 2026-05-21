@@ -7,20 +7,36 @@ namespace ExchangeAdminWeb.Services;
 
 public class GroupManagementService : ExchangeServiceBase
 {
-    private readonly GraphClientService _graph;
+    private readonly ModuleConfigService _moduleConfig;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+    private GraphTokenClient? _graph;
 
     public GroupManagementService(
         ExoConnectionPool exoPool,
         DelineaService delineaService,
-        GraphClientService graph,
+        ModuleConfigService moduleConfig,
+        IHttpClientFactory httpClientFactory,
         IConfiguration config,
         ILogger<GroupManagementService> logger)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "")
     {
-        _graph = graph;
+        _moduleConfig = moduleConfig;
+        _httpClientFactory = httpClientFactory;
         _config = config;
+    }
+
+    private GraphTokenClient GetGraphClient()
+    {
+        if (_graph != null && _graph.IsConfigured) return _graph;
+
+        var tenantId = _moduleConfig.GetValue("GroupManagement", "GraphTenantId") ?? "";
+        var clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId") ?? "";
+        var credTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget") ?? "Graph_GroupManagement";
+
+        _graph = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        return _graph;
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
@@ -46,9 +62,8 @@ public class GroupManagementService : ExchangeServiceBase
             {
                 Name = group.Properties["DisplayName"]?.Value?.ToString() ?? "",
                 Email = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
-                Identity = isDirSynced
-                    ? (group.Properties["Alias"]?.Value?.ToString() ?? group.Properties["DisplayName"]?.Value?.ToString() ?? "")
-                    : (group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? ""),
+                Identity = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
+                SamAccountName = group.Properties["Alias"]?.Value?.ToString() ?? "",
                 GroupType = typeDetails.Contains("Security") ? "MailEnabledSecurity" : "Distribution",
                 IsDirSynced = isDirSynced,
                 Backend = isDirSynced ? "OnPremAD" : "ExchangeOnline"
@@ -56,12 +71,12 @@ public class GroupManagementService : ExchangeServiceBase
         }
 
         // Search Microsoft 365 Groups via Graph API
-        if (_graph.IsConfigured)
+        if (GetGraphClient().IsConfigured)
         {
             try
             {
                 var encoded = Uri.EscapeDataString(searchTerm);
-                using var graphResult = await _graph.GetAsync($"/groups?$filter=groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{encoded}') or startsWith(mail,'{encoded}'))&$top=25&$select=id,displayName,mail,groupTypes");
+                using var graphResult = await GetGraphClient().GetAsync($"/groups?$filter=groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{encoded}') or startsWith(mail,'{encoded}'))&$top=25&$select=id,displayName,mail,groupTypes");
                 if (graphResult != null)
                 {
                     foreach (var g in graphResult.RootElement.GetProperty("value").EnumerateArray())
@@ -87,34 +102,34 @@ public class GroupManagementService : ExchangeServiceBase
         return results;
     }
 
-    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend, string? graphId = null)
+    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend, string? graphId = null, string? samAccountName = null)
     {
         if (backend == "ExchangeOnline")
             return await GetExoMembersAsync(groupIdentity);
         if (backend == "OnPremAD")
-            return await GetOnPremMembersAsync(groupIdentity);
+            return await GetOnPremMembersAsync(samAccountName ?? groupIdentity);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await GetGraphMembersAsync(graphId, groupIdentity);
         return new GroupMemberList { GroupName = groupIdentity, Error = $"Unknown backend: {backend}" };
     }
 
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend, string? graphId = null)
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend, string? graphId = null, string? samAccountName = null)
     {
         if (backend == "ExchangeOnline")
             return await AddExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
-            return await AddOnPremMemberAsync(groupIdentity, member);
+            return await AddOnPremMemberAsync(samAccountName ?? groupIdentity, member);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await AddGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
     }
 
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend, string? graphId = null)
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend, string? graphId = null, string? samAccountName = null)
     {
         if (backend == "ExchangeOnline")
             return await RemoveExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
-            return await RemoveOnPremMemberAsync(groupIdentity, member);
+            return await RemoveOnPremMemberAsync(samAccountName ?? groupIdentity, member);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await RemoveGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
@@ -323,7 +338,7 @@ public class GroupManagementService : ExchangeServiceBase
     private async Task<GroupMemberList> GetGraphMembersAsync(string groupId, string displayName)
     {
         var result = new GroupMemberList { GroupName = displayName };
-        using var doc = await _graph.GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
+        using var doc = await GetGraphClient().GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
         if (doc == null)
         {
             result.Error = "Failed to retrieve M365 group members.";
@@ -345,7 +360,7 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> AddGraphMemberAsync(string groupId, string displayName, string member)
     {
-        using var userDoc = await _graph.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        using var userDoc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
         if (userDoc == null)
             return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
 
@@ -354,7 +369,7 @@ public class GroupManagementService : ExchangeServiceBase
         {
             ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
         };
-        var success = await _graph.PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
+        var success = await GetGraphClient().PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
 
         return success
             ? new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." }
@@ -363,12 +378,12 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> RemoveGraphMemberAsync(string groupId, string displayName, string member)
     {
-        using var userDoc = await _graph.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        using var userDoc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
         if (userDoc == null)
             return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
 
         var userId = userDoc.RootElement.GetProperty("id").GetString();
-        var success = await _graph.DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
+        var success = await GetGraphClient().DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
 
         return success
             ? new PermissionResult { Success = true, Message = $"{member} removed from {displayName} (M365 Group)." }
@@ -390,6 +405,7 @@ public class GroupInfo
     public string Name { get; set; } = "";
     public string Email { get; set; } = "";
     public string Identity { get; set; } = "";
+    public string SamAccountName { get; set; } = "";
     public string GroupType { get; set; } = "";
     public bool IsDirSynced { get; set; }
     public string Backend { get; set; } = "";

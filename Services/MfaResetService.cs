@@ -4,21 +4,36 @@ namespace ExchangeAdminWeb.Services;
 
 public class MfaResetService
 {
-    private readonly GraphClientService _graph;
     private readonly ILogger<MfaResetService> _logger;
+    private readonly ModuleConfigService _moduleConfig;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private GraphTokenClient? _graph;
 
-    public MfaResetService(GraphClientService graph, ILogger<MfaResetService> logger)
+    public MfaResetService(ILogger<MfaResetService> logger, ModuleConfigService moduleConfig, IHttpClientFactory httpClientFactory)
     {
-        _graph = graph;
         _logger = logger;
+        _moduleConfig = moduleConfig;
+        _httpClientFactory = httpClientFactory;
     }
 
-    public bool IsAvailable => _graph.IsConfigured;
+    private GraphTokenClient GetGraphClient()
+    {
+        if (_graph != null && _graph.IsConfigured) return _graph;
+
+        var tenantId = _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
+        var clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
+        var credTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
+
+        _graph = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        return _graph;
+    }
+
+    public bool IsAvailable => GetGraphClient().IsConfigured;
 
     public async Task<List<AuthMethod>> GetUserMethodsAsync(string userPrincipalName)
     {
         var methods = new List<AuthMethod>();
-        using var doc = await _graph.GetAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
+        using var doc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
         if (doc == null) return methods;
 
         foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
@@ -63,7 +78,7 @@ public class MfaResetService
                 continue;
             }
 
-            var success = await _graph.DeleteAsync(endpoint);
+            var success = await GetGraphClient().DeleteAsync(endpoint);
             if (success)
             {
                 removed++;

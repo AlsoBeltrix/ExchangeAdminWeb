@@ -13,7 +13,6 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 @inject ModuleConfigService ModuleConfig
-@inject GraphClientService GraphClient
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -414,8 +413,6 @@
                     }
                 }
             }
-
-            GraphClient.ReloadConfig();
 
             statusMessage = "Module configuration saved. Changes take effect on next operation.";
             statusIsError = false;
