@@ -52,33 +52,68 @@ public class GroupManagementService : ExchangeServiceBase
             });
         }
 
+        // Search Microsoft 365 Groups via Graph API
+        if (_graph.IsConfigured)
+        {
+            try
+            {
+                var encoded = Uri.EscapeDataString(searchTerm);
+                using var graphResult = await _graph.GetAsync($"/groups?$filter=groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{encoded}') or startsWith(mail,'{encoded}'))&$top=25&$select=id,displayName,mail,groupTypes");
+                if (graphResult != null)
+                {
+                    foreach (var g in graphResult.RootElement.GetProperty("value").EnumerateArray())
+                    {
+                        results.Add(new GroupInfo
+                        {
+                            Name = g.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "",
+                            Email = g.TryGetProperty("mail", out var mail) ? mail.GetString() ?? "" : "",
+                            GroupType = "Microsoft365",
+                            IsDirSynced = false,
+                            Backend = "Graph",
+                            GraphId = g.TryGetProperty("id", out var id) ? id.GetString() ?? "" : ""
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Graph group search failed — M365 groups not included in results");
+            }
+        }
+
         return results;
     }
 
-    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend)
+    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend, string? graphId = null)
     {
         if (backend == "ExchangeOnline")
             return await GetExoMembersAsync(groupIdentity);
         if (backend == "OnPremAD")
             return await GetOnPremMembersAsync(groupIdentity);
+        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
+            return await GetGraphMembersAsync(graphId, groupIdentity);
         return new GroupMemberList { GroupName = groupIdentity, Error = $"Unknown backend: {backend}" };
     }
 
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend)
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend, string? graphId = null)
     {
         if (backend == "ExchangeOnline")
             return await AddExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
             return await AddOnPremMemberAsync(groupIdentity, member);
+        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
+            return await AddGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
     }
 
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend)
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend, string? graphId = null)
     {
         if (backend == "ExchangeOnline")
             return await RemoveExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
             return await RemoveOnPremMemberAsync(groupIdentity, member);
+        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
+            return await RemoveGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
     }
 
@@ -278,6 +313,61 @@ public class GroupManagementService : ExchangeServiceBase
         }), _adThrottle);
     }
 
+    // --- Graph API operations (M365 Groups) ---
+
+    private async Task<GroupMemberList> GetGraphMembersAsync(string groupId, string displayName)
+    {
+        var result = new GroupMemberList { GroupName = displayName };
+        using var doc = await _graph.GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
+        if (doc == null)
+        {
+            result.Error = "Failed to retrieve M365 group members.";
+            return result;
+        }
+
+        foreach (var m in doc.RootElement.GetProperty("value").EnumerateArray())
+        {
+            result.Members.Add(new GroupMemberInfo
+            {
+                DisplayName = m.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "",
+                Email = m.TryGetProperty("mail", out var mail) ? mail.GetString() ?? ""
+                    : m.TryGetProperty("userPrincipalName", out var upn) ? upn.GetString() ?? "" : "",
+                RecipientType = "M365Member"
+            });
+        }
+        return result;
+    }
+
+    private async Task<PermissionResult> AddGraphMemberAsync(string groupId, string displayName, string member)
+    {
+        using var userDoc = await _graph.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        if (userDoc == null)
+            return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
+
+        var userId = userDoc.RootElement.GetProperty("id").GetString();
+        var body = new Dictionary<string, string>
+        {
+            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
+        };
+        await _graph.PostAsync($"/groups/{groupId}/members/$ref", body);
+
+        return new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." };
+    }
+
+    private async Task<PermissionResult> RemoveGraphMemberAsync(string groupId, string displayName, string member)
+    {
+        using var userDoc = await _graph.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        if (userDoc == null)
+            return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
+
+        var userId = userDoc.RootElement.GetProperty("id").GetString();
+        var success = await _graph.DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
+
+        return success
+            ? new PermissionResult { Success = true, Message = $"{member} removed from {displayName} (M365 Group)." }
+            : PermissionResult.Fail($"Failed to remove {member} from {displayName}.");
+    }
+
     private static PSCredential CreateCredential(string username, string password, string domain)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
@@ -295,6 +385,7 @@ public class GroupInfo
     public string GroupType { get; set; } = "";
     public bool IsDirSynced { get; set; }
     public string Backend { get; set; } = "";
+    public string GraphId { get; set; } = "";
 }
 
 public class GroupMemberList

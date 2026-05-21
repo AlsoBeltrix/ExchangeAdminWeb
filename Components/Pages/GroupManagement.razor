@@ -218,7 +218,7 @@
         isLoading = true;
         try
         {
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Email, selectedGroup.Backend);
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Email, selectedGroup.Backend, selectedGroup.GraphId);
         }
         catch (Exception ex)
         {
@@ -233,13 +233,13 @@
         opResult = null;
         try
         {
-            opResult = await GroupService.AddMemberAsync(selectedGroup!.Email, newMember.Trim(), selectedGroup.Backend);
+            opResult = await GroupService.AddMemberAsync(selectedGroup!.Email, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId);
             if (opResult.Success)
             {
                 Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_AddMember",
                     $"{selectedGroup.Email}:{newMember.Trim()}", true);
                 newMember = "";
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend, selectedGroup.GraphId);
             }
         }
         catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
@@ -252,12 +252,12 @@
         opResult = null;
         try
         {
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Email, member, selectedGroup.Backend);
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Email, member, selectedGroup.Backend, selectedGroup.GraphId);
             if (opResult.Success)
             {
                 Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember",
                     $"{selectedGroup.Email}:{member}", true);
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend, selectedGroup.GraphId);
             }
         }
         catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
