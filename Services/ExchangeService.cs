@@ -27,8 +27,8 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
     private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
     {
-        if (_moduleConfig.IsCorrupt) return "";
         var val = _moduleConfig.GetValue("Migration", key);
+        if (_moduleConfig.IsCorrupt) return "";
         if (val != null) return val;
         if (!_moduleConfig.HasConfigFile)
             return _config[fallbackConfigKey] ?? defaultValue;
