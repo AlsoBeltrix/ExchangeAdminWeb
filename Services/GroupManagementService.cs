@@ -11,6 +11,8 @@ public class GroupManagementService : ExchangeServiceBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _config;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+    private GraphTokenClient? _cachedClient;
+    private string _cachedConfigKey = "";
 
     public GroupManagementService(
         ExoConnectionPool exoPool,
@@ -32,7 +34,13 @@ public class GroupManagementService : ExchangeServiceBase
         var clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId") ?? "";
         var credTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget") ?? "Graph_GroupManagement";
 
-        return new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        var configKey = $"{tenantId}|{clientId}|{credTarget}";
+        if (_cachedClient != null && _cachedConfigKey == configKey)
+            return _cachedClient;
+
+        _cachedClient = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        _cachedConfigKey = configKey;
+        return _cachedClient;
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
@@ -391,8 +399,9 @@ public class GroupManagementService : ExchangeServiceBase
 
     private static string ResolveAdGroupIdentity(PowerShell ps, string groupName, PSCredential credential)
     {
+        var escaped = groupName.Replace("'", "''");
         ps.AddCommand("Get-ADGroup")
-          .AddParameter("Filter", $"Name -eq '{groupName.Replace("'", "''")}'")
+          .AddParameter("Filter", $"SamAccountName -eq '{escaped}' -or Name -eq '{escaped}' -or Mail -like '{escaped}@*'")
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var groups = ps.Invoke();

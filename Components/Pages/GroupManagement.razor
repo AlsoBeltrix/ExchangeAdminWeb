@@ -228,7 +228,7 @@
         isLoading = true;
         try
         {
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.Backend, selectedGroup.GraphId);
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
         }
         catch (Exception ex)
         {
