@@ -226,16 +226,16 @@
             csv.Read();
             csv.ReadHeader();
 
-            var hasEmail = csv.HeaderRecord?.Any(h => h.Trim().Equals("Email", StringComparison.OrdinalIgnoreCase)) == true;
-            var hasUPN = csv.HeaderRecord?.Any(h => h.Trim().Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase)) == true;
+            var matchedHeader = csv.HeaderRecord?.FirstOrDefault(h => h.Trim().Equals("Email", StringComparison.OrdinalIgnoreCase))
+                ?? csv.HeaderRecord?.FirstOrDefault(h => h.Trim().Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase));
 
-            if (!hasEmail && !hasUPN)
+            if (matchedHeader == null)
             {
                 result = new Comms10kUpdateResult { Success = false, Message = "CSV must have an 'Email' or 'UserPrincipalName' column." };
                 return;
             }
 
-            var fieldName = hasEmail ? "Email" : "UserPrincipalName";
+            var fieldName = matchedHeader;
             while (csv.Read())
             {
                 var val = csv.GetField(fieldName)?.Trim();

@@ -138,10 +138,13 @@ public class Comms10kService
                 var userResults = ps.Invoke();
                 ps.Commands.Clear();
 
-                var user = userResults.FirstOrDefault();
-                if (user != null)
+                if (userResults.Count > 1)
                 {
-                    var dn = user.Properties["DistinguishedName"]?.Value?.ToString();
+                    skipped.Add($"{email} (ambiguous: {userResults.Count} matches)");
+                }
+                else if (userResults.Count == 1)
+                {
+                    var dn = userResults[0].Properties["DistinguishedName"]?.Value?.ToString();
                     if (dn != null) resolved.Add(dn);
                     else skipped.Add(email);
                 }
