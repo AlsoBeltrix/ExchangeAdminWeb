@@ -1,0 +1,312 @@
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
+using System.Text.Json;
+using ExchangeAdminWeb.Models;
+
+namespace ExchangeAdminWeb.Services;
+
+public class GroupManagementService : ExchangeServiceBase
+{
+    private readonly GraphClientService _graph;
+    private readonly IConfiguration _config;
+    private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+
+    public GroupManagementService(
+        ExoConnectionPool exoPool,
+        DelineaService delineaService,
+        GraphClientService graph,
+        IConfiguration config,
+        ILogger<GroupManagementService> logger)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "")
+    {
+        _graph = graph;
+        _config = config;
+    }
+
+    public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
+    {
+        var results = new List<GroupInfo>();
+
+        // Search EXO distribution groups and mail-enabled security groups
+        var exoResults = await RunPooledQueryAsync(ps =>
+        {
+            ps.AddCommand("Get-DistributionGroup")
+              .AddParameter("Filter", $"Name -like '*{searchTerm.Replace("'", "''")}*' -or PrimarySmtpAddress -like '*{searchTerm.Replace("'", "''")}*'")
+              .AddParameter("ResultSize", 25)
+              .AddParameter("ErrorAction", "Stop");
+            return Invoke(ps);
+        });
+
+        foreach (var group in exoResults)
+        {
+            var isDirSynced = group.Properties["IsDirSynced"]?.Value as bool? ?? false;
+            var typeDetails = group.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "";
+
+            results.Add(new GroupInfo
+            {
+                Name = group.Properties["DisplayName"]?.Value?.ToString() ?? "",
+                Email = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
+                GroupType = typeDetails.Contains("Security") ? "MailEnabledSecurity" : "Distribution",
+                IsDirSynced = isDirSynced,
+                Backend = isDirSynced ? "OnPremAD" : "ExchangeOnline"
+            });
+        }
+
+        return results;
+    }
+
+    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend)
+    {
+        if (backend == "ExchangeOnline")
+            return await GetExoMembersAsync(groupIdentity);
+        if (backend == "OnPremAD")
+            return await GetOnPremMembersAsync(groupIdentity);
+        return new GroupMemberList { GroupName = groupIdentity, Error = $"Unknown backend: {backend}" };
+    }
+
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend)
+    {
+        if (backend == "ExchangeOnline")
+            return await AddExoMemberAsync(groupIdentity, member);
+        if (backend == "OnPremAD")
+            return await AddOnPremMemberAsync(groupIdentity, member);
+        return PermissionResult.Fail($"Unknown backend: {backend}");
+    }
+
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend)
+    {
+        if (backend == "ExchangeOnline")
+            return await RemoveExoMemberAsync(groupIdentity, member);
+        if (backend == "OnPremAD")
+            return await RemoveOnPremMemberAsync(groupIdentity, member);
+        return PermissionResult.Fail($"Unknown backend: {backend}");
+    }
+
+    // --- EXO operations ---
+
+    private async Task<GroupMemberList> GetExoMembersAsync(string groupIdentity)
+    {
+        return await RunPooledQueryAsync(ps =>
+        {
+            var result = new GroupMemberList { GroupName = groupIdentity };
+            ps.AddCommand("Get-DistributionGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("ResultSize", "Unlimited")
+              .AddParameter("ErrorAction", "Stop");
+            var members = Invoke(ps);
+
+            foreach (var m in members)
+            {
+                result.Members.Add(new GroupMemberInfo
+                {
+                    DisplayName = m.Properties["DisplayName"]?.Value?.ToString() ?? "",
+                    Email = m.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
+                    RecipientType = m.Properties["RecipientType"]?.Value?.ToString() ?? ""
+                });
+            }
+            return result;
+        });
+    }
+
+    private async Task<PermissionResult> AddExoMemberAsync(string groupIdentity, string member)
+    {
+        return await RunAsync(ps =>
+        {
+            ps.AddCommand("Add-DistributionGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Member", member)
+              .AddParameter("ErrorAction", "Stop");
+            Invoke(ps);
+        }, () => ($"{member} added to {groupIdentity}.", null));
+    }
+
+    private async Task<PermissionResult> RemoveExoMemberAsync(string groupIdentity, string member)
+    {
+        return await RunAsync(ps =>
+        {
+            ps.AddCommand("Remove-DistributionGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Member", member)
+              .AddParameter("Confirm", false)
+              .AddParameter("ErrorAction", "Stop");
+            Invoke(ps);
+        }, () => ($"{member} removed from {groupIdentity}.", null));
+    }
+
+    // --- On-prem AD operations ---
+
+    private async Task<GroupMemberList> GetOnPremMembersAsync(string groupIdentity)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return new GroupMemberList { GroupName = groupIdentity, Error = "AD credentials unavailable." };
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var result = new GroupMemberList { GroupName = groupIdentity };
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+            ps.AddCommand("Get-ADGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var members = ps.Invoke();
+            ps.Commands.Clear();
+
+            foreach (var m in members)
+            {
+                var sam = m.Properties["SamAccountName"]?.Value?.ToString() ?? "";
+                ps.AddCommand("Get-ADUser")
+                  .AddParameter("Identity", sam)
+                  .AddParameter("Properties", new[] { "EmailAddress", "DisplayName" })
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "SilentlyContinue");
+                var userResults = ps.Invoke();
+                ps.Commands.Clear();
+
+                var user = userResults.FirstOrDefault();
+                result.Members.Add(new GroupMemberInfo
+                {
+                    DisplayName = user?.Properties["DisplayName"]?.Value?.ToString() ?? m.Properties["Name"]?.Value?.ToString() ?? "",
+                    Email = user?.Properties["EmailAddress"]?.Value?.ToString() ?? "",
+                    RecipientType = "ADUser"
+                });
+            }
+
+            return result;
+        }), _adThrottle);
+    }
+
+    private async Task<PermissionResult> AddOnPremMemberAsync(string groupIdentity, string member)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("AD credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+            // Resolve member by UPN or email
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var users = ps.Invoke();
+            ps.Commands.Clear();
+
+            if (users.Count == 0)
+                throw new InvalidOperationException($"User '{member}' not found in AD.");
+            if (users.Count > 1)
+                throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
+
+            ps.AddCommand("Add-ADGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).");
+        }), _adThrottle);
+    }
+
+    private async Task<PermissionResult> RemoveOnPremMemberAsync(string groupIdentity, string member)
+    {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return PermissionResult.Fail("AD credentials unavailable.");
+
+        return await ThrottledAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var users = ps.Invoke();
+            ps.Commands.Clear();
+
+            if (users.Count == 0)
+                throw new InvalidOperationException($"User '{member}' not found in AD.");
+
+            ps.AddCommand("Remove-ADGroupMember")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Credential", credential)
+              .AddParameter("Confirm", false)
+              .AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).");
+        }), _adThrottle);
+    }
+
+    private static PSCredential CreateCredential(string username, string password, string domain)
+    {
+        var fullUsername = username.Contains('\\') || username.Contains('@')
+            ? username : $"{domain}\\{username}";
+        var securePassword = new System.Security.SecureString();
+        foreach (var c in password) securePassword.AppendChar(c);
+        return new PSCredential(fullUsername, securePassword);
+    }
+}
+
+public class GroupInfo
+{
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+    public string GroupType { get; set; } = "";
+    public bool IsDirSynced { get; set; }
+    public string Backend { get; set; } = "";
+}
+
+public class GroupMemberList
+{
+    public string GroupName { get; set; } = "";
+    public string? Error { get; set; }
+    public List<GroupMemberInfo> Members { get; set; } = new();
+}
+
+public class GroupMemberInfo
+{
+    public string DisplayName { get; set; } = "";
+    public string Email { get; set; } = "";
+    public string RecipientType { get; set; } = "";
+}

@@ -71,6 +71,7 @@ try
     builder.Services.AddSingleton<GraphClientService>();
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
+    builder.Services.AddScoped<GroupManagementService>();
 
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();

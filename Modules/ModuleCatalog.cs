@@ -193,6 +193,19 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "GroupManagement",
+            DisplayName = "Group Management",
+            Description = "Search, view membership, and manage distribution lists and security groups.",
+            Route = "group-management",
+            IconCss = "bi bi-people-fill-nav-menu",
+            SortOrder = 150,
+            EnabledByDefault = true,
+            IsSystemModule = false,
+            MainPermission = new("Access", "GroupManagement"),
+            GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)]
+        },
+        new()
+        {
             Id = "Comms10k",
             DisplayName = "Comms-10k",
             Description = "Manage the broadcast distribution list for company-wide communications.",

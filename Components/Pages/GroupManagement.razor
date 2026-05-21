@@ -1,0 +1,266 @@
+@page "/group-management"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "GroupManagement")]
+@rendermode InteractiveServer
+@inject GroupManagementService GroupService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<GroupManagement> Logger
+
+<PageTitle>Group Management</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Group Management</h1>
+
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <div class="input-group">
+                <input type="text" class="form-control" placeholder="Search groups by name or email..."
+                       value="@searchTerm"
+                       @oninput="(e) => searchTerm = e.Value?.ToString() ?? string.Empty"
+                       @onkeydown="HandleSearchKey" disabled="@isLoading" />
+                <button class="btn btn-primary" @onclick="Search" disabled="@(isLoading || string.IsNullOrWhiteSpace(searchTerm))">
+                    @if (isLoading && selectedGroup == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Search
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (searchResults.Count > 0)
+    {
+        <div class="row mb-3">
+            <div class="col-md-8">
+                <table class="table table-sm table-hover">
+                    <thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Source</th><th></th></tr></thead>
+                    <tbody>
+                        @foreach (var group in searchResults)
+                        {
+                            var g = group;
+                            <tr>
+                                <td>@g.Name</td>
+                                <td><small>@g.Email</small></td>
+                                <td><span class="badge bg-light text-dark border">@g.GroupType</span></td>
+                                <td>
+                                    @if (g.IsDirSynced) { <span class="badge bg-secondary">On-Prem</span> }
+                                    else { <span class="badge bg-info text-dark">Cloud</span> }
+                                </td>
+                                <td><button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(g)">Manage</button></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+
+    @if (selectedGroup != null)
+    {
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>@selectedGroup.Name</strong>
+                    <small class="text-muted ms-2">@selectedGroup.Email</small>
+                    @if (selectedGroup.IsDirSynced) { <span class="badge bg-secondary ms-2">On-Prem (synced)</span> }
+                </div>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="() => { selectedGroup = null; memberList = null; }">Close</button>
+            </div>
+            <div class="card-body">
+                @if (selectedGroup.IsDirSynced && !canManageOnPrem)
+                {
+                    <div class="alert alert-warning mb-3">
+                        This is an on-premises synced group. You do not have permission to modify it. Contact the Exchange team.
+                    </div>
+                }
+
+                @if (memberList == null)
+                {
+                    <button class="btn btn-primary btn-sm" @onclick="LoadMembers" disabled="@isLoading">
+                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Load Members
+                    </button>
+                }
+                else if (memberList.Error != null)
+                {
+                    <div class="alert alert-danger">@memberList.Error</div>
+                }
+                else
+                {
+                    <p class="text-muted mb-2"><small>@memberList.Members.Count member(s)</small></p>
+
+                    @if (!selectedGroup.IsDirSynced || canManageOnPrem)
+                    {
+                        <div class="input-group input-group-sm mb-3" style="max-width: 400px;">
+                            <input type="text" class="form-control" placeholder="user@domain.com" @bind="newMember" disabled="@isLoading" />
+                            <button class="btn btn-success" @onclick="AddMember" disabled="@(isLoading || string.IsNullOrWhiteSpace(newMember))">Add</button>
+                        </div>
+                    }
+
+                    @if (opResult != null)
+                    {
+                        <div class="alert @(opResult.Success ? "alert-success" : "alert-danger") alert-dismissible py-2">
+                            <small>@opResult.Message</small>
+                            <button type="button" class="btn-close btn-close-sm" @onclick="() => opResult = null"></button>
+                        </div>
+                    }
+
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-sm">
+                            <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var m in memberList.Members)
+                                {
+                                    var member = m;
+                                    <tr>
+                                        <td>@member.DisplayName</td>
+                                        <td><small>@member.Email</small></td>
+                                        <td>
+                                            @if (!selectedGroup.IsDirSynced || canManageOnPrem)
+                                            {
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member.Email)" disabled="@isLoading">Remove</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool canManageOnPrem;
+    private string searchTerm = "";
+    private string newMember = "";
+    private List<GroupInfo> searchResults = new();
+    private GroupInfo? selectedGroup;
+    private GroupMemberList? memberList;
+    private PermissionResult? opResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupManagement");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        var onPremAuth = await AuthorizationService.AuthorizeAsync(user, "GroupManagementOnPrem");
+        canManageOnPrem = onPremAuth.Succeeded;
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private void HandleSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchTerm))
+            _ = Search();
+    }
+
+    private async Task Search()
+    {
+        isLoading = true;
+        selectedGroup = null;
+        memberList = null;
+        opResult = null;
+
+        try
+        {
+            searchResults = await GroupService.SearchGroupsAsync(searchTerm.Trim());
+        }
+        catch (Exception ex)
+        {
+            opResult = PermissionResult.Fail(ex.Message);
+        }
+        finally { isLoading = false; }
+    }
+
+    private void SelectGroup(GroupInfo group)
+    {
+        selectedGroup = group;
+        memberList = null;
+        opResult = null;
+        newMember = "";
+    }
+
+    private async Task LoadMembers()
+    {
+        isLoading = true;
+        try
+        {
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Email, selectedGroup.Backend);
+        }
+        catch (Exception ex)
+        {
+            memberList = new GroupMemberList { GroupName = selectedGroup!.Name, Error = ex.Message };
+        }
+        finally { isLoading = false; }
+    }
+
+    private async Task AddMember()
+    {
+        isLoading = true;
+        opResult = null;
+        try
+        {
+            opResult = await GroupService.AddMemberAsync(selectedGroup!.Email, newMember.Trim(), selectedGroup.Backend);
+            if (opResult.Success)
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_AddMember",
+                    $"{selectedGroup.Email}:{newMember.Trim()}", true);
+                newMember = "";
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend);
+            }
+        }
+        catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
+        finally { isLoading = false; }
+    }
+
+    private async Task RemoveMember(string member)
+    {
+        isLoading = true;
+        opResult = null;
+        try
+        {
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Email, member, selectedGroup.Backend);
+            if (opResult.Success)
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember",
+                    $"{selectedGroup.Email}:{member}", true);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend);
+            }
+        }
+        catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
+        finally { isLoading = false; }
+    }
+}
