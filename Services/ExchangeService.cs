@@ -16,19 +16,39 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string _organization;
     private readonly string _certSubject;
     private readonly ILogger<ExchangeService> _logger;
-    private readonly string _hybridEndpoint;
-    private readonly string _cloudTargetDomain;
-    private readonly string _onPremTargetDomain;
-    private readonly string _onPremTargetDAG;
-    private readonly long _cloudQuotaGB;
-    private readonly string[] _excludedADGroups;
     private readonly string[] _adminNotificationEmails;
     private readonly string _onPremServerUri;
     private readonly DelineaService _delineaService;
     private readonly ExoConnectionPool _exoPool;
+    private readonly IConfiguration _config;
     private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
     private readonly ModuleConfigService _moduleConfig;
+
+    private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
+    {
+        var val = _moduleConfig.GetValue("Migration", key);
+        if (val != null) return val;
+        if (!_moduleConfig.HasConfigFile)
+            return _config[fallbackConfigKey] ?? defaultValue;
+        return defaultValue;
+    }
+
+    private string _hybridEndpoint => MigrationConfig("HybridEndpoint", "Migration:HybridEndpoint", "hybrid1");
+    private string _cloudTargetDomain => MigrationConfig("CloudTargetDeliveryDomain", "Migration:CloudTargetDeliveryDomain");
+    private string _onPremTargetDomain => MigrationConfig("OnPremTargetDeliveryDomain", "Migration:OnPremTargetDeliveryDomain");
+    private string _onPremTargetDAG => MigrationConfig("OnPremTargetDAG", "Migration:OnPremTargetDAG");
+    private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "100"), out var v) ? v : 100;
+    private string[] _excludedADGroups {
+        get {
+            var val = _moduleConfig.GetValue("Migration", "ExcludedADGroups");
+            if (!string.IsNullOrEmpty(val))
+                return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (!_moduleConfig.HasConfigFile)
+                return _config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
+            return Array.Empty<string>();
+        }
+    }
 
     public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool, ModuleConfigService moduleConfig)
     {
@@ -38,18 +58,8 @@ public class ExchangeService : IExchangeService, IIdentityResolver
             ?? throw new InvalidOperationException("ExchangeOnline:Organization is not configured.");
         _certSubject = config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
         _logger = logger;
+        _config = config;
         _moduleConfig = moduleConfig;
-
-        // Migration configuration — module config takes precedence over appsettings
-        _hybridEndpoint = moduleConfig.GetValue("Migration", "HybridEndpoint") ?? config["Migration:HybridEndpoint"] ?? "hybrid1";
-        _cloudTargetDomain = moduleConfig.GetValue("Migration", "CloudTargetDeliveryDomain") ?? config["Migration:CloudTargetDeliveryDomain"] ?? "example.mail.onmicrosoft.com";
-        _onPremTargetDomain = moduleConfig.GetValue("Migration", "OnPremTargetDeliveryDomain") ?? config["Migration:OnPremTargetDeliveryDomain"] ?? "example.com";
-        _onPremTargetDAG = moduleConfig.GetValue("Migration", "OnPremTargetDAG") ?? config["Migration:OnPremTargetDAG"] ?? "";
-        _cloudQuotaGB = long.Parse(moduleConfig.GetValue("Migration", "CloudQuotaGB") ?? config["Migration:CloudQuotaGB"] ?? "100");
-        var excludedGroups = moduleConfig.GetValue("Migration", "ExcludedADGroups");
-        _excludedADGroups = !string.IsNullOrEmpty(excludedGroups)
-            ? excludedGroups.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            : config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
 
         // Admin notification emails
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";

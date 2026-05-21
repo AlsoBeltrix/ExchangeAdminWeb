@@ -350,6 +350,15 @@
             AddGroup(section);
     }
 
+    private string MaskIfSecret(string moduleId, string key, string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(empty)";
+        var module = Catalog.GetById(moduleId);
+        var field = module?.ConfigFields.FirstOrDefault(f => f.Key == key);
+        if (field?.IsSecret == true) return "***";
+        return value;
+    }
+
     private string GetModuleConfigValue(string moduleId, string key, string defaultValue)
     {
         if (moduleConfigState.TryGetValue(moduleId, out var config) && config.TryGetValue(key, out var val))
@@ -379,17 +388,28 @@
 
             foreach (var (moduleId, config) in moduleConfigState)
             {
+                var previous = ModuleConfig.GetModuleConfig(moduleId);
                 ModuleConfig.SaveModuleConfig(moduleId, config);
 
-                try
+                var changed = config.Where(kv =>
                 {
-                    var ip = ClientInfo.GetIpForUser(currentUser);
-                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{moduleId}",
-                        Array.Empty<string>(), config.Where(kv => !string.IsNullOrEmpty(kv.Value)).Select(kv => kv.Key).ToArray());
-                }
-                catch (Exception auditEx)
+                    previous.TryGetValue(kv.Key, out var oldVal);
+                    return (oldVal ?? "") != (kv.Value ?? "");
+                }).Select(kv => kv.Key).ToList();
+
+                if (changed.Count > 0)
                 {
-                    Logger.LogError(auditEx, "Failed to audit module config change for {Module}", moduleId);
+                    try
+                    {
+                        var ip = ClientInfo.GetIpForUser(currentUser);
+                        var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, previous.GetValueOrDefault(k, ""))}").ToArray();
+                        var newKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, config.GetValueOrDefault(k, ""))}").ToArray();
+                        Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{moduleId}", prevKeys, newKeys);
+                    }
+                    catch (Exception auditEx)
+                    {
+                        Logger.LogError(auditEx, "Failed to audit module config change for {Module}", moduleId);
+                    }
                 }
             }
 

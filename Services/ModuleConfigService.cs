@@ -21,6 +21,8 @@ public class ModuleConfigService
         Directory.CreateDirectory(configDir);
     }
 
+    public bool HasConfigFile => File.Exists(_configFilePath);
+
     public string? GetValue(string moduleId, string key)
     {
         var config = ReadConfig();
@@ -99,7 +101,7 @@ public class ModuleConfigService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to read module config file");
+            _logger.LogError(ex, "Module config file corrupt - returning empty config (modules will appear unconfigured)");
             return new(StringComparer.OrdinalIgnoreCase);
         }
     }
