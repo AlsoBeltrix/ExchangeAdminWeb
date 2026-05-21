@@ -22,6 +22,7 @@ public class ModuleConfigService
     }
 
     public bool HasConfigFile => File.Exists(_configFilePath);
+    public bool IsCorrupt { get; private set; }
 
     public string? GetValue(string moduleId, string key)
     {
@@ -44,6 +45,8 @@ public class ModuleConfigService
 
     public bool IsModuleConfigured(string moduleId)
     {
+        if (IsCorrupt) return false;
+
         var module = _catalog.GetById(moduleId);
         if (module == null || module.ConfigFields.Count == 0) return true;
 
@@ -101,7 +104,8 @@ public class ModuleConfigService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Module config file corrupt - returning empty config (modules will appear unconfigured)");
+            IsCorrupt = true;
+            _logger.LogError(ex, "Module config file corrupt - modules will appear unconfigured until file is fixed or re-saved");
             return new(StringComparer.OrdinalIgnoreCase);
         }
     }

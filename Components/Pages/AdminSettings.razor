@@ -391,19 +391,21 @@
                 var previous = ModuleConfig.GetModuleConfig(moduleId);
                 ModuleConfig.SaveModuleConfig(moduleId, config);
 
-                var changed = config.Where(kv =>
+                var allKeys = previous.Keys.Union(config.Keys, StringComparer.OrdinalIgnoreCase).ToList();
+                var changed = allKeys.Where(k =>
                 {
-                    previous.TryGetValue(kv.Key, out var oldVal);
-                    return (oldVal ?? "") != (kv.Value ?? "");
-                }).Select(kv => kv.Key).ToList();
+                    var oldVal = previous.GetValueOrDefault(k, "");
+                    var newVal = config.GetValueOrDefault(k, "");
+                    return oldVal != newVal;
+                }).ToList();
 
                 if (changed.Count > 0)
                 {
                     try
                     {
                         var ip = ClientInfo.GetIpForUser(currentUser);
-                        var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, previous.GetValueOrDefault(k, ""))}").ToArray();
-                        var newKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, config.GetValueOrDefault(k, ""))}").ToArray();
+                        var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
+                        var newKeys = changed.Select(k => $"{k}={MaskIfSecret(moduleId, k, config.GetValueOrDefault(k) ?? "")}").ToArray();
                         Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{moduleId}", prevKeys, newKeys);
                     }
                     catch (Exception auditEx)

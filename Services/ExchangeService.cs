@@ -39,8 +39,10 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private string _onPremTargetDomain => MigrationConfig("OnPremTargetDeliveryDomain", "Migration:OnPremTargetDeliveryDomain");
     private string _onPremTargetDAG => MigrationConfig("OnPremTargetDAG", "Migration:OnPremTargetDAG");
     private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "100"), out var v) ? v : 100;
-    private string[] _excludedADGroups {
-        get {
+    private string[] _excludedADGroups
+    {
+        get
+        {
             var val = _moduleConfig.GetValue("Migration", "ExcludedADGroups");
             if (!string.IsNullOrEmpty(val))
                 return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
