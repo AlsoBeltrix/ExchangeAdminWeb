@@ -202,7 +202,12 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "GroupManagement"),
-            GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)]
+            GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
+            ConfigFields = [
+                new("GraphTenantId", "Azure AD Tenant ID", "For M365 Group management (same tenant as MFA Reset)", Required: false),
+                new("GraphClientId", "Graph App Client ID", "App with Group.ReadWrite.All permission", Required: false),
+                new("GraphCredentialTarget", "Graph Credential Vault Target", "PasswordVault resource name", Required: false, DefaultValue: "Graph_MFAResets")
+            ]
         },
         new()
         {
@@ -232,7 +237,7 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("TenantId", "Azure AD Tenant ID", "Your Entra tenant GUID"),
-                new("ClientId", "App Registration Client ID", "Graph API app registration"),
+                new("ClientId", "App Registration Client ID", "Graph API app registration (needs UserAuthenticationMethod.ReadWrite.All)"),
                 new("CredentialTarget", "Credential Vault Target", "PasswordVault resource name for client secret", DefaultValue: "Graph_MFAResets")
             ]
         },

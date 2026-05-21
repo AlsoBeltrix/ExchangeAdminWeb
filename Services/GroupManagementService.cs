@@ -46,6 +46,9 @@ public class GroupManagementService : ExchangeServiceBase
             {
                 Name = group.Properties["DisplayName"]?.Value?.ToString() ?? "",
                 Email = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
+                Identity = isDirSynced
+                    ? (group.Properties["Alias"]?.Value?.ToString() ?? group.Properties["DisplayName"]?.Value?.ToString() ?? "")
+                    : (group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? ""),
                 GroupType = typeDetails.Contains("Security") ? "MailEnabledSecurity" : "Distribution",
                 IsDirSynced = isDirSynced,
                 Backend = isDirSynced ? "OnPremAD" : "ExchangeOnline"
@@ -299,6 +302,8 @@ public class GroupManagementService : ExchangeServiceBase
 
             if (users.Count == 0)
                 throw new InvalidOperationException($"User '{member}' not found in AD.");
+            if (users.Count > 1)
+                throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
 
             ps.AddCommand("Remove-ADGroupMember")
               .AddParameter("Identity", groupIdentity)
@@ -349,9 +354,11 @@ public class GroupManagementService : ExchangeServiceBase
         {
             ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
         };
-        await _graph.PostAsync($"/groups/{groupId}/members/$ref", body);
+        var success = await _graph.PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
 
-        return new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." };
+        return success
+            ? new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." }
+            : PermissionResult.Fail($"Failed to add {member} to {displayName}. Check Graph API permissions.");
     }
 
     private async Task<PermissionResult> RemoveGraphMemberAsync(string groupId, string displayName, string member)
@@ -382,6 +389,7 @@ public class GroupInfo
 {
     public string Name { get; set; } = "";
     public string Email { get; set; } = "";
+    public string Identity { get; set; } = "";
     public string GroupType { get; set; } = "";
     public bool IsDirSynced { get; set; }
     public string Backend { get; set; } = "";

@@ -30,9 +30,13 @@ public sealed class GraphClientService
 
     private void LoadConfig()
     {
-        _tenantId = _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
-        _clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
-        var credentialTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
+        // Try GroupManagement config first, then MfaReset (shared credential pattern)
+        _tenantId = _moduleConfig.GetValue("GroupManagement", "GraphTenantId")
+            ?? _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
+        _clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId")
+            ?? _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
+        var credentialTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget")
+            ?? _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
 
         if (string.IsNullOrEmpty(_tenantId) || string.IsNullOrEmpty(_clientId))
         {
@@ -91,6 +95,28 @@ public sealed class GraphClientService
             return false;
         }
 
+        return true;
+    }
+
+    public async Task<bool> PostNoContentAsync(string endpoint, object? body = null)
+    {
+        var token = await GetAccessTokenAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{GraphBaseUrl}{endpoint}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        if (body != null)
+        {
+            var json = JsonSerializer.Serialize(body);
+            request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        }
+
+        var response = await _httpClient.SendAsync(request);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync();
+            _logger.LogError("Graph POST {Endpoint} failed: {Status} {Error}", endpoint, response.StatusCode, error);
+            return false;
+        }
         return true;
     }
 

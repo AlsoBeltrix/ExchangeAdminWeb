@@ -105,9 +105,16 @@
 
                     @if (!selectedGroup.IsDirSynced || canManageOnPrem)
                     {
-                        <div class="input-group input-group-sm mb-3" style="max-width: 400px;">
-                            <input type="text" class="form-control" placeholder="user@domain.com" @bind="newMember" disabled="@isLoading" />
-                            <button class="btn btn-success" @onclick="AddMember" disabled="@(isLoading || string.IsNullOrWhiteSpace(newMember))">Add</button>
+                        <div class="row g-2 mb-3">
+                            <div class="col-auto">
+                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" disabled="@isLoading" style="width: 140px;" />
+                            </div>
+                            <div class="col-auto">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" placeholder="user@domain.com" @bind="newMember" disabled="@isLoading" />
+                                    <button class="btn btn-success" @onclick="AddMember" disabled="@(isLoading || string.IsNullOrWhiteSpace(newMember) || string.IsNullOrWhiteSpace(ticketNumber))">Add</button>
+                                </div>
+                            </div>
                         </div>
                     }
 
@@ -154,6 +161,7 @@
     private bool canManageOnPrem;
     private string searchTerm = "";
     private string newMember = "";
+    private string ticketNumber = "";
     private List<GroupInfo> searchResults = new();
     private GroupInfo? selectedGroup;
     private GroupMemberList? memberList;
@@ -218,7 +226,7 @@
         isLoading = true;
         try
         {
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Email, selectedGroup.Backend, selectedGroup.GraphId);
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.Backend, selectedGroup.GraphId);
         }
         catch (Exception ex)
         {
@@ -233,16 +241,28 @@
         opResult = null;
         try
         {
-            opResult = await GroupService.AddMemberAsync(selectedGroup!.Email, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId);
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
+            if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
+
+            opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId);
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember",
+                $"{selectedGroup.Name}:{newMember.Trim()}", opResult.Success, ticketNumber.Trim(),
+                opResult.Success ? null : opResult.Message);
+
             if (opResult.Success)
             {
-                Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_AddMember",
-                    $"{selectedGroup.Email}:{newMember.Trim()}", true);
                 newMember = "";
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend, selectedGroup.GraphId);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId);
             }
         }
-        catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
+        catch (Exception ex)
+        {
+            opResult = PermissionResult.Fail(ex.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup!.Name}:{newMember.Trim()}", false, ticketNumber.Trim(), ex.Message); } catch { }
+        }
         finally { isLoading = false; }
     }
 
@@ -252,15 +272,25 @@
         opResult = null;
         try
         {
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Email, member, selectedGroup.Backend, selectedGroup.GraphId);
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
+            if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
+
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId);
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember",
+                $"{selectedGroup.Name}:{member}", opResult.Success, ticketNumber.Trim(),
+                opResult.Success ? null : opResult.Message);
+
             if (opResult.Success)
-            {
-                Audit.LogLookupAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember",
-                    $"{selectedGroup.Email}:{member}", true);
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Email, selectedGroup.Backend, selectedGroup.GraphId);
-            }
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId);
         }
-        catch (Exception ex) { opResult = PermissionResult.Fail(ex.Message); }
+        catch (Exception ex)
+        {
+            opResult = PermissionResult.Fail(ex.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup!.Name}:{member}", false, ticketNumber.Trim(), ex.Message); } catch { }
+        }
         finally { isLoading = false; }
     }
 }
