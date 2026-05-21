@@ -67,6 +67,7 @@ try
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
+    builder.Services.AddSingleton<ModuleConfigService>();
     builder.Services.AddSingleton<GraphClientService>();
     builder.Services.AddSingleton<MfaResetService>();
 

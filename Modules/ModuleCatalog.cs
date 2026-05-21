@@ -133,7 +133,15 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "MigrationCheck"),
-            GranularPermissions = [new("Create", "MigrationCreate"), new("Manage", "MigrationManage")]
+            GranularPermissions = [new("Create", "MigrationCreate"), new("Manage", "MigrationManage")],
+            ConfigFields = [
+                new("HybridEndpoint", "Hybrid Endpoint", "Migration endpoint name", DefaultValue: "hybrid1"),
+                new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
+                new("OnPremTargetDeliveryDomain", "On-Prem Target Domain", "e.g. contoso.com"),
+                new("OnPremTargetDAG", "On-Prem Target DAG", "Database availability group name", Required: false),
+                new("CloudQuotaGB", "Cloud Quota (GB)", "Max mailbox size for cloud migration", DefaultValue: "100"),
+                new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated AD groups excluded from cloud migration", Required: false)
+            ]
         },
         new()
         {
@@ -193,7 +201,12 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = true,
             IsSystemModule = false,
-            MainPermission = new("Access", "MfaReset")
+            MainPermission = new("Access", "MfaReset"),
+            ConfigFields = [
+                new("TenantId", "Azure AD Tenant ID", "Your Entra tenant GUID"),
+                new("ClientId", "App Registration Client ID", "Graph API app registration"),
+                new("CredentialTarget", "Credential Vault Target", "PasswordVault resource name for client secret", DefaultValue: "Graph_MFAResets")
+            ]
         },
         new()
         {

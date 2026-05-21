@@ -8,32 +8,45 @@ public sealed class GraphClientService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<GraphClientService> _logger;
-    private readonly string _tenantId;
-    private readonly string _clientId;
-    private readonly string _clientSecret;
+    private string _tenantId = "";
+    private string _clientId = "";
+    private string _clientSecret = "";
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
     private string? _accessToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
 
     private const string GraphBaseUrl = "https://graph.microsoft.com/v1.0";
 
-    public GraphClientService(IConfiguration config, IHttpClientFactory httpClientFactory, ILogger<GraphClientService> logger)
+    private readonly ModuleConfigService _moduleConfig;
+
+    public GraphClientService(ModuleConfigService moduleConfig, IHttpClientFactory httpClientFactory, ILogger<GraphClientService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("MicrosoftGraph");
         _logger = logger;
+        _moduleConfig = moduleConfig;
 
-        _tenantId = config["MicrosoftGraph:TenantId"]
-            ?? throw new InvalidOperationException("MicrosoftGraph:TenantId not configured");
-        _clientId = config["MicrosoftGraph:ClientId"]
-            ?? throw new InvalidOperationException("MicrosoftGraph:ClientId not configured");
+        LoadConfig();
+    }
 
-        var credentialTarget = config["MicrosoftGraph:CredentialTarget"] ?? "Graph_MFAResets";
-        var (storedClientId, secret) = ReadCredential(credentialTarget);
+    private void LoadConfig()
+    {
+        _tenantId = _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
+        _clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
+        var credentialTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
+
+        if (string.IsNullOrEmpty(_tenantId) || string.IsNullOrEmpty(_clientId))
+        {
+            _clientSecret = string.Empty;
+            _logger.LogWarning("MfaReset module config incomplete (TenantId/ClientId). Configure via Admin Settings.");
+            return;
+        }
+
+        var (_, secret) = ReadCredential(credentialTarget);
 
         if (string.IsNullOrEmpty(secret))
         {
             _clientSecret = string.Empty;
-            _logger.LogWarning("Graph API credentials not found in PasswordVault (target: {Target}). Graph-dependent modules will be unavailable.", credentialTarget);
+            _logger.LogWarning("Graph API credentials not found in PasswordVault (target: {Target}).", credentialTarget);
         }
         else
         {
@@ -41,6 +54,8 @@ public sealed class GraphClientService
             _logger.LogInformation("Graph API credentials loaded from PasswordVault");
         }
     }
+
+    public void ReloadConfig() => LoadConfig();
 
     public bool IsConfigured => !string.IsNullOrEmpty(_clientSecret);
 

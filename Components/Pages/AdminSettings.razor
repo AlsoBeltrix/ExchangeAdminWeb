@@ -12,6 +12,7 @@
 @inject ILogger<AdminSettings> Logger
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
+@inject ModuleConfigService ModuleConfig
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -125,6 +126,48 @@
         </div>
     </div>
 
+    @{ var configurableModules = Catalog.GetAll().Where(m => m.ConfigFields.Count > 0).ToList(); }
+    @if (configurableModules.Any())
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Module Configuration</strong>
+                <button class="btn btn-primary btn-sm" @onclick="SaveModuleConfig" disabled="@saving">Save Config</button>
+            </div>
+            <div class="card-body">
+                @foreach (var module in configurableModules)
+                {
+                    var modId = module.Id;
+                    var isConfigured = ModuleConfig.IsModuleConfigured(modId);
+                    <div class="mb-4">
+                        <h6>
+                            @module.DisplayName
+                            @if (!isConfigured) { <span class="badge bg-warning text-dark ms-2">Not configured</span> }
+                        </h6>
+                        <div class="row g-2">
+                            @foreach (var field in module.ConfigFields)
+                            {
+                                var fieldKey = $"{modId}:{field.Key}";
+                                <div class="col-md-4">
+                                    <label class="form-label mb-0"><small>@field.Label</small></label>
+                                    @{
+                                        var capturedModId = modId;
+                                        var capturedKey = field.Key;
+                                    }
+                                    <input type="@(field.IsSecret ? "password" : "text")"
+                                           class="form-control form-control-sm"
+                                           placeholder="@field.Description"
+                                           value="@GetModuleConfigValue(modId, field.Key, field.DefaultValue)"
+                                           @oninput="(e) => SetModuleConfigValue(capturedModId, capturedKey, e.Value?.ToString() ?? string.Empty)" />
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Per-Section Access</strong>
@@ -205,6 +248,7 @@
 
     private string[] sections = Array.Empty<string>();
     private Dictionary<string, bool> moduleEnablement = new();
+    private Dictionary<string, Dictionary<string, string>> moduleConfigState = new();
 
     private Dictionary<string, List<string>> editState = new();
     private Dictionary<string, string> newGroupInputs = new();
@@ -231,6 +275,9 @@
     {
         sections = Catalog.GetConfigurablePolicyAliases().ToArray();
         moduleEnablement = Enablement.GetAllEnablement();
+        moduleConfigState = new();
+        foreach (var module in Catalog.GetAll().Where(m => m.ConfigFields.Count > 0))
+            moduleConfigState[module.Id] = ModuleConfig.GetModuleConfig(module.Id);
         allowedGroups = SectionAccess.GetAllowedGroups();
         adminGroups = SectionAccess.GetAdminGroups();
         sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
@@ -300,6 +347,38 @@
     {
         if (e.Key == "Enter")
             AddGroup(section);
+    }
+
+    private string GetModuleConfigValue(string moduleId, string key, string defaultValue)
+    {
+        if (moduleConfigState.TryGetValue(moduleId, out var config) && config.TryGetValue(key, out var val))
+            return val;
+        return defaultValue;
+    }
+
+    private void SetModuleConfigValue(string moduleId, string key, string value)
+    {
+        if (!moduleConfigState.ContainsKey(moduleId))
+            moduleConfigState[moduleId] = new();
+        moduleConfigState[moduleId][key] = value;
+    }
+
+    private void SaveModuleConfig()
+    {
+        try
+        {
+            foreach (var (moduleId, config) in moduleConfigState)
+                ModuleConfig.SaveModuleConfig(moduleId, config);
+
+            statusMessage = "Module configuration saved.";
+            statusIsError = false;
+            Logger.LogInformation("User {User} updated module configuration", currentUser);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save module config: {ex.Message}";
+            statusIsError = true;
+        }
     }
 
     private async Task SaveEnablement()
