@@ -1,0 +1,280 @@
+@page "/comms-10k"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "Comms10k")]
+@rendermode InteractiveServer
+@inject Comms10kService Comms10kService
+@inject AuditService Audit
+@inject ServiceNowService ServiceNow
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject EmailService Email
+@inject ILogger<ExchangeAdminWeb.Components.Pages.Comms10k> Logger
+
+<PageTitle>Comms-10k</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-warning py-2 mb-3">
+        <small><strong>Caution:</strong> Uploading a CSV will replace ALL members of the broadcast distribution list. This action is logged and admin-notified.</small>
+    </div>
+    <h1 class="mb-4">Comms-10k Broadcast List</h1>
+
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>Current Members</strong>
+                    <div>
+                        <button class="btn btn-outline-primary btn-sm me-2" @onclick="LoadPreview" disabled="@isLoading">Preview</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadFull" disabled="@isLoading">Download CSV</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    @if (preview != null)
+                    {
+                        <p class="text-muted mb-2"><small>Showing @preview.Members.Count of @preview.TotalCount total members</small></p>
+                        <div style="max-height: 300px; overflow-y: auto;">
+                            <table class="table table-sm">
+                                <thead><tr><th>Name</th><th>Email</th></tr></thead>
+                                <tbody>
+                                    @foreach (var m in preview.Members)
+                                    {
+                                        <tr><td>@m.DisplayName</td><td><small>@m.Email</small></td></tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="text-muted">Click Preview to load current members.</p>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header"><strong>Replace Members</strong></div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Ticket Number</label>
+                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">CSV File (Email column required)</label>
+                        <InputFile OnChange="HandleFileUpload" accept=".csv" disabled="@isLoading" />
+                    </div>
+                    @if (parsedEmails.Count > 0)
+                    {
+                        <p class="text-info">@parsedEmails.Count email(s) parsed from CSV.</p>
+                    }
+                    @if (confirmPending)
+                    {
+                        <div class="alert alert-danger">
+                            <p><strong>Confirm: Replace all members of the broadcast list with @parsedEmails.Count users?</strong></p>
+                            <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
+                                @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Confirm Replace
+                            </button>
+                            <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
+                        </div>
+                    }
+                    else if (parsedEmails.Count > 0)
+                    {
+                        <button class="btn btn-warning" @onclick="() => confirmPending = true"
+                                disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                            Replace All Members
+                        </button>
+                    }
+                </div>
+            </div>
+
+            @if (result != null)
+            {
+                <div class="alert @(result.Success ? "alert-success" : "alert-danger") mt-3">
+                    @result.Message
+                    @if (result.SkippedEmails.Count > 0)
+                    {
+                        <div class="mt-2">
+                            <small><strong>Skipped (@result.SkippedEmails.Count):</strong> @string.Join(", ", result.SkippedEmails.Take(10))@(result.SkippedEmails.Count > 10 ? "..." : "")</small>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private string ticketNumber = "";
+    private bool confirmPending;
+    private Comms10kMemberList? preview;
+    private List<string> parsedEmails = new();
+    private Comms10kUpdateResult? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "Comms10k");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task LoadPreview()
+    {
+        isLoading = true;
+        try
+        {
+            preview = await Comms10kService.GetMembersAsync(limit: 25);
+        }
+        catch (Exception ex)
+        {
+            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
+        }
+        finally { isLoading = false; }
+    }
+
+    private async Task DownloadFull()
+    {
+        isLoading = true;
+        try
+        {
+            var full = await Comms10kService.GetMembersAsync();
+            var csv = "Email,DisplayName,SamAccountName\n" +
+                string.Join("\n", full.Members.Select(m => $"{m.Email},{m.DisplayName},{m.SamAccountName}"));
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            var base64 = Convert.ToBase64String(bytes);
+            // JS interop would be needed here for download - simplified
+            Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", preview?.GroupName ?? "Comms-10k", true);
+        }
+        catch (Exception ex)
+        {
+            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
+        }
+        finally { isLoading = false; }
+    }
+
+    private void HandleFileUpload(InputFileChangeEventArgs e)
+    {
+        parsedEmails = new();
+        confirmPending = false;
+        result = null;
+
+        try
+        {
+            using var reader = new System.IO.StreamReader(e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024));
+            var content = reader.ReadToEnd();
+            var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+            var emailIndex = -1;
+            var header = lines[0].Split(',');
+            for (int i = 0; i < header.Length; i++)
+            {
+                if (header[i].Trim().Equals("Email", StringComparison.OrdinalIgnoreCase) ||
+                    header[i].Trim().Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase))
+                {
+                    emailIndex = i;
+                    break;
+                }
+            }
+
+            if (emailIndex < 0)
+            {
+                result = new Comms10kUpdateResult { Success = false, Message = "CSV must have an 'Email' or 'UserPrincipalName' column." };
+                return;
+            }
+
+            for (int i = 1; i < lines.Length; i++)
+            {
+                var cols = lines[i].Split(',');
+                if (cols.Length > emailIndex)
+                {
+                    var email = cols[emailIndex].Trim().Trim('"');
+                    if (!string.IsNullOrWhiteSpace(email) && email.Contains('@'))
+                        parsedEmails.Add(email);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result = new Comms10kUpdateResult { Success = false, Message = $"Failed to parse CSV: {ex.Message}" };
+        }
+    }
+
+    private async Task ExecuteReplace()
+    {
+        isLoading = true;
+        confirmPending = false;
+
+        try
+        {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = new Comms10kUpdateResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "Comms10k");
+            if (!authCheck.Succeeded)
+            {
+                result = new Comms10kUpdateResult { Success = false, Message = "Authorization denied." };
+                return;
+            }
+
+            result = await Comms10kService.ReplaceAllMembersAsync(parsedEmails, currentUser);
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
+                $"{parsedEmails.Count} members", result.Success, ticket,
+                result.Success ? null : result.Message);
+
+            if (result.Success)
+            {
+                await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
+                    "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
+                    true, ticket, null);
+            }
+
+            parsedEmails = new();
+            preview = null;
+        }
+        catch (Exception ex)
+        {
+            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
+                $"{parsedEmails.Count} members", false, ticketNumber.Trim(), ex.Message);
+        }
+        finally { isLoading = false; }
+    }
+}

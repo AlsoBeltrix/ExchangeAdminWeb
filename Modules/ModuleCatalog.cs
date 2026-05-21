@@ -193,6 +193,22 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "Comms10k",
+            DisplayName = "Comms-10k",
+            Description = "Manage the broadcast distribution list for company-wide communications.",
+            Route = "comms-10k",
+            IconCss = "bi bi-people-fill-nav-menu",
+            SortOrder = 160,
+            EnabledByDefault = true,
+            IsSystemModule = false,
+            MainPermission = new("Access", "Comms10k"),
+            ConfigFields = [
+                new("TargetGroupName", "Target Group", "AD group name to manage", DefaultValue: "Comms-10k"),
+                new("DomainName", "Domain", "AD domain prefix", DefaultValue: "ANALOG")
+            ]
+        },
+        new()
+        {
             Id = "MfaReset",
             DisplayName = "MFA Reset",
             Description = "Reset multi-factor authentication methods for users, forcing re-registration at next sign-in.",
