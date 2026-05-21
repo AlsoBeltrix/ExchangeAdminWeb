@@ -199,9 +199,9 @@ public sealed class ModuleCatalog
             Route = "comms-10k",
             IconCss = "bi bi-people-fill-nav-menu",
             SortOrder = 160,
-            EnabledByDefault = true,
+            EnabledByDefault = false,
             IsSystemModule = false,
-            MainPermission = new("Access", "Comms10k"),
+            MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", DefaultValue: "Comms-10k"),
                 new("DomainName", "Domain", "AD domain prefix", DefaultValue: "ANALOG")

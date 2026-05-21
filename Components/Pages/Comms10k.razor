@@ -10,6 +10,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject EmailService Email
+@inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Comms10k> Logger
 
 <PageTitle>Comms-10k</PageTitle>
@@ -31,6 +32,12 @@
         <small><strong>Caution:</strong> Uploading a CSV will replace ALL members of the broadcast distribution list. This action is logged and admin-notified.</small>
     </div>
     <h1 class="mb-4">Comms-10k Broadcast List</h1>
+
+    @if (!Comms10kService.IsConfigured)
+    {
+        <div class="alert alert-danger">Module not configured. Set TargetGroupName in Admin Settings.</div>
+        return;
+    }
 
     <div class="row">
         <div class="col-md-6">
@@ -78,41 +85,56 @@
                         <label class="form-label">CSV File (Email column required)</label>
                         <InputFile OnChange="HandleFileUpload" accept=".csv" disabled="@isLoading" />
                     </div>
-                    @if (parsedEmails.Count > 0)
+                    @if (parsedEmails.Count > 0 && resolveResult == null)
                     {
-                        <p class="text-info">@parsedEmails.Count email(s) parsed from CSV.</p>
-                    }
-                    @if (confirmPending)
-                    {
-                        <div class="alert alert-danger">
-                            <p><strong>Confirm: Replace all members of the broadcast list with @parsedEmails.Count users?</strong></p>
-                            <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
-                                @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                                Confirm Replace
-                            </button>
-                            <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
-                        </div>
-                    }
-                    else if (parsedEmails.Count > 0)
-                    {
-                        <button class="btn btn-warning" @onclick="() => confirmPending = true"
-                                disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
-                            Replace All Members
+                        <p class="text-info">@parsedEmails.Count email(s) parsed. Click Validate to check against AD.</p>
+                        <button class="btn btn-primary btn-sm" @onclick="ValidateEmails" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Validate
                         </button>
+                    }
+
+                    @if (resolveResult != null && resolveResult.Success)
+                    {
+                        <div class="alert alert-info mt-2">
+                            <strong>@resolveResult.ResolvedDns.Count</strong> users resolved.
+                            @if (resolveResult.SkippedEmails.Count > 0)
+                            {
+                                <br /><span class="text-danger"><strong>@resolveResult.SkippedEmails.Count not found:</strong> @string.Join(", ", resolveResult.SkippedEmails.Take(10))@(resolveResult.SkippedEmails.Count > 10 ? "..." : "")</span>
+                            }
+                        </div>
+
+                        @if (confirmPending)
+                        {
+                            <div class="alert alert-danger">
+                                <p><strong>Confirm: Replace all members with @resolveResult.ResolvedDns.Count users?</strong>
+                                @if (resolveResult.SkippedEmails.Count > 0)
+                                {
+                                    <br /><small>@resolveResult.SkippedEmails.Count email(s) will be excluded (not found in AD).</small>
+                                }
+                                </p>
+                                <button class="btn btn-danger btn-sm me-2" @onclick="ExecuteReplace" disabled="@isLoading">
+                                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    Confirm Replace
+                                </button>
+                                <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <button class="btn btn-warning" @onclick="() => confirmPending = true">
+                                Replace All Members (@resolveResult.ResolvedDns.Count users)
+                            </button>
+                        }
                     }
                 </div>
             </div>
 
             @if (result != null)
             {
-                <div class="alert @(result.Success ? "alert-success" : "alert-danger") mt-3">
+                <div class="alert @(result.Success ? "alert-success" : "alert-danger") mt-3 alert-dismissible">
                     @result.Message
-                    @if (result.SkippedEmails.Count > 0)
-                    {
-                        <div class="mt-2">
-                            <small><strong>Skipped (@result.SkippedEmails.Count):</strong> @string.Join(", ", result.SkippedEmails.Take(10))@(result.SkippedEmails.Count > 10 ? "..." : "")</small>
-                        </div>
-                    }
+                    <button type="button" class="btn-close" @onclick="() => result = null"></button>
                 </div>
             }
         </div>
@@ -128,6 +150,7 @@
     private bool confirmPending;
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
+    private Comms10kResolveResult? resolveResult;
     private Comms10kUpdateResult? result;
 
     protected override async Task OnInitializedAsync()
@@ -152,14 +175,8 @@
     private async Task LoadPreview()
     {
         isLoading = true;
-        try
-        {
-            preview = await Comms10kService.GetMembersAsync(limit: 25);
-        }
-        catch (Exception ex)
-        {
-            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
-        }
+        try { preview = await Comms10kService.GetMembersAsync(limit: 25); }
+        catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
     }
 
@@ -173,19 +190,17 @@
                 string.Join("\n", full.Members.Select(m => $"{m.Email},{m.DisplayName},{m.SamAccountName}"));
             var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
             var base64 = Convert.ToBase64String(bytes);
-            // JS interop would be needed here for download - simplified
-            Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", preview?.GroupName ?? "Comms-10k", true);
+            await JS.InvokeVoidAsync("downloadFile", $"comms10k_members_{DateTime.Now:yyyyMMdd}.csv", "text/csv", base64);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", full.GroupName, true);
         }
-        catch (Exception ex)
-        {
-            result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
-        }
+        catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
     }
 
     private void HandleFileUpload(InputFileChangeEventArgs e)
     {
         parsedEmails = new();
+        resolveResult = null;
         confirmPending = false;
         result = null;
 
@@ -199,8 +214,8 @@
             var header = lines[0].Split(',');
             for (int i = 0; i < header.Length; i++)
             {
-                if (header[i].Trim().Equals("Email", StringComparison.OrdinalIgnoreCase) ||
-                    header[i].Trim().Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase))
+                if (header[i].Trim().Trim('"').Equals("Email", StringComparison.OrdinalIgnoreCase) ||
+                    header[i].Trim().Trim('"').Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase))
                 {
                     emailIndex = i;
                     break;
@@ -230,21 +245,32 @@
         }
     }
 
-    private async Task ExecuteReplace()
+    private async Task ValidateEmails()
     {
         isLoading = true;
-        confirmPending = false;
-
         try
         {
-            var ticket = ticketNumber.Trim();
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticketNumber.Trim());
             if (!ticketValidation.IsValid)
             {
                 result = new Comms10kUpdateResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 return;
             }
 
+            resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
+        }
+        catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
+        finally { isLoading = false; }
+    }
+
+    private async Task ExecuteReplace()
+    {
+        isLoading = true;
+        confirmPending = false;
+        var ticket = ticketNumber.Trim();
+
+        try
+        {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "Comms10k");
             if (!authCheck.Succeeded)
@@ -253,27 +279,27 @@
                 return;
             }
 
-            result = await Comms10kService.ReplaceAllMembersAsync(parsedEmails, currentUser);
+            result = await Comms10kService.ExecuteReplaceAsync(resolveResult!.ResolvedDns, currentUser);
 
             Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                $"{parsedEmails.Count} members", result.Success, ticket,
+                $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
                 result.Success ? null : result.Message);
 
-            if (result.Success)
-            {
-                await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
-                    "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
-                    true, ticket, null);
-            }
+            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
+                "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
+                result.Success, ticket, result.Success ? null : result.Message);
 
             parsedEmails = new();
+            resolveResult = null;
             preview = null;
         }
         catch (Exception ex)
         {
             result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
             Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                $"{parsedEmails.Count} members", false, ticketNumber.Trim(), ex.Message);
+                $"attempted", false, ticket, ex.Message);
+            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
+                "Comms-10k", "ERROR", "BroadcastDL", false, ticket, ex.Message);
         }
         finally { isLoading = false; }
     }

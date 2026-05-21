@@ -7,18 +7,49 @@ public class Comms10kService
 {
     private readonly ILogger<Comms10kService> _logger;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly DelineaService _delineaService;
+    private readonly IConfiguration _config;
 
-    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig)
+    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, DelineaService delineaService, IConfiguration config)
     {
         _logger = logger;
         _moduleConfig = moduleConfig;
+        _delineaService = delineaService;
+        _config = config;
     }
 
-    private string TargetGroup => _moduleConfig.GetValue("Comms10k", "TargetGroupName") ?? "Comms-10k";
-    private string DomainName => _moduleConfig.GetValue("Comms10k", "DomainName") ?? "ANALOG";
+    private string? TargetGroup
+    {
+        get
+        {
+            var val = _moduleConfig.GetValue("Comms10k", "TargetGroupName");
+            if (_moduleConfig.IsCorrupt) return null;
+            return val;
+        }
+    }
+
+    private string DomainName
+    {
+        get
+        {
+            var val = _moduleConfig.GetValue("Comms10k", "DomainName");
+            if (_moduleConfig.IsCorrupt) return "";
+            return val ?? "";
+        }
+    }
+
+    public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup);
 
     public async Task<Comms10kMemberList> GetMembersAsync(int? limit = null)
     {
+        var group = TargetGroup;
+        if (string.IsNullOrEmpty(group))
+            throw new InvalidOperationException("Comms10k module is not configured. Set TargetGroupName in Admin Settings.");
+
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            throw new InvalidOperationException("Cannot connect to AD: credentials unavailable.");
+
         return await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -34,24 +65,27 @@ public class Comms10kService
             ps.Invoke();
             ps.Commands.Clear();
 
+            var server = _config["OnPremExchange:ServerUri"]?.Replace("/PowerShell/", "").Replace("http://", "").Replace("https://", "");
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
             ps.AddCommand("Get-ADGroupMember")
-              .AddParameter("Identity", TargetGroup)
+              .AddParameter("Identity", group)
+              .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             var members = ps.Invoke();
             ps.Commands.Clear();
 
-            var result = new Comms10kMemberList { GroupName = TargetGroup };
+            var result = new Comms10kMemberList { GroupName = group };
 
             foreach (var member in members)
             {
                 var sam = member.Properties["SamAccountName"]?.Value?.ToString() ?? "";
                 var name = member.Properties["Name"]?.Value?.ToString() ?? "";
-                var dn = member.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
 
-                // Get email via Get-ADUser
                 ps.AddCommand("Get-ADUser")
                   .AddParameter("Identity", sam)
                   .AddParameter("Properties", new[] { "EmailAddress", "DisplayName" })
+                  .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "SilentlyContinue");
                 var userResults = ps.Invoke();
                 ps.Commands.Clear();
@@ -76,8 +110,16 @@ public class Comms10kService
         });
     }
 
-    public async Task<Comms10kUpdateResult> ReplaceAllMembersAsync(List<string> emails, string performedBy)
+    public async Task<Comms10kResolveResult> ResolveEmailsAsync(List<string> emails)
     {
+        var group = TargetGroup;
+        if (string.IsNullOrEmpty(group))
+            return new Comms10kResolveResult { Success = false, Message = "Module not configured." };
+
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return new Comms10kResolveResult { Success = false, Message = "AD credentials unavailable." };
+
         return await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -87,28 +129,19 @@ public class Comms10kService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ActiveDirectory")
-              .AddParameter("ErrorAction", "Stop");
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
             ps.Invoke();
             ps.Commands.Clear();
 
-            // Get initial member count
-            ps.AddCommand("Get-ADGroupMember")
-              .AddParameter("Identity", TargetGroup)
-              .AddParameter("ErrorAction", "Stop");
-            var initialMembers = ps.Invoke();
-            ps.Commands.Clear();
-            var initialCount = initialMembers.Count;
-
-            // Resolve emails to DNs
-            var resolvedDns = new List<string>();
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var resolved = new List<string>();
             var skipped = new List<string>();
 
             foreach (var email in emails)
             {
                 ps.AddCommand("Get-ADUser")
                   .AddParameter("Filter", $"UserPrincipalName -eq '{email.Replace("'", "''")}'")
+                  .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "SilentlyContinue");
                 var userResults = ps.Invoke();
                 ps.Commands.Clear();
@@ -117,7 +150,7 @@ public class Comms10kService
                 if (user != null)
                 {
                     var dn = user.Properties["DistinguishedName"]?.Value?.ToString();
-                    if (dn != null) resolvedDns.Add(dn);
+                    if (dn != null) resolved.Add(dn);
                     else skipped.Add(email);
                 }
                 else
@@ -126,55 +159,86 @@ public class Comms10kService
                 }
             }
 
-            if (resolvedDns.Count == 0)
+            return new Comms10kResolveResult
             {
-                return new Comms10kUpdateResult
-                {
-                    Success = false,
-                    Message = "No valid users found in the uploaded list.",
-                    SkippedEmails = skipped
-                };
-            }
+                Success = true,
+                ResolvedDns = resolved,
+                SkippedEmails = skipped,
+                Message = $"{resolved.Count} resolved, {skipped.Count} not found."
+            };
+        });
+    }
 
-            // Atomic replacement
+    public async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)
+    {
+        var group = TargetGroup;
+        if (string.IsNullOrEmpty(group))
+            return new Comms10kUpdateResult { Success = false, Message = "Module not configured." };
+
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return new Comms10kUpdateResult { Success = false, Message = "AD credentials unavailable." };
+
+        return await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+            // Get initial count
+            ps.AddCommand("Get-ADGroupMember")
+              .AddParameter("Identity", group)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var initialMembers = ps.Invoke();
+            ps.Commands.Clear();
+            var initialCount = initialMembers.Count;
+
             try
             {
                 ps.AddCommand("Set-ADGroup")
-                  .AddParameter("Identity", TargetGroup)
+                  .AddParameter("Identity", group)
                   .AddParameter("Replace", new System.Collections.Hashtable { { "member", resolvedDns.ToArray() } })
+                  .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
                 ps.Invoke();
                 ps.Commands.Clear();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to replace members of {Group}", TargetGroup);
-                return new Comms10kUpdateResult
-                {
-                    Success = false,
-                    Message = $"Failed to update group: {ex.Message}",
-                    SkippedEmails = skipped
-                };
+                _logger.LogError(ex, "Failed to replace members of {Group}", group);
+                return new Comms10kUpdateResult { Success = false, Message = $"Failed to update group: {ex.Message}" };
             }
 
-            var added = resolvedDns.Count - initialMembers.Where(m =>
-                resolvedDns.Contains(m.Properties["DistinguishedName"]?.Value?.ToString() ?? "")).Count();
-            var removed = initialCount - initialMembers.Where(m =>
-                resolvedDns.Contains(m.Properties["DistinguishedName"]?.Value?.ToString() ?? "")).Count();
-
-            _logger.LogInformation("Comms10k updated by {User}: {Initial} -> {Final} members ({Added} added, {Removed} removed)",
-                performedBy, initialCount, resolvedDns.Count, added, removed);
+            _logger.LogInformation("Comms10k updated by {User}: {Initial} -> {Final} members",
+                performedBy, initialCount, resolvedDns.Count);
 
             return new Comms10kUpdateResult
             {
                 Success = true,
-                Message = $"Successfully updated {TargetGroup}: {resolvedDns.Count} members (was {initialCount}).",
+                Message = $"Successfully updated {group}: {resolvedDns.Count} members (was {initialCount}).",
                 InitialCount = initialCount,
-                FinalCount = resolvedDns.Count,
-                ResolvedCount = resolvedDns.Count,
-                SkippedEmails = skipped
+                FinalCount = resolvedDns.Count
             };
         });
+    }
+
+    private static PSCredential CreateCredential(string username, string password, string domain)
+    {
+        var fullUsername = username.Contains('\\') || username.Contains('@')
+            ? username : $"{domain}\\{username}";
+        var securePassword = new System.Security.SecureString();
+        foreach (var c in password) securePassword.AppendChar(c);
+        return new PSCredential(fullUsername, securePassword);
     }
 }
 
@@ -192,12 +256,18 @@ public class Comms10kMemberList
     public List<Comms10kMember> Members { get; set; } = new();
 }
 
+public class Comms10kResolveResult
+{
+    public bool Success { get; set; }
+    public string Message { get; set; } = "";
+    public List<string> ResolvedDns { get; set; } = new();
+    public List<string> SkippedEmails { get; set; } = new();
+}
+
 public class Comms10kUpdateResult
 {
     public bool Success { get; set; }
     public string Message { get; set; } = "";
     public int InitialCount { get; set; }
     public int FinalCount { get; set; }
-    public int ResolvedCount { get; set; }
-    public List<string> SkippedEmails { get; set; } = new();
 }
