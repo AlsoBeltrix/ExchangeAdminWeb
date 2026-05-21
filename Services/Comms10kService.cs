@@ -28,15 +28,6 @@ public class Comms10kService
         }
     }
 
-    private string DomainName
-    {
-        get
-        {
-            var val = _moduleConfig.GetValue("Comms10k", "DomainName");
-            if (_moduleConfig.IsCorrupt) return "";
-            return val ?? "";
-        }
-    }
 
     public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup);
 

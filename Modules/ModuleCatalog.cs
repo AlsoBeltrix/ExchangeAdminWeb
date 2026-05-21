@@ -203,8 +203,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
-                new("TargetGroupName", "Target Group", "AD group name to manage", DefaultValue: "Comms-10k"),
-                new("DomainName", "Domain", "AD domain prefix", DefaultValue: "ANALOG")
+                new("TargetGroupName", "Target Group", "AD group name to manage")
             ]
         },
         new()

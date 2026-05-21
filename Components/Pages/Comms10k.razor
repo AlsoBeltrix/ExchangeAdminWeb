@@ -120,11 +120,15 @@
                                 <button class="btn btn-secondary btn-sm" @onclick="() => confirmPending = false">Cancel</button>
                             </div>
                         }
-                        else
+                        else if (resolveResult.ResolvedDns.Count > 0)
                         {
                             <button class="btn btn-warning" @onclick="() => confirmPending = true">
                                 Replace All Members (@resolveResult.ResolvedDns.Count users)
                             </button>
+                        }
+                        else
+                        {
+                            <div class="alert alert-danger mt-2">No valid users resolved. Cannot proceed.</div>
                         }
                     }
                 </div>
@@ -147,6 +151,7 @@
     private bool authChecked;
     private bool isLoading;
     private string ticketNumber = "";
+    private string validatedTicket = "";
     private bool confirmPending;
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
@@ -256,8 +261,11 @@
                 result = new Comms10kUpdateResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
                 return;
             }
+            validatedTicket = ticketNumber.Trim();
 
             resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
+            if (!resolveResult.Success)
+                result = new Comms10kUpdateResult { Success = false, Message = resolveResult.Message };
         }
         catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
@@ -267,7 +275,7 @@
     {
         isLoading = true;
         confirmPending = false;
-        var ticket = ticketNumber.Trim();
+        var ticket = validatedTicket;
 
         try
         {
@@ -281,13 +289,21 @@
 
             result = await Comms10kService.ExecuteReplaceAsync(resolveResult!.ResolvedDns, currentUser);
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
-                result.Success ? null : result.Message);
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
+                    $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
+                    result.Success ? null : result.Message);
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for Comms10k replace"); }
 
-            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
-                "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
-                result.Success, ticket, result.Success ? null : result.Message);
+            try
+            {
+                await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
+                    "Comms-10k", $"{result.InitialCount}->{result.FinalCount}", "BroadcastDL",
+                    result.Success, ticket, result.Success ? null : result.Message);
+            }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for Comms10k replace"); }
 
             parsedEmails = new();
             resolveResult = null;
@@ -296,10 +312,8 @@
         catch (Exception ex)
         {
             result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                $"attempted", false, ticket, ex.Message);
-            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace",
-                "Comms-10k", "ERROR", "BroadcastDL", false, ticket, ex.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "attempted", false, ticket, ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", "Comms-10k", "ERROR", "BroadcastDL", false, ticket, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }
