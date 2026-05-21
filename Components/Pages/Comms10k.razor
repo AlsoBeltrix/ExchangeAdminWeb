@@ -12,6 +12,9 @@
 @inject EmailService Email
 @inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Comms10k> Logger
+@using CsvHelper
+@using CsvHelper.Configuration
+@using System.Globalization
 
 <PageTitle>Comms-10k</PageTitle>
 
@@ -191,9 +194,10 @@
         try
         {
             var full = await Comms10kService.GetMembersAsync();
-            var csv = "Email,DisplayName,SamAccountName\n" +
-                string.Join("\n", full.Members.Select(m => $"{m.Email},{m.DisplayName},{m.SamAccountName}"));
-            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            using var writer = new System.IO.StringWriter();
+            using var csvWriter = new CsvWriter(writer, CultureInfo.InvariantCulture);
+            csvWriter.WriteRecords(full.Members);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
             var base64 = Convert.ToBase64String(bytes);
             await JS.InvokeVoidAsync("downloadFile", $"comms10k_members_{DateTime.Now:yyyyMMdd}.csv", "text/csv", base64);
             Audit.LogLookupAction(currentUser, clientIpAddress, "Comms10k_Export", full.GroupName, true);
@@ -211,37 +215,32 @@
 
         try
         {
-            using var reader = new System.IO.StreamReader(e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024));
-            var content = reader.ReadToEnd();
-            var lines = content.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-
-            var emailIndex = -1;
-            var header = lines[0].Split(',');
-            for (int i = 0; i < header.Length; i++)
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
-                if (header[i].Trim().Trim('"').Equals("Email", StringComparison.OrdinalIgnoreCase) ||
-                    header[i].Trim().Trim('"').Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase))
-                {
-                    emailIndex = i;
-                    break;
-                }
-            }
+                HeaderValidated = null,
+                MissingFieldFound = null
+            };
+            using var csv = new CsvReader(reader, csvConfig);
+            csv.Read();
+            csv.ReadHeader();
 
-            if (emailIndex < 0)
+            var hasEmail = csv.HeaderRecord?.Any(h => h.Trim().Equals("Email", StringComparison.OrdinalIgnoreCase)) == true;
+            var hasUPN = csv.HeaderRecord?.Any(h => h.Trim().Equals("UserPrincipalName", StringComparison.OrdinalIgnoreCase)) == true;
+
+            if (!hasEmail && !hasUPN)
             {
                 result = new Comms10kUpdateResult { Success = false, Message = "CSV must have an 'Email' or 'UserPrincipalName' column." };
                 return;
             }
 
-            for (int i = 1; i < lines.Length; i++)
+            var fieldName = hasEmail ? "Email" : "UserPrincipalName";
+            while (csv.Read())
             {
-                var cols = lines[i].Split(',');
-                if (cols.Length > emailIndex)
-                {
-                    var email = cols[emailIndex].Trim().Trim('"');
-                    if (!string.IsNullOrWhiteSpace(email) && email.Contains('@'))
-                        parsedEmails.Add(email);
-                }
+                var val = csv.GetField(fieldName)?.Trim();
+                if (!string.IsNullOrWhiteSpace(val) && val.Contains('@'))
+                    parsedEmails.Add(val);
             }
         }
         catch (Exception ex)

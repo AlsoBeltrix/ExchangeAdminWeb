@@ -130,8 +130,9 @@ public class Comms10kService
 
             foreach (var email in emails)
             {
+                var escaped = email.Replace("'", "''");
                 ps.AddCommand("Get-ADUser")
-                  .AddParameter("Filter", $"UserPrincipalName -eq '{email.Replace("'", "''")}'")
+                  .AddParameter("Filter", $"UserPrincipalName -eq '{escaped}' -or EmailAddress -eq '{escaped}'")
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "SilentlyContinue");
                 var userResults = ps.Invoke();
@@ -162,6 +163,9 @@ public class Comms10kService
 
     public async Task<Comms10kUpdateResult> ExecuteReplaceAsync(List<string> resolvedDns, string performedBy)
     {
+        if (resolvedDns.Count == 0)
+            return new Comms10kUpdateResult { Success = false, Message = "Cannot replace with an empty member list." };
+
         var group = TargetGroup;
         if (string.IsNullOrEmpty(group))
             return new Comms10kUpdateResult { Success = false, Message = "Module not configured." };
