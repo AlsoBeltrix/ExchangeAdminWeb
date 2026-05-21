@@ -126,6 +126,7 @@ public class Comms10kService
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var resolved = new List<string>();
+            var resolvedSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var skipped = new List<string>();
 
             foreach (var email in emails)
@@ -145,8 +146,8 @@ public class Comms10kService
                 else if (userResults.Count == 1)
                 {
                     var dn = userResults[0].Properties["DistinguishedName"]?.Value?.ToString();
-                    if (dn != null) resolved.Add(dn);
-                    else skipped.Add(email);
+                    if (dn != null && resolvedSet.Add(dn)) resolved.Add(dn);
+                    else if (dn == null) skipped.Add(email);
                 }
                 else
                 {

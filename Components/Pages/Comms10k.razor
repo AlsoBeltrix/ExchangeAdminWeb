@@ -236,10 +236,11 @@
             }
 
             var fieldName = matchedHeader;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             while (csv.Read())
             {
                 var val = csv.GetField(fieldName)?.Trim();
-                if (!string.IsNullOrWhiteSpace(val) && val.Contains('@'))
+                if (!string.IsNullOrWhiteSpace(val) && val.Contains('@') && seen.Add(val))
                     parsedEmails.Add(val);
             }
         }
