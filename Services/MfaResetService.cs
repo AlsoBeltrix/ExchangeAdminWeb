@@ -23,11 +23,16 @@ public class MfaResetService
         var clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
         var credTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
 
+        var client = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+
+        if (!client.IsConfigured)
+            return client; // Don't cache unconfigured clients
+
         var configKey = $"{tenantId}|{clientId}|{credTarget}";
-        if (_cachedClient != null && _cachedConfigKey == configKey)
+        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey)
             return _cachedClient;
 
-        _cachedClient = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        _cachedClient = client;
         _cachedConfigKey = configKey;
         return _cachedClient;
     }

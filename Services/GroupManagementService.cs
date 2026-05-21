@@ -34,11 +34,16 @@ public class GroupManagementService : ExchangeServiceBase
         var clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId") ?? "";
         var credTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget") ?? "Graph_GroupManagement";
 
+        var client = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+
+        if (!client.IsConfigured)
+            return client;
+
         var configKey = $"{tenantId}|{clientId}|{credTarget}";
-        if (_cachedClient != null && _cachedConfigKey == configKey)
+        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey)
             return _cachedClient;
 
-        _cachedClient = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        _cachedClient = client;
         _cachedConfigKey = configKey;
         return _cachedClient;
     }
@@ -112,7 +117,7 @@ public class GroupManagementService : ExchangeServiceBase
         if (backend == "ExchangeOnline")
             return await GetExoMembersAsync(groupIdentity);
         if (backend == "OnPremAD")
-            return await GetOnPremMembersAsync(samAccountName ?? groupIdentity);
+            return await GetOnPremMembersAsync(samAccountName, groupIdentity);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await GetGraphMembersAsync(graphId, groupIdentity);
         return new GroupMemberList { GroupName = groupIdentity, Error = $"Unknown backend: {backend}" };
@@ -123,7 +128,7 @@ public class GroupManagementService : ExchangeServiceBase
         if (backend == "ExchangeOnline")
             return await AddExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
-            return await AddOnPremMemberAsync(samAccountName ?? groupIdentity, member);
+            return await AddOnPremMemberAsync(samAccountName, groupIdentity, member);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await AddGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
@@ -134,7 +139,7 @@ public class GroupManagementService : ExchangeServiceBase
         if (backend == "ExchangeOnline")
             return await RemoveExoMemberAsync(groupIdentity, member);
         if (backend == "OnPremAD")
-            return await RemoveOnPremMemberAsync(samAccountName ?? groupIdentity, member);
+            return await RemoveOnPremMemberAsync(samAccountName, groupIdentity, member);
         if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
             return await RemoveGraphMemberAsync(graphId, groupIdentity, member);
         return PermissionResult.Fail($"Unknown backend: {backend}");
@@ -193,7 +198,7 @@ public class GroupManagementService : ExchangeServiceBase
 
     // --- On-prem AD operations ---
 
-    private async Task<GroupMemberList> GetOnPremMembersAsync(string groupIdentity)
+    private async Task<GroupMemberList> GetOnPremMembersAsync(string? samAccountName, string groupIdentity)
     {
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
@@ -214,7 +219,7 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
+            var resolvedDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
 
             ps.AddCommand("Get-ADGroupMember")
               .AddParameter("Identity", resolvedDn)
@@ -247,7 +252,7 @@ public class GroupManagementService : ExchangeServiceBase
         }), _adThrottle);
     }
 
-    private async Task<PermissionResult> AddOnPremMemberAsync(string groupIdentity, string member)
+    private async Task<PermissionResult> AddOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
     {
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
@@ -267,7 +272,7 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedGroupDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
+            var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
 
             ps.AddCommand("Get-ADUser")
               .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
@@ -293,7 +298,7 @@ public class GroupManagementService : ExchangeServiceBase
         }), _adThrottle);
     }
 
-    private async Task<PermissionResult> RemoveOnPremMemberAsync(string groupIdentity, string member)
+    private async Task<PermissionResult> RemoveOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
     {
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
@@ -313,7 +318,7 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedGroupDn = ResolveAdGroupIdentity(ps, groupIdentity, credential);
+            var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
 
             ps.AddCommand("Get-ADUser")
               .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
@@ -397,23 +402,29 @@ public class GroupManagementService : ExchangeServiceBase
             : PermissionResult.Fail($"Failed to remove {member} from {displayName}.");
     }
 
-    private static string ResolveAdGroupIdentity(PowerShell ps, string groupName, PSCredential credential)
+    private static string ResolveAdGroupIdentity(PowerShell ps, string? alias, string email, PSCredential credential)
     {
-        var escaped = groupName.Replace("'", "''");
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("Filter", $"SamAccountName -eq '{escaped}' -or Name -eq '{escaped}' -or Mail -like '{escaped}@*'")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var groups = ps.Invoke();
-        ps.Commands.Clear();
+        var candidates = new List<string>();
+        if (!string.IsNullOrEmpty(alias)) candidates.Add(alias);
+        if (!string.IsNullOrEmpty(email)) candidates.Add(email);
 
-        if (groups.Count == 0)
-            throw new InvalidOperationException($"AD group '{groupName}' not found.");
-        if (groups.Count > 1)
-            throw new InvalidOperationException($"Ambiguous: '{groupName}' matches {groups.Count} AD groups.");
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var escaped = candidate.Replace("'", "''");
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Filter", $"SamAccountName -eq '{escaped}' -or Name -eq '{escaped}' -or Mail -eq '{escaped}'")
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            var groups = ps.Invoke();
+            ps.Commands.Clear();
 
-        return groups[0].Properties["DistinguishedName"]?.Value?.ToString()
-            ?? throw new InvalidOperationException($"Could not resolve DN for group '{groupName}'.");
+            if (groups.Count == 1)
+                return groups[0].Properties["DistinguishedName"]?.Value?.ToString()
+                    ?? throw new InvalidOperationException($"Could not resolve DN for group '{candidate}'.");
+        }
+
+        var tried = string.Join(", ", candidates);
+        throw new InvalidOperationException($"AD group not found. Tried: {tried}");
     }
 
     private static PSCredential CreateCredential(string username, string password, string domain)
