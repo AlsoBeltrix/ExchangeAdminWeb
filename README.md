@@ -195,11 +195,6 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
     "NotifyUsersOnPermissionGrant": false
   },
   "Security": {
-    "ExcludedUsers": [
-      "C-Suite",
-      "ceo@yourcompany.com"
-    ],
-    "PreventSelfGrant": true,
     "AllowedGroups": [
       "DOMAIN\\IT-Helpdesk",
       "DOMAIN\\Exchange-Admins",
@@ -329,18 +324,17 @@ Each application feature is independently gated by AD group membership. A user m
 
 ### Protected Users / Excluded Users
 
-Prevent modifications to specific mailboxes:
+Prevent modifications to specific mailboxes. Configure via **Module Config** page under Mailbox Permissions or Calendar Permissions → `Excluded Users` field (comma-separated):
 
-```json
-"ExcludedUsers": [
-  "C-Suite",
-  "ceo@example.com"
-]
+```
+C-Suite, Board of Directors, ceo@example.com
 ```
 
-- Supports distribution groups (auto-expanded to members at startup)
+- Supports distribution groups (auto-expanded to members on first use, cached 30 min)
 - Supports individual users (SMTP, UPN, or SamAccountName)
 - All formats are intelligently matched (case-insensitive)
+- Falls back to `Security:ExcludedUsers` in appsettings.json if module config is not set
+- Cache is invalidated immediately when module config is saved via UI
 
 ### Audit Logging
 

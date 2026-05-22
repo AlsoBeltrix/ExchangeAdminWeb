@@ -25,6 +25,12 @@ public class PermissionValidator
         _config = config;
         _moduleConfig = moduleConfig;
         _scopeFactory = scopeFactory;
+
+        moduleConfig.ConfigSaved += moduleId =>
+        {
+            if (moduleId is "MailboxPermissions" or "CalendarPermissions")
+                InvalidateCache();
+        };
     }
 
     private string[] GetConfiguredExclusions()
@@ -42,7 +48,7 @@ public class PermissionValidator
             foreach (var e in calendarExcluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 exclusions.Add(e);
 
-        if (exclusions.Count == 0 && !_moduleConfig.HasConfigFile)
+        if (exclusions.Count == 0)
         {
             var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
             if (legacy != null)
@@ -55,13 +61,24 @@ public class PermissionValidator
     private bool GetPreventSelfGrant()
     {
         var mailboxVal = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
-        if (!string.IsNullOrEmpty(mailboxVal) && bool.TryParse(mailboxVal, out var result))
-            return result;
+        var calendarVal = _moduleConfig.GetValue("CalendarPermissions", "PreventSelfGrant");
 
-        if (!_moduleConfig.HasConfigFile)
-            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+        if (!string.IsNullOrEmpty(mailboxVal) && bool.TryParse(mailboxVal, out var mbx))
+        {
+            if (!string.IsNullOrEmpty(calendarVal) && bool.TryParse(calendarVal, out var cal))
+                return mbx || cal;
+            return mbx;
+        }
 
-        return true;
+        if (!string.IsNullOrEmpty(calendarVal) && bool.TryParse(calendarVal, out var calOnly))
+            return calOnly;
+
+        return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+    }
+
+    public void InvalidateCache()
+    {
+        _lastRefresh = DateTime.MinValue;
     }
 
     public async Task<bool> IsUserExcludedAsync(string userIdentity)

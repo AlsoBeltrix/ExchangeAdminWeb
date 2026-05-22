@@ -539,18 +539,8 @@ if ($isUpgrade) {
                 NotifyUsersOnPermissionGrant = $false
             }
             Security = [ordered]@{
-                ExcludedUsers = @()
-                PreventSelfGrant = $true
                 AllowedGroups = @($qualifiedGroups)
                 AdminGroups = @($qualifiedAdminGroups)
-            }
-            Migration = [ordered]@{
-                HybridEndpoint = $HybridEndpoint
-                CloudTargetDeliveryDomain = $CloudTargetDomain
-                OnPremTargetDeliveryDomain = $OnPremTargetDomain
-                OnPremTargetDAG = $OnPremTargetDAG
-                CloudQuotaGB = 100
-                ExcludedADGroups = @()
             }
             ServiceNow = [ordered]@{
                 Enabled = $false
@@ -606,7 +596,7 @@ if (-not $isUpgrade) {
     Write-Host "    - Review appsettings.json for additional tuning" -ForegroundColor Yellow
     Write-Host "    - Security:AdminGroups controls /admin-settings page access" -ForegroundColor Yellow
     Write-Host "    - Use /admin-settings to configure per-section group access" -ForegroundColor Yellow
-    Write-Host "    - Add Security:ExcludedUsers to protect executive mailboxes" -ForegroundColor Yellow
+    Write-Host "    - Use Module Config to set Excluded Users for Mailbox/Calendar protection" -ForegroundColor Yellow
 }
 
 Write-Host ""

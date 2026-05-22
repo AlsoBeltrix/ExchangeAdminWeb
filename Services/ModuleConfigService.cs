@@ -21,6 +21,8 @@ public class ModuleConfigService
         Directory.CreateDirectory(configDir);
     }
 
+    public event Action<string>? ConfigSaved;
+
     public bool HasConfigFile => File.Exists(_configFilePath);
     public bool IsCorrupt { get; private set; }
 
@@ -92,6 +94,8 @@ public class ModuleConfigService
                     try { File.Delete(tempPath); } catch { }
             }
         }
+
+        ConfigSaved?.Invoke(moduleId);
     }
 
     private Dictionary<string, Dictionary<string, string>>? ReadConfig()
