@@ -83,6 +83,19 @@ public sealed class GraphTokenClient
         return string.IsNullOrWhiteSpace(content) ? null : JsonDocument.Parse(content);
     }
 
+    public async Task<bool> PatchAsync(string endpoint, object body)
+    {
+        var token = await GetAccessTokenAsync();
+        using var request = new HttpRequestMessage(HttpMethod.Patch, $"{GraphBaseUrl}{endpoint}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        var json = JsonSerializer.Serialize(body);
+        request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+        var response = await _httpClient.SendAsync(request);
+        return response.IsSuccessStatusCode;
+    }
+
     private async Task<string> GetAccessTokenAsync()
     {
         if (!IsConfigured)

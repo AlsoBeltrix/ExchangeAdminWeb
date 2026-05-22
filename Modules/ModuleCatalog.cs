@@ -250,6 +250,21 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "NamedLocations",
+            DisplayName = "Named Locations",
+            Description = "Manage Entra ID Conditional Access named locations (IP ranges and country/region lists).",
+            Route = "named-locations",
+            IconCss = "bi bi-geo-alt-fill-nav-menu",
+            SortOrder = 790,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "NamedLocations", FailClosed: true),
+            ConfigFields = [
+                new("DelineaSecretId", "Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (requires Policy.ReadWrite.ConditionalAccess)")
+            ]
+        },
+        new()
+        {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
             Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Enterprise Admin credentials via Secret Server.",

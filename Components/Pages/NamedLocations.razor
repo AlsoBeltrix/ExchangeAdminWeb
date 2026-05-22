@@ -1,0 +1,385 @@
+@page "/named-locations"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "NamedLocations")]
+@rendermode InteractiveServer
+@inject NamedLocationsService LocationService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<NamedLocations> Logger
+
+<PageTitle>Named Locations</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Manages Entra ID Conditional Access named locations. Requires <code>Policy.ReadWrite.ConditionalAccess</code> permission on the app registration.</small>
+    </div>
+    <h1 class="mb-4">Named Locations</h1>
+
+    @if (!LocationService.IsAvailable)
+    {
+        <div class="alert alert-danger">Named Locations module is not configured. Set DelineaSecretId in Module Config.</div>
+        return;
+    }
+
+    @if (operationResult != null)
+    {
+        <div class="alert @(operationResult.Success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
+    }
+
+    <div class="row">
+        <div class="col-md-8">
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>Named Locations</strong>
+                    <div>
+                        <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@isLoading">
+                            @if (isLoading && editingLocation == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Refresh
+                        </button>
+                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isLoading">New Location</button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    @if (loadError != null)
+                    {
+                        <div class="alert alert-danger m-3">@loadError</div>
+                    }
+                    else if (locations.Count > 0)
+                    {
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Details</th>
+                                    <th style="width: 140px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var loc in locations)
+                                {
+                                    <tr>
+                                        <td>
+                                            @loc.DisplayName
+                                            @if (loc.IsTrusted)
+                                            {
+                                                <span class="badge bg-success ms-1">Trusted</span>
+                                            }
+                                        </td>
+                                        <td>@(loc.LocationType == NamedLocationType.Ip ? "IP ranges" : "Countries")</td>
+                                        <td>
+                                            <small class="text-muted">
+                                                @if (loc.LocationType == NamedLocationType.Ip)
+                                                {
+                                                    @($"{loc.IpRanges.Count} range(s)")
+                                                }
+                                                else
+                                                {
+                                                    @($"{loc.CountryCodes.Count} country/region(s)")
+                                                }
+                                            </small>
+                                        </td>
+                                        <td>
+                                            @if (confirmDelete == loc.Id)
+                                            {
+                                                <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(loc)" disabled="@isOperating">Yes</button>
+                                                <button class="btn btn-secondary btn-sm" @onclick="() => confirmDelete = null">No</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => EditLocation(loc)" disabled="@isOperating">Edit</button>
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = loc.Id" disabled="@isOperating">Delete</button>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    else if (!isLoading)
+                    {
+                        <p class="text-muted p-3 mb-0">No named locations found.</p>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            @if (showForm)
+            {
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>@(editingLocation != null ? "Edit Location" : "New Location")</strong>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm">Cancel</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Display Name</label>
+                            <input type="text" class="form-control" @bind="formDisplayName" disabled="@isOperating" />
+                        </div>
+
+                        @if (editingLocation == null)
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Type</label>
+                                <select class="form-select" @bind="formType" disabled="@isOperating">
+                                    <option value="ip">IP Ranges</option>
+                                    <option value="country">Countries/Regions</option>
+                                </select>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Type</label>
+                                <input type="text" class="form-control" value="@(editingLocation.LocationType == NamedLocationType.Ip ? "IP Ranges" : "Countries/Regions")" disabled />
+                            </div>
+                        }
+
+                        @if (EffectiveType == "ip")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">IP Ranges (CIDR, one per line)</label>
+                                <textarea class="form-control" rows="5" @bind="formIpRanges" placeholder="10.0.0.0/8&#10;192.168.1.0/24&#10;2001:db8::/32" disabled="@isOperating"></textarea>
+                            </div>
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="chkTrusted" @bind="formIsTrusted" disabled="@isOperating" />
+                                <label class="form-check-label" for="chkTrusted">Mark as trusted</label>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Country Codes (ISO 3166-1 alpha-2, one per line)</label>
+                                <textarea class="form-control" rows="5" @bind="formCountryCodes" placeholder="US&#10;GB&#10;CA" disabled="@isOperating"></textarea>
+                            </div>
+                            <div class="mb-3 form-check">
+                                <input type="checkbox" class="form-check-input" id="chkUnknown" @bind="formIncludeUnknown" disabled="@isOperating" />
+                                <label class="form-check-label" for="chkUnknown">Include unknown countries/regions</label>
+                            </div>
+                        }
+
+                        <button class="btn btn-primary" @onclick="SaveLocation"
+                                disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName))">
+                            @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @(editingLocation != null ? "Update" : "Create")
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool isOperating;
+    private string? loadError;
+
+    private List<NamedLocation> locations = new();
+    private NamedLocationResult? operationResult;
+    private string? confirmDelete;
+
+    private bool showForm;
+    private NamedLocation? editingLocation;
+    private string formDisplayName = "";
+    private string formType = "ip";
+    private string formIpRanges = "";
+    private string formCountryCodes = "";
+    private bool formIsTrusted;
+    private bool formIncludeUnknown;
+
+    private string EffectiveType => editingLocation != null
+        ? (editingLocation.LocationType == NamedLocationType.Ip ? "ip" : "country")
+        : formType;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "NamedLocations");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+
+        await LoadLocations();
+    }
+
+    private async Task LoadLocations()
+    {
+        isLoading = true;
+        loadError = null;
+        await Task.Yield();
+        try
+        {
+            locations = await LocationService.GetAllAsync();
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+            Logger.LogError(ex, "Failed to load named locations");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ShowCreateForm()
+    {
+        editingLocation = null;
+        formDisplayName = "";
+        formType = "ip";
+        formIpRanges = "";
+        formCountryCodes = "";
+        formIsTrusted = false;
+        formIncludeUnknown = false;
+        showForm = true;
+    }
+
+    private void EditLocation(NamedLocation loc)
+    {
+        editingLocation = loc;
+        formDisplayName = loc.DisplayName;
+        formIpRanges = string.Join("\n", loc.IpRanges);
+        formCountryCodes = string.Join("\n", loc.CountryCodes);
+        formIsTrusted = loc.IsTrusted;
+        formIncludeUnknown = loc.IncludeUnknownCountries;
+        showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        showForm = false;
+        editingLocation = null;
+    }
+
+    private async Task SaveLocation()
+    {
+        isOperating = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            if (editingLocation != null)
+            {
+                if (editingLocation.LocationType == NamedLocationType.Ip)
+                {
+                    var ranges = ParseLines(formIpRanges);
+                    if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
+                    operationResult = await LocationService.UpdateIpLocationAsync(editingLocation.Id, formDisplayName.Trim(), ranges, formIsTrusted);
+                }
+                else
+                {
+                    var codes = ParseLines(formCountryCodes);
+                    if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
+                    operationResult = await LocationService.UpdateCountryLocationAsync(editingLocation.Id, formDisplayName.Trim(), codes, formIncludeUnknown);
+                }
+
+                Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Update",
+                    $"{formDisplayName.Trim()} ({editingLocation.Id})", operationResult.Success, "",
+                    operationResult.Success ? null : operationResult.Message);
+            }
+            else
+            {
+                if (EffectiveType == "ip")
+                {
+                    var ranges = ParseLines(formIpRanges);
+                    if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
+                    operationResult = await LocationService.CreateIpLocationAsync(formDisplayName.Trim(), ranges, formIsTrusted);
+                }
+                else
+                {
+                    var codes = ParseLines(formCountryCodes);
+                    if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
+                    operationResult = await LocationService.CreateCountryLocationAsync(formDisplayName.Trim(), codes, formIncludeUnknown);
+                }
+
+                Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Create",
+                    formDisplayName.Trim(), operationResult.Success, "",
+                    operationResult.Success ? null : operationResult.Message);
+            }
+
+            if (operationResult.Success)
+            {
+                showForm = false;
+                editingLocation = null;
+                await LoadLocations();
+            }
+        }
+        catch (Exception ex)
+        {
+            operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
+            Logger.LogError(ex, "Failed to save named location");
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task DeleteLocation(NamedLocation loc)
+    {
+        isOperating = true;
+        operationResult = null;
+        confirmDelete = null;
+        await Task.Yield();
+
+        try
+        {
+            operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete",
+                $"{loc.DisplayName} ({loc.Id})", operationResult.Success, "",
+                operationResult.Success ? null : operationResult.Message);
+
+            if (operationResult.Success)
+                await LoadLocations();
+        }
+        catch (Exception ex)
+        {
+            operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
+            Logger.LogError(ex, "Failed to delete named location {Id}", loc.Id);
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private static List<string> ParseLines(string input) =>
+        (input ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .ToList();
+}

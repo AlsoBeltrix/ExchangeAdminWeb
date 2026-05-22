@@ -70,6 +70,7 @@ try
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
+    builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
 
