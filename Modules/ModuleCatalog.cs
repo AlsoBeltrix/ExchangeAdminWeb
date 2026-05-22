@@ -112,7 +112,7 @@ public sealed class ModuleCatalog
         new()
         {
             Id = "CalendarPermissions",
-            DisplayName = "Calendar Permissions",
+            DisplayName = "Calendar",
             Description = "Set or remove calendar sharing permissions on Exchange Online mailboxes.",
             Route = "calendar-permissions",
             IconCss = "bi bi-calendar-fill-nav-menu",
