@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 10 Blazor Server application for managing Exchange Online (and on-premises) mailbox and calendar permissions through a self-service web interface.
+ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, and Active Directory tasks through a self-service web interface. Currently provides 12 modules covering EXO, Graph API, and on-prem AD operations.
 
 ## Features
 
@@ -43,6 +43,62 @@ A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
 - Browse audit events by date (one file per rotation period).
 - Filter by category, user, IP address, and result (Success/Failed).
 - Displays full event detail in an expandable JSON view.
+
+### MFA Reset (`/mfa-reset`)
+
+Reset user MFA authentication methods via Microsoft Graph API.
+
+- Lists all registered authentication methods for a user (phone, FIDO2, authenticator app, etc.)
+- Confirmation step before deletion
+- Deletes all non-password authentication methods in one operation
+- **Requires:** Separate Graph app registration with `UserAuthenticationMethod.ReadWrite.All` application permission (per-module registration pattern)
+- Section access key: `MfaReset`
+
+### Group Management (`/group-management`)
+
+Search and manage distribution lists, mail-enabled security groups, and Microsoft 365 groups.
+
+- Three backends depending on group type:
+  - **EXO** — Cloud-only distribution and mail-enabled security groups
+  - **On-prem AD** — Synced groups modified via Delinea-authenticated AD operations
+  - **Graph API** — Microsoft 365 (Unified) groups
+- Add/remove members, view group details
+- **Requires:** `GroupManagementOnPrem` section access for on-premises group modifications
+- Section access key: `GroupManagement`
+
+### Comms-10k (`/comms-10k`)
+
+Dedicated bulk member replacement for broadcast distribution lists.
+
+- CSV upload of new member list
+- Resolves all entries before applying changes
+- Confirmation step showing add/remove diff
+- Atomic replacement via `Set-ADGroup -Replace` (full member swap in one AD operation)
+- Uses Delinea credentials for Active Directory operations
+- Section access key: `Comms10k`
+
+### Conference Rooms (`/conference-rooms`)
+
+Room mailbox metadata configuration and booking policy management.
+
+- Set room properties: city, building, capacity, floor label, timezone
+- Apply booking policy templates:
+  - **Standard** — Default room booking behavior
+  - **Workspace** — Hot-desk / workspace booking mode
+  - **Restricted** — Delegate-approved booking only
+- CSV bulk upload for multi-room setup
+- Room list management (add/remove rooms from room lists)
+- Section access key: `ConferenceRooms`
+
+### DHCP Authorization (`/dhcp-authorization`)
+
+Authorize or deauthorize DHCP servers in Active Directory.
+
+- Authorize a server by IP/hostname to allow DHCP service in the domain
+- Deauthorize a server to revoke DHCP serving rights
+- Confirmation dialog (high-privilege operation)
+- **Requires:** Module-specific Delinea secret (Enterprise Admin credentials)
+- Section access key: `DhcpAuthorization`
 
 ### Security & Compliance
 - **Windows Authentication** - Seamless SSO with Active Directory
@@ -158,7 +214,12 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
       "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
       "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
       "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
-      "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
+      "OutOfOffice": ["DOMAIN\\Exchange-Admins"],
+      "MfaReset": ["DOMAIN\\Exchange-Admins"],
+      "GroupManagement": ["DOMAIN\\Exchange-Admins"],
+      "Comms10k": ["DOMAIN\\Exchange-Admins"],
+      "ConferenceRooms": ["DOMAIN\\Exchange-Admins"],
+      "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"]
     }
   }
 }
@@ -249,7 +310,13 @@ Each application feature is independently gated by AD group membership. A user m
   "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
   "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
   "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
-  "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
+  "OutOfOffice": ["DOMAIN\\Exchange-Admins"],
+  "MfaReset": ["DOMAIN\\Exchange-Admins"],
+  "GroupManagement": ["DOMAIN\\Exchange-Admins"],
+  "GroupManagementOnPrem": ["DOMAIN\\Exchange-Admins"],
+  "Comms10k": ["DOMAIN\\Exchange-Admins"],
+  "ConferenceRooms": ["DOMAIN\\Exchange-Admins"],
+  "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"]
 }
 ```
 
@@ -291,6 +358,11 @@ All operations logged as JSON Lines (.jsonl):
 - MigrationAction: `target`
 - Lookup: `target`
 - AdminSettings: `section`, `added`, `removed`
+- MfaReset: `target`, `methodsRemoved`
+- GroupManagement: `target`, `member`, `operation`, `backend`
+- Comms10k: `target`, `membersAdded`, `membersRemoved`
+- ConferenceRooms: `target`, `properties`, `policyTemplate`
+- DhcpAuthorization: `target`, `operation`
 
 Null fields are omitted. `error` appears only on failure.
 
