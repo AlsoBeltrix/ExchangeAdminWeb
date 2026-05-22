@@ -214,8 +214,16 @@
     private Dictionary<string, List<string>> accessState = new();
     private Dictionary<string, string> accessInputs = new();
 
-    protected override async Task OnInitializedAsync()
+    private string? loadedModuleId;
+
+    protected override async Task OnParametersSetAsync()
     {
+        if (ModuleId == loadedModuleId) return;
+        loadedModuleId = ModuleId;
+
+        authChecked = false;
+        statusMessage = null;
+
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
@@ -337,15 +345,34 @@
             }
 
             var allAccess = SectionAccess.GetSectionAccess();
+
+            if (allAccess.Count == 0)
+            {
+                foreach (var alias in Catalog.GetConfigurablePolicyAliases())
+                {
+                    if (!allAccess.ContainsKey(alias))
+                        allAccess[alias] = SectionAccess.GetGroupsForSection(alias);
+                }
+            }
+
+            var previousGroups = new Dictionary<string, string[]>();
             foreach (var alias in policyAliases)
+            {
+                previousGroups[alias] = allAccess.TryGetValue(alias, out var prev) ? prev : Array.Empty<string>();
                 allAccess[alias] = accessState[alias].ToArray();
+            }
             SectionAccess.SaveSectionAccess(allAccess);
 
             var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var alias in policyAliases)
             {
-                try { Audit.LogSettingsChange(currentUser, ip, alias, Array.Empty<string>(), accessState[alias].ToArray()); }
-                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
+                var prev = previousGroups[alias];
+                var curr = accessState[alias].ToArray();
+                if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
+                {
+                    try { Audit.LogSettingsChange(currentUser, ip, alias, prev, curr); }
+                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
+                }
             }
 
             statusMessage = "Section access saved.";

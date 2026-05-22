@@ -28,13 +28,18 @@ When a target mailbox is detected as on-premises:
 
 ### Admin Settings Page (`/admin-settings`)
 
-A web UI for managing section-level access control, gated by `Security:AdminGroups`.
+Module enablement controls, gated by `Security:AdminGroups`.
 
-- View and edit which AD groups can access each application section.
-- Changes are persisted to `config/sectionaccess.json` and take effect immediately (no restart required).
-- If the fragment file does not exist, the service falls back to `Security:SectionAccess` in `appsettings.json`.
-- **Fail-closed behavior:** if a section key is missing or empty, access is denied to all users for that section.
-- All changes are audit-logged under the `AdminSettings` category.
+### Per-Module Config Pages (`/module-config/{ModuleId}`)
+
+Each module has its own config page (linked in the sidebar) with:
+
+- **Section Access** — which AD groups can use the module (global admin only)
+- **Configuration** — module-specific settings (config fields)
+- **Module Admins** — AD groups that can configure this module without global admin
+
+Changes are persisted to `config/sectionaccess.json` and `config/module-config.json` and take effect immediately.
+Global admins see all module config links; module admins see only their delegated modules.
 
 ### Admin Event Log Page (`/admin-event-log`)
 
@@ -319,7 +324,7 @@ Each application feature is independently gated by AD group membership. A user m
 - **On-prem sections** (`MailboxPermissionsOnPrem`, `CalendarPermissionsOnPrem`) are always fail-closed even when no `SectionAccess` configuration exists at all
 - **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
 - NavMenu links and Home page cards are hidden for unauthorized sections
-- Any group listed in a section must also appear in `AllowedGroups` to be effective
+- Section access is managed per-module via `/module-config/{ModuleId}` (not Admin Settings)
 - Section access can be managed at runtime via the Admin Settings page, which writes to `config/sectionaccess.json` (takes precedence over `appsettings.json`)
 
 ### Protected Users / Excluded Users

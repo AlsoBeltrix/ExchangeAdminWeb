@@ -422,7 +422,7 @@ if ($isUpgrade) {
         $sectionAccessFragment = Join-Path $PublishPath "config\sectionaccess.json"
         if (-not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
             -not (Test-Path $sectionAccessFragment)) {
-            Write-Warn "Section-level permissions not configured -- use /admin-settings or create config\sectionaccess.json"
+            Write-Warn "Section-level permissions not configured -- use per-module config pages or create config\sectionaccess.json"
         }
 
         Write-Success "Configuration reconciled"
@@ -594,8 +594,8 @@ if (-not $isUpgrade) {
     Write-Host ""
     Write-Host "  Post-install:" -ForegroundColor Yellow
     Write-Host "    - Review appsettings.json for additional tuning" -ForegroundColor Yellow
-    Write-Host "    - Security:AdminGroups controls /admin-settings page access" -ForegroundColor Yellow
-    Write-Host "    - Use /admin-settings to configure per-section group access" -ForegroundColor Yellow
+    Write-Host "    - Security:AdminGroups controls /admin-settings and module config pages" -ForegroundColor Yellow
+    Write-Host "    - Use per-module config pages in the sidebar to set section access" -ForegroundColor Yellow
     Write-Host "    - Use Module Config to set Excluded Users for Mailbox/Calendar protection" -ForegroundColor Yellow
 }
 
