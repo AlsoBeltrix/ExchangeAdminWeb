@@ -287,7 +287,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
-            MainPermission = new("Access", "EventLog")
+            MainPermission = new("Access", "EventLog", FailClosed: true)
         }
     ];
 

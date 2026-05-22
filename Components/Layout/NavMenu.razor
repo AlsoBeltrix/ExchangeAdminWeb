@@ -4,6 +4,8 @@
 @inject IConfiguration Config
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
+@inject ModuleAdminService ModuleAdmin
+@inject AuthenticationStateProvider AuthStateProvider
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -66,11 +68,24 @@
                 </AuthorizeView>
             }
         }
+        @if (isModuleAdmin)
+        {
+            <AuthorizeView Policy="AdminSettings">
+                <NotAuthorized>
+                    <div class="nav-item px-3 mt-3 border-top pt-3">
+                        <NavLink class="nav-link" href="module-config">
+                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> Module Config
+                        </NavLink>
+                    </div>
+                </NotAuthorized>
+            </AuthorizeView>
+
+        }
 
         <div class="nav-item px-3 mt-auto pt-3 border-top">
             <small class="text-muted d-block" style="font-size: 0.7em; line-height: 1.4;">
                 @{ var contactEmail = Config["Application:ContactEmail"]; }
-                v1.2.6
+                v1.2.7
                 @if (!string.IsNullOrEmpty(contactEmail))
                 {
                     <text> | Issues? <a href="mailto:@contactEmail">@contactEmail</a></text>
@@ -79,3 +94,13 @@
         </div>
     </nav>
 </div>
+
+@code {
+    private bool isModuleAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        isModuleAdmin = ModuleAdmin.IsModuleAdminForAny(authState.User);
+    }
+}

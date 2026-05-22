@@ -225,7 +225,15 @@
             return;
         }
 
-        selectedModule = Catalog.GetById(moduleId);
+        // Only allow selecting modules the user is authorized to configure
+        var module = configurableModules.FirstOrDefault(m => m.Id == moduleId);
+        if (module == null)
+        {
+            selectedModule = null;
+            return;
+        }
+
+        selectedModule = module;
         if (selectedModule != null)
         {
             currentConfigState = ModuleConfigSvc.GetModuleConfig(selectedModule.Id);
