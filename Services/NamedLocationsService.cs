@@ -49,13 +49,26 @@ public class NamedLocationsService
     public async Task<List<NamedLocation>> GetAllAsync()
     {
         var client = await GetGraphClientAsync();
-        using var doc = await client.GetAsync("/identity/conditionalAccess/namedLocations");
-        if (doc == null) return [];
-
         var locations = new List<NamedLocation>();
-        foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
+        string? endpoint = "/identity/conditionalAccess/namedLocations";
+
+        while (endpoint != null)
         {
-            locations.Add(ParseNamedLocation(item));
+            using var doc = await client.GetAsync(endpoint);
+            if (doc == null) break;
+
+            foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
+            {
+                locations.Add(ParseNamedLocation(item));
+            }
+
+            endpoint = null;
+            if (doc.RootElement.TryGetProperty("@odata.nextLink", out var nextLink))
+            {
+                var next = nextLink.GetString();
+                if (!string.IsNullOrEmpty(next) && next.Contains("/v1.0"))
+                    endpoint = next.Substring(next.IndexOf("/v1.0") + 5);
+            }
         }
 
         return locations.OrderBy(l => l.DisplayName).ToList();

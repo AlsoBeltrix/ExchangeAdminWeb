@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject NamedLocationsService LocationService
 @inject AuditService Audit
+@inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -120,6 +121,14 @@
                     }
                 </div>
             </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <label class="form-label fw-semibold">Ticket Number</label>
+                    <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isOperating" />
+                    <small class="text-muted">Required for all create, update, and delete operations.</small>
+                </div>
+            </div>
         </div>
 
         <div class="col-md-4">
@@ -178,7 +187,7 @@
                         }
 
                         <button class="btn btn-primary" @onclick="SaveLocation"
-                                disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName))">
+                                disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(ticketNumber))">
                             @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             @(editingLocation != null ? "Update" : "Create")
                         </button>
@@ -196,6 +205,7 @@
     private bool isLoading;
     private bool isOperating;
     private string? loadError;
+    private string ticketNumber = "";
 
     private List<NamedLocation> locations = new();
     private NamedLocationResult? operationResult;
@@ -292,6 +302,22 @@
 
         try
         {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                operationResult = new NamedLocationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "NamedLocations");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
+                return;
+            }
+
             if (editingLocation != null)
             {
                 if (editingLocation.LocationType == NamedLocationType.Ip)
@@ -307,9 +333,8 @@
                     operationResult = await LocationService.UpdateCountryLocationAsync(editingLocation.Id, formDisplayName.Trim(), codes, formIncludeUnknown);
                 }
 
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Update",
-                    $"{formDisplayName.Trim()} ({editingLocation.Id})", operationResult.Success, "",
-                    operationResult.Success ? null : operationResult.Message);
+                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Update", $"{formDisplayName.Trim()} ({editingLocation.Id})", operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations update"); }
             }
             else
             {
@@ -326,9 +351,8 @@
                     operationResult = await LocationService.CreateCountryLocationAsync(formDisplayName.Trim(), codes, formIncludeUnknown);
                 }
 
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Create",
-                    formDisplayName.Trim(), operationResult.Success, "",
-                    operationResult.Success ? null : operationResult.Message);
+                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Create", formDisplayName.Trim(), operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations create"); }
             }
 
             if (operationResult.Success)
@@ -358,11 +382,32 @@
 
         try
         {
+            var ticket = ticketNumber.Trim();
+            if (string.IsNullOrWhiteSpace(ticket))
+            {
+                operationResult = new NamedLocationResult { Success = false, Message = "A ticket number is required for deletion." };
+                return;
+            }
+
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                operationResult = new NamedLocationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "NamedLocations");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
+                return;
+            }
+
             operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete",
-                $"{loc.DisplayName} ({loc.Id})", operationResult.Success, "",
-                operationResult.Success ? null : operationResult.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
 
             if (operationResult.Success)
                 await LoadLocations();
