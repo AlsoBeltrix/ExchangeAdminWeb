@@ -324,7 +324,7 @@ Each application feature is independently gated by AD group membership. A user m
 
 ### Protected Users / Excluded Users
 
-Prevent modifications to specific mailboxes. Configure via **Module Config** page under Mailbox Permissions or Calendar Permissions → `Excluded Users` field (comma-separated):
+Prevent modifications to specific mailboxes. Configure via **Module Config** page under **Mailbox Permissions** → `Excluded Users` field (comma-separated). Applies to both mailbox and calendar permission operations:
 
 ```
 C-Suite, Board of Directors, ceo@example.com
