@@ -83,6 +83,7 @@
     "ServerUri": "http://your-exchange-server.domain.com/PowerShell/"
   },
   "Application": {
+    "Name": "IT Admin Portal",
     "PathBase": "/ExchangeAdminWeb",
     "ContactEmail": "exchangeadmin@yourcompany.com"
   },

@@ -11,7 +11,7 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 
-<PageTitle>Exchange Admin</PageTitle>
+<PageTitle>@(Config["Application:Name"] ?? "Admin Portal")</PageTitle>
 
 @if (!authChecked)
 {
@@ -29,7 +29,7 @@
     <div class="alert alert-info">
         <strong>Logged in as:</strong> @currentUser
     </div>
-    <h1 class="mb-4">Exchange Admin</h1>
+    <h1 class="mb-4">@(Config["Application:Name"] ?? "Admin Portal")</h1>
 
     <div class="alert alert-warning mb-4">
         <h5><strong>⚠️ Important Notice</strong></h5>
