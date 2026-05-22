@@ -51,11 +51,19 @@ public class NamedLocationsService
         var client = await GetGraphClientAsync();
         var locations = new List<NamedLocation>();
         string? endpoint = "/identity/conditionalAccess/namedLocations";
+        var isFirstPage = true;
 
         while (endpoint != null)
         {
             using var doc = await client.GetAsync(endpoint);
-            if (doc == null) break;
+            if (doc == null)
+            {
+                if (!isFirstPage)
+                    _logger.LogWarning("Graph API returned non-success on a subsequent page; returning {Count} locations (list may be incomplete)", locations.Count);
+                break;
+            }
+
+            isFirstPage = false;
 
             foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
             {

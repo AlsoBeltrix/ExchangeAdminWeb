@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject NamedLocationsService LocationService
 @inject AuditService Audit
+@inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -300,23 +301,24 @@
                 return;
             }
 
+            var action = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
+            var target = formDisplayName.Trim();
+
             if (editingLocation != null)
             {
                 if (editingLocation.LocationType == NamedLocationType.Ip)
                 {
                     var ranges = ParseLines(formIpRanges);
                     if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
-                    operationResult = await LocationService.UpdateIpLocationAsync(editingLocation.Id, formDisplayName.Trim(), ranges, formIsTrusted);
+                    operationResult = await LocationService.UpdateIpLocationAsync(editingLocation.Id, target, ranges, formIsTrusted);
                 }
                 else
                 {
                     var codes = ParseLines(formCountryCodes);
                     if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
-                    operationResult = await LocationService.UpdateCountryLocationAsync(editingLocation.Id, formDisplayName.Trim(), codes, formIncludeUnknown);
+                    operationResult = await LocationService.UpdateCountryLocationAsync(editingLocation.Id, target, codes, formIncludeUnknown);
                 }
-
-                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Update", $"{formDisplayName.Trim()} ({editingLocation.Id})", operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
-                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations update"); }
+                target = $"{target} ({editingLocation.Id})";
             }
             else
             {
@@ -324,18 +326,21 @@
                 {
                     var ranges = ParseLines(formIpRanges);
                     if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
-                    operationResult = await LocationService.CreateIpLocationAsync(formDisplayName.Trim(), ranges, formIsTrusted);
+                    operationResult = await LocationService.CreateIpLocationAsync(target, ranges, formIsTrusted);
                 }
                 else
                 {
                     var codes = ParseLines(formCountryCodes);
                     if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
-                    operationResult = await LocationService.CreateCountryLocationAsync(formDisplayName.Trim(), codes, formIncludeUnknown);
+                    operationResult = await LocationService.CreateCountryLocationAsync(target, codes, formIncludeUnknown);
                 }
-
-                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Create", formDisplayName.Trim(), operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
-                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations create"); }
             }
+
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, action, target, operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, "", new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
 
             if (operationResult.Success)
             {
@@ -348,6 +353,10 @@
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to save named location");
+            var failAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
+            var failTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, "", ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, "", new Dictionary<string, string> { ["Location"] = failTarget }, ex.Message); } catch { }
         }
         finally
         {
@@ -372,10 +381,14 @@
                 return;
             }
 
+            var target = $"{loc.DisplayName} ({loc.Id})";
             operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", target, operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
+
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", operationResult.Success, "", new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for NamedLocations delete"); }
 
             if (operationResult.Success)
                 await LoadLocations();
@@ -384,6 +397,8 @@
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete named location {Id}", loc.Id);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", false, "", ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, "", new Dictionary<string, string> { ["Location"] = $"{loc.DisplayName} ({loc.Id})" }, ex.Message); } catch { }
         }
         finally
         {
