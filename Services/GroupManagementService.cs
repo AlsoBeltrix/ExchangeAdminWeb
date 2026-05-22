@@ -13,6 +13,8 @@ public class GroupManagementService : ExchangeServiceBase
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
     private GraphTokenClient? _cachedClient;
     private string _cachedConfigKey = "";
+    private DateTime _cachedAt = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
     public GroupManagementService(
         ExoConnectionPool exoPool,
@@ -40,11 +42,13 @@ public class GroupManagementService : ExchangeServiceBase
             return client;
 
         var configKey = $"{tenantId}|{clientId}|{credTarget}";
-        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey)
+        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey
+            && DateTime.UtcNow - _cachedAt < CacheTtl)
             return _cachedClient;
 
         _cachedClient = client;
         _cachedConfigKey = configKey;
+        _cachedAt = DateTime.UtcNow;
         return _cachedClient;
     }
 

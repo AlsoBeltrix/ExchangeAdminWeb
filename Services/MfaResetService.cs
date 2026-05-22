@@ -9,6 +9,8 @@ public class MfaResetService
     private readonly IHttpClientFactory _httpClientFactory;
     private GraphTokenClient? _cachedClient;
     private string _cachedConfigKey = "";
+    private DateTime _cachedAt = DateTime.MinValue;
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
     public MfaResetService(ILogger<MfaResetService> logger, ModuleConfigService moduleConfig, IHttpClientFactory httpClientFactory)
     {
@@ -26,14 +28,16 @@ public class MfaResetService
         var client = new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
 
         if (!client.IsConfigured)
-            return client; // Don't cache unconfigured clients
+            return client;
 
         var configKey = $"{tenantId}|{clientId}|{credTarget}";
-        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey)
+        if (_cachedClient != null && _cachedClient.IsConfigured && _cachedConfigKey == configKey
+            && DateTime.UtcNow - _cachedAt < CacheTtl)
             return _cachedClient;
 
         _cachedClient = client;
         _cachedConfigKey = configKey;
+        _cachedAt = DateTime.UtcNow;
         return _cachedClient;
     }
 
