@@ -10,6 +10,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Migration> Logger
 @rendermode InteractiveServer
 
@@ -170,7 +171,8 @@
                     <div class="col-md-4">
                         <label class="form-label">CSV File (EmailAddress column required)</label>
                         <InputFile class="form-control" OnChange="HandleCsvUpload" disabled="@isLoading" accept=".csv" />
-                        <small class="text-muted">Format: EmailAddress<br />user1@example.com<br />user2@example.com</small>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
+                        <small class="text-muted d-block mt-1">Format: EmailAddress<br />user1@example.com<br />user2@example.com</small>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label">Migration Direction</label>
@@ -1415,5 +1417,12 @@
             "queued" => "secondary",
             _ => "secondary"
         };
+    }
+
+    private async Task DownloadSampleCsv()
+    {
+        var content = "EmailAddress\nuser@company.com\n";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        await JS.InvokeVoidAsync("downloadFile", "migration_check_sample.csv", "text/csv", base64);
     }
 }

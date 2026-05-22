@@ -87,6 +87,7 @@
                     <div class="mb-3">
                         <label class="form-label">CSV File (Email column required)</label>
                         <InputFile OnChange="HandleFileUpload" accept=".csv" disabled="@isLoading" />
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
                     </div>
                     @if (parsedEmails.Count > 0 && resolveResult == null)
                     {
@@ -319,5 +320,12 @@
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k" }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
+    }
+
+    private async Task DownloadSampleCsv()
+    {
+        var content = "Email\nuser@company.com\n";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        await JS.InvokeVoidAsync("downloadFile", "comms10k_sample.csv", "text/csv", base64);
     }
 }

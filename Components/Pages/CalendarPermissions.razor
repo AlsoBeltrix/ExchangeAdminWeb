@@ -131,6 +131,7 @@
                         <div class="mb-3">
                             <label for="csvFile" class="form-label fw-semibold">CSV File</label>
                             <InputFile id="csvFile" class="form-control" OnChange="HandleCsvUpload" accept=".csv" />
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
                         </div>
 
                         <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(isLoading || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
@@ -559,6 +560,16 @@
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         var filename = $"calendar_permissions_report_{timestamp}.csv";
 
+        await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+    }
+
+    private async Task DownloadSampleCsv()
+    {
+        var content = bulkIsSet
+            ? "Target,User,AccessRight\ncalendar-owner@company.com,viewer@company.com,Reviewer\n"
+            : "Target,User\ncalendar-owner@company.com,viewer@company.com\n";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        var filename = bulkIsSet ? "calendar_set_sample.csv" : "calendar_remove_sample.csv";
         await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
     }
 }

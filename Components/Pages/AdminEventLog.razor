@@ -1,5 +1,7 @@
 @page "/admin-event-log"
 @using System.Text.Json
+@using System.Globalization
+@using CsvHelper
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "AdminSettings")]
 @rendermode InteractiveServer
@@ -7,6 +9,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject IConfiguration Config
+@inject IJSRuntime JS
 @inject ILogger<AdminEventLog> Logger
 
 <PageTitle>Event Log</PageTitle>
@@ -28,8 +31,12 @@
 
     <div class="row mb-3 g-2 align-items-end">
         <div class="col-auto">
-            <label class="form-label mb-0">Date</label>
-            <input type="date" class="form-control form-control-sm" @bind="selectedDate" @bind:event="onchange" @bind:after="LoadEvents" />
+            <label class="form-label mb-0">Start Date</label>
+            <input type="date" class="form-control form-control-sm" @bind="startDate" @bind:event="onchange" @bind:after="LoadEvents" />
+        </div>
+        <div class="col-auto">
+            <label class="form-label mb-0">End Date</label>
+            <input type="date" class="form-control form-control-sm" @bind="endDate" @bind:event="onchange" @bind:after="LoadEvents" />
         </div>
         <div class="col-auto">
             <label class="form-label mb-0">Category</label>
@@ -63,6 +70,7 @@
         </div>
         <div class="col-auto pt-4">
             <span class="badge bg-secondary">@filteredEvents.Count events</span>
+            <button class="btn btn-outline-secondary btn-sm ms-2" @onclick="DownloadCsv" disabled="@(filteredEvents.Count == 0)">Download CSV</button>
         </div>
     </div>
 
@@ -146,7 +154,8 @@
 
 @code {
     private bool authChecked;
-    private DateOnly selectedDate = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly startDate = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly endDate = DateOnly.FromDateTime(DateTime.Today);
     private string selectedCategory = "";
     private string userFilter = "";
     private string ipFilter = "";
@@ -155,6 +164,7 @@
     private int currentPage = 1;
     private int expandedRow = -1;
     private const int PageSize = 50;
+    private const int MaxTotalEvents = 2000;
 
     private List<AuditEvent> allEvents = new();
     private List<AuditEvent> filteredEvents = new();
@@ -185,63 +195,95 @@
 
         var logRoot = Config["Audit:LogRoot"] ?? @"E:\WWWOutput";
         var logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
-
         var rotationPeriod = Config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
-        var date = selectedDate.ToDateTime(TimeOnly.MinValue);
-        var suffix = rotationPeriod switch
-        {
-            "weekly" => $"{date.Year}W{System.Globalization.ISOWeek.GetWeekOfYear(date):D2}",
-            "monthly" => date.ToString("yyyyMM"),
-            _ => date.ToString("yyyyMMdd")
-        };
 
-        var filePath = Path.Combine(logFolder, $"exchangeadmin_{suffix}.jsonl");
+        // Ensure startDate <= endDate
+        var effectiveStart = startDate <= endDate ? startDate : endDate;
+        var effectiveEnd = startDate <= endDate ? endDate : startDate;
 
-        if (!File.Exists(filePath))
+        var filesLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allBuffer = new List<AuditEvent>();
+        var filesNotFound = 0;
+        var totalDays = effectiveEnd.DayNumber - effectiveStart.DayNumber + 1;
+
+        for (var d = effectiveStart; d <= effectiveEnd; d = d.AddDays(1))
         {
-            loadError = $"No log file found for {selectedDate:yyyy-MM-dd}";
+            var date = d.ToDateTime(TimeOnly.MinValue);
+            var suffix = rotationPeriod switch
+            {
+                "weekly" => $"{date.Year}W{System.Globalization.ISOWeek.GetWeekOfYear(date):D2}",
+                "monthly" => date.ToString("yyyyMM"),
+                _ => date.ToString("yyyyMMdd")
+            };
+
+            var filePath = Path.Combine(logFolder, $"exchangeadmin_{suffix}.jsonl");
+
+            // Skip duplicate files (e.g. same week file for multiple days)
+            if (!filesLoaded.Add(filePath))
+                continue;
+
+            if (!File.Exists(filePath))
+            {
+                filesNotFound++;
+                continue;
+            }
+
+            try
+            {
+                foreach (var line in File.ReadLines(filePath))
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    try
+                    {
+                        var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        allBuffer.Add(new AuditEvent
+                        {
+                            Index = 0,
+                            Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
+                            User = TryGetString(root, "user") ?? "",
+                            Ip = TryGetString(root, "ip") ?? "",
+                            Action = TryGetString(root, "action") ?? "",
+                            Category = TryGetString(root, "category") ?? "",
+                            Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
+                            Result = TryGetString(root, "result") ?? "",
+                            RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
+                        });
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                loadError = $"Error reading log: {ex.Message}";
+                Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
+            }
+        }
+
+        if (allBuffer.Count == 0 && filesNotFound == totalDays)
+        {
+            loadError = effectiveStart == effectiveEnd
+                ? $"No log file found for {effectiveStart:yyyy-MM-dd}"
+                : $"No log files found for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}";
             filteredEvents = new();
             return;
         }
 
-        try
+        // Take the last MaxTotalEvents entries (most recent)
+        if (allBuffer.Count > MaxTotalEvents)
         {
-            const int maxEvents = 500;
-            var buffer = new Queue<AuditEvent>(maxEvents + 1);
-            var index = 0;
-            foreach (var line in File.ReadLines(filePath))
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                try
-                {
-                    var doc = JsonDocument.Parse(line);
-                    var root = doc.RootElement;
-                    buffer.Enqueue(new AuditEvent
-                    {
-                        Index = index++,
-                        Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
-                        User = TryGetString(root, "user") ?? "",
-                        Ip = TryGetString(root, "ip") ?? "",
-                        Action = TryGetString(root, "action") ?? "",
-                        Category = TryGetString(root, "category") ?? "",
-                        Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
-                        Result = TryGetString(root, "result") ?? "",
-                        RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
-                    });
-                    if (buffer.Count > maxEvents)
-                        buffer.Dequeue();
-                }
-                catch { }
-            }
-            allEvents = buffer.Reverse().ToList();
-            for (int i = 0; i < allEvents.Count; i++)
-                allEvents[i].Index = i;
+            allEvents = allBuffer.Skip(allBuffer.Count - MaxTotalEvents).ToList();
+            loadError = $"Showing last {MaxTotalEvents} of {allBuffer.Count} total events.";
         }
-        catch (Exception ex)
+        else
         {
-            loadError = $"Error reading log: {ex.Message}";
-            Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
+            allEvents = allBuffer;
         }
+
+        // Reverse to show newest first, then re-index
+        allEvents.Reverse();
+        for (int i = 0; i < allEvents.Count; i++)
+            allEvents[i].Index = i;
 
         ApplyFilters();
     }
@@ -281,6 +323,41 @@
         if (DateTimeOffset.TryParse(iso, out var dt))
             return dt.ToLocalTime().ToString("HH:mm:ss");
         return iso;
+    }
+
+    private async Task DownloadCsv()
+    {
+        if (filteredEvents.Count == 0) return;
+
+        using var writer = new System.IO.StringWriter();
+        using var csv = new CsvWriter(writer, CultureInfo.InvariantCulture);
+
+        csv.WriteField("Time");
+        csv.WriteField("User");
+        csv.WriteField("IP");
+        csv.WriteField("Action");
+        csv.WriteField("Category");
+        csv.WriteField("Target");
+        csv.WriteField("Result");
+        await csv.NextRecordAsync();
+
+        foreach (var evt in filteredEvents)
+        {
+            csv.WriteField(evt.Time);
+            csv.WriteField(evt.User);
+            csv.WriteField(evt.Ip);
+            csv.WriteField(evt.Action);
+            csv.WriteField(evt.Category);
+            csv.WriteField(evt.Target);
+            csv.WriteField(evt.Result);
+            await csv.NextRecordAsync();
+        }
+
+        await csv.FlushAsync();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+        var base64 = Convert.ToBase64String(bytes);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        await JS.InvokeVoidAsync("downloadFile", $"event_log_{timestamp}.csv", "text/csv", base64);
     }
 
     private class AuditEvent
