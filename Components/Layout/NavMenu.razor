@@ -48,11 +48,14 @@
                             </NavLink>
                         </div>
                     }
-                    <div class="nav-item px-3">
-                        <NavLink class="nav-link" href="module-config">
-                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> Module Config
-                        </NavLink>
-                    </div>
+                    @foreach (var cfgModule in configModulesForGlobalAdmin)
+                    {
+                        <div class="nav-item px-3">
+                            <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> @cfgModule.DisplayName
+                            </NavLink>
+                        </div>
+                    }
                 </Authorized>
             </AuthorizeView>
             @foreach (var module in adminAdjacentModules)
@@ -68,24 +71,26 @@
                 </AuthorizeView>
             }
         }
-        @if (isModuleAdmin)
+        @if (moduleAdminModules.Count > 0)
         {
             <AuthorizeView Policy="AdminSettings">
                 <NotAuthorized>
-                    <div class="nav-item px-3 mt-3 border-top pt-3">
-                        <NavLink class="nav-link" href="module-config">
-                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> Module Config
-                        </NavLink>
-                    </div>
+                    @foreach (var cfgModule in moduleAdminModules)
+                    {
+                        <div class="nav-item px-3 @(cfgModule == moduleAdminModules[0] ? "mt-3 border-top pt-3" : "")">
+                            <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> @cfgModule.DisplayName
+                            </NavLink>
+                        </div>
+                    }
                 </NotAuthorized>
             </AuthorizeView>
-
         }
 
         <div class="nav-item px-3 mt-auto pt-3 border-top">
             <small class="text-muted d-block" style="font-size: 0.7em; line-height: 1.4;">
                 @{ var contactEmail = Config["Application:ContactEmail"]; }
-                v1.3.1
+                v1.3.2
                 @if (!string.IsNullOrEmpty(contactEmail))
                 {
                     <text> | Issues? <a href="mailto:@contactEmail">@contactEmail</a></text>
@@ -96,11 +101,20 @@
 </div>
 
 @code {
-    private bool isModuleAdmin;
+    private List<AdminModuleDescriptor> configModulesForGlobalAdmin = new();
+    private List<AdminModuleDescriptor> moduleAdminModules = new();
 
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        isModuleAdmin = ModuleAdmin.IsModuleAdminForAny(authState.User);
+        var user = authState.User;
+
+        configModulesForGlobalAdmin = Catalog.GetOrdered()
+            .Where(m => !m.IsSystemModule)
+            .ToList();
+
+        moduleAdminModules = Catalog.GetOrdered()
+            .Where(m => !m.IsSystemModule && ModuleAdmin.IsModuleAdmin(m.Id, user))
+            .ToList();
     }
 }

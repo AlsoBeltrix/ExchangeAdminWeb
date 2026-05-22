@@ -1,10 +1,11 @@
-@page "/module-config"
+@page "/module-config/{ModuleId}"
 @using Microsoft.AspNetCore.Authorization
 @using ExchangeAdminWeb.Modules
 @attribute [Authorize]
 @rendermode InteractiveServer
 @inject ModuleConfigService ModuleConfigSvc
 @inject ModuleAdminService ModuleAdmin
+@inject SectionAccessService SectionAccess
 @inject ModuleCatalog Catalog
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
@@ -13,7 +14,7 @@
 @inject ClientInfoService ClientInfo
 @inject ILogger<ModuleConfig> Logger
 
-<PageTitle>Module Configuration</PageTitle>
+<PageTitle>Module Config — @(module?.DisplayName ?? ModuleId)</PageTitle>
 
 @if (!authChecked)
 {
@@ -27,20 +28,17 @@
     return;
 }
 
-<div class="container-fluid">
-    <h1 class="mb-4">Module Configuration</h1>
-
-    <div class="alert alert-info mb-4">
-        <strong>Configure module-specific settings.</strong>
-        @if (isGlobalAdmin)
-        {
-            <span>As a global admin, you can configure any module and assign module admins.</span>
-        }
-        else
-        {
-            <span>You can configure modules for which you are a designated module admin.</span>
-        }
+@if (module == null)
+{
+    <div class="container-fluid">
+        <div class="alert alert-danger">Module not found: @ModuleId</div>
     </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">@module.DisplayName</h1>
+    <p class="text-muted mb-4">@module.Description</p>
 
     @if (!string.IsNullOrEmpty(statusMessage))
     {
@@ -50,120 +48,156 @@
         </div>
     }
 
-    @if (configurableModules.Count == 0)
+    @* Section Access *@
+    @if (isGlobalAdmin)
     {
-        <div class="alert alert-warning">No configurable modules are available for your account.</div>
-    }
-    else
-    {
-        <div class="row mb-4">
-            <div class="col-md-4">
-                <label class="form-label"><strong>Select Module</strong></label>
-                <select class="form-select" @onchange="OnModuleSelected">
-                    <option value="">-- Select a module --</option>
-                    @foreach (var module in configurableModules)
-                    {
-                        <option value="@module.Id">@module.DisplayName</option>
-                    }
-                </select>
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Section Access</strong>
+                <button class="btn btn-primary btn-sm" @onclick="SaveSectionAccessAsync" disabled="@saving">Save Access</button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3"><small>AD groups allowed to use this module. If empty, access is denied for fail-closed modules or inherits base groups.</small></p>
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th style="width: 200px;">Permission</th>
+                            <th>Allowed Groups</th>
+                            <th style="width: 280px;">Add Group</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var alias in policyAliases)
+                        {
+                            var capturedAlias = alias;
+                            <tr>
+                                <td><strong>@capturedAlias</strong></td>
+                                <td>
+                                    @if (accessState.TryGetValue(capturedAlias, out var groups) && groups.Count > 0)
+                                    {
+                                        @foreach (var group in groups.ToList())
+                                        {
+                                            var cg = group;
+                                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.8em;">
+                                                @cg
+                                                <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
+                                                      @onclick="() => RemoveAccessGroup(capturedAlias, cg)">&times;</span>
+                                            </span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="text-muted fst-italic">No groups configured</span>
+                                    }
+                                </td>
+                                <td>
+                                    <div class="input-group input-group-sm">
+                                        <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
+                                               value="@accessInputs[capturedAlias]"
+                                               @oninput="(e) => accessInputs[capturedAlias] = e.Value?.ToString() ?? string.Empty"
+                                               @onkeydown="(e) => HandleAccessKeyDown(e, capturedAlias)" />
+                                        <button class="btn btn-outline-success" type="button"
+                                                @onclick="() => AddAccessGroup(capturedAlias)">Add</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
             </div>
         </div>
+    }
 
-        @if (selectedModule != null)
-        {
-            <div class="card mb-4">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <strong>@selectedModule.DisplayName Configuration</strong>
-                    <button class="btn btn-primary btn-sm" @onclick="SaveSelectedModuleConfig" disabled="@saving">
-                        @if (saving)
-                        {
-                            <span class="spinner-border spinner-border-sm me-1"></span>
-                        }
-                        Save Configuration
-                    </button>
-                </div>
-                <div class="card-body">
-                    @if (!ModuleConfigSvc.IsModuleConfigured(selectedModule.Id))
-                    {
-                        <div class="alert alert-warning py-2 mb-3">
-                            <small>This module has required fields that are not yet configured.</small>
-                        </div>
-                    }
-                    @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("DelineaSecretId")))
-                    {
-                        <div class="alert alert-secondary py-2 mb-3">
-                            <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, use the "ADI - Azure App Registration" template (fields: Tenant ID, Application ID, Client Secret). For AD modules, use a template with Username, Password, and Domain fields. All secrets are stored centrally in Secret Server — portable across servers.</small>
-                        </div>
-                    }
-                    <div class="row g-3">
-                        @foreach (var field in selectedModule.ConfigFields)
-                        {
-                            var capturedKey = field.Key;
-                            <div class="col-md-6">
-                                <label class="form-label">
-                                    @field.Label
-                                    @if (field.Required) { <span class="text-danger">*</span> }
-                                </label>
-                                <input type="text"
-                                       class="form-control"
-                                       placeholder="@field.Description"
-                                       value="@GetConfigValue(field.Key, field.DefaultValue)"
-                                       @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
-                                @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
-                                {
-                                    <div class="form-text">@field.Description</div>
-                                }
-                            </div>
-                        }
+    @* Module Configuration *@
+    @if (module.ConfigFields.Count > 0)
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Configuration</strong>
+                <button class="btn btn-primary btn-sm" @onclick="SaveConfigAsync" disabled="@saving">Save Configuration</button>
+            </div>
+            <div class="card-body">
+                @if (!ModuleConfigSvc.IsModuleConfigured(module.Id))
+                {
+                    <div class="alert alert-warning py-2 mb-3">
+                        <small>This module has required fields that are not yet configured.</small>
                     </div>
+                }
+                @if (module.ConfigFields.Any(f => f.Key.Contains("DelineaSecretId")))
+                {
+                    <div class="alert alert-secondary py-2 mb-3">
+                        <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, use the "ADI - Azure App Registration" template (fields: Tenant ID, Application ID, Client Secret). For AD modules, use a template with Username, Password, and Domain fields.</small>
+                    </div>
+                }
+                <div class="row g-3">
+                    @foreach (var field in module.ConfigFields)
+                    {
+                        var capturedKey = field.Key;
+                        <div class="col-md-6">
+                            <label class="form-label">
+                                @field.Label
+                                @if (field.Required) { <span class="text-danger">*</span> }
+                            </label>
+                            <input type="text"
+                                   class="form-control"
+                                   placeholder="@field.Description"
+                                   value="@GetConfigValue(field.Key, field.DefaultValue)"
+                                   @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
+                            @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                            {
+                                <div class="form-text">@field.Description</div>
+                            }
+                        </div>
+                    }
                 </div>
             </div>
+        </div>
+    }
 
-            @if (isGlobalAdmin)
-            {
-                <div class="card mb-4">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <strong>Module Admins &mdash; @selectedModule.DisplayName</strong>
-                        <button class="btn btn-primary btn-sm" @onclick="SaveModuleAdmins" disabled="@saving">Save Admins</button>
-                    </div>
-                    <div class="card-body">
-                        <p class="text-muted mb-3">
-                            <small>Assign AD groups that can manage this module's configuration without global admin access.</small>
-                        </p>
+    @* Module Admins (global admin only) *@
+    @if (isGlobalAdmin)
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Module Admins</strong>
+                <button class="btn btn-primary btn-sm" @onclick="SaveModuleAdminsAsync" disabled="@saving">Save Admins</button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3"><small>AD groups that can manage this module's configuration without global admin access.</small></p>
 
-                        @if (moduleAdminGroups.Count > 0)
+                @if (moduleAdminGroups.Count > 0)
+                {
+                    <div class="mb-3">
+                        @foreach (var group in moduleAdminGroups.ToList())
                         {
-                            <div class="mb-3">
-                                @foreach (var group in moduleAdminGroups.ToList())
-                                {
-                                    var capturedGroup = group;
-                                    <span class="badge bg-light text-dark border me-1 mb-1" style="font-size: 0.85em;">
-                                        @capturedGroup
-                                        <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
-                                              @onclick="() => RemoveModuleAdmin(capturedGroup)">&times;</span>
-                                    </span>
-                                }
-                            </div>
+                            var capturedGroup = group;
+                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.85em;">
+                                @capturedGroup
+                                <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
+                                      @onclick="() => RemoveModuleAdmin(capturedGroup)">&times;</span>
+                            </span>
                         }
-                        else
-                        {
-                            <p class="text-muted fst-italic mb-3">No module admins assigned.</p>
-                        }
-
-                        <div class="input-group" style="max-width: 400px;">
-                            <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
-                                   @bind="newAdminGroup" @bind:event="oninput"
-                                   @onkeydown="HandleAdminKeyDown" />
-                            <button class="btn btn-outline-success" type="button" @onclick="AddModuleAdmin">Add</button>
-                        </div>
                     </div>
+                }
+                else
+                {
+                    <p class="text-muted fst-italic mb-3">No module admins assigned.</p>
+                }
+
+                <div class="input-group" style="max-width: 400px;">
+                    <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
+                           @bind="newAdminGroup" @bind:event="oninput"
+                           @onkeydown="HandleAdminKeyDown" />
+                    <button class="btn btn-outline-success" type="button" @onclick="AddModuleAdmin">Add</button>
                 </div>
-            }
-        }
+            </div>
+        </div>
     }
 </div>
 
 @code {
+    [Parameter] public string ModuleId { get; set; } = "";
+
     private string currentUser = string.Empty;
     private bool authChecked;
     private bool isGlobalAdmin;
@@ -171,11 +205,14 @@
     private string? statusMessage;
     private bool statusIsError;
 
-    private List<AdminModuleDescriptor> configurableModules = new();
-    private AdminModuleDescriptor? selectedModule;
+    private AdminModuleDescriptor? module;
     private Dictionary<string, string> currentConfigState = new();
     private List<string> moduleAdminGroups = new();
     private string newAdminGroup = string.Empty;
+
+    private List<string> policyAliases = new();
+    private Dictionary<string, List<string>> accessState = new();
+    private Dictionary<string, string> accessInputs = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -183,207 +220,221 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
+        module = Catalog.GetById(ModuleId);
+        if (module == null || module.IsSystemModule)
+        {
+            authChecked = true;
+            module = null;
+            return;
+        }
+
         var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
         isGlobalAdmin = adminResult.Succeeded;
 
-        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdminForAny(user))
+        if (!isGlobalAdmin && !ModuleAdmin.IsModuleAdmin(ModuleId, user))
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
 
-        LoadModules(user);
+        LoadState();
         authChecked = true;
     }
 
-    private void LoadModules(System.Security.Claims.ClaimsPrincipal user)
+    private void LoadState()
     {
-        var allConfigurable = Catalog.GetOrdered()
-            .Where(m => m.ConfigFields.Count > 0)
-            .ToList();
+        if (module == null) return;
 
-        if (isGlobalAdmin)
+        currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
+        moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
+
+        policyAliases = new List<string> { module.MainPermission.PolicyAlias };
+        foreach (var gp in module.GranularPermissions)
+            policyAliases.Add(gp.PolicyAlias);
+
+        var allAccess = SectionAccess.GetSectionAccess();
+        accessState = new();
+        accessInputs = new();
+        foreach (var alias in policyAliases)
         {
-            configurableModules = allConfigurable;
-        }
-        else
-        {
-            configurableModules = allConfigurable
-                .Where(m => ModuleAdmin.IsModuleAdmin(m.Id, user))
-                .ToList();
+            accessState[alias] = allAccess.TryGetValue(alias, out var groups)
+                ? new List<string>(groups)
+                : new List<string>();
+            accessInputs[alias] = string.Empty;
         }
     }
 
-    private void OnModuleSelected(ChangeEventArgs e)
-    {
-        var moduleId = e.Value?.ToString();
-        if (string.IsNullOrEmpty(moduleId))
-        {
-            selectedModule = null;
-            currentConfigState = new();
-            moduleAdminGroups = new();
-            return;
-        }
+    private string GetConfigValue(string key, string defaultValue) =>
+        currentConfigState.TryGetValue(key, out var val) ? val : defaultValue;
 
-        // Only allow selecting modules the user is authorized to configure
-        var module = configurableModules.FirstOrDefault(m => m.Id == moduleId);
-        if (module == null)
-        {
-            selectedModule = null;
-            return;
-        }
-
-        selectedModule = module;
-        if (selectedModule != null)
-        {
-            currentConfigState = ModuleConfigSvc.GetModuleConfig(selectedModule.Id);
-            moduleAdminGroups = ModuleAdmin.GetModuleAdmins(selectedModule.Id).ToList();
-        }
-    }
-
-    private string GetConfigValue(string key, string defaultValue)
-    {
-        return currentConfigState.TryGetValue(key, out var val) ? val : defaultValue;
-    }
-
-    private void SetConfigValue(string key, string value)
-    {
+    private void SetConfigValue(string key, string value) =>
         currentConfigState[key] = value;
-    }
 
-    private async Task SaveSelectedModuleConfig()
+    private async Task SaveConfigAsync()
     {
-        if (selectedModule == null) return;
+        if (module == null) return;
         saving = true;
         statusMessage = null;
+        await Task.Yield();
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var user = authState.User;
-
             var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
-            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(selectedModule.Id, user))
+            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module.Id, user))
             {
                 statusMessage = "You are not authorized to configure this module.";
                 statusIsError = true;
                 return;
             }
 
-            var previous = ModuleConfigSvc.GetModuleConfig(selectedModule.Id);
-            ModuleConfigSvc.SaveModuleConfig(selectedModule.Id, currentConfigState);
+            var previous = ModuleConfigSvc.GetModuleConfig(module.Id);
+            ModuleConfigSvc.SaveModuleConfig(module.Id, currentConfigState);
 
             var allKeys = previous.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase).ToList();
-            var changed = allKeys.Where(k =>
-            {
-                var oldVal = previous.GetValueOrDefault(k, "");
-                var newVal = currentConfigState.GetValueOrDefault(k, "");
-                return oldVal != newVal;
-            }).ToList();
+            var changed = allKeys.Where(k => (previous.GetValueOrDefault(k, "") ?? "") != (currentConfigState.GetValueOrDefault(k, "") ?? "")).ToList();
 
             if (changed.Count > 0)
             {
                 try
                 {
                     var ip = ClientInfo.GetIpForUser(currentUser);
-                    var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(selectedModule.Id, k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
-                    var newKeys = changed.Select(k => $"{k}={MaskIfSecret(selectedModule.Id, k, currentConfigState.GetValueOrDefault(k) ?? "")}").ToArray();
-                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{selectedModule.Id}", prevKeys, newKeys);
+                    var prevKeys = changed.Select(k => $"{k}={MaskIfSecret(k, previous.GetValueOrDefault(k) ?? "")}").ToArray();
+                    var newKeys = changed.Select(k => $"{k}={MaskIfSecret(k, currentConfigState.GetValueOrDefault(k) ?? "")}").ToArray();
+                    Audit.LogSettingsChange(currentUser, ip, $"ModuleConfig:{module.Id}", prevKeys, newKeys);
                 }
-                catch (Exception auditEx)
-                {
-                    Logger.LogError(auditEx, "Failed to audit module config change for {Module}", selectedModule.Id);
-                }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
 
-            statusMessage = $"{selectedModule.DisplayName} configuration saved successfully.";
+            statusMessage = "Configuration saved.";
             statusIsError = false;
-            Logger.LogInformation("User {User} updated module config for {Module}", currentUser, selectedModule.Id);
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save configuration: {ex.Message}";
+            statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
         }
-        finally
-        {
-            saving = false;
-        }
+        finally { saving = false; }
     }
 
-    private string MaskIfSecret(string moduleId, string key, string value)
+    private async Task SaveSectionAccessAsync()
     {
-        if (string.IsNullOrEmpty(value)) return "(empty)";
-        var module = Catalog.GetById(moduleId);
-        var field = module?.ConfigFields.FirstOrDefault(f => f.Key == key);
-        if (field?.IsSecret == true) return "***";
-        return value;
-    }
-
-    private void AddModuleAdmin()
-    {
-        var input = newAdminGroup?.Trim();
-        if (string.IsNullOrWhiteSpace(input)) return;
-
-        if (!moduleAdminGroups.Contains(input, StringComparer.OrdinalIgnoreCase))
-            moduleAdminGroups.Add(input);
-
-        newAdminGroup = string.Empty;
-    }
-
-    private void RemoveModuleAdmin(string group)
-    {
-        moduleAdminGroups.Remove(group);
-    }
-
-    private void HandleAdminKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Enter")
-            AddModuleAdmin();
-    }
-
-    private async Task SaveModuleAdmins()
-    {
-        if (selectedModule == null) return;
+        if (module == null) return;
         saving = true;
         statusMessage = null;
+        await Task.Yield();
 
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var adminResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
-            if (!adminResult.Succeeded)
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Only global admins can change section access.";
+                statusIsError = true;
+                return;
+            }
+
+            var allAccess = SectionAccess.GetSectionAccess();
+            foreach (var alias in policyAliases)
+                allAccess[alias] = accessState[alias].ToArray();
+            SectionAccess.SaveSectionAccess(allAccess);
+
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            foreach (var alias in policyAliases)
+            {
+                try { Audit.LogSettingsChange(currentUser, ip, alias, Array.Empty<string>(), accessState[alias].ToArray()); }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for section access change"); }
+            }
+
+            statusMessage = "Section access saved.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally { saving = false; }
+    }
+
+    private async Task SaveModuleAdminsAsync()
+    {
+        if (module == null) return;
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
             {
                 statusMessage = "Only global admins can assign module admins.";
                 statusIsError = true;
                 return;
             }
 
-            var previous = ModuleAdmin.GetModuleAdmins(selectedModule.Id);
-            ModuleAdmin.SetModuleAdmins(selectedModule.Id, moduleAdminGroups.ToArray());
+            var previous = ModuleAdmin.GetModuleAdmins(module.Id);
+            ModuleAdmin.SetModuleAdmins(module.Id, moduleAdminGroups.ToArray());
 
             try
             {
                 var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{selectedModule.Id}", previous, moduleAdminGroups.ToArray());
+                Audit.LogSettingsChange(currentUser, ip, $"ModuleAdmins:{module.Id}", previous, moduleAdminGroups.ToArray());
             }
-            catch (Exception auditEx)
-            {
-                Logger.LogError(auditEx, "Failed to audit module admin change for {Module}", selectedModule.Id);
-            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
-            statusMessage = $"Module admins for {selectedModule.DisplayName} saved successfully.";
+            statusMessage = "Module admins saved.";
             statusIsError = false;
-            Logger.LogInformation("User {User} updated module admins for {Module}", currentUser, selectedModule.Id);
         }
         catch (Exception ex)
         {
-            statusMessage = $"Failed to save module admins: {ex.Message}";
+            statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
         }
-        finally
-        {
-            saving = false;
-        }
+        finally { saving = false; }
+    }
+
+    private string MaskIfSecret(string key, string value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(empty)";
+        var field = module?.ConfigFields.FirstOrDefault(f => f.Key == key);
+        if (field?.IsSecret == true) return "***";
+        return value;
+    }
+
+    private void AddAccessGroup(string alias)
+    {
+        var input = accessInputs[alias]?.Trim();
+        if (string.IsNullOrWhiteSpace(input)) return;
+        if (!accessState[alias].Contains(input, StringComparer.OrdinalIgnoreCase))
+            accessState[alias].Add(input);
+        accessInputs[alias] = string.Empty;
+    }
+
+    private void RemoveAccessGroup(string alias, string group) => accessState[alias].Remove(group);
+
+    private void HandleAccessKeyDown(KeyboardEventArgs e, string alias)
+    {
+        if (e.Key == "Enter") AddAccessGroup(alias);
+    }
+
+    private void AddModuleAdmin()
+    {
+        var input = newAdminGroup?.Trim();
+        if (string.IsNullOrWhiteSpace(input)) return;
+        if (!moduleAdminGroups.Contains(input, StringComparer.OrdinalIgnoreCase))
+            moduleAdminGroups.Add(input);
+        newAdminGroup = string.Empty;
+    }
+
+    private void RemoveModuleAdmin(string group) => moduleAdminGroups.Remove(group);
+
+    private void HandleAdminKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddModuleAdmin();
     }
 }

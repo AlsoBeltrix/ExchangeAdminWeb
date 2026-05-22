@@ -3,7 +3,6 @@
 @using ExchangeAdminWeb.Modules
 @attribute [Authorize(Policy = "AdminSettings")]
 @rendermode InteractiveServer
-@inject SectionAccessService SectionAccess
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -28,12 +27,11 @@
 }
 
 <div class="container-fluid">
-    <h1 class="mb-4">Section Access Management</h1>
+    <h1 class="mb-4">Admin Settings</h1>
 
     <div class="alert alert-info mb-4">
-        <strong>Configure which AD groups can access each application section.</strong>
-        Changes take effect immediately without application restart.
-        If no groups are configured for a section, access is denied to all users.
+        <strong>Enable or disable modules.</strong>
+        Per-module section access and configuration are managed on each module's config page (see sidebar links).
     </div>
 
     @if (!string.IsNullOrEmpty(statusMessage))
@@ -43,16 +41,6 @@
             <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
         </div>
     }
-
-    @if (!sectionAccessConfigured)
-    {
-        <div class="alert alert-warning mb-4">
-            <strong>Section access is not configured.</strong>
-            All sections currently fall back to the base <code>Security:AllowedGroups</code> gate.
-            Configure per-section groups below to enable granular access control.
-        </div>
-    }
-
 
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -80,71 +68,6 @@
             </div>
         </div>
     </div>
-
-    <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Per-Section Access</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveAll" disabled="@saving">
-                @if (saving)
-                {
-                    <span class="spinner-border spinner-border-sm me-1"></span>
-                }
-                Save All Changes
-            </button>
-        </div>
-        <div class="card-body">
-            <table class="table table-hover align-middle">
-                <thead>
-                    <tr>
-                        <th style="width: 200px;">Section</th>
-                        <th>Allowed Groups</th>
-                        <th style="width: 300px;">Add Group</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var sectionName in sections)
-                    {
-                        <tr>
-                            <td><strong>@sectionName</strong></td>
-                            <td>
-                                @if (editState.TryGetValue(sectionName, out var groups) && groups.Count > 0)
-                                {
-                                    @foreach (var group in groups.ToList())
-                                    {
-                                        var capturedSection = sectionName;
-                                        var capturedGroup = group;
-                                        <span class="badge bg-secondary me-1 mb-1"
-                                              style="font-size: 0.8em;">
-                                            @capturedGroup
-                                            <span role="button" class="ms-1 text-danger"
-                                                  style="cursor:pointer; font-weight:bold;"
-                                                  @onclick="() => RemoveGroup(capturedSection, capturedGroup)">&times;</span>
-                                        </span>
-                                    }
-                                }
-                                else
-                                {
-                                    <span class="text-muted fst-italic">
-                                        @(sectionAccessConfigured || IsFailClosedSection(sectionName) ? "No groups (access denied)" : "Inherits base groups")
-                                    </span>
-                                }
-                            </td>
-                            <td>
-                                <div class="input-group input-group-sm">
-                                    <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
-                                           value="@newGroupInputs[sectionName]"
-                                           @oninput="(e) => newGroupInputs[sectionName] = e.Value?.ToString() ?? string.Empty"
-                                           @onkeydown="(e) => HandleKeyDown(e, sectionName)" />
-                                    <button class="btn btn-outline-success" type="button"
-                                            @onclick="() => AddGroup(sectionName)">Add</button>
-                                </div>
-                            </td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </div>
-    </div>
 </div>
 
 @code {
@@ -153,13 +76,8 @@
     private bool saving;
     private string? statusMessage;
     private bool statusIsError;
-    private bool sectionAccessConfigured;
 
-    private string[] sections = Array.Empty<string>();
     private Dictionary<string, bool> moduleEnablement = new();
-
-    private Dictionary<string, List<string>> editState = new();
-    private Dictionary<string, string> newGroupInputs = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -174,64 +92,16 @@
             return;
         }
 
-        LoadCurrentState();
-        authChecked = true;
-    }
-
-    private void LoadCurrentState()
-    {
-        sections = Catalog.GetConfigurablePolicyAliases().ToArray();
         moduleEnablement = Enablement.GetAllEnablement();
-        sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
-
-        var current = SectionAccess.GetSectionAccess();
-        editState = new Dictionary<string, List<string>>();
-        newGroupInputs = new Dictionary<string, string>();
-        foreach (var section in sections)
-        {
-            var sectionGroups = current.TryGetValue(section, out var groups)
-                ? new List<string>(groups)
-                : new List<string>();
-            editState[section] = sectionGroups;
-            newGroupInputs[section] = string.Empty;
-        }
-    }
-
-    private void AddGroup(string section)
-    {
-        var input = newGroupInputs[section]?.Trim();
-        if (string.IsNullOrWhiteSpace(input)) return;
-
-        if (!editState[section].Contains(input, StringComparer.OrdinalIgnoreCase))
-        {
-            editState[section].Add(input);
-
-        }
-        newGroupInputs[section] = string.Empty;
-    }
-
-    private bool IsFailClosedSection(string sectionName)
-    {
-        var module = Catalog.GetByPolicyAlias(sectionName);
-        if (module == null) return false;
-        return module.GranularPermissions.Any(gp =>
-            gp.PolicyAlias.Equals(sectionName, StringComparison.OrdinalIgnoreCase) && gp.FailClosed);
-    }
-
-
-    private void RemoveGroup(string section, string group)
-    {
-        editState[section].Remove(group);
-    }
-
-    private void HandleKeyDown(KeyboardEventArgs e, string section)
-    {
-        if (e.Key == "Enter")
-            AddGroup(section);
+        authChecked = true;
     }
 
     private async Task SaveEnablement()
     {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -246,12 +116,6 @@
             var previous = Enablement.GetAllEnablement();
             Enablement.SaveEnablement(moduleEnablement);
 
-            statusMessage = "Module enablement saved. Refreshing...";
-            statusIsError = false;
-            Logger.LogInformation("User {User} updated module enablement", currentUser);
-            await Task.Delay(500);
-            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
-
             var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
             {
@@ -265,75 +129,19 @@
                             prev ? new[] { "Enabled" } : Array.Empty<string>(),
                             curr ? new[] { "Enabled" } : Array.Empty<string>());
                     }
-                    catch (Exception auditEx)
-                    {
-                        Logger.LogError(auditEx, "Failed to audit module enablement change for {Module}", module.Id);
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            statusMessage = $"Failed to save enablement: {ex.Message}";
-            statusIsError = true;
-        }
-    }
-
-    private async Task SaveAll()
-    {
-        saving = true;
-        statusMessage = null;
-
-        try
-        {
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
-            if (!authResult.Succeeded)
-            {
-                statusMessage = "Authorization check failed. You may have been removed from AdminGroups.";
-                statusIsError = true;
-                return;
-            }
-
-            var previousState = SectionAccess.GetSectionAccess();
-            var newState = new Dictionary<string, string[]>();
-
-            foreach (var section in sections)
-            {
-                newState[section] = editState[section].ToArray();
-            }
-
-            SectionAccess.SaveSectionAccess(newState);
-
-            var ip = ClientInfo.GetIpForUser(currentUser);
-            foreach (var section in sections)
-            {
-                var prev = previousState.TryGetValue(section, out var p) ? p : Array.Empty<string>();
-                var curr = newState.TryGetValue(section, out var c) ? c : Array.Empty<string>();
-
-                if (!prev.SequenceEqual(curr, StringComparer.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        Audit.LogSettingsChange(currentUser, ip, section, prev, curr);
-                    }
-                    catch (Exception auditEx)
-                    {
-                        Logger.LogError(auditEx, "Failed to audit section access change for {Section}", section);
-                    }
+                    catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for enablement change"); }
                 }
             }
 
-            sectionAccessConfigured = true;
-            statusMessage = "Section access configuration saved successfully.";
+            statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
-            Logger.LogInformation("User {User} updated section access configuration", currentUser);
+            await Task.Delay(500);
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
         }
         catch (Exception ex)
         {
             statusMessage = $"Failed to save: {ex.Message}";
             statusIsError = true;
-            Logger.LogError(ex, "Failed to save section access configuration");
         }
         finally
         {
