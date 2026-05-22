@@ -35,12 +35,15 @@ public class ConferenceRoomService : ExchangeServiceBase
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps);
 
-            // Set-MailboxRegionalConfiguration for timezone
-            ps.AddCommand("Set-MailboxRegionalConfiguration")
-              .AddParameter("Identity", roomEmail)
-              .AddParameter("TimeZone", timezone)
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            // Set-MailboxRegionalConfiguration for timezone (skip if not provided)
+            if (!string.IsNullOrWhiteSpace(timezone))
+            {
+                ps.AddCommand("Set-MailboxRegionalConfiguration")
+                  .AddParameter("Identity", roomEmail)
+                  .AddParameter("TimeZone", timezone)
+                  .AddParameter("ErrorAction", "Stop");
+                Invoke(ps);
+            }
         });
     }
 

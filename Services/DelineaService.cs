@@ -44,7 +44,10 @@ public class DelineaService
         }
     }
 
-    public async Task<(string username, string password, string domain)?> GetExchangeCredentialsAsync()
+    public Task<(string username, string password, string domain)?> GetExchangeCredentialsAsync()
+        => GetCredentialsBySecretIdAsync(_exchangeSecretId);
+
+    public async Task<(string username, string password, string domain)?> GetCredentialsBySecretIdAsync(int secretId)
     {
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
         {
@@ -61,13 +64,13 @@ public class DelineaService
         {
             var token = await GetAccessTokenAsync();
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{_exchangeSecretId}");
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             var response = await _httpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError("Failed to retrieve secret {SecretId}: {StatusCode}", _exchangeSecretId, response.StatusCode);
+                _logger.LogError("Failed to retrieve secret {SecretId}: {StatusCode}", secretId, response.StatusCode);
                 return null;
             }
 
@@ -94,13 +97,13 @@ public class DelineaService
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
-                _logger.LogError("Secret {SecretId} missing username or password fields", _exchangeSecretId);
+                _logger.LogError("Secret {SecretId} missing username or password fields", secretId);
                 return null;
             }
 
             if (string.IsNullOrEmpty(domain))
             {
-                _logger.LogError("Secret {SecretId} missing Domain field — cannot construct on-prem credential", _exchangeSecretId);
+                _logger.LogError("Secret {SecretId} missing Domain field — cannot construct credential", secretId);
                 return null;
             }
 
@@ -108,7 +111,7 @@ public class DelineaService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error retrieving Exchange credentials from Delinea Secret Server");
+            _logger.LogError(ex, "Error retrieving credentials from Delinea Secret Server for secret {SecretId}", secretId);
             return null;
         }
     }

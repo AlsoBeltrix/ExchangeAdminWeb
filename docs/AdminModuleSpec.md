@@ -121,6 +121,39 @@ The catalog validates at startup:
 - No duplicate routes
 - No duplicate policy aliases (except system modules sharing a policy)
 
+## Credential Isolation
+
+**Each module that requires privileged credentials MUST have its own Delinea Secret Server secret.** Modules must never share credentials with other modules or with the application core.
+
+### Rules
+
+1. Declare a `DelineaSecretId` config field in the module descriptor. The operator sets the secret ID via Admin Settings.
+2. Call `DelineaService.GetCredentialsBySecretIdAsync(secretId)` with the module's configured ID — never `GetExchangeCredentialsAsync()` (which is for the core Exchange module only).
+3. If the secret ID is not configured or credentials are unavailable, **fail closed** — return an error, do not fall back to the app pool identity or another module's secret.
+4. The Delinea API bootstrap credential (PasswordVault target `Delinea_Client`) is shared infrastructure. Individual module secrets retrieved through it are isolated.
+
+### For Graph API modules
+
+1. Declare `TenantId`, `ClientId`, and `CredentialTarget` config fields.
+2. Create a `GraphTokenClient` from module config on each operation — do not cache across config changes.
+3. Each module uses its own Entra app registration with minimal permissions.
+4. Reusing an app registration across modules is allowed ONLY if the operator explicitly enters the same values in each module's config. The code must never fall back to another module's config.
+
+### Example (DHCP Authorization)
+
+```csharp
+ConfigFields = [
+    new("DelineaSecretId", "Delinea Secret ID", "Secret Server ID for Enterprise Admin credential")
+]
+```
+
+```csharp
+var secretId = GetSecretId(); // reads from module config
+if (secretId is null) return Fail("Module not configured.");
+var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+if (creds is null) return Fail("Credentials unavailable.");
+```
+
 ## Page Authorization
 
 Each module page must:

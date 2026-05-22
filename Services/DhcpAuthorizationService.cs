@@ -7,11 +7,19 @@ public class DhcpAuthorizationService
 {
     private readonly ILogger<DhcpAuthorizationService> _logger;
     private readonly DelineaService _delineaService;
+    private readonly ModuleConfigService _moduleConfig;
 
-    public DhcpAuthorizationService(ILogger<DhcpAuthorizationService> logger, DelineaService delineaService)
+    public DhcpAuthorizationService(ILogger<DhcpAuthorizationService> logger, DelineaService delineaService, ModuleConfigService moduleConfig)
     {
         _logger = logger;
         _delineaService = delineaService;
+        _moduleConfig = moduleConfig;
+    }
+
+    private int? GetSecretId()
+    {
+        var val = _moduleConfig.GetValue("DhcpAuthorization", "DelineaSecretId");
+        return int.TryParse(val, out var id) && id > 0 ? id : null;
     }
 
     public async Task<List<DhcpServerEntry>> GetAuthorizedServersAsync()
@@ -52,9 +60,12 @@ public class DhcpAuthorizationService
 
     public async Task<DhcpOperationResult> AuthorizeServerAsync(string dnsName, string ipAddress)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var secretId = GetSecretId();
+        if (secretId is null)
+            return new DhcpOperationResult { Success = false, Message = "DHCP module not configured. Set DelineaSecretId in Admin Settings." };
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
         if (creds is null)
-            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea. Cannot authorize DHCP server." };
+            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea." };
 
         return await Task.Run(() =>
         {
