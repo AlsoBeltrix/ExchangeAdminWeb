@@ -3,7 +3,7 @@
 @using System.Globalization
 @using CsvHelper
 @using Microsoft.AspNetCore.Authorization
-@attribute [Authorize(Policy = "AdminSettings")]
+@attribute [Authorize(Policy = "EventLog")]
 @rendermode InteractiveServer
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -180,7 +180,7 @@
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
 
-        var authResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "EventLog");
         if (!authResult.Succeeded)
         {
             Navigation.NavigateTo("access-denied", forceLoad: true);

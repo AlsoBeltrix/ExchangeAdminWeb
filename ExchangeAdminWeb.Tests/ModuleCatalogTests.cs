@@ -82,8 +82,9 @@ public class ModuleCatalogTests
         Assert.Contains("GroupManagementOnPrem", aliases);
         Assert.Contains("ConferenceRooms", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
+        Assert.Contains("EventLog", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
-        Assert.Equal(17, aliases.Count);
+        Assert.Equal(18, aliases.Count);
     }
 
     [Fact]
@@ -98,7 +99,8 @@ public class ModuleCatalogTests
             "MailboxPermissions", "MailboxPermissionsOnPrem",
             "CalendarPermissions", "CalendarPermissionsOnPrem",
             "MigrationCheck", "MigrationCreate", "MigrationManage",
-            "DelegationReport", "MessageTrace", "RecipientLookup", "OutOfOffice"
+            "DelegationReport", "MessageTrace", "RecipientLookup", "OutOfOffice",
+            "EventLog"
         };
 
         foreach (var name in expectedPolicies)

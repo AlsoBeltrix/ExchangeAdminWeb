@@ -204,8 +204,10 @@ public class ModuleEnablementServiceTests : IDisposable
 
         var service = CreateService();
 
+        // AdminSettings is a system module — always enabled regardless of file
         Assert.True(service.IsModuleEnabled("AdminSettings"));
-        Assert.True(service.IsModuleEnabled("AdminEventLog"));
+        // AdminEventLog is no longer a system module — respects the file setting
+        Assert.False(service.IsModuleEnabled("AdminEventLog"));
     }
 
     [Fact]

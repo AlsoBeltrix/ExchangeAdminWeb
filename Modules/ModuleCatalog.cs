@@ -290,8 +290,8 @@ public sealed class ModuleCatalog
             IconCss = "bi bi-gear-fill-nav-menu",
             SortOrder = 910,
             EnabledByDefault = true,
-            IsSystemModule = true,
-            MainPermission = new("Access", "AdminSettings")
+            IsSystemModule = false,
+            MainPermission = new("Access", "EventLog")
         }
     ];
 

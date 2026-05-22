@@ -68,6 +68,7 @@ try
         });
 
     builder.Services.AddSingleton<ModuleConfigService>();
+    builder.Services.AddSingleton<ModuleAdminService>();
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
