@@ -11,8 +11,7 @@ public class PermissionValidator
     private readonly Dictionary<string, string> _excludedObjectIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
-    private readonly string[] _configuredExclusions;
-    private readonly bool _preventSelfGrant;
+    private readonly ModuleConfigService _moduleConfig;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
@@ -20,13 +19,49 @@ public class PermissionValidator
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
 
-    public PermissionValidator(IConfiguration config, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
+    public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _config = config;
+        _moduleConfig = moduleConfig;
         _scopeFactory = scopeFactory;
-        _configuredExclusions = config.GetSection("Security:ExcludedUsers").Get<string[]>() ?? Array.Empty<string>();
-        _preventSelfGrant = bool.Parse(config["Security:PreventSelfGrant"] ?? "true");
+    }
+
+    private string[] GetConfiguredExclusions()
+    {
+        var exclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var mailboxExcluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
+        var calendarExcluded = _moduleConfig.GetValue("CalendarPermissions", "ExcludedUsers");
+
+        if (!string.IsNullOrEmpty(mailboxExcluded))
+            foreach (var e in mailboxExcluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                exclusions.Add(e);
+
+        if (!string.IsNullOrEmpty(calendarExcluded))
+            foreach (var e in calendarExcluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                exclusions.Add(e);
+
+        if (exclusions.Count == 0 && !_moduleConfig.HasConfigFile)
+        {
+            var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
+            if (legacy != null)
+                foreach (var e in legacy) exclusions.Add(e);
+        }
+
+        return exclusions.ToArray();
+    }
+
+    private bool GetPreventSelfGrant()
+    {
+        var mailboxVal = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
+        if (!string.IsNullOrEmpty(mailboxVal) && bool.TryParse(mailboxVal, out var result))
+            return result;
+
+        if (!_moduleConfig.HasConfigFile)
+            return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
+
+        return true;
     }
 
     public async Task<bool> IsUserExcludedAsync(string userIdentity)
@@ -83,7 +118,7 @@ public class PermissionValidator
 
     public string? ValidateSelfGrant(string currentUser, string affectedUser)
     {
-        if (!_preventSelfGrant)
+        if (!GetPreventSelfGrant())
             return null;
 
         if (IdentitiesMatch(currentUser, affectedUser))
@@ -97,7 +132,7 @@ public class PermissionValidator
 
     public async Task<string?> ValidateSelfGrantAsync(string currentUser, string affectedUser)
     {
-        if (!_preventSelfGrant)
+        if (!GetPreventSelfGrant())
             return null;
 
         if (IdentitiesMatch(currentUser, affectedUser))
@@ -158,11 +193,12 @@ public class PermissionValidator
         {
             if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
 
-            _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", _configuredExclusions.Length);
+            var configuredExclusions = GetConfiguredExclusions();
+            _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", configuredExclusions.Length);
 
             _excludedUsers.Clear();
 
-            foreach (var entry in _configuredExclusions)
+            foreach (var entry in configuredExclusions)
             {
                 var trimmed = entry.Trim();
                 if (string.IsNullOrWhiteSpace(trimmed)) continue;

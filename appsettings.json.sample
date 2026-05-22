@@ -29,13 +29,6 @@
     "NotifyUsersOnPermissionGrant": false
   },
   "Security": {
-    "ExcludedUsers": [
-      "C-Suite",
-      "Board of Directors",
-      "Executives",
-      "ceo@yourcompany.com"
-    ],
-    "PreventSelfGrant": true,
     "AdminGroups": [
       "DOMAIN\\Exchange-Admins"
     ],
@@ -52,16 +45,6 @@
       "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
       "OutOfOffice": ["DOMAIN\\Exchange-Admins"]
     }
-  },
-  "Migration": {
-    "HybridEndpoint": "hybrid1",
-    "CloudTargetDeliveryDomain": "yourorg.mail.onmicrosoft.com",
-    "OnPremTargetDeliveryDomain": "yourcompany.com",
-    "OnPremTargetDAG": "DAG2019",
-    "CloudQuotaGB": 100,
-    "ExcludedADGroups": [
-      "SEC_ITAR_USERS"
-    ]
   },
   "ServiceNow": {
     "Enabled": false,

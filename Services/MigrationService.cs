@@ -9,23 +9,43 @@ namespace ExchangeAdminWeb.Services;
 
 public class MigrationService : ExchangeServiceBase
 {
-    private readonly string _hybridEndpoint;
-    private readonly string _cloudTargetDomain;
-    private readonly string _onPremTargetDomain;
-    private readonly string _onPremTargetDAG;
-    private readonly long _cloudQuotaGB;
-    private readonly string[] _excludedADGroups;
+    private readonly IConfiguration _config;
+    private readonly ModuleConfigService _moduleConfig;
     private readonly string[] _adminNotificationEmails;
 
-    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
+    private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
+    {
+        var val = _moduleConfig.GetValue("Migration", key);
+        if (_moduleConfig.IsCorrupt) return "";
+        if (val != null) return val;
+        if (!_moduleConfig.HasConfigFile)
+            return _config[fallbackConfigKey] ?? defaultValue;
+        return defaultValue;
+    }
+
+    private string _hybridEndpoint => MigrationConfig("HybridEndpoint", "Migration:HybridEndpoint", "hybrid1");
+    private string _cloudTargetDomain => MigrationConfig("CloudTargetDeliveryDomain", "Migration:CloudTargetDeliveryDomain");
+    private string _onPremTargetDomain => MigrationConfig("OnPremTargetDeliveryDomain", "Migration:OnPremTargetDeliveryDomain");
+    private string _onPremTargetDAG => MigrationConfig("OnPremTargetDAG", "Migration:OnPremTargetDAG");
+    private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "100"), out var v) ? v : 100;
+    private string[] _excludedADGroups
+    {
+        get
+        {
+            var val = _moduleConfig.GetValue("Migration", "ExcludedADGroups");
+            if (!string.IsNullOrEmpty(val))
+                return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (!_moduleConfig.HasConfigFile)
+                return _config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
+            return Array.Empty<string>();
+        }
+    }
+
+    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleConfigService moduleConfig)
         : base(exoPool, delineaService, logger, onPremServerUri)
     {
-        _hybridEndpoint = config["Migration:HybridEndpoint"] ?? "hybrid1";
-        _cloudTargetDomain = config["Migration:CloudTargetDeliveryDomain"] ?? "example.mail.onmicrosoft.com";
-        _onPremTargetDomain = config["Migration:OnPremTargetDeliveryDomain"] ?? "example.com";
-        _onPremTargetDAG = config["Migration:OnPremTargetDAG"] ?? "";
-        _cloudQuotaGB = long.Parse(config["Migration:CloudQuotaGB"] ?? "100");
-        _excludedADGroups = config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
+        _config = config;
+        _moduleConfig = moduleConfig;
 
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";
         _adminNotificationEmails = adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)

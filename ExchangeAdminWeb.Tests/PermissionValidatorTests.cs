@@ -1,4 +1,6 @@
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -33,7 +35,13 @@ public class PermissionValidatorTests
         var serviceProvider = Substitute.For<IServiceProvider>();
         scopeFactory.CreateScope().Returns(scope);
         scope.ServiceProvider.Returns(serviceProvider);
-        return new PermissionValidator(config, logger, scopeFactory);
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(Path.GetTempPath());
+        var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigLogger);
+
+        return new PermissionValidator(config, moduleConfig, logger, scopeFactory);
     }
 
     // --- Self-grant validation ---

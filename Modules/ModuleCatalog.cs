@@ -105,7 +105,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "MailboxPermissions"),
-            GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)]
+            GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
+            ConfigFields = [
+                new("ExcludedUsers", "Excluded Users", "Comma-separated users, groups, or emails protected from modification", Required: false),
+                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves (true/false)", Required: false, DefaultValue: "true")
+            ]
         },
         new()
         {
@@ -118,7 +122,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "CalendarPermissions"),
-            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)]
+            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
+            ConfigFields = [
+                new("ExcludedUsers", "Excluded Users", "Comma-separated users, groups, or emails protected from modification", Required: false),
+                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves (true/false)", Required: false, DefaultValue: "true")
+            ]
         },
         new()
         {
