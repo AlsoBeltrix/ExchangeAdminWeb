@@ -204,9 +204,10 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
-                new("GraphTenantId", "Azure AD Tenant ID", "For M365 Group management (same tenant as MFA Reset)", Required: false),
-                new("GraphClientId", "Graph App Client ID", "App with Group.ReadWrite.All permission", Required: false),
-                new("GraphCredentialTarget", "Graph Credential Vault Target", "PasswordVault resource name", Required: false, DefaultValue: "Graph_GroupManagement")
+                new("GraphTenantId", "Azure AD Tenant ID", "For M365 Group management", Required: false),
+                new("GraphClientId", "Graph App Client ID", "Needs Group.ReadWrite.All permission", Required: false),
+                new("GraphClientSecret", "Client Secret", "App registration client secret (stored securely)", Required: false, IsSecret: true),
+                new("GraphCredentialTarget", "Credential Vault Target", "Internal storage name", Required: false, DefaultValue: "Graph_GroupManagement")
             ]
         },
         new()
@@ -237,8 +238,9 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("TenantId", "Azure AD Tenant ID", "Your Entra tenant GUID"),
-                new("ClientId", "App Registration Client ID", "Graph API app registration (needs UserAuthenticationMethod.ReadWrite.All)"),
-                new("CredentialTarget", "Credential Vault Target", "PasswordVault resource name for client secret", DefaultValue: "Graph_MFAResets")
+                new("ClientId", "App Registration Client ID", "Needs UserAuthenticationMethod.ReadWrite.All"),
+                new("ClientSecret", "Client Secret", "App registration client secret (stored securely)", IsSecret: true),
+                new("CredentialTarget", "Credential Vault Target", "Internal storage name", DefaultValue: "Graph_MFAResets")
             ]
         },
         new()
