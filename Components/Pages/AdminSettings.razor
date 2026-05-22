@@ -53,50 +53,6 @@
         </div>
     }
 
-    <div class="row mb-4">
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <strong>Base Access Groups</strong>
-                    <span class="text-muted ms-2">(Security:AllowedGroups &mdash; not editable here)</span>
-                </div>
-                <div class="card-body">
-                    @if (allowedGroups.Length == 0)
-                    {
-                        <span class="text-danger">Not configured</span>
-                    }
-                    else
-                    {
-                        @foreach (var g in allowedGroups)
-                        {
-                            <span class="badge bg-secondary me-1">@g</span>
-                        }
-                    }
-                </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <strong>Admin Groups</strong>
-                    <span class="text-muted ms-2">(Security:AdminGroups &mdash; not editable here)</span>
-                </div>
-                <div class="card-body">
-                    @if (adminGroups.Length == 0)
-                    {
-                        <span class="text-danger">Not configured</span>
-                    }
-                    else
-                    {
-                        @foreach (var g in adminGroups)
-                        {
-                            <span class="badge bg-primary me-1">@g</span>
-                        }
-                    }
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -198,8 +154,6 @@
     private string? statusMessage;
     private bool statusIsError;
     private bool sectionAccessConfigured;
-    private string[] allowedGroups = Array.Empty<string>();
-    private string[] adminGroups = Array.Empty<string>();
 
     private string[] sections = Array.Empty<string>();
     private Dictionary<string, bool> moduleEnablement = new();
@@ -228,8 +182,6 @@
     {
         sections = Catalog.GetConfigurablePolicyAliases().ToArray();
         moduleEnablement = Enablement.GetAllEnablement();
-        allowedGroups = SectionAccess.GetAllowedGroups();
-        adminGroups = SectionAccess.GetAdminGroups();
         sectionAccessConfigured = SectionAccess.IsSectionAccessConfigured();
 
         var current = SectionAccess.GetSectionAccess();

@@ -26,8 +26,6 @@ try
         .WriteTo.File("logs/app-.log", rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30));
 
     var allowedGroups = builder.Configuration.GetSection("Security:AllowedGroups").Get<string[]>() ?? Array.Empty<string>();
-    if (allowedGroups.Length == 0)
-        Log.Warning("Security:AllowedGroups is empty or missing — all users will be denied access until configured");
 
     var adminGroups = builder.Configuration.GetSection("Security:AdminGroups").Get<string[]>() ?? Array.Empty<string>();
     if (adminGroups.Length == 0)

@@ -36,11 +36,6 @@
       "ceo@yourcompany.com"
     ],
     "PreventSelfGrant": true,
-    "AllowedGroups": [
-      "DOMAIN\\IT-Helpdesk",
-      "DOMAIN\\Exchange-Admins",
-      "DOMAIN\\Migration-Team"
-    ],
     "AdminGroups": [
       "DOMAIN\\Exchange-Admins"
     ],
