@@ -89,6 +89,30 @@
                             <small>This module has required fields that are not yet configured.</small>
                         </div>
                     }
+                    @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("TenantId") || f.Key.Contains("ClientId") || f.Key.Contains("CredentialTarget")))
+                    {
+                        <div class="alert alert-secondary py-2 mb-3">
+                            <strong>Entra App Registration Setup:</strong>
+                            <ol class="mb-1 small">
+                                <li>Enter your <strong>Tenant ID</strong> and <strong>Client ID</strong> from the Entra app registration below.</li>
+                                <li>The <strong>Credential Vault Target</strong> is the name the server uses to find the client secret. Leave the default or set a custom name.</li>
+                                <li>Store the client secret on the server (run as the app pool service account):
+                                    <pre class="mb-0 mt-1 p-2 bg-dark text-light" style="font-size: 0.75em;">[void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime]
+$vault = New-Object Windows.Security.Credentials.PasswordVault
+$cred = New-Object Windows.Security.Credentials.PasswordCredential("<strong>@(GetConfigValue("GraphCredentialTarget", "") is var target && !string.IsNullOrEmpty(target) ? target : GetConfigValue("CredentialTarget", "Graph_ModuleName"))</strong>", "&lt;ClientId&gt;", "&lt;ClientSecret&gt;")
+$vault.Add($cred)</pre>
+                                </li>
+                            </ol>
+                            <small class="text-muted">The same app registration can be used by multiple modules — enter the same values in each. The secret is never stored in the web app.</small>
+                        </div>
+                    }
+                    @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("DelineaSecretId")))
+                    {
+                        <div class="alert alert-secondary py-2 mb-3">
+                            <strong>Delinea Secret Server:</strong>
+                            <small>Enter the Secret Server secret ID that contains the service account credentials for this module. The secret must have Username, Password, and Domain fields.</small>
+                        </div>
+                    }
                     <div class="row g-3">
                         @foreach (var field in selectedModule.ConfigFields)
                         {
