@@ -243,6 +243,34 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "ConferenceRooms",
+            DisplayName = "Conference Rooms",
+            Description = "Configure room lists, metadata, and booking policies for Exchange conference rooms.",
+            Route = "conference-rooms",
+            IconCss = "bi bi-house-door-fill-nav-menu",
+            SortOrder = 350,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
+            ConfigFields = []
+        },
+        new()
+        {
+            Id = "DhcpAuthorization",
+            DisplayName = "DHCP Authorization",
+            Description = "Authorize and deauthorize DHCP servers in Active Directory.",
+            Route = "dhcp-authorization",
+            IconCss = "bi bi-gear-fill-nav-menu",
+            SortOrder = 800,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
+            ConfigFields = [
+                new("CredentialTarget", "Credential Vault Target", "PasswordVault resource for Enterprise Admin credential", DefaultValue: "DHCP_Admin")
+            ]
+        },
+        new()
+        {
             Id = "AdminSettings",
             DisplayName = "Admin Settings",
             Description = "Configure which AD groups have access to each application section.",

@@ -1,0 +1,438 @@
+@page "/conference-rooms"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "ConferenceRooms")]
+@rendermode InteractiveServer
+@inject ConferenceRoomService RoomService
+@inject AuditService Audit
+@inject ServiceNowService ServiceNow
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject IJSRuntime JS
+@inject ILogger<ConferenceRooms> Logger
+@using CsvHelper
+@using CsvHelper.Configuration
+@using System.Globalization
+
+<PageTitle>Conference Rooms</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Conference Rooms</h1>
+
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "setup" ? "active" : "")" @onclick='() => activeTab = "setup"'>Room Setup</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "type" ? "active" : "")" @onclick='() => activeTab = "type"'>Room Type</button>
+        </li>
+    </ul>
+
+    @if (activeTab == "setup")
+    {
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-header"><strong>Single Room Setup</strong></div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Room Email</label>
+                            <input type="email" class="form-control" @bind="roomEmail" placeholder="room@company.com" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">City</label>
+                            <input type="text" class="form-control" @bind="city" placeholder="City" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Building</label>
+                            <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@isLoading" />
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Capacity</label>
+                                <input type="number" class="form-control" @bind="capacity" min="1" disabled="@isLoading" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Floor</label>
+                                <input type="text" class="form-control" @bind="floor" placeholder="Floor" disabled="@isLoading" />
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Time Zone</label>
+                            <input type="text" class="form-control" @bind="timezone" placeholder="e.g. Eastern Standard Time" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                        </div>
+                        <button class="btn btn-primary" @onclick="SetupSingleRoom"
+                                disabled="@(isLoading || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
+                            @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Setup Room
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header"><strong>CSV Bulk Upload</strong></div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="csvTicketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">CSV File</label>
+                            <InputFile OnChange="HandleCsvUpload" accept=".csv" disabled="@isLoading" />
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
+                        </div>
+                        @if (csvRows.Count > 0)
+                        {
+                            <p class="text-info">@csvRows.Count room(s) parsed from CSV.</p>
+                            <button class="btn btn-primary" @onclick="ProcessCsvRooms"
+                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvTicketNumber))">
+                                @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Process All
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        @if (csvResults.Count > 0)
+        {
+            <div class="row mt-3">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header"><strong>Bulk Results</strong></div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0">
+                                <thead><tr><th>Room</th><th>Status</th><th>Message</th></tr></thead>
+                                <tbody>
+                                    @foreach (var r in csvResults)
+                                    {
+                                        <tr class="@(r.Success ? "" : "table-danger")">
+                                            <td>@r.Email</td>
+                                            <td>@(r.Success ? "OK" : "FAILED")</td>
+                                            <td><small>@r.Message</small></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    @if (activeTab == "type")
+    {
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header"><strong>Set Room Type</strong></div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Room Email</label>
+                            <input type="email" class="form-control" @bind="typeRoomEmail" placeholder="room@company.com" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Room Type</label>
+                            <select class="form-select" @bind="selectedRoomType" disabled="@isLoading">
+                                <option value="">-- Select --</option>
+                                <option value="Standard">Standard (auto-accept, no conflicts)</option>
+                                <option value="Workspace">Workspace (auto-accept, allows conflicts)</option>
+                                <option value="Restricted">Restricted (auto-accept, approval required)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Time Zone</label>
+                            <input type="text" class="form-control" @bind="typeTimezone" placeholder="e.g. Eastern Standard Time" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="typeTicketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                        </div>
+                        <button class="btn btn-primary" @onclick="SetRoomType"
+                                disabled="@(isLoading || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Set Type
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (result != null)
+    {
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="alert @(result.Success ? "alert-success" : "alert-danger") alert-dismissible">
+                    @result.Message
+                    @if (!string.IsNullOrWhiteSpace(result.Detail))
+                    {
+                        <br /><small>@result.Detail</small>
+                    }
+                    <button type="button" class="btn-close" @onclick="() => result = null"></button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool isCsvProcessing;
+    private string activeTab = "setup";
+
+    // Single room setup fields
+    private string roomEmail = "";
+    private string city = "";
+    private string building = "";
+    private int capacity = 1;
+    private string floor = "";
+    private string timezone = "";
+    private string ticketNumber = "";
+
+    // CSV fields
+    private string csvTicketNumber = "";
+    private List<CsvRoomRow> csvRows = new();
+    private List<CsvRoomResult> csvResults = new();
+
+    // Room Type fields
+    private string typeRoomEmail = "";
+    private string selectedRoomType = "";
+    private string typeTimezone = "";
+    private string typeTicketNumber = "";
+
+    private PermissionResult? result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "ConferenceRooms");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task SetupSingleRoom()
+    {
+        isLoading = true;
+        result = null;
+
+        try
+        {
+            var ticket = ticketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+
+            var email = roomEmail.Trim();
+            result = await RoomService.SetRoomMetadataAsync(email, city.Trim(), building.Trim(), capacity, floor.Trim(), timezone.Trim());
+
+            if (result.Success)
+            {
+                var addResult = await RoomService.AddToRoomListAsync(email, city.Trim());
+                if (!addResult.Success)
+                    result = PermissionResult.Fail($"Metadata set but failed to add to room list: {addResult.Message}");
+            }
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", email, result.Success, ticket,
+                result.Success ? null : result.Message);
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", roomEmail.Trim(), false, ticketNumber.Trim(), ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    {
+        csvRows = new();
+        csvResults = new();
+        result = null;
+
+        try
+        {
+            using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HeaderValidated = null,
+                MissingFieldFound = null
+            };
+            using var csv = new CsvReader(reader, csvConfig);
+            csv.Read();
+            csv.ReadHeader();
+
+            while (csv.Read())
+            {
+                var email = csv.GetField("PrimarySmtpAddress")?.Trim();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;
+
+                csvRows.Add(new CsvRoomRow
+                {
+                    PrimarySmtpAddress = email,
+                    City = csv.GetField("City")?.Trim() ?? "",
+                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? "",
+                    Building = csv.GetField("Building")?.Trim() ?? "",
+                    Capacity = int.TryParse(csv.GetField("Capacity")?.Trim(), out var c) ? c : 1,
+                    Floor = csv.GetField("Floor")?.Trim() ?? ""
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail($"Failed to parse CSV: {ex.Message}");
+        }
+    }
+
+    private async Task ProcessCsvRooms()
+    {
+        isLoading = true;
+        isCsvProcessing = true;
+        csvResults = new();
+
+        try
+        {
+            var ticket = csvTicketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+
+            foreach (var row in csvRows)
+            {
+                try
+                {
+                    var r = await RoomService.SetRoomMetadataAsync(row.PrimarySmtpAddress, row.City, row.Building, row.Capacity, row.Floor, row.TimeZone);
+                    if (r.Success && !string.IsNullOrWhiteSpace(row.City))
+                        await RoomService.AddToRoomListAsync(row.PrimarySmtpAddress, row.City);
+
+                    csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = r.Success, Message = r.Message });
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket,
+                        r.Success ? null : r.Message);
+                }
+                catch (Exception ex)
+                {
+                    csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = false, Message = ex.Message });
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message);
+                }
+
+                StateHasChanged();
+            }
+
+            var successCount = csvResults.Count(r => r.Success);
+            result = successCount == csvResults.Count
+                ? PermissionResult.Ok($"All {successCount} rooms configured successfully.")
+                : PermissionResult.Fail($"{successCount}/{csvResults.Count} rooms succeeded. See table for details.");
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+            isCsvProcessing = false;
+        }
+    }
+
+    private async Task SetRoomType()
+    {
+        isLoading = true;
+        result = null;
+
+        try
+        {
+            var ticket = typeTicketNumber.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+
+            var email = typeRoomEmail.Trim();
+            result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, typeTimezone.Trim());
+
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType",
+                $"{email} -> {selectedRoomType}", result.Success, ticket,
+                result.Success ? null : result.Message);
+        }
+        catch (Exception ex)
+        {
+            result = PermissionResult.Fail(ex.Message);
+            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", typeRoomEmail.Trim(), false, typeTicketNumber.Trim(), ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task DownloadSampleCsv()
+    {
+        var content = "PrimarySmtpAddress,City,TimeZone,Building,Capacity,Floor\nroom1@company.com,New York,Eastern Standard Time,HQ,10,3\n";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        await JS.InvokeVoidAsync("downloadFile", "conference_rooms_sample.csv", "text/csv", base64);
+    }
+
+    private class CsvRoomRow
+    {
+        public string PrimarySmtpAddress { get; set; } = "";
+        public string City { get; set; } = "";
+        public string TimeZone { get; set; } = "";
+        public string Building { get; set; } = "";
+        public int Capacity { get; set; }
+        public string Floor { get; set; } = "";
+    }
+
+    private class CsvRoomResult
+    {
+        public string Email { get; set; } = "";
+        public bool Success { get; set; }
+        public string Message { get; set; } = "";
+    }
+}
