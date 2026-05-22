@@ -82,7 +82,7 @@
     {
         <div class="alert alert-danger">@loadError</div>
     }
-    else if (filteredEvents.Count == 0 && loadWarning == null)
+    else if (filteredEvents.Count == 0)
     {
         <div class="alert alert-info">No events found for the selected filters.</div>
     }
@@ -243,7 +243,7 @@
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     try
                     {
-                        var doc = JsonDocument.Parse(line);
+                        using var doc = JsonDocument.Parse(line);
                         var root = doc.RootElement;
 
                         var tsStr = TryGetString(root, "ts");
@@ -264,7 +264,7 @@
                             Category = TryGetString(root, "category") ?? "",
                             Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
                             Result = TryGetString(root, "result") ?? "",
-                            RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
+                            RawJson = root.ToString() ?? ""
                         });
                         if (buffer.Count > MaxTotalEvents)
                             buffer.Dequeue();
@@ -279,7 +279,7 @@
             }
         }
 
-        if (buffer.Count == 0 && filesNotFound == totalDays)
+        if (buffer.Count == 0 && loadError == null)
         {
             loadError = effectiveStart == effectiveEnd
                 ? $"No log file found for {effectiveStart:yyyy-MM-dd}"
