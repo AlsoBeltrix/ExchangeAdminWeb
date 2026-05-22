@@ -26,9 +26,9 @@ public class MfaResetService
         var fields = await _delineaService.GetSecretFieldsAsync(secretId);
         if (fields == null) return null;
 
-        var tenantId = fields.GetValueOrDefault("tenant-id") ?? "";
-        var clientId = fields.GetValueOrDefault("application-id") ?? "";
-        var clientSecret = fields.GetValueOrDefault("client-secret") ?? "";
+        var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
+        var clientId = fields.GetValueOrDefault("Application ID") ?? "";
+        var clientSecret = fields.GetValueOrDefault("Client Secret") ?? "";
 
         if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
             return null;

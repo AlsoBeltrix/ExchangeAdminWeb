@@ -71,12 +71,9 @@ public class DelineaService
             var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var item in secret.RootElement.GetProperty("items").EnumerateArray())
             {
-                var slug = item.TryGetProperty("slug", out var s) ? s.GetString() : null;
                 var fieldName = item.GetProperty("fieldName").GetString();
                 var itemValue = item.GetProperty("itemValue").GetString();
 
-                if (slug != null && itemValue != null)
-                    fields[slug] = itemValue;
                 if (fieldName != null && itemValue != null)
                     fields[fieldName] = itemValue;
             }
