@@ -261,6 +261,10 @@
                 return;
             }
 
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
+            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+
             var email = roomEmail.Trim();
             result = await RoomService.SetRoomMetadataAsync(email, city.Trim(), building.Trim(), capacity, floor.Trim(), timezone.Trim());
 
@@ -271,13 +275,12 @@
                     result = PermissionResult.Fail($"Metadata set but failed to add to room list: {addResult.Message}");
             }
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", email, result.Success, ticket,
-                result.Success ? null : result.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", email, result.Success, ticket, result.Success ? null : result.Message); } catch { }
         }
         catch (Exception ex)
         {
             result = PermissionResult.Fail(ex.Message);
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", roomEmail.Trim(), false, ticketNumber.Trim(), ex.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", roomEmail.Trim(), false, ticketNumber.Trim(), ex.Message); } catch { }
         }
         finally
         {
@@ -342,22 +345,29 @@
                 return;
             }
 
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
+            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+
             foreach (var row in csvRows)
             {
                 try
                 {
                     var r = await RoomService.SetRoomMetadataAsync(row.PrimarySmtpAddress, row.City, row.Building, row.Capacity, row.Floor, row.TimeZone);
                     if (r.Success && !string.IsNullOrWhiteSpace(row.City))
-                        await RoomService.AddToRoomListAsync(row.PrimarySmtpAddress, row.City);
+                    {
+                        var addResult = await RoomService.AddToRoomListAsync(row.PrimarySmtpAddress, row.City);
+                        if (!addResult.Success)
+                            r = PermissionResult.Fail($"Metadata set but room list failed: {addResult.Message}");
+                    }
 
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = r.Success, Message = r.Message });
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket,
-                        r.Success ? null : r.Message);
+                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket, r.Success ? null : r.Message); } catch { }
                 }
                 catch (Exception ex)
                 {
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = false, Message = ex.Message });
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message);
+                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message); } catch { }
                 }
 
                 StateHasChanged();
@@ -394,17 +404,19 @@
                 return;
             }
 
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
+            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+
             var email = typeRoomEmail.Trim();
             result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, typeTimezone.Trim());
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType",
-                $"{email} -> {selectedRoomType}", result.Success, ticket,
-                result.Success ? null : result.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", $"{email} -> {selectedRoomType}", result.Success, ticket, result.Success ? null : result.Message); } catch { }
         }
         catch (Exception ex)
         {
             result = PermissionResult.Fail(ex.Message);
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", typeRoomEmail.Trim(), false, typeTicketNumber.Trim(), ex.Message);
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", typeRoomEmail.Trim(), false, typeTicketNumber.Trim(), ex.Message); } catch { }
         }
         finally
         {

@@ -6,21 +6,12 @@ namespace ExchangeAdminWeb.Services;
 public class DhcpAuthorizationService
 {
     private readonly ILogger<DhcpAuthorizationService> _logger;
-    private readonly ModuleConfigService _moduleConfig;
+    private readonly DelineaService _delineaService;
 
-    public DhcpAuthorizationService(ILogger<DhcpAuthorizationService> logger, ModuleConfigService moduleConfig)
+    public DhcpAuthorizationService(ILogger<DhcpAuthorizationService> logger, DelineaService delineaService)
     {
         _logger = logger;
-        _moduleConfig = moduleConfig;
-    }
-
-    private string CredentialTarget
-    {
-        get
-        {
-            var val = _moduleConfig.GetValue("DhcpAuthorization", "CredentialTarget");
-            return val ?? "DHCP_Admin";
-        }
+        _delineaService = delineaService;
     }
 
     public async Task<List<DhcpServerEntry>> GetAuthorizedServersAsync()
@@ -43,20 +34,16 @@ public class DhcpAuthorizationService
             ps.AddCommand("Get-DhcpServerInDC")
               .AddParameter("ErrorAction", "Stop");
             var results = ps.Invoke();
-
-            if (ps.HadErrors)
-            {
-                var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
-                _logger.LogError("Get-DhcpServerInDC failed: {Errors}", errors);
-                throw new InvalidOperationException($"Failed to retrieve authorized DHCP servers: {errors}");
-            }
+            ps.Commands.Clear();
 
             var servers = new List<DhcpServerEntry>();
-            foreach (var item in results)
+            foreach (var r in results)
             {
-                var dnsName = item.Properties["DnsName"]?.Value?.ToString() ?? "";
-                var ipAddress = item.Properties["IPAddress"]?.Value?.ToString() ?? "";
-                servers.Add(new DhcpServerEntry { DnsName = dnsName, IpAddress = ipAddress });
+                servers.Add(new DhcpServerEntry
+                {
+                    DnsName = r.Properties["DnsName"]?.Value?.ToString() ?? "",
+                    IpAddress = r.Properties["IPAddress"]?.Value?.ToString() ?? ""
+                });
             }
 
             return servers;
@@ -65,6 +52,10 @@ public class DhcpAuthorizationService
 
     public async Task<DhcpOperationResult> AuthorizeServerAsync(string dnsName, string ipAddress)
     {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea. Cannot authorize DHCP server." };
+
         return await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -80,28 +71,20 @@ public class DhcpAuthorizationService
             ps.Invoke();
             ps.Commands.Clear();
 
-            var credential = GetCredential();
-            if (credential != null)
-            {
-                ps.AddScript($"$cred = $args[0]; Invoke-Command -ScriptBlock {{ Add-DhcpServerInDC -DnsName '{EscapeSingleQuote(dnsName)}' -IPAddress '{EscapeSingleQuote(ipAddress)}' -ErrorAction Stop }} -Credential $cred");
-                ps.AddArgument(credential);
-            }
-            else
-            {
-                ps.AddCommand("Add-DhcpServerInDC")
-                  .AddParameter("DnsName", dnsName)
-                  .AddParameter("IPAddress", ipAddress)
-                  .AddParameter("ErrorAction", "Stop");
-            }
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+            ps.AddCommand("Invoke-Command")
+              .AddParameter("ComputerName", "localhost")
+              .AddParameter("Credential", credential)
+              .AddParameter("ScriptBlock", script)
+              .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
 
             try
             {
                 ps.Invoke();
-
                 if (ps.HadErrors)
                 {
                     var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
-                    _logger.LogError("Add-DhcpServerInDC failed for {DnsName}/{Ip}: {Errors}", dnsName, ipAddress, errors);
                     return new DhcpOperationResult { Success = false, Message = $"Failed to authorize: {errors}" };
                 }
 
@@ -118,6 +101,10 @@ public class DhcpAuthorizationService
 
     public async Task<DhcpOperationResult> DeauthorizeServerAsync(string dnsName, string ipAddress)
     {
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea. Cannot deauthorize DHCP server." };
+
         return await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -133,28 +120,20 @@ public class DhcpAuthorizationService
             ps.Invoke();
             ps.Commands.Clear();
 
-            var credential = GetCredential();
-            if (credential != null)
-            {
-                ps.AddScript($"$cred = $args[0]; Invoke-Command -ScriptBlock {{ Remove-DhcpServerInDC -DnsName '{EscapeSingleQuote(dnsName)}' -IPAddress '{EscapeSingleQuote(ipAddress)}' -ErrorAction Stop }} -Credential $cred");
-                ps.AddArgument(credential);
-            }
-            else
-            {
-                ps.AddCommand("Remove-DhcpServerInDC")
-                  .AddParameter("DnsName", dnsName)
-                  .AddParameter("IPAddress", ipAddress)
-                  .AddParameter("ErrorAction", "Stop");
-            }
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+            ps.AddCommand("Invoke-Command")
+              .AddParameter("ComputerName", "localhost")
+              .AddParameter("Credential", credential)
+              .AddParameter("ScriptBlock", script)
+              .AddParameter("ArgumentList", new object[] { dnsName, ipAddress });
 
             try
             {
                 ps.Invoke();
-
                 if (ps.HadErrors)
                 {
                     var errors = string.Join("; ", ps.Streams.Error.Select(e => e.ToString()));
-                    _logger.LogError("Remove-DhcpServerInDC failed for {DnsName}/{Ip}: {Errors}", dnsName, ipAddress, errors);
                     return new DhcpOperationResult { Success = false, Message = $"Failed to deauthorize: {errors}" };
                 }
 
@@ -169,21 +148,14 @@ public class DhcpAuthorizationService
         });
     }
 
-    private PSCredential? GetCredential()
+    private static PSCredential CreateCredential(string username, string password, string domain)
     {
-        var (username, password) = CredentialManagerService.ReadCredential(CredentialTarget);
-        if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
-        {
-            _logger.LogWarning("No credential found in PasswordVault for target '{Target}'. Running DHCP commands as app pool identity.", CredentialTarget);
-            return null;
-        }
-
+        var fullUsername = username.Contains('\\') || username.Contains('@')
+            ? username : $"{domain}\\{username}";
         var securePassword = new System.Security.SecureString();
         foreach (var c in password) securePassword.AppendChar(c);
-        return new PSCredential(username, securePassword);
+        return new PSCredential(fullUsername, securePassword);
     }
-
-    private static string EscapeSingleQuote(string value) => value.Replace("'", "''");
 }
 
 public class DhcpServerEntry

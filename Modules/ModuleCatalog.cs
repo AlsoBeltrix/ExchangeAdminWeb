@@ -258,16 +258,14 @@ public sealed class ModuleCatalog
         {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
-            Description = "Authorize and deauthorize DHCP servers in Active Directory.",
+            Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Delinea-vaulted Enterprise Admin credentials.",
             Route = "dhcp-authorization",
             IconCss = "bi bi-gear-fill-nav-menu",
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
-            ConfigFields = [
-                new("CredentialTarget", "Credential Vault Target", "PasswordVault resource for Enterprise Admin credential", DefaultValue: "DHCP_Admin")
-            ]
+            ConfigFields = []
         },
         new()
         {

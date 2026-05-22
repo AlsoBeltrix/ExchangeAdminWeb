@@ -199,6 +199,14 @@
                 return;
             }
 
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "DhcpAuthorization");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = new DhcpOperationResult { Success = false, Message = "Authorization denied." };
+                return;
+            }
+
             var dns = newDnsName.Trim();
             var ip = newIpAddress.Trim();
             operationResult = await DhcpService.AuthorizeServerAsync(dns, ip);
@@ -261,6 +269,14 @@
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "DhcpAuthorization");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = new DhcpOperationResult { Success = false, Message = "Authorization denied." };
                 return;
             }
 
