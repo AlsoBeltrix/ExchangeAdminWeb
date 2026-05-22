@@ -158,7 +158,7 @@
                                         var capturedSection = sectionName;
                                         var capturedGroup = group;
                                         var isIneffective = ineffectiveGroups.Contains(capturedGroup);
-                                        <span class="badge @(isIneffective ? "bg-warning text-dark" : "bg-light text-dark") border me-1 mb-1"
+                                        <span class="badge @(isIneffective ? "bg-warning text-dark" : "bg-secondary") me-1 mb-1"
                                               style="font-size: 0.8em;"
                                               title="@(isIneffective ? "Not in AllowedGroups — users will still be denied by base gate" : "")">
                                             @capturedGroup
