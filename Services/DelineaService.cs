@@ -47,6 +47,44 @@ public class DelineaService
     public Task<(string username, string password, string domain)?> GetExchangeCredentialsAsync()
         => GetCredentialsBySecretIdAsync(_exchangeSecretId);
 
+    public async Task<Dictionary<string, string>?> GetSecretFieldsAsync(int secretId)
+    {
+        if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
+        {
+            LoadCredentials();
+            if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
+                return null;
+        }
+
+        try
+        {
+            var token = await GetAccessTokenAsync();
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            var response = await _httpClient.SendAsync(request);
+
+            if (!response.IsSuccessStatusCode) return null;
+
+            var content = await response.Content.ReadAsStringAsync();
+            using var secret = JsonDocument.Parse(content);
+
+            var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in secret.RootElement.GetProperty("items").EnumerateArray())
+            {
+                var fieldName = item.GetProperty("fieldName").GetString();
+                var itemValue = item.GetProperty("itemValue").GetString();
+                if (fieldName != null && itemValue != null)
+                    fields[fieldName] = itemValue;
+            }
+            return fields;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error retrieving secret fields from Delinea for secret {SecretId}", secretId);
+            return null;
+        }
+    }
+
     public async Task<(string username, string password, string domain)?> GetCredentialsBySecretIdAsync(int secretId)
     {
         if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))

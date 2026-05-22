@@ -1,6 +1,5 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using Windows.Security.Credentials;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -18,14 +17,12 @@ public sealed class GraphTokenClient
 
     public bool IsConfigured => !string.IsNullOrEmpty(_tenantId) && !string.IsNullOrEmpty(_clientId) && !string.IsNullOrEmpty(_clientSecret);
 
-    public GraphTokenClient(string tenantId, string clientId, string credentialTarget, HttpClient httpClient)
+    public GraphTokenClient(string tenantId, string clientId, string clientSecret, HttpClient httpClient)
     {
         _httpClient = httpClient;
         _tenantId = tenantId;
         _clientId = clientId;
-
-        var (_, secret) = ReadCredential(credentialTarget);
-        _clientSecret = secret ?? "";
+        _clientSecret = clientSecret ?? "";
     }
 
     public async Task<JsonDocument?> GetAsync(string endpoint)
@@ -124,20 +121,4 @@ public sealed class GraphTokenClient
         }
     }
 
-    private static (string? clientId, string? secret) ReadCredential(string target)
-    {
-        try
-        {
-            var vault = new PasswordVault();
-            var results = vault.FindAllByResource(target);
-            var cred = results.FirstOrDefault();
-            if (cred is null) return (null, null);
-            cred.RetrievePassword();
-            return (cred.UserName, cred.Password);
-        }
-        catch
-        {
-            return (null, null);
-        }
-    }
 }

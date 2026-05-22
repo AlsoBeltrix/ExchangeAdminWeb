@@ -6,30 +6,49 @@ public class MfaResetService
 {
     private readonly ILogger<MfaResetService> _logger;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly DelineaService _delineaService;
     private readonly IHttpClientFactory _httpClientFactory;
 
-    public MfaResetService(ILogger<MfaResetService> logger, ModuleConfigService moduleConfig, IHttpClientFactory httpClientFactory)
+    public MfaResetService(ILogger<MfaResetService> logger, ModuleConfigService moduleConfig, DelineaService delineaService, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _moduleConfig = moduleConfig;
+        _delineaService = delineaService;
         _httpClientFactory = httpClientFactory;
     }
 
-    private GraphTokenClient GetGraphClient()
+    private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
-        var tenantId = _moduleConfig.GetValue("MfaReset", "TenantId") ?? "";
-        var clientId = _moduleConfig.GetValue("MfaReset", "ClientId") ?? "";
-        var credTarget = _moduleConfig.GetValue("MfaReset", "CredentialTarget") ?? "Graph_MFAResets";
+        var secretIdStr = _moduleConfig.GetValue("MfaReset", "DelineaSecretId");
+        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+            return null;
 
-        return new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        var fields = await _delineaService.GetSecretFieldsAsync(secretId);
+        if (fields == null) return null;
+
+        var tenantId = fields.GetValueOrDefault("TenantId") ?? "";
+        var clientId = fields.GetValueOrDefault("ClientId") ?? "";
+        var clientSecret = fields.GetValueOrDefault("ClientSecret") ?? "";
+
+        if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+            return null;
+
+        return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
-    public bool IsAvailable => GetGraphClient().IsConfigured;
+    public bool IsAvailable
+    {
+        get
+        {
+            var secretIdStr = _moduleConfig.GetValue("MfaReset", "DelineaSecretId");
+            return int.TryParse(secretIdStr, out var id) && id > 0;
+        }
+    }
 
     public async Task<List<AuthMethod>> GetUserMethodsAsync(string userPrincipalName)
     {
         var methods = new List<AuthMethod>();
-        using var doc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
+        using var doc = await (await GetGraphClientAsync() ?? throw new InvalidOperationException("MFA Reset Graph credentials not available.")).GetAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
         if (doc == null) return methods;
 
         foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
@@ -74,7 +93,7 @@ public class MfaResetService
                 continue;
             }
 
-            var success = await GetGraphClient().DeleteAsync(endpoint);
+            var success = await (await GetGraphClientAsync() ?? throw new InvalidOperationException("MFA Reset Graph credentials not available.")).DeleteAsync(endpoint);
             if (success)
             {
                 removed++;

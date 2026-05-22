@@ -89,16 +89,10 @@
                             <small>This module has required fields that are not yet configured.</small>
                         </div>
                     }
-                    @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("CredentialTarget")))
-                    {
-                        <div class="alert alert-secondary py-2 mb-3">
-                            <small><strong>Client secrets</strong> are stored securely in the server's credential vault — never in config files. Enter the secret below and click Save; it will be stored and never displayed again.</small>
-                        </div>
-                    }
                     @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("DelineaSecretId")))
                     {
                         <div class="alert alert-secondary py-2 mb-3">
-                            <small><strong>Delinea Secret Server:</strong> Enter the secret ID containing Username, Password, and Domain fields for this module's service account.</small>
+                            <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, the secret must contain TenantId, ClientId, and ClientSecret fields. For AD modules, it must contain Username, Password, and Domain fields. All secrets are stored centrally in Secret Server — portable across servers.</small>
                         </div>
                     }
                     <div class="row g-3">
@@ -109,15 +103,11 @@
                                 <label class="form-label">
                                     @field.Label
                                     @if (field.Required) { <span class="text-danger">*</span> }
-                                    @if (field.IsSecret && GetConfigValue(field.Key, "") == "(stored in vault)")
-                                    {
-                                        <span class="badge bg-success ms-1">Configured</span>
-                                    }
                                 </label>
-                                <input type="@(field.IsSecret ? "password" : "text")"
+                                <input type="text"
                                        class="form-control"
-                                       placeholder="@(field.IsSecret ? "Enter new value to update" : field.Description)"
-                                       value="@(field.IsSecret ? "" : GetConfigValue(field.Key, field.DefaultValue))"
+                                       placeholder="@field.Description"
+                                       value="@GetConfigValue(field.Key, field.DefaultValue)"
                                        @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
                                 @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
                                 {
@@ -272,32 +262,8 @@
                 return;
             }
 
-            // Handle secret fields: store in PasswordVault, not in config file
-            var configToSave = new Dictionary<string, string>(currentConfigState, StringComparer.OrdinalIgnoreCase);
-            foreach (var field in selectedModule.ConfigFields.Where(f => f.IsSecret))
-            {
-                if (configToSave.TryGetValue(field.Key, out var secretValue) && !string.IsNullOrWhiteSpace(secretValue))
-                {
-                    // Determine the vault target from the CredentialTarget field
-                    var targetKey = selectedModule.ConfigFields.FirstOrDefault(f => f.Key.Contains("CredentialTarget"))?.Key;
-                    var vaultTarget = targetKey != null && configToSave.TryGetValue(targetKey, out var t) && !string.IsNullOrEmpty(t)
-                        ? t
-                        : $"Graph_{selectedModule.Id}";
-                    var clientId = configToSave.GetValueOrDefault("ClientId") ?? configToSave.GetValueOrDefault("GraphClientId") ?? selectedModule.Id;
-
-                    if (!CredentialManagerService.StoreCredential(vaultTarget, clientId, secretValue))
-                    {
-                        statusMessage = "Failed to store secret in credential vault.";
-                        statusIsError = true;
-                        return;
-                    }
-                    // Don't persist the secret value in the config file
-                    configToSave[field.Key] = "(stored in vault)";
-                }
-            }
-
             var previous = ModuleConfigSvc.GetModuleConfig(selectedModule.Id);
-            ModuleConfigSvc.SaveModuleConfig(selectedModule.Id, configToSave);
+            ModuleConfigSvc.SaveModuleConfig(selectedModule.Id, currentConfigState);
 
             var allKeys = previous.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase).ToList();
             var changed = allKeys.Where(k =>

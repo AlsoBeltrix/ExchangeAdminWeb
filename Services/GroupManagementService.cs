@@ -26,13 +26,23 @@ public class GroupManagementService : ExchangeServiceBase
         _config = config;
     }
 
-    private GraphTokenClient GetGraphClient()
+    private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
-        var tenantId = _moduleConfig.GetValue("GroupManagement", "GraphTenantId") ?? "";
-        var clientId = _moduleConfig.GetValue("GroupManagement", "GraphClientId") ?? "";
-        var credTarget = _moduleConfig.GetValue("GroupManagement", "GraphCredentialTarget") ?? "Graph_GroupManagement";
+        var secretIdStr = _moduleConfig.GetValue("GroupManagement", "GraphDelineaSecretId");
+        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+            return null;
 
-        return new GraphTokenClient(tenantId, clientId, credTarget, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        var fields = await _delineaService.GetSecretFieldsAsync(secretId);
+        if (fields == null) return null;
+
+        var tenantId = fields.GetValueOrDefault("TenantId") ?? "";
+        var clientId = fields.GetValueOrDefault("ClientId") ?? "";
+        var clientSecret = fields.GetValueOrDefault("ClientSecret") ?? "";
+
+        if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
+            return null;
+
+        return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
@@ -67,13 +77,14 @@ public class GroupManagementService : ExchangeServiceBase
         }
 
         // Search Microsoft 365 Groups via Graph API
-        if (GetGraphClient().IsConfigured)
+        var graphClient = await GetGraphClientAsync();
+        if (graphClient != null && graphClient.IsConfigured)
         {
             try
             {
                 var odataEscaped = searchTerm.Replace("'", "''");
                 var filterQuery = Uri.EscapeDataString($"groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{odataEscaped}') or startsWith(mail,'{odataEscaped}'))");
-                using var graphResult = await GetGraphClient().GetAsync($"/groups?$filter={filterQuery}&$top=25&$select=id,displayName,mail,groupTypes");
+                using var graphResult = await graphClient.GetAsync($"/groups?$filter={filterQuery}&$top=25&$select=id,displayName,mail,groupTypes");
                 if (graphResult != null)
                 {
                     foreach (var g in graphResult.RootElement.GetProperty("value").EnumerateArray())
@@ -337,12 +348,11 @@ public class GroupManagementService : ExchangeServiceBase
     private async Task<GroupMemberList> GetGraphMembersAsync(string groupId, string displayName)
     {
         var result = new GroupMemberList { GroupName = displayName };
-        using var doc = await GetGraphClient().GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
-        if (doc == null)
-        {
-            result.Error = "Failed to retrieve M365 group members.";
-            return result;
-        }
+        var client = await GetGraphClientAsync();
+        if (client == null) { result.Error = "Graph API not configured for Group Management."; return result; }
+
+        using var doc = await client.GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
+        if (doc == null) { result.Error = "Failed to retrieve M365 group members."; return result; }
 
         foreach (var m in doc.RootElement.GetProperty("value").EnumerateArray())
         {
@@ -359,16 +369,18 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> AddGraphMemberAsync(string groupId, string displayName, string member)
     {
-        using var userDoc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
-        if (userDoc == null)
-            return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
+        var client = await GetGraphClientAsync();
+        if (client == null) return PermissionResult.Fail("Graph API not configured for Group Management.");
+
+        using var userDoc = await client.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        if (userDoc == null) return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
 
         var userId = userDoc.RootElement.GetProperty("id").GetString();
         var body = new Dictionary<string, string>
         {
             ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
         };
-        var success = await GetGraphClient().PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
+        var success = await client.PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
 
         return success
             ? new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." }
@@ -377,12 +389,14 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> RemoveGraphMemberAsync(string groupId, string displayName, string member)
     {
-        using var userDoc = await GetGraphClient().GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
-        if (userDoc == null)
-            return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
+        var client = await GetGraphClientAsync();
+        if (client == null) return PermissionResult.Fail("Graph API not configured for Group Management.");
+
+        using var userDoc = await client.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
+        if (userDoc == null) return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
 
         var userId = userDoc.RootElement.GetProperty("id").GetString();
-        var success = await GetGraphClient().DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
+        var success = await client.DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
 
         return success
             ? new PermissionResult { Success = true, Message = $"{member} removed from {displayName} (M365 Group)." }
