@@ -2,7 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @using ExchangeAdminWeb.Modules
 @using ExchangeAdminWeb.Services
-@attribute [Authorize(Policy = "GroupPolicy")]
+@attribute [Authorize]
 @rendermode InteractiveServer
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -92,16 +92,6 @@
         var user = authState.User;
         currentUser = user.Identity?.Name ?? "Unknown";
 
-        // CRITICAL: Explicitly check authorization in component
-        // The [Authorize] attribute alone is not reliably enforced in Blazor Server
-        var authResult = await AuthorizationService.AuthorizeAsync(user, "GroupPolicy");
-
-        if (!authResult.Succeeded)
-        {
-            // Force redirect to access denied
-            Navigation.NavigateTo("access-denied", forceLoad: true);
-            return;
-        }
 
         authChecked = true;
     }

@@ -92,7 +92,7 @@
                     @if (selectedModule.ConfigFields.Any(f => f.Key.Contains("DelineaSecretId")))
                     {
                         <div class="alert alert-secondary py-2 mb-3">
-                            <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, the secret must contain TenantId, ClientId, and ClientSecret fields. For AD modules, it must contain Username, Password, and Domain fields. All secrets are stored centrally in Secret Server — portable across servers.</small>
+                            <small><strong>Delinea Secret Server:</strong> Enter the Secret ID for this module's credentials. For Graph modules, use the "ADI - Azure App Registration" template (fields: Tenant ID, Application ID, Client Secret). For AD modules, use a template with Username, Password, and Domain fields. All secrets are stored centrally in Secret Server — portable across servers.</small>
                         </div>
                     }
                     <div class="row g-3">
