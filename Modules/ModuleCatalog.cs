@@ -247,7 +247,7 @@ public sealed class ModuleCatalog
             DisplayName = "Conference Rooms",
             Description = "Configure room lists, metadata, and booking policies for Exchange conference rooms.",
             Route = "conference-rooms",
-            IconCss = "bi bi-house-door-fill-nav-menu",
+            IconCss = "bi bi-calendar-fill-nav-menu",
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,

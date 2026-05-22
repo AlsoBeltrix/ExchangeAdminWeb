@@ -441,9 +441,11 @@
             var previous = Enablement.GetAllEnablement();
             Enablement.SaveEnablement(moduleEnablement);
 
-            statusMessage = "Module enablement saved.";
+            statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
             Logger.LogInformation("User {User} updated module enablement", currentUser);
+            await Task.Delay(500);
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
 
             var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var module in Catalog.GetAll().Where(m => !m.IsSystemModule))
