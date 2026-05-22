@@ -74,11 +74,15 @@
         </div>
     </div>
 
+    @if (loadWarning != null)
+    {
+        <div class="alert alert-info py-2">@loadWarning</div>
+    }
     @if (loadError != null)
     {
-        <div class="alert alert-warning">@loadError</div>
+        <div class="alert alert-danger">@loadError</div>
     }
-    else if (filteredEvents.Count == 0)
+    else if (filteredEvents.Count == 0 && loadWarning == null)
     {
         <div class="alert alert-info">No events found for the selected filters.</div>
     }
@@ -161,6 +165,7 @@
     private string ipFilter = "";
     private string selectedResult = "";
     private string? loadError;
+    private string? loadWarning;
     private int currentPage = 1;
     private int expandedRow = -1;
     private const int PageSize = 50;
@@ -189,6 +194,7 @@
     private void LoadEvents()
     {
         loadError = null;
+        loadWarning = null;
         allEvents = new List<AuditEvent>();
         expandedRow = -1;
         currentPage = 1;
@@ -202,9 +208,12 @@
         var effectiveEnd = startDate <= endDate ? endDate : startDate;
 
         var filesLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var allBuffer = new List<AuditEvent>();
+        var buffer = new Queue<AuditEvent>(MaxTotalEvents + 1);
         var filesNotFound = 0;
         var totalDays = effectiveEnd.DayNumber - effectiveStart.DayNumber + 1;
+        var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+        var rangeEndUtc = effectiveEnd.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+        var totalParsed = 0;
 
         for (var d = effectiveStart; d <= effectiveEnd; d = d.AddDays(1))
         {
@@ -218,7 +227,6 @@
 
             var filePath = Path.Combine(logFolder, $"exchangeadmin_{suffix}.jsonl");
 
-            // Skip duplicate files (e.g. same week file for multiple days)
             if (!filesLoaded.Add(filePath))
                 continue;
 
@@ -237,10 +245,19 @@
                     {
                         var doc = JsonDocument.Parse(line);
                         var root = doc.RootElement;
-                        allBuffer.Add(new AuditEvent
+
+                        var tsStr = TryGetString(root, "ts");
+                        if (tsStr != null && DateTimeOffset.TryParse(tsStr, out var eventTime))
+                        {
+                            if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                                continue;
+                        }
+
+                        totalParsed++;
+                        buffer.Enqueue(new AuditEvent
                         {
                             Index = 0,
-                            Time = TryGetString(root, "ts") is string ts ? FormatTimestamp(ts) : "",
+                            Time = tsStr != null ? FormatTimestamp(tsStr) : "",
                             User = TryGetString(root, "user") ?? "",
                             Ip = TryGetString(root, "ip") ?? "",
                             Action = TryGetString(root, "action") ?? "",
@@ -249,6 +266,8 @@
                             Result = TryGetString(root, "result") ?? "",
                             RawJson = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = true })
                         });
+                        if (buffer.Count > MaxTotalEvents)
+                            buffer.Dequeue();
                     }
                     catch { }
                 }
@@ -260,7 +279,7 @@
             }
         }
 
-        if (allBuffer.Count == 0 && filesNotFound == totalDays)
+        if (buffer.Count == 0 && filesNotFound == totalDays)
         {
             loadError = effectiveStart == effectiveEnd
                 ? $"No log file found for {effectiveStart:yyyy-MM-dd}"
@@ -269,19 +288,10 @@
             return;
         }
 
-        // Take the last MaxTotalEvents entries (most recent)
-        if (allBuffer.Count > MaxTotalEvents)
-        {
-            allEvents = allBuffer.Skip(allBuffer.Count - MaxTotalEvents).ToList();
-            loadError = $"Showing last {MaxTotalEvents} of {allBuffer.Count} total events.";
-        }
-        else
-        {
-            allEvents = allBuffer;
-        }
+        if (totalParsed > MaxTotalEvents)
+            loadWarning = $"Showing last {MaxTotalEvents} of {totalParsed} events in range.";
 
-        // Reverse to show newest first, then re-index
-        allEvents.Reverse();
+        allEvents = buffer.Reverse().ToList();
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 
@@ -321,7 +331,7 @@
     private static string FormatTimestamp(string iso)
     {
         if (DateTimeOffset.TryParse(iso, out var dt))
-            return dt.ToLocalTime().ToString("HH:mm:ss");
+            return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
         return iso;
     }
 
