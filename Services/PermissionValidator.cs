@@ -188,6 +188,16 @@ public class PermissionValidator
         {
             if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
 
+            if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
+            {
+                _excludedUsers.Clear();
+                _initFailed = true;
+                _initialized = true;
+                _lastRefresh = DateTime.UtcNow;
+                _logger.LogError("Module config file is corrupt — blocking all protected-target operations until file is fixed");
+                return;
+            }
+
             var configuredExclusions = GetConfiguredExclusions();
             _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", configuredExclusions.Length);
 

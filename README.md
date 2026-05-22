@@ -296,7 +296,7 @@ Members of `Security:AdminGroups` can access the Admin Settings and Admin Event 
 
 ### Section-Level Access (SectionAccess)
 
-Each application feature is independently gated by AD group membership. A user must pass **both** the base `AllowedGroups` check **and** the section-specific group check:
+Each application feature is independently gated by AD group membership via its section access groups, managed on each module's config page (`/module-config/{ModuleId}`). The config is stored in `config/sectionaccess.json`:
 
 ```json
 "SectionAccess": {

@@ -260,14 +260,11 @@
         foreach (var gp in module.GranularPermissions)
             policyAliases.Add(gp.PolicyAlias);
 
-        var allAccess = SectionAccess.GetSectionAccess();
         accessState = new();
         accessInputs = new();
         foreach (var alias in policyAliases)
         {
-            accessState[alias] = allAccess.TryGetValue(alias, out var groups)
-                ? new List<string>(groups)
-                : new List<string>();
+            accessState[alias] = new List<string>(SectionAccess.GetGroupsForSection(alias));
             accessInputs[alias] = string.Empty;
         }
     }

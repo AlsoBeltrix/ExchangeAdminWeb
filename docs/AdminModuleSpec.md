@@ -87,7 +87,7 @@ File: `config/sectionaccess.json`
 }
 ```
 
-Managed via the Admin Settings UI. Each PolicyAlias appears as a row.
+Managed via per-module config pages (`/module-config/{ModuleId}`). Each PolicyAlias appears under Section Access.
 
 ### Module Enablement
 
@@ -127,7 +127,7 @@ The catalog validates at startup:
 
 ### Rules
 
-1. Declare a `DelineaSecretId` config field in the module descriptor. The operator sets the secret ID via Admin Settings.
+1. Declare a `DelineaSecretId` config field in the module descriptor. The operator sets the secret ID via the module's config page.
 2. Call `DelineaService.GetCredentialsBySecretIdAsync(secretId)` with the module's configured ID — never `GetExchangeCredentialsAsync()` (which is for the core Exchange module only).
 3. If the secret ID is not configured or credentials are unavailable, **fail closed** — return an error, do not fall back to the app pool identity or another module's secret.
 4. The Delinea API bootstrap credential (PasswordVault target `Delinea_Client`) is shared infrastructure. Individual module secrets retrieved through it are isolated.
@@ -220,7 +220,7 @@ Shared infrastructure in `ExchangeServiceBase`:
 Modules are rendered automatically by the catalog in:
 - **NavMenu**: sorted by `SortOrder`, filtered by enablement + authorization
 - **Home page**: cards with `DisplayName`, `Description`, link to `Route`
-- **Admin Settings**: section access rows for all `PolicyAlias` values
+- **Module Config pages**: section access + config fields per module
 
 System modules are grouped separately with warning styling.
 
@@ -244,6 +244,6 @@ The deploy script (`deploy.ps1`):
    - Module appears in nav/home when authorized
    - Module hidden when disabled
    - Direct URL denied when disabled
-   - Section access configurable in Admin Settings
+   - Section access configurable on module config page
    - Audit entries created for actions
 7. Deploy to prod
