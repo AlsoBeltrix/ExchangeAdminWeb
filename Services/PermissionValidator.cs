@@ -28,50 +28,28 @@ public class PermissionValidator
 
         moduleConfig.ConfigSaved += moduleId =>
         {
-            if (moduleId is "MailboxPermissions" or "CalendarPermissions")
+            if (moduleId == "MailboxPermissions")
                 InvalidateCache();
         };
     }
 
     private string[] GetConfiguredExclusions()
     {
-        var exclusions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        var mailboxExcluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
-        var calendarExcluded = _moduleConfig.GetValue("CalendarPermissions", "ExcludedUsers");
-
-        if (!string.IsNullOrEmpty(mailboxExcluded))
-            foreach (var e in mailboxExcluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                exclusions.Add(e);
-
-        if (!string.IsNullOrEmpty(calendarExcluded))
-            foreach (var e in calendarExcluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                exclusions.Add(e);
-
-        if (exclusions.Count == 0)
+        var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
+        if (!string.IsNullOrEmpty(excluded))
         {
-            var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
-            if (legacy != null)
-                foreach (var e in legacy) exclusions.Add(e);
+            return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
 
-        return exclusions.ToArray();
+        var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
+        return legacy ?? Array.Empty<string>();
     }
 
     private bool GetPreventSelfGrant()
     {
-        var mailboxVal = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
-        var calendarVal = _moduleConfig.GetValue("CalendarPermissions", "PreventSelfGrant");
-
-        if (!string.IsNullOrEmpty(mailboxVal) && bool.TryParse(mailboxVal, out var mbx))
-        {
-            if (!string.IsNullOrEmpty(calendarVal) && bool.TryParse(calendarVal, out var cal))
-                return mbx || cal;
-            return mbx;
-        }
-
-        if (!string.IsNullOrEmpty(calendarVal) && bool.TryParse(calendarVal, out var calOnly))
-            return calOnly;
+        var val = _moduleConfig.GetValue("MailboxPermissions", "PreventSelfGrant");
+        if (!string.IsNullOrEmpty(val) && bool.TryParse(val, out var result))
+            return result;
 
         return bool.Parse(_config["Security:PreventSelfGrant"] ?? "true");
     }
