@@ -157,10 +157,8 @@
                                     {
                                         var capturedSection = sectionName;
                                         var capturedGroup = group;
-                                        var isIneffective = ineffectiveGroups.Contains(capturedGroup);
-                                        <span class="badge @(isIneffective ? "bg-warning text-dark" : "bg-secondary") me-1 mb-1"
-                                              style="font-size: 0.8em;"
-                                              title="@(isIneffective ? "Not in AllowedGroups — users will still be denied by base gate" : "")">
+                                        <span class="badge bg-secondary me-1 mb-1"
+                                              style="font-size: 0.8em;">
                                             @capturedGroup
                                             <span role="button" class="ms-1 text-danger"
                                                   style="cursor:pointer; font-weight:bold;"
@@ -208,7 +206,6 @@
 
     private Dictionary<string, List<string>> editState = new();
     private Dictionary<string, string> newGroupInputs = new();
-    private HashSet<string> ineffectiveGroups = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -238,8 +235,6 @@
         var current = SectionAccess.GetSectionAccess();
         editState = new Dictionary<string, List<string>>();
         newGroupInputs = new Dictionary<string, string>();
-        ineffectiveGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
         foreach (var section in sections)
         {
             var sectionGroups = current.TryGetValue(section, out var groups)
@@ -247,12 +242,6 @@
                 : new List<string>();
             editState[section] = sectionGroups;
             newGroupInputs[section] = string.Empty;
-
-            foreach (var g in sectionGroups)
-            {
-                if (!IsInAllowedGroups(g))
-                    ineffectiveGroups.Add(g);
-            }
         }
     }
 
@@ -265,12 +254,6 @@
         {
             editState[section].Add(input);
 
-            if (!IsInAllowedGroups(input))
-            {
-                ineffectiveGroups.Add(input);
-                statusMessage = $"Warning: \"{input}\" is not in AllowedGroups. Users in this group will still be denied by the base access gate.";
-                statusIsError = true;
-            }
         }
         newGroupInputs[section] = string.Empty;
     }
@@ -283,13 +266,6 @@
             gp.PolicyAlias.Equals(sectionName, StringComparison.OrdinalIgnoreCase) && gp.FailClosed);
     }
 
-    private bool IsInAllowedGroups(string group)
-    {
-        var normalized = group.Contains('\\') ? group.Split('\\')[1] : group;
-        return allowedGroups.Any(g =>
-            g.Equals(group, StringComparison.OrdinalIgnoreCase) ||
-            (g.Contains('\\') ? g.Split('\\')[1] : g).Equals(normalized, StringComparison.OrdinalIgnoreCase));
-    }
 
     private void RemoveGroup(string section, string group)
     {

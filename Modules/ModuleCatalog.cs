@@ -77,7 +77,6 @@ public sealed class ModuleCatalog
             {
                 options.AddPolicy(mainAlias, policy => policy
                     .RequireAuthenticatedUser()
-                    .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
                     .AddRequirements(new GroupAuthorizationRequirement(mainAlias, dynamic: true)));
             }
 
@@ -87,7 +86,6 @@ public sealed class ModuleCatalog
 
                 options.AddPolicy(gp.PolicyAlias, policy => policy
                     .RequireAuthenticatedUser()
-                    .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
                     .AddRequirements(new GroupAuthorizationRequirement(mainAlias, dynamic: true))
                     .AddRequirements(new GroupAuthorizationRequirement(gp.PolicyAlias, dynamic: true)));
             }
