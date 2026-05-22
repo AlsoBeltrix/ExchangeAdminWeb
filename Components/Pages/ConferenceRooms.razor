@@ -362,12 +362,12 @@
                     }
 
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = r.Success, Message = r.Message });
-                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket, r.Success ? null : r.Message); } catch { }
+                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket, r.Success ? null : r.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
                 }
                 catch (Exception ex)
                 {
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = false, Message = ex.Message });
-                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message); } catch { }
+                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
                 }
 
                 StateHasChanged();

@@ -112,9 +112,12 @@ public class DhcpAuthorizationService
 
     public async Task<DhcpOperationResult> DeauthorizeServerAsync(string dnsName, string ipAddress)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var secretId = GetSecretId();
+        if (secretId is null)
+            return new DhcpOperationResult { Success = false, Message = "DHCP module not configured. Set DelineaSecretId in Admin Settings." };
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
         if (creds is null)
-            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea. Cannot deauthorize DHCP server." };
+            return new DhcpOperationResult { Success = false, Message = "Enterprise Admin credentials unavailable from Delinea." };
 
         return await Task.Run(() =>
         {
