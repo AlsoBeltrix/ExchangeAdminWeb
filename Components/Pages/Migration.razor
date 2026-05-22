@@ -734,6 +734,7 @@
         isLoading = true;
         singleResult = null;
         singleCreateResult = null;
+        await Task.Yield();
 
         try
         {
@@ -779,6 +780,7 @@
 
         isCreating = true;
         singleCreateResult = null;
+        await Task.Yield();
 
         try
         {
@@ -836,6 +838,7 @@
         isLoading = true;
         bulkResult = null;
         createResult = null;
+        await Task.Yield();
 
         try
         {
@@ -893,6 +896,7 @@
 
         isCreating = true;
         createResult = null;
+        await Task.Yield();
 
         try
         {

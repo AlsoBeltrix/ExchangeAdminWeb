@@ -184,6 +184,7 @@
     private async Task LoadPreview()
     {
         isLoading = true;
+        await Task.Yield();
         try { preview = await Comms10kService.GetMembersAsync(limit: 25); }
         catch (Exception ex) { result = new Comms10kUpdateResult { Success = false, Message = ex.Message }; }
         finally { isLoading = false; }
@@ -192,6 +193,7 @@
     private async Task DownloadFull()
     {
         isLoading = true;
+        await Task.Yield();
         try
         {
             var full = await Comms10kService.GetMembersAsync();
@@ -254,6 +256,7 @@
     private async Task ValidateEmails()
     {
         isLoading = true;
+        await Task.Yield();
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticketNumber.Trim());
@@ -277,6 +280,7 @@
         isLoading = true;
         confirmPending = false;
         var ticket = validatedTicket;
+        await Task.Yield();
 
         try
         {

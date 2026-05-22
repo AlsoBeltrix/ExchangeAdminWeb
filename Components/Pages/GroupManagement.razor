@@ -203,6 +203,7 @@
         selectedGroup = null;
         memberList = null;
         opResult = null;
+        await Task.Yield();
 
         try
         {
@@ -226,6 +227,7 @@
     private async Task LoadMembers()
     {
         isLoading = true;
+        await Task.Yield();
         try
         {
             memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
@@ -241,6 +243,7 @@
     {
         isLoading = true;
         opResult = null;
+        await Task.Yield();
         try
         {
             var ticket = ticketNumber.Trim();
@@ -276,6 +279,7 @@
     {
         isLoading = true;
         opResult = null;
+        await Task.Yield();
         try
         {
             var ticket = ticketNumber.Trim();

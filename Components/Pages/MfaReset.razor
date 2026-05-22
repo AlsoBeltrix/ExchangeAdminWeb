@@ -170,6 +170,7 @@
         result = null;
         methods = new();
         resetConfirmPending = false;
+        await Task.Yield();
 
         try
         {
@@ -201,6 +202,7 @@
     {
         isLoading = true;
         resetConfirmPending = false;
+        await Task.Yield();
 
         try
         {

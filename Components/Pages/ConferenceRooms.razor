@@ -250,6 +250,7 @@
     {
         isLoading = true;
         result = null;
+        await Task.Yield();
 
         try
         {
@@ -334,6 +335,7 @@
         isLoading = true;
         isCsvProcessing = true;
         csvResults = new();
+        await Task.Yield();
 
         try
         {
@@ -393,6 +395,7 @@
     {
         isLoading = true;
         result = null;
+        await Task.Yield();
 
         try
         {

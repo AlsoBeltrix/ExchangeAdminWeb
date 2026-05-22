@@ -66,9 +66,12 @@ public class Comms10kService
             var members = ps.Invoke();
             ps.Commands.Clear();
 
-            var result = new Comms10kMemberList { GroupName = group };
+            var result = new Comms10kMemberList { GroupName = group, TotalCount = members.Count };
 
-            foreach (var member in members)
+            // Only resolve details for the limited set (preview) or all (export)
+            var toResolve = limit.HasValue ? members.Take(limit.Value) : members;
+
+            foreach (var member in toResolve)
             {
                 var sam = member.Properties["SamAccountName"]?.Value?.ToString() ?? "";
                 var name = member.Properties["Name"]?.Value?.ToString() ?? "";
@@ -92,10 +95,6 @@ public class Comms10kService
                     DisplayName = displayName
                 });
             }
-
-            result.TotalCount = result.Members.Count;
-            if (limit.HasValue)
-                result.Members = result.Members.Take(limit.Value).ToList();
 
             return result;
         });

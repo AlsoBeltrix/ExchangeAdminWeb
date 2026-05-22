@@ -291,6 +291,7 @@
     {
         isLoading = true;
         result = null;
+        await Task.Yield();
 
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
@@ -438,6 +439,7 @@
 
         isLoading = true;
         bulkResult = null;
+        await Task.Yield();
 
         try
         {
@@ -500,6 +502,7 @@
         if (sendAs) perms.Add("SendAs");
         var permType = string.Join("+", perms);
         var action = $"OnPrem_{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
+        await Task.Yield();
 
         try
         {

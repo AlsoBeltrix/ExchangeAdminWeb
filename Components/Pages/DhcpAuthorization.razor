@@ -169,6 +169,7 @@
     {
         isLoading = true;
         loadError = null;
+        await Task.Yield();
         try
         {
             servers = await DhcpService.GetAuthorizedServersAsync();
@@ -188,6 +189,7 @@
     {
         isOperating = true;
         operationResult = null;
+        await Task.Yield();
 
         try
         {
@@ -255,6 +257,7 @@
         isOperating = true;
         operationResult = null;
         confirmRemove = null;
+        await Task.Yield();
 
         try
         {

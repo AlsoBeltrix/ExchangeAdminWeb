@@ -286,6 +286,7 @@
     {
         isLoading = true;
         result = null;
+        await Task.Yield();
 
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
@@ -433,6 +434,7 @@
 
         isLoading = true;
         bulkResult = null;
+        await Task.Yield();
 
         try
         {
@@ -501,6 +503,7 @@
             action = "OnPrem_RemoveCalendar";
             level = null;
         }
+        await Task.Yield();
 
         try
         {
