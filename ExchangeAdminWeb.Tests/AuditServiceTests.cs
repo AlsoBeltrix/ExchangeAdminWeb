@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ExchangeAdminWeb.Services;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -22,7 +24,7 @@ public class AuditServiceTests : IDisposable
             })
             .Build();
 
-        _audit = new AuditService(config);
+        _audit = new AuditService(config, Substitute.For<ILogger<AuditService>>());
     }
 
     public void Dispose()
@@ -158,7 +160,7 @@ public class AuditServiceTests : IDisposable
             })
             .Build();
 
-        Assert.ThrowsAny<Exception>(() => new AuditService(config));
+        Assert.ThrowsAny<Exception>(() => new AuditService(config, Substitute.For<ILogger<AuditService>>()));
     }
 
     [Fact]

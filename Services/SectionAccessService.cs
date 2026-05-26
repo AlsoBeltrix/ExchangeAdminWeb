@@ -13,6 +13,9 @@ public class SectionAccessService
     private readonly string[] _allowedGroups;
     private readonly string[] _adminGroups;
     private readonly object _writeLock = new();
+    private CachedAccess? _cache;
+
+    private sealed record CachedAccess(Dictionary<string, string[]> Data, SectionAccessSource Source);
 
     public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env)
     {
@@ -79,6 +82,17 @@ public class SectionAccessService
     private enum SectionAccessSource { None, Fragment, AppSettings }
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()
+    {
+        var cached = _cache;
+        if (cached != null)
+            return (cached.Data, cached.Source);
+
+        var result = ReadSectionAccessFromDisk();
+        _cache = new CachedAccess(result.data, result.source);
+        return result;
+    }
+
+    private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccessFromDisk()
     {
         if (File.Exists(_configFilePath))
         {
@@ -149,6 +163,7 @@ public class SectionAccessService
                 else
                     File.Move(tempPath, _configFilePath);
 
+                _cache = null;
                 _logger.LogInformation("SectionAccess config saved to {Path}", _configFilePath);
             }
             finally

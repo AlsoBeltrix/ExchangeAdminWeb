@@ -8,6 +8,7 @@ public class AuditService
 {
     private readonly string _logFolder;
     private readonly string _rotationPeriod;
+    private readonly ILogger<AuditService> _logger;
     private readonly object _lock = new();
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -15,8 +16,9 @@ public class AuditService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    public AuditService(IConfiguration config)
+    public AuditService(IConfiguration config, ILogger<AuditService> logger)
     {
+        _logger = logger;
         var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
@@ -221,9 +223,16 @@ public class AuditService
         var json = JsonSerializer.Serialize(filtered, JsonOpts);
         var logPath = Path.Combine(_logFolder, GetLogFilename());
 
-        lock (_lock)
+        try
         {
-            File.AppendAllText(logPath, json + "\n");
+            lock (_lock)
+            {
+                File.AppendAllText(logPath, json + "\n");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to write audit event to {Path}", logPath);
         }
     }
 

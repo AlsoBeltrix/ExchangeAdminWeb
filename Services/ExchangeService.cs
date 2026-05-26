@@ -223,6 +223,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         var errors = new List<string>();
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;
+        var pendingRows = new List<(MailboxPermissionCsvRow row, bool fullAccess, bool sendAs, bool autoMap, string permType)>();
 
         foreach (var row in records)
         {
@@ -299,40 +300,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                     }
                 }
 
-                var result = isAdd
-                    ? await AddMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs, autoMap)
-                    : await RemoveMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs);
-
-                var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
-                audit.LogMailboxPermission(
-                    currentUser, ipAddress, action, row.Target, row.User, permType,
-                    result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
-                    errorDetail: result.Success ? null : result.Message);
-
-                if (result.Success)
-                {
-                    successCount++;
-                    entries.Add(new BulkOperationEntry
-                    {
-                        Target = row.Target,
-                        User = row.User,
-                        Permission = permType,
-                        Status = "SUCCESS",
-                        Message = result.Message
-                    });
-                }
-                else
-                {
-                    errors.Add($"{row.Target}/{row.User}: {result.Message}");
-                    entries.Add(new BulkOperationEntry
-                    {
-                        Target = row.Target,
-                        User = row.User,
-                        Permission = permType,
-                        Status = "FAILED",
-                        Message = result.Message
-                    });
-                }
+                pendingRows.Add((row, fullAccess, sendAs, autoMap, permType));
             }
             catch (Exception ex)
             {
@@ -350,6 +318,48 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                     Message = ex.Message
                 });
             }
+        }
+
+        if (pendingRows.Count > 0)
+        {
+            await RunPooledBatchAsync(ps => Task.Run(() =>
+            {
+                foreach (var (row, fullAccess, sendAs, autoMap, permType) in pendingRows)
+                {
+                    var result = ExecuteMailboxPermission(ps, row.Target, row.User, fullAccess, sendAs, autoMap, isAdd);
+
+                    var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
+                    audit.LogMailboxPermission(
+                        currentUser, ipAddress, action, row.Target, row.User, permType,
+                        result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
+                        errorDetail: result.Success ? null : result.Message);
+
+                    if (result.Success)
+                    {
+                        successCount++;
+                        entries.Add(new BulkOperationEntry
+                        {
+                            Target = row.Target,
+                            User = row.User,
+                            Permission = permType,
+                            Status = "SUCCESS",
+                            Message = result.Message
+                        });
+                    }
+                    else
+                    {
+                        errors.Add($"{row.Target}/{row.User}: {result.Message}");
+                        entries.Add(new BulkOperationEntry
+                        {
+                            Target = row.Target,
+                            User = row.User,
+                            Permission = permType,
+                            Status = "FAILED",
+                            Message = result.Message
+                        });
+                    }
+                }
+            }));
         }
 
         return new BulkOperationResult
@@ -379,6 +389,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         var errors = new List<string>();
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;
+        var pendingRows = new List<(CalendarPermissionCsvRow row, string permType)>();
 
         foreach (var row in records)
         {
@@ -408,7 +419,6 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                     var selfGrantError = await validator.ValidateSelfGrantAsync(currentUser, row.User);
                     if (selfGrantError is not null)
                     {
-                        // Log self-grant attempt to audit log
                         audit.LogCalendarPermission(
                             currentUser, ipAddress, "BulkSetCalendar_SelfGrantAttempt",
                             row.Target, row.User, row.AccessRight, false, ticketNumber,
@@ -428,41 +438,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 }
 
                 var permType = isSet ? row.AccessRight : "Remove";
-
-                var result = isSet
-                    ? await SetCalendarPermissionAsync(row.Target, row.User, Enum.Parse<CalendarAccessRight>(row.AccessRight))
-                    : await RemoveCalendarPermissionAsync(row.Target, row.User);
-
-                var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
-                audit.LogCalendarPermission(
-                    currentUser, ipAddress, action, row.Target, row.User,
-                    isSet ? row.AccessRight : null, result.Success, ticketNumber,
-                    errorDetail: result.Success ? null : result.Message);
-
-                if (result.Success)
-                {
-                    successCount++;
-                    entries.Add(new BulkOperationEntry
-                    {
-                        Target = row.Target,
-                        User = row.User,
-                        Permission = permType,
-                        Status = "SUCCESS",
-                        Message = result.Message
-                    });
-                }
-                else
-                {
-                    errors.Add($"{row.Target}/{row.User}: {result.Message}");
-                    entries.Add(new BulkOperationEntry
-                    {
-                        Target = row.Target,
-                        User = row.User,
-                        Permission = permType,
-                        Status = "FAILED",
-                        Message = result.Message
-                    });
-                }
+                pendingRows.Add((row, permType));
             }
             catch (Exception ex)
             {
@@ -480,6 +456,48 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                     Message = ex.Message
                 });
             }
+        }
+
+        if (pendingRows.Count > 0)
+        {
+            await RunPooledBatchAsync(ps => Task.Run(() =>
+            {
+                foreach (var (row, permType) in pendingRows)
+                {
+                    var result = ExecuteCalendarPermission(ps, row.Target, row.User, isSet ? row.AccessRight : null, isSet);
+
+                    var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
+                    audit.LogCalendarPermission(
+                        currentUser, ipAddress, action, row.Target, row.User,
+                        isSet ? row.AccessRight : null, result.Success, ticketNumber,
+                        errorDetail: result.Success ? null : result.Message);
+
+                    if (result.Success)
+                    {
+                        successCount++;
+                        entries.Add(new BulkOperationEntry
+                        {
+                            Target = row.Target,
+                            User = row.User,
+                            Permission = permType,
+                            Status = "SUCCESS",
+                            Message = result.Message
+                        });
+                    }
+                    else
+                    {
+                        errors.Add($"{row.Target}/{row.User}: {result.Message}");
+                        entries.Add(new BulkOperationEntry
+                        {
+                            Target = row.Target,
+                            User = row.User,
+                            Permission = permType,
+                            Status = "FAILED",
+                            Message = result.Message
+                        });
+                    }
+                }
+            }));
         }
 
         return new BulkOperationResult
@@ -1996,18 +2014,35 @@ https://admin.exchange.microsoft.com/#/migration";
 
         var credential = new PSCredential(fullUsername, securePassword);
 
-        ps.AddCommand("New-PSSession")
-          .AddParameter("ConfigurationName", "Microsoft.Exchange")
-          .AddParameter("ConnectionUri", _onPremServerUri)
-          .AddParameter("Authentication", "Kerberos")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var sessions = Invoke(ps);
-        var session = sessions.FirstOrDefault() ?? throw new InvalidOperationException("Failed to create on-prem Exchange session");
+        const int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                ps.Commands.Clear();
+                ps.Streams.Error.Clear();
+                ps.AddCommand("New-PSSession")
+                  .AddParameter("ConfigurationName", "Microsoft.Exchange")
+                  .AddParameter("ConnectionUri", _onPremServerUri)
+                  .AddParameter("Authentication", "Kerberos")
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                var sessions = Invoke(ps);
+                var session = sessions.FirstOrDefault()
+                    ?? throw new InvalidOperationException("New-PSSession returned no session object");
 
-        ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
+                ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
+                _logger.LogInformation("Connected to on-prem Exchange at {Uri} (attempt {Attempt})", _onPremServerUri, attempt);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying after delay", attempt, maxRetries);
+                Thread.Sleep(2000 * attempt);
+            }
+        }
 
-        _logger.LogInformation("Connected to on-prem Exchange at {Uri}", _onPremServerUri);
+        throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
     }
 
     private static double ParseExchangeSize(string? sizeString)
@@ -2152,6 +2187,154 @@ https://admin.exchange.microsoft.com/#/migration";
                 _exoPool.Discard(pooled);
             else
                 _exoPool.Return(pooled);
+        }
+    }
+
+    private async Task RunPooledBatchAsync(Func<PowerShell, Task> batchOperation)
+    {
+        var pooled = await _exoPool.BorrowAsync();
+        bool discard = false;
+        try
+        {
+            await Task.Run(async () =>
+            {
+                ConnectionErrorFlag = false;
+                await batchOperation(pooled.PowerShell);
+                if (ConnectionErrorFlag) discard = true;
+            });
+        }
+        catch (Exception ex) when (IsConnectionError(ex))
+        {
+            discard = true;
+            throw;
+        }
+        finally
+        {
+            if (discard)
+                _exoPool.Discard(pooled);
+            else
+                _exoPool.Return(pooled);
+        }
+    }
+
+    private PermissionResult ExecuteMailboxPermission(PowerShell ps, string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping, bool isAdd)
+    {
+        try
+        {
+            ValidateMailbox(ps, targetMailbox);
+            ValidateRecipient(ps, user);
+
+            if (isAdd)
+            {
+                if (fullAccess)
+                {
+                    ps.AddCommand("Add-MailboxPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", "FullAccess")
+                      .AddParameter("AutoMapping", autoMapping)
+                      .AddParameter("Confirm", false);
+                    Invoke(ps);
+                }
+                if (sendAs)
+                {
+                    ps.AddCommand("Add-RecipientPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Trustee", user)
+                      .AddParameter("AccessRights", "SendAs")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps);
+                }
+            }
+            else
+            {
+                if (fullAccess)
+                {
+                    ps.AddCommand("Remove-MailboxPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", "FullAccess")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps);
+                }
+                if (sendAs)
+                {
+                    ps.AddCommand("Remove-RecipientPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Trustee", user)
+                      .AddParameter("AccessRights", "SendAs")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps);
+                }
+            }
+
+            return PermissionResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            var psErrors = ps.Streams.Error
+                .Select(e => e.Exception?.Message ?? e.ToString())
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .ToList();
+            ps.Streams.Error.Clear();
+            var primary = psErrors.FirstOrDefault() ?? ex.Message;
+            if (IsConnectionError(ex)) ConnectionErrorFlag = true;
+            return PermissionResult.Fail(primary);
+        }
+    }
+
+    private PermissionResult ExecuteCalendarPermission(PowerShell ps, string targetMailbox, string user, string? accessRight, bool isSet)
+    {
+        try
+        {
+            var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
+            ValidateRecipient(ps, user);
+            var calendarPath = GetCalendarFolderName(ps, resolvedMailbox);
+
+            if (isSet && accessRight != null)
+            {
+                ps.AddCommand("Set-MailboxFolderPermission")
+                  .AddParameter("Identity", calendarPath)
+                  .AddParameter("User", user)
+                  .AddParameter("AccessRights", accessRight)
+                  .AddParameter("ErrorAction", "Stop");
+                try
+                {
+                    Invoke(ps);
+                }
+                catch
+                {
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                    ps.AddCommand("Add-MailboxFolderPermission")
+                      .AddParameter("Identity", calendarPath)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", accessRight)
+                      .AddParameter("ErrorAction", "Stop");
+                    Invoke(ps);
+                }
+            }
+            else
+            {
+                ps.AddCommand("Remove-MailboxFolderPermission")
+                  .AddParameter("Identity", calendarPath)
+                  .AddParameter("User", user)
+                  .AddParameter("Confirm", false);
+                Invoke(ps);
+            }
+
+            return PermissionResult.Ok();
+        }
+        catch (Exception ex)
+        {
+            var psErrors = ps.Streams.Error
+                .Select(e => e.Exception?.Message ?? e.ToString())
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .ToList();
+            ps.Streams.Error.Clear();
+            var primary = psErrors.FirstOrDefault() ?? ex.Message;
+            if (IsConnectionError(ex)) ConnectionErrorFlag = true;
+            return PermissionResult.Fail(primary);
         }
     }
 

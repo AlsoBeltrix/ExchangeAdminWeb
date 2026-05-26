@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
@@ -7,8 +8,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class PermissionValidator
 {
-    private readonly HashSet<string> _excludedUsers = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _excludedObjectIds = new(StringComparer.OrdinalIgnoreCase);
+    private ImmutableHashSet<string> _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
+    private ImmutableDictionary<string, string> _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
@@ -190,7 +191,8 @@ public class PermissionValidator
 
             if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
             {
-                _excludedUsers.Clear();
+                _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
+                _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
                 _initFailed = true;
                 _initialized = true;
                 _lastRefresh = DateTime.UtcNow;
@@ -201,38 +203,38 @@ public class PermissionValidator
             var configuredExclusions = GetConfiguredExclusions();
             _logger.LogInformation("Initializing permission validator with {Count} configured exclusions", configuredExclusions.Length);
 
-            _excludedUsers.Clear();
+            var newExcluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var entry in configuredExclusions)
             {
                 var trimmed = entry.Trim();
                 if (string.IsNullOrWhiteSpace(trimmed)) continue;
 
-                _excludedUsers.Add(trimmed);
+                newExcluded.Add(trimmed);
 
                 var members = await TryExpandGroupAsync(trimmed);
                 foreach (var member in members)
                 {
-                    _excludedUsers.Add(member);
+                    newExcluded.Add(member);
                     _logger.LogDebug("Excluded (from group {Group}): {Member}", trimmed, member);
                 }
             }
 
-            _excludedObjectIds.Clear();
+            var newObjectIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
             {
                 using var scope = _scopeFactory.CreateScope();
                 var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
                 if (resolver != null)
                 {
-                    foreach (var user in _excludedUsers)
+                    foreach (var user in newExcluded)
                     {
                         var objectId = await resolver.ResolveToObjectIdAsync(user);
                         if (objectId != null)
-                            _excludedObjectIds[user] = objectId;
+                            newObjectIds[user] = objectId;
                     }
                     _logger.LogInformation("Resolved {Count}/{Total} excluded identities to ObjectIds",
-                        _excludedObjectIds.Count, _excludedUsers.Count);
+                        newObjectIds.Count, newExcluded.Count);
                 }
             }
             catch (Exception ex)
@@ -240,6 +242,8 @@ public class PermissionValidator
                 _logger.LogWarning(ex, "Failed to resolve some excluded-user ObjectIds — string matching will be used as fallback");
             }
 
+            _excludedUsers = newExcluded.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+            _excludedObjectIds = newObjectIds.ToImmutableDictionary(StringComparer.OrdinalIgnoreCase);
             _initFailed = false;
             _initialized = true;
             _lastRefresh = DateTime.UtcNow;
@@ -247,7 +251,8 @@ public class PermissionValidator
         }
         catch (Exception ex)
         {
-            _excludedUsers.Clear();
+            _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
+            _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
             _initFailed = true;
             _initialized = true;
             _lastRefresh = DateTime.UtcNow;
