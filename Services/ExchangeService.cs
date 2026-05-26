@@ -618,16 +618,14 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 }
                 else
                 {
-                    result.Status = MigrationStatus.Ineligible;
-                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} - marking ineligible", emailAddress);
-                    result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
+                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} — size check skipped", emailAddress);
+                    result.Warnings.Add("Could not verify on-prem mailbox size (on-prem connection unavailable) — size check skipped");
                 }
             }
             catch (Exception sizeEx)
             {
-                result.Status = MigrationStatus.Ineligible;
                 _logger.LogError(sizeEx, "Error checking on-prem mailbox size for {Email}", emailAddress);
-                result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+                result.Warnings.Add($"Could not verify on-prem mailbox size ({sizeEx.Message}) — size check skipped");
             }
         }
 

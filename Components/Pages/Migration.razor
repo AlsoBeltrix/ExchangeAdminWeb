@@ -88,6 +88,17 @@
                                 </ul>
                             }
                         }
+                        @if (singleResult.Warnings.Any())
+                        {
+                            <hr />
+                            <strong>Warnings:</strong>
+                            <ul class="mb-0">
+                                @foreach (var warning in singleResult.Warnings)
+                                {
+                                    <li class="text-warning">@warning</li>
+                                }
+                            </ul>
+                        }
                         @if (singleResult.MailboxSizeGB > 0 || singleResult.ArchiveSizeGB > 0)
                         {
                             <p class="mb-1">

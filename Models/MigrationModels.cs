@@ -5,6 +5,7 @@ public class MigrationEligibilityResult
     public required string EmailAddress { get; set; }
     public MigrationStatus Status { get; set; }
     public List<string> IneligibilityReasons { get; set; } = new();
+    public List<string> Warnings { get; set; } = new();
     public double MailboxSizeGB { get; set; }
     public double ArchiveSizeGB { get; set; }
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
