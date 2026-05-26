@@ -11,6 +11,7 @@
 @inject IConfiguration Config
 @inject IJSRuntime JS
 @inject ILogger<AdminEventLog> Logger
+@inject ExtendedLogService ExtendedLog
 
 <PageTitle>Event Log</PageTitle>
 
@@ -154,10 +155,30 @@
             </nav>
         }
     }
+
+    @if (ExtendedLog.HasExtendedLogs(startDate.ToDateTime(TimeOnly.MinValue)))
+    {
+        <div class="mt-4">
+            <button class="btn btn-outline-info btn-sm" @onclick="ToggleExtendedLogs">
+                @(showExtendedLogs ? "Hide" : "Show") Extended Logs
+            </button>
+            @if (showExtendedLogs)
+            {
+                <div class="card mt-2">
+                    <div class="card-header"><strong>Extended Diagnostic Logs</strong> <small class="text-muted">(@startDate)</small></div>
+                    <div class="card-body p-0">
+                        <pre class="m-0 p-3" style="max-height: 400px; overflow-y: auto; font-size: 0.75em; background: #1a1d21; color: #e0e0e0;">@string.Join("\n", extendedLogEntries)</pre>
+                    </div>
+                </div>
+            }
+        </div>
+    }
 </div>
 
 @code {
     private bool authChecked;
+    private bool showExtendedLogs;
+    private List<string> extendedLogEntries = new();
     private DateOnly startDate = DateOnly.FromDateTime(DateTime.Today);
     private DateOnly endDate = DateOnly.FromDateTime(DateTime.Today);
     private string selectedCategory = "";
@@ -371,6 +392,13 @@
         var base64 = Convert.ToBase64String(bytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         await JS.InvokeVoidAsync("downloadFile", $"event_log_{timestamp}.csv", "text/csv", base64);
+    }
+
+    private void ToggleExtendedLogs()
+    {
+        showExtendedLogs = !showExtendedLogs;
+        if (showExtendedLogs)
+            extendedLogEntries = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue));
     }
 
     private class AuditEvent

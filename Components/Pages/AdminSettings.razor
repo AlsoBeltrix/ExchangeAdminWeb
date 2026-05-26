@@ -4,6 +4,7 @@
 @attribute [Authorize(Policy = "AdminSettings")]
 @rendermode InteractiveServer
 @inject AuditService Audit
+@inject ExtendedLogService ExtendedLog
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -68,6 +69,33 @@
             </div>
         </div>
     </div>
+
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Extended Logging</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveLogLevel" disabled="@saving">Save</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3"><small>Controls the detail level of extended diagnostic logs. Admin audit logging (event log) is always active regardless of this setting. Extended logs are written to a separate file and viewable from the Event Log page.</small></p>
+            <div class="row align-items-center">
+                <div class="col-auto">
+                    <label class="form-label mb-0 fw-semibold">Log Level</label>
+                </div>
+                <div class="col-auto">
+                    <select class="form-select form-select-sm" style="width: 150px;" @bind="selectedLogLevel">
+                        <option value="None">None</option>
+                        <option value="Error">Error</option>
+                        <option value="Warning">Warning</option>
+                        <option value="Information">Info</option>
+                        <option value="Debug">Debug</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <small class="text-muted">Current: @ExtendedLog.CurrentLevel</small>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 @code {
@@ -78,6 +106,7 @@
     private bool statusIsError;
 
     private Dictionary<string, bool> moduleEnablement = new();
+    private string selectedLogLevel = "None";
 
     protected override async Task OnInitializedAsync()
     {
@@ -93,6 +122,7 @@
         }
 
         moduleEnablement = Enablement.GetAllEnablement();
+        selectedLogLevel = ExtendedLog.CurrentLevel;
         authChecked = true;
     }
 
@@ -141,6 +171,44 @@
         catch (Exception ex)
         {
             statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task SaveLogLevel()
+    {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Authorization check failed.";
+                statusIsError = true;
+                return;
+            }
+
+            var previousLevel = ExtendedLog.CurrentLevel;
+            ExtendedLog.SetLevel(selectedLogLevel);
+
+            var ip = ClientInfo.GetIpForUser(currentUser);
+            try { Audit.LogSettingsChange(currentUser, ip, "ExtendedLogLevel", new[] { previousLevel }, new[] { selectedLogLevel }); }
+            catch { }
+
+            statusMessage = $"Extended log level set to {ExtendedLog.CurrentLevel}.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save log level: {ex.Message}";
             statusIsError = true;
         }
         finally

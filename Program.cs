@@ -74,6 +74,7 @@ try
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
 
+    builder.Services.AddSingleton<ExtendedLogService>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<PermissionValidator>();
