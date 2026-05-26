@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -7,6 +8,7 @@ public class DelineaService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<DelineaService> _logger;
+    private readonly ExtendedLogService _extLog;
     private readonly string _secretServerUrl;
     private string _apiUsername = string.Empty;
     private string _apiKey = string.Empty;
@@ -15,10 +17,11 @@ public class DelineaService
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
 
-    public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger)
+    public DelineaService(IHttpClientFactory httpClientFactory, IConfiguration config, ILogger<DelineaService> logger, ExtendedLogService extLog)
     {
         _httpClient = httpClientFactory.CreateClient();
         _logger = logger;
+        _extLog = extLog;
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
         _exchangeSecretId = int.Parse(config["Delinea:ExchangeSecretId"] ?? throw new InvalidOperationException("Delinea:ExchangeSecretId not configured"));
 
@@ -106,9 +109,11 @@ public class DelineaService
             if (string.IsNullOrEmpty(_apiUsername) || string.IsNullOrEmpty(_apiKey))
             {
                 _logger.LogWarning("Delinea credentials not found in Credential Manager (target: {Target})", _credentialTarget);
+                _extLog.Write(LogEventLevel.Error, "Delinea bootstrap credentials not found", "Delinea", $"Target={_credentialTarget}");
                 return null;
             }
             _logger.LogInformation("Delinea credentials loaded on retry from Credential Manager");
+            _extLog.Write(LogEventLevel.Information, "Delinea bootstrap credentials loaded on retry", "Delinea", $"Target={_credentialTarget}; User={_apiUsername}");
         }
 
         try
@@ -134,6 +139,7 @@ public class DelineaService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogError("Failed to retrieve secret {SecretId}: {StatusCode}", secretId, response.StatusCode);
+                _extLog.Write(LogEventLevel.Error, "Delinea credential request failed", "Delinea", $"SecretId={secretId}; Status={response.StatusCode}");
                 return null;
             }
 
@@ -161,20 +167,24 @@ public class DelineaService
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
                 _logger.LogError("Secret {SecretId} missing username or password fields", secretId);
+                _extLog.Write(LogEventLevel.Error, "Delinea credential secret missing username or password", "Delinea", $"SecretId={secretId}");
                 return null;
             }
 
             if (string.IsNullOrEmpty(domain))
             {
                 _logger.LogError("Secret {SecretId} missing Domain field — cannot construct credential", secretId);
+                _extLog.Write(LogEventLevel.Error, "Delinea credential secret missing Domain field", "Delinea", $"SecretId={secretId}");
                 return null;
             }
 
+            _extLog.Write(LogEventLevel.Information, "Delinea credentials retrieved", "Delinea", $"SecretId={secretId}; User={username}; Domain={domain}");
             return (username!, password!, domain);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error retrieving credentials from Delinea Secret Server for secret {SecretId}", secretId);
+            _extLog.Write(LogEventLevel.Error, "Exception retrieving Delinea credentials", "Delinea", $"SecretId={secretId}; Error={ex.Message}");
             return null;
         }
     }
@@ -191,7 +201,12 @@ public class DelineaService
         try
         {
             if (!string.IsNullOrEmpty(_accessToken) && DateTime.UtcNow < _tokenExpiry.AddMinutes(-5))
+            {
+                _extLog.Write(LogEventLevel.Debug, "Using cached Delinea access token", "Delinea", $"ClientId=sdk-client-{_apiUsername}; ExpiresUtc={_tokenExpiry:o}");
                 return _accessToken;
+            }
+
+            _extLog.Write(LogEventLevel.Debug, "Authenticating to Delinea Secret Server", "Delinea", $"ClientId=sdk-client-{_apiUsername}");
 
             var authBody = new FormUrlEncodedContent(new[]
             {
@@ -207,6 +222,7 @@ public class DelineaService
                 var errorBody = await authResponse.Content.ReadAsStringAsync();
                 _logger.LogError("Delinea auth failed: {Status} | ClientId: {ClientId} | Response: {Body}",
                     authResponse.StatusCode, _apiUsername, errorBody);
+                _extLog.Write(LogEventLevel.Error, "Delinea authentication failed", "Delinea", $"ClientId=sdk-client-{_apiUsername}; Status={authResponse.StatusCode}; Response={errorBody}");
                 throw new InvalidOperationException($"Failed to authenticate to Delinea Secret Server: {authResponse.StatusCode}");
             }
 
@@ -218,6 +234,7 @@ public class DelineaService
             _tokenExpiry = DateTime.UtcNow.AddSeconds(expiresIn);
 
             _logger.LogInformation("Successfully authenticated to Delinea Secret Server");
+            _extLog.Write(LogEventLevel.Information, "Authenticated to Delinea Secret Server", "Delinea", $"ClientId=sdk-client-{_apiUsername}; ExpiresUtc={_tokenExpiry:o}");
             return _accessToken;
         }
         finally

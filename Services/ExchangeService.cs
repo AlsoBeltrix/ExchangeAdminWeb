@@ -7,6 +7,7 @@ using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
+using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -20,6 +21,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string _onPremServerUri;
     private readonly DelineaService _delineaService;
     private readonly ExoConnectionPool _exoPool;
+    private readonly ExtendedLogService _extLog;
     private readonly IConfiguration _config;
     private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
@@ -53,7 +55,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         }
     }
 
-    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool, ModuleConfigService moduleConfig)
+    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool, ModuleConfigService moduleConfig, ExtendedLogService extLog)
     {
         _appId = config["ExchangeOnline:AppId"]
             ?? throw new InvalidOperationException("ExchangeOnline:AppId is not configured.");
@@ -74,6 +76,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "";
         _delineaService = delineaService;
         _exoPool = exoPool;
+        _extLog = extLog;
     }
 
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
@@ -1564,9 +1567,13 @@ https://admin.exchange.microsoft.com/#/migration";
         if (string.IsNullOrEmpty(_onPremServerUri))
             throw new InvalidOperationException("OnPremExchange:ServerUri is not configured");
 
+        _extLog.Write(LogEventLevel.Debug, "Retrieving on-prem Exchange credentials for mailbox size check", "OnPremExchange", $"Target={emailAddress}");
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
+        {
+            _extLog.Write(LogEventLevel.Error, "On-prem Exchange credentials unavailable for mailbox size check", "OnPremExchange", $"Target={emailAddress}");
             throw new InvalidOperationException("Failed to retrieve on-prem credentials from Delinea — check Secret Server connectivity and Delinea:ExchangeSecretId config");
+        }
 
         return await ThrottledAsync(() => Task.Run(() =>
         {
@@ -1591,6 +1598,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 var mailboxGB = ParseExchangeSize(totalItemSize);
 
                 _logger.LogInformation("On-prem mailbox size for {Email}: {Size} GB", emailAddress, mailboxGB);
+                _extLog.Write(LogEventLevel.Information, "Retrieved on-prem mailbox size", "OnPremExchange", $"Target={emailAddress}; MailboxGB={mailboxGB:F2}");
 
                 double archiveGB = 0;
                 try
@@ -1604,10 +1612,12 @@ https://admin.exchange.microsoft.com/#/migration";
                     var archiveSize = archiveStats.FirstOrDefault()?.Properties["TotalItemSize"]?.Value?.ToString();
                     archiveGB = ParseExchangeSize(archiveSize);
                     _logger.LogInformation("On-prem archive size for {Email}: {Size} GB", emailAddress, archiveGB);
+                    _extLog.Write(LogEventLevel.Information, "Retrieved on-prem archive size", "OnPremExchange", $"Target={emailAddress}; ArchiveGB={archiveGB:F2}");
                 }
                 catch
                 {
                     _logger.LogInformation("No archive mailbox found for {Email}", emailAddress);
+                    _extLog.Write(LogEventLevel.Debug, "No on-prem archive mailbox found", "OnPremExchange", $"Target={emailAddress}");
                 }
 
                 return ((double mailboxSizeGB, double archiveSizeGB)?)(mailboxGB, archiveGB);
@@ -1615,6 +1625,7 @@ https://admin.exchange.microsoft.com/#/migration";
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to get on-prem mailbox size for {Email}", emailAddress);
+                _extLog.Write(LogEventLevel.Error, "Failed to get on-prem mailbox size", "OnPremExchange", $"Target={emailAddress}; Error={ex.Message}");
                 return null;
             }
             finally
@@ -1652,6 +1663,7 @@ https://admin.exchange.microsoft.com/#/migration";
         if (creds is null)
         {
             _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
+            _extLog.Write(LogEventLevel.Error, "On-prem Exchange credentials unavailable for DAG resolution", "OnPremExchange", $"DAG={_onPremTargetDAG}");
             return null;
         }
 
@@ -1690,12 +1702,14 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 _logger.LogInformation("Resolved {Count} databases from DAG '{DagName}': {Databases}",
                     databases.Length, _onPremTargetDAG, string.Join(", ", databases));
+                _extLog.Write(LogEventLevel.Information, "Resolved databases from DAG", "OnPremExchange", $"DAG={_onPremTargetDAG}; Count={databases.Length}; Databases={string.Join(", ", databases)}");
 
                 return databases;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to resolve databases for DAG '{DagName}'", _onPremTargetDAG);
+                _extLog.Write(LogEventLevel.Error, "Failed to resolve databases from DAG", "OnPremExchange", $"DAG={_onPremTargetDAG}; Error={ex.Message}");
                 return null;
             }
             finally
@@ -2027,11 +2041,13 @@ https://admin.exchange.microsoft.com/#/migration";
 
                 ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
                 _logger.LogInformation("Connected to on-prem Exchange at {Uri} (attempt {Attempt})", _onPremServerUri, attempt);
+                _extLog.Write(LogEventLevel.Debug, "Connected to on-prem Exchange", "OnPremExchange", $"Uri={_onPremServerUri}; Attempt={attempt}; User={fullUsername}");
                 return;
             }
             catch (Exception ex) when (attempt < maxRetries)
             {
                 _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying after delay", attempt, maxRetries);
+                _extLog.Write(LogEventLevel.Warning, "On-prem Exchange connection attempt failed", "OnPremExchange", $"Uri={_onPremServerUri}; Attempt={attempt}; Max={maxRetries}; Error={ex.Message}");
                 Thread.Sleep(2000 * attempt);
             }
         }

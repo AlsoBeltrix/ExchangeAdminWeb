@@ -44,21 +44,23 @@ public sealed record ModulePermission(string Name, string PolicyAlias, bool Fail
 
 **Main permission policy** (generated automatically):
 1. RequireAuthenticatedUser
-2. User must be in `Security:AllowedGroups` (base gate)
-3. Module must be enabled
-4. User must be in the dynamic section groups for `PolicyAlias`
+2. Module must be enabled
+3. User must be in the dynamic section groups for `PolicyAlias`
 
 **Granular permission policy** (generated automatically):
 1. RequireAuthenticatedUser
-2. User must be in `Security:AllowedGroups` (base gate)
-3. Module must be enabled
-4. User must be in the parent module's main permission groups
-5. User must be in the dynamic section groups for the granular `PolicyAlias`
+2. Module must be enabled
+3. User must be in the parent module's main permission groups
+4. User must be in the dynamic section groups for the granular `PolicyAlias`
 
-**System module policy** (AdminSettings, AdminEventLog):
+`Security:AllowedGroups` is only a backward-compatibility fallback when no section access configuration exists and the permission is not marked `FailClosed`. Once section access is configured, the section's groups are authoritative; there is no separate base gate.
+
+**System module policy** (AdminSettings):
 1. RequireAuthenticatedUser
-2. User must be in `Security:AdminGroups` (no AllowedGroups base gate)
+2. User must be in `Security:AdminGroups`
 3. Always enabled (cannot be disabled)
+
+Admin Event Log is not an AdminGroups system module. It uses the `EventLog` section policy and is fail-closed until explicitly granted.
 
 ## Naming Conventions
 

@@ -156,7 +156,7 @@
         }
     }
 
-    @if (ExtendedLog.HasExtendedLogs(startDate.ToDateTime(TimeOnly.MinValue)))
+    @if (ExtendedLog.HasExtendedLogs(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue)))
     {
         <div class="mt-4">
             <button class="btn btn-outline-info btn-sm" @onclick="ToggleExtendedLogs">
@@ -165,7 +165,7 @@
             @if (showExtendedLogs)
             {
                 <div class="card mt-2">
-                    <div class="card-header"><strong>Extended Diagnostic Logs</strong> <small class="text-muted">(@startDate)</small></div>
+                    <div class="card-header"><strong>Extended Diagnostic Logs</strong> <small class="text-muted">(@startDate - @endDate)</small></div>
                     <div class="card-body p-0">
                         <pre class="m-0 p-3" style="max-height: 400px; overflow-y: auto; font-size: 0.75em; background: #1a1d21; color: #e0e0e0;">@string.Join("\n", extendedLogEntries)</pre>
                     </div>
@@ -398,7 +398,7 @@
     {
         showExtendedLogs = !showExtendedLogs;
         if (showExtendedLogs)
-            extendedLogEntries = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue));
+            extendedLogEntries = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue));
     }
 
     private class AuditEvent

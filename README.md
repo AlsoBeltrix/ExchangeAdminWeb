@@ -273,7 +273,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 
 ### Group-Based Authorization
 
-Users must be members of at least one `AllowedGroups` entry to access the application at all:
+Each module is gated by its own section access groups. `Security:AllowedGroups` is only a backward-compatibility fallback for modules that are not fail-closed when no `config/sectionaccess.json` or legacy `Security:SectionAccess` block exists:
 
 ```json
 "AllowedGroups": [
@@ -285,17 +285,18 @@ Users must be members of at least one `AllowedGroups` entry to access the applic
 
 - Groups are checked using Windows role claims
 - Both simple names (`IT-Helpdesk`) and domain-qualified names (`DOMAIN\IT-Helpdesk`) are supported
-- Empty list = all access denied (fail-closed). At least one group must be configured.
+- Once section access is configured, the section's groups are the gate; users do not also need to be in `AllowedGroups`
+- Fail-closed modules deny access until explicit section access groups are configured
 
 ### Admin Groups
 
-Members of `Security:AdminGroups` can access the Admin Settings and Admin Event Log pages:
+Members of `Security:AdminGroups` can access Admin Settings. Admin Event Log is controlled by its own `EventLog` section access policy:
 
 ```json
 "AdminGroups": ["DOMAIN\\Exchange-Admins"]
 ```
 
-- Empty or missing = admin pages are inaccessible to everyone (fail-closed).
+- Empty or missing = Admin Settings is inaccessible to everyone (fail-closed).
 
 ### Section-Level Access (SectionAccess)
 
@@ -319,11 +320,12 @@ Each application feature is independently gated by AD group membership via its s
   "GroupManagementOnPrem": ["DOMAIN\\Exchange-Admins"],
   "Comms10k": ["DOMAIN\\Exchange-Admins"],
   "ConferenceRooms": ["DOMAIN\\Exchange-Admins"],
-  "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"]
+  "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"],
+  "EventLog": ["DOMAIN\\Exchange-Admins"]
 }
 ```
 
-- **Fail-closed:** missing or empty section keys deny access to that feature for all users
+- **Fail-closed:** when section access is configured, missing or empty section keys deny access to that feature for all users
 - **On-prem sections** (`MailboxPermissionsOnPrem`, `CalendarPermissionsOnPrem`) are always fail-closed even when no `SectionAccess` configuration exists at all
 - **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
 - NavMenu links and Home page cards are hidden for unauthorized sections

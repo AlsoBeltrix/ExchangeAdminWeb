@@ -40,8 +40,9 @@ appsettings.Development.json
 Thumbs.db
 ~$*
 
-# Claude Code
+# Claude Code & Agents
 .claude/
+.antigravitycli/
 
 # Local/private cleanup archive
 _not_for_github/

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Serilog.Events;
 
@@ -67,6 +66,7 @@ public class ExtendedLogService
 
         try
         {
+            Directory.CreateDirectory(_logFolder);
             lock (_writeLock)
             {
                 File.AppendAllText(logPath, json + "\n");
@@ -79,14 +79,30 @@ public class ExtendedLogService
     }
 
     public List<string> GetEntries(DateTime date, int maxLines = 500)
-    {
-        var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
-        if (!File.Exists(logPath)) return new();
+        => GetEntries(date, date, maxLines);
 
+    public List<string> GetEntries(DateTime startDate, DateTime endDate, int maxLines = 500)
+    {
+        if (endDate.Date < startDate.Date)
+            (startDate, endDate) = (endDate, startDate);
+
+        var queue = new Queue<string>(maxLines);
         try
         {
-            var lines = File.ReadAllLines(logPath);
-            return lines.TakeLast(maxLines).ToList();
+            for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+            {
+                var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
+                if (!File.Exists(logPath)) continue;
+
+                foreach (var line in File.ReadLines(logPath))
+                {
+                    if (queue.Count == maxLines)
+                        queue.Dequeue();
+                    queue.Enqueue(line);
+                }
+            }
+
+            return queue.ToList();
         }
         catch
         {
@@ -95,9 +111,21 @@ public class ExtendedLogService
     }
 
     public bool HasExtendedLogs(DateTime date)
+        => HasExtendedLogs(date, date);
+
+    public bool HasExtendedLogs(DateTime startDate, DateTime endDate)
     {
-        var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
-        return File.Exists(logPath);
+        if (endDate.Date < startDate.Date)
+            (startDate, endDate) = (endDate, startDate);
+
+        for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
+        {
+            var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
+            if (File.Exists(logPath))
+                return true;
+        }
+
+        return false;
     }
 
     private string GetLogFilename() => $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.jsonl";

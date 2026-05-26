@@ -29,9 +29,10 @@ try {
             password   = $Password
         }
     } else {
+        $clientId = if ($Username -like "sdk-client-*") { $Username } else { "sdk-client-$Username" }
         $body = @{
             grant_type    = "client_credentials"
-            client_id     = $Username
+            client_id     = $clientId
             client_secret = $Password
         }
     }
