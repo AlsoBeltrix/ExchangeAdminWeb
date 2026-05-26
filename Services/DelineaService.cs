@@ -63,6 +63,18 @@ public class DelineaService
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             var response = await _httpClient.SendAsync(request);
 
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} — forcing token refresh", response.StatusCode, secretId);
+                InvalidateToken();
+                token = await GetAccessTokenAsync();
+
+                using var retryRequest = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
+                retryRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                response = await _httpClient.SendAsync(retryRequest);
+            }
+
             if (!response.IsSuccessStatusCode) return null;
 
             var content = await response.Content.ReadAsStringAsync();
@@ -106,6 +118,18 @@ public class DelineaService
             using var request = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
             request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             var response = await _httpClient.SendAsync(request);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            {
+                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} — forcing token refresh and retrying", response.StatusCode, secretId);
+                InvalidateToken();
+                token = await GetAccessTokenAsync();
+
+                using var retryRequest = new HttpRequestMessage(HttpMethod.Get, $"{_secretServerUrl}/api/v1/secrets/{secretId}");
+                retryRequest.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                response = await _httpClient.SendAsync(retryRequest);
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -153,6 +177,12 @@ public class DelineaService
             _logger.LogError(ex, "Error retrieving credentials from Delinea Secret Server for secret {SecretId}", secretId);
             return null;
         }
+    }
+
+    private void InvalidateToken()
+    {
+        _accessToken = null;
+        _tokenExpiry = DateTime.MinValue;
     }
 
     private async Task<string> GetAccessTokenAsync()

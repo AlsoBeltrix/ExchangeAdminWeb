@@ -618,14 +618,16 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 }
                 else
                 {
-                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} — size check skipped", emailAddress);
-                    result.Warnings.Add("Could not verify on-prem mailbox size (on-prem connection unavailable) — size check skipped");
+                    result.Status = MigrationStatus.Ineligible;
+                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} - marking ineligible", emailAddress);
+                    result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
                 }
             }
             catch (Exception sizeEx)
             {
+                result.Status = MigrationStatus.Ineligible;
                 _logger.LogError(sizeEx, "Error checking on-prem mailbox size for {Email}", emailAddress);
-                result.Warnings.Add($"Could not verify on-prem mailbox size ({sizeEx.Message}) — size check skipped");
+                result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
             }
         }
 
@@ -1560,17 +1562,11 @@ https://admin.exchange.microsoft.com/#/migration";
     public async Task<(double mailboxSizeGB, double archiveSizeGB)?> GetOnPremMailboxSizeAsync(string emailAddress)
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
-        {
-            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot check mailbox size");
-            return null;
-        }
+            throw new InvalidOperationException("OnPremExchange:ServerUri is not configured");
 
         var creds = await _delineaService.GetExchangeCredentialsAsync();
         if (creds is null)
-        {
-            _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
-            return null;
-        }
+            throw new InvalidOperationException("Failed to retrieve on-prem credentials from Delinea — check Secret Server connectivity and Delinea:ExchangeSecretId config");
 
         return await ThrottledAsync(() => Task.Run(() =>
         {
