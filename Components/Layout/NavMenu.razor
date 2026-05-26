@@ -48,14 +48,24 @@
                             </NavLink>
                         </div>
                     }
-                    @foreach (var cfgModule in configModulesForGlobalAdmin)
-                    {
-                        <div class="nav-item px-3">
-                            <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
-                                <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> @cfgModule.DisplayName
-                            </NavLink>
+                    <div class="nav-item px-3">
+                        <div class="nav-link nav-tree-toggle" style="cursor: pointer;" @onclick="() => configTreeExpanded = !configTreeExpanded">
+                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
+                            Module Config
+                            <span class="ms-auto" style="font-size: 0.7em;">@(configTreeExpanded ? "−" : "+")</span>
                         </div>
-                    }
+                        @if (configTreeExpanded)
+                        {
+                            @foreach (var cfgModule in configModulesForGlobalAdmin)
+                            {
+                                <div class="nav-item ps-4">
+                                    <NavLink class="nav-link py-1" href="@($"module-config/{cfgModule.Id}")" style="font-size: 0.85em;">
+                                        @cfgModule.DisplayName
+                                    </NavLink>
+                                </div>
+                            }
+                        }
+                    </div>
                 </Authorized>
             </AuthorizeView>
             @foreach (var module in adminAdjacentModules)
@@ -75,14 +85,24 @@
         {
             <AuthorizeView Policy="AdminSettings">
                 <NotAuthorized>
-                    @foreach (var cfgModule in moduleAdminModules)
-                    {
-                        <div class="nav-item px-3 @(cfgModule == moduleAdminModules[0] ? "mt-3 border-top pt-3" : "")">
-                            <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
-                                <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> @cfgModule.DisplayName
-                            </NavLink>
+                    <div class="nav-item px-3 mt-3 border-top pt-3">
+                        <div class="nav-link nav-tree-toggle" style="cursor: pointer;" @onclick="() => moduleAdminTreeExpanded = !moduleAdminTreeExpanded">
+                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
+                            Module Config
+                            <span class="ms-auto" style="font-size: 0.7em;">@(moduleAdminTreeExpanded ? "−" : "+")</span>
                         </div>
-                    }
+                        @if (moduleAdminTreeExpanded)
+                        {
+                            @foreach (var cfgModule in moduleAdminModules)
+                            {
+                                <div class="nav-item ps-4">
+                                    <NavLink class="nav-link py-1" href="@($"module-config/{cfgModule.Id}")" style="font-size: 0.85em;">
+                                        @cfgModule.DisplayName
+                                    </NavLink>
+                                </div>
+                            }
+                        }
+                    </div>
                 </NotAuthorized>
             </AuthorizeView>
         }
@@ -90,7 +110,7 @@
         <div class="nav-item px-3 mt-auto pt-3 border-top">
             <small class="text-muted d-block" style="font-size: 0.7em; line-height: 1.4;">
                 @{ var contactEmail = Config["Application:ContactEmail"]; }
-                v1.3.5
+                v1.5.0
                 @if (!string.IsNullOrEmpty(contactEmail))
                 {
                     <text> | Issues? <a href="mailto:@contactEmail">@contactEmail</a></text>
@@ -103,6 +123,8 @@
 @code {
     private List<AdminModuleDescriptor> configModulesForGlobalAdmin = new();
     private List<AdminModuleDescriptor> moduleAdminModules = new();
+    private bool configTreeExpanded;
+    private bool moduleAdminTreeExpanded;
 
     protected override async Task OnInitializedAsync()
     {
