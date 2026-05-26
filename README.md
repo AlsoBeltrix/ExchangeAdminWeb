@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, and Active Directory tasks through a self-service web interface. Currently provides 12 modules covering EXO, Graph API, and on-prem AD operations.
+ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, named locations, and Active Directory tasks through a self-service web interface. Provides 15 modules covering EXO, Graph API, and on-prem AD operations.
 
 ## Features
 
@@ -105,14 +105,26 @@ Authorize or deauthorize DHCP servers in Active Directory.
 - **Requires:** Module-specific Delinea secret (Enterprise Admin credentials)
 - Section access key: `DhcpAuthorization`
 
+### Named Locations (`/named-locations`)
+
+Manage Entra ID Conditional Access named locations via Microsoft Graph API.
+
+- Create, edit, and delete IP range locations (IPv4/IPv6 CIDR)
+- Create, edit, and delete country/region locations
+- Mark locations as trusted
+- Full pagination support for large tenants
+- **Requires:** Graph app registration with `Policy.ReadWrite.ConditionalAccess` permission
+- Section access key: `NamedLocations`
+
 ### Security & Compliance
-- **Windows Authentication** - Seamless SSO with Active Directory
-- **Group-based Authorization** - Restrict access to specific AD groups
-- **Self-grant Prevention** - Users cannot grant themselves permissions
-- **Protected User Lists** - Block modifications to C-suite/executive mailboxes (with AD group expansion)
-- **Audit Logging** - JSONL format logs with full operation details
-- **Email Notifications** - Admin notifications on all operations, optional user notifications
-- **Ticket Number Requirement** - All operations require a service ticket number
+- **Windows Authentication** — Seamless SSO with Active Directory
+- **Group-based Authorization** — Restrict access to specific AD groups per module
+- **Self-grant Prevention** — Users cannot grant themselves permissions
+- **Protected User Lists** — Block modifications to C-suite/executive mailboxes (with AD group expansion)
+- **Audit Logging** — JSONL format logs with full operation details (always active)
+- **Extended Diagnostic Logging** — Configurable log level (None/Error/Warning/Info/Debug) with separate log file, viewable in Event Log page
+- **Email Notifications** — Admin notifications on all operations, optional user notifications
+- **Fail-closed Design** — Corrupt config or credential failures block operations rather than bypassing security
 
 ## Requirements
 
@@ -205,22 +217,9 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
       "DOMAIN\\Exchange-Admins",
       "DOMAIN\\Migration-Team"
     ],
-    "SectionAccess": {
-      "MailboxPermissions": ["DOMAIN\\Exchange-Admins"],
-      "CalendarPermissions": ["DOMAIN\\Exchange-Admins"],
-      "MigrationCheck": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
-      "MigrationCreate": ["DOMAIN\\Exchange-Admins", "DOMAIN\\Migration-Team"],
-      "MigrationManage": ["DOMAIN\\Exchange-Admins"],
-      "DelegationReport": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
-      "MessageTrace": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
-      "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
-      "OutOfOffice": ["DOMAIN\\Exchange-Admins"],
-      "MfaReset": ["DOMAIN\\Exchange-Admins"],
-      "GroupManagement": ["DOMAIN\\Exchange-Admins"],
-      "Comms10k": ["DOMAIN\\Exchange-Admins"],
-      "ConferenceRooms": ["DOMAIN\\Exchange-Admins"],
-      "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"]
-    }
+    "AdminGroups": [
+      "DOMAIN\\Exchange-Admins"
+    ]
   }
 }
 ```
@@ -262,9 +261,13 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 ## Architecture
 
 - **EXO Connection Pool:** 5 pooled PowerShell runspaces for Exchange Online operations; connections idle longer than 20 minutes are automatically recycled.
-- **On-Prem Throttle:** On-premises Exchange operations are limited to 2 concurrent PSSession connections.
+- **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
+- **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
 - **Audit:** Append-only JSONL files rotated daily/weekly/monthly; read by the admin event log viewer.
+- **Extended Logging:** Separate JSONL diagnostic log with runtime-configurable level (Admin Settings). Viewable from Event Log page.
+- **Credential Management:** Delinea Secret Server SDK auth via Windows PasswordVault. Per-module secrets isolated in Secret Server.
+- **Thread Safety:** PermissionValidator uses immutable collections with atomic swap; SectionAccessService uses in-memory cache invalidated on save.
 
 ## Configuration Details
 
@@ -324,8 +327,7 @@ Each application feature is independently gated by AD group membership via its s
 - **On-prem sections** (`MailboxPermissionsOnPrem`, `CalendarPermissionsOnPrem`) are always fail-closed even when no `SectionAccess` configuration exists at all
 - **Migration hierarchy:** `MigrationCreate` requires MigrationCheck groups AND MigrationCreate groups; `MigrationManage` requires MigrationCheck groups AND MigrationManage groups
 - NavMenu links and Home page cards are hidden for unauthorized sections
-- Section access is managed per-module via `/module-config/{ModuleId}` (not Admin Settings)
-- Section access can be managed at runtime via the Admin Settings page, which writes to `config/sectionaccess.json` (takes precedence over `appsettings.json`)
+- Section access is managed per-module via `/module-config/{ModuleId}` (collapsible tree in sidebar)
 
 ### Protected Users / Excluded Users
 
