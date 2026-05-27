@@ -35,7 +35,7 @@ public class ExtendedLogServiceTests
         var logPath = GetTodayLogPath(temp.Path);
         File.WriteAllText(logPath, "{\"message\":\"first\"}" + Environment.NewLine);
 
-        using var appendHandle = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        using var appendHandle = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
         using var service = CreateService(temp.Path);
 
         var entries = service.GetEntries(DateTime.Today);
@@ -44,13 +44,67 @@ public class ExtendedLogServiceTests
         Assert.Contains("first", entries[0]);
     }
 
-    private static ExtendedLogService CreateService(string logRoot)
+    [Fact]
+    public void GetEntries_ReadsRotatedLogFiles_InChronologicalOrder()
     {
+        using var temp = new TempDirectory();
+        var logFolder = Path.Combine(temp.Path, "ExchangeAdminWeb");
+        Directory.CreateDirectory(logFolder);
+        File.WriteAllText(GetTodayRotatedLogPath(temp.Path, 2), "{\"message\":\"oldest\"}" + Environment.NewLine);
+        File.WriteAllText(GetTodayRotatedLogPath(temp.Path, 1), "{\"message\":\"older\"}" + Environment.NewLine);
+        File.WriteAllText(GetTodayLogPath(temp.Path), "{\"message\":\"current\"}" + Environment.NewLine);
+        using var service = CreateService(temp.Path, new Dictionary<string, string?>
+        {
+            ["ExtendedLog:MaxFilesPerDay"] = "3"
+        });
+
+        var entries = service.GetEntries(DateTime.Today, maxLines: 10);
+
+        Assert.Equal(3, entries.Count);
+        Assert.Contains("oldest", entries[0]);
+        Assert.Contains("older", entries[1]);
+        Assert.Contains("current", entries[2]);
+        Assert.True(service.HasExtendedLogs(DateTime.Today));
+    }
+
+    [Fact]
+    public void Write_RotatesActiveLog_WhenFileExceedsConfiguredLimit()
+    {
+        using var temp = new TempDirectory();
+        var logFolder = Path.Combine(temp.Path, "ExchangeAdminWeb");
+        Directory.CreateDirectory(logFolder);
+        var logPath = GetTodayLogPath(temp.Path);
+        File.WriteAllText(logPath, new string('x', 2048));
+        var service = CreateService(temp.Path, new Dictionary<string, string?>
+        {
+            ["ExtendedLog:MaxFileBytes"] = "1024",
+            ["ExtendedLog:MaxFilesPerDay"] = "3"
+        });
+
+        service.SetLevel("Error");
+        service.Write(LogEventLevel.Error, "rotated write", "Test", () => "detail");
+        service.Dispose();
+
+        Assert.True(File.Exists(GetTodayRotatedLogPath(temp.Path, 1)));
+        Assert.Contains("rotated write", File.ReadAllText(logPath));
+        Assert.Equal(new string('x', 2048), File.ReadAllText(GetTodayRotatedLogPath(temp.Path, 1)));
+    }
+
+    private static ExtendedLogService CreateService(string logRoot, Dictionary<string, string?>? additionalSettings = null)
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["Audit:LogRoot"] = logRoot
+        };
+
+        if (additionalSettings != null)
+        {
+            foreach (var setting in additionalSettings)
+                settings[setting.Key] = setting.Value;
+        }
+
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Audit:LogRoot"] = logRoot
-            })
+            .AddInMemoryCollection(settings)
             .Build();
 
         var env = Substitute.For<IWebHostEnvironment>();
@@ -61,6 +115,9 @@ public class ExtendedLogServiceTests
 
     private static string GetTodayLogPath(string logRoot)
         => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.jsonl");
+
+    private static string GetTodayRotatedLogPath(string logRoot, int index)
+        => Path.Combine(logRoot, "ExchangeAdminWeb", $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.{index}.jsonl");
 
     private sealed class TempDirectory : IDisposable
     {

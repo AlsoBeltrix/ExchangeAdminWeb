@@ -374,6 +374,8 @@ Null fields are omitted. `error` appears only on failure.
 - `weekly`: New file each week
 - `monthly`: New file each month
 
+**Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Keep Admin Event Log access tightly scoped.
+
 ### Delinea Secret Server (On-Prem Credentials)
 
 On-prem Exchange operations retrieve credentials from Delinea Secret Server:

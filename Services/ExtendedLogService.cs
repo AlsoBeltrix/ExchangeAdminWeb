@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+using Microsoft.Extensions.Configuration;
 using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
@@ -9,10 +10,14 @@ public class ExtendedLogService : IDisposable
 {
     private const int DefaultMaxLines = 500;
     private const int MaxQueuedWrites = 1024;
+    private const int DefaultMaxFileMB = 10;
+    private const int DefaultMaxFilesPerDay = 5;
     private readonly string _logFolder;
     private readonly ILogger<ExtendedLogService> _logger;
     private readonly Channel<PendingLogEntry> _writeQueue;
     private readonly Task _writerTask;
+    private readonly long _maxFileBytes;
+    private readonly int _maxFilesPerDay;
     private volatile LogEventLevel _minimumLevel = LogEventLevel.Fatal;
     private readonly string _configFilePath;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -26,6 +31,8 @@ public class ExtendedLogService : IDisposable
         var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _configFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
+        _maxFileBytes = GetMaxFileBytes(config);
+        _maxFilesPerDay = Math.Clamp(config.GetValue<int?>("ExtendedLog:MaxFilesPerDay") ?? DefaultMaxFilesPerDay, 2, 50);
         _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
@@ -95,9 +102,8 @@ public class ExtendedLogService : IDisposable
         };
 
         var json = JsonSerializer.Serialize(entry, JsonOptions);
-        var logPath = Path.Combine(_logFolder, GetLogFilename());
 
-        if (!_writeQueue.Writer.TryWrite(new PendingLogEntry(logPath, json)))
+        if (!_writeQueue.Writer.TryWrite(new PendingLogEntry(DateTime.Now.Date, json)))
             _logger.LogWarning("Extended log queue is closed; dropping extended log entry");
     }
 
@@ -106,6 +112,9 @@ public class ExtendedLogService : IDisposable
 
     public List<string> GetEntries(DateTime startDate, DateTime endDate, int maxLines = DefaultMaxLines)
     {
+        if (maxLines <= 0)
+            return new();
+
         if (endDate.Date < startDate.Date)
             (startDate, endDate) = (endDate, startDate);
 
@@ -114,20 +123,22 @@ public class ExtendedLogService : IDisposable
         {
             for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
             {
-                var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
-                if (!File.Exists(logPath)) continue;
-
-                using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = new StreamReader(stream);
-
-                while (reader.ReadLine() is { } line)
+                foreach (var logPath in GetLogPathsForDate(date))
                 {
-                    if (string.IsNullOrWhiteSpace(line))
-                        continue;
+                    if (!File.Exists(logPath)) continue;
 
-                    if (queue.Count == maxLines)
-                        queue.Dequeue();
-                    queue.Enqueue(line);
+                    using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var reader = new StreamReader(stream);
+
+                    while (reader.ReadLine() is { } line)
+                    {
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        if (queue.Count == maxLines)
+                            queue.Dequeue();
+                        queue.Enqueue(line);
+                    }
                 }
             }
 
@@ -149,8 +160,7 @@ public class ExtendedLogService : IDisposable
 
         for (var date = startDate.Date; date <= endDate.Date; date = date.AddDays(1))
         {
-            var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
-            if (File.Exists(logPath))
+            if (GetLogPathsForDate(date).Any(File.Exists))
                 return true;
         }
 
@@ -176,8 +186,9 @@ public class ExtendedLogService : IDisposable
         {
             try
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(entry.LogPath)!);
-                await using var stream = new FileStream(entry.LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 4096, useAsync: true);
+                var logPath = GetWritableLogPath(entry.LogDate);
+                Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+                await using var stream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 4096, useAsync: true);
                 await using var writer = new StreamWriter(stream);
                 await writer.WriteLineAsync(entry.Json);
             }
@@ -188,7 +199,56 @@ public class ExtendedLogService : IDisposable
         }
     }
 
-    private string GetLogFilename() => $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.jsonl";
+    private static long GetMaxFileBytes(IConfiguration config)
+    {
+        var explicitBytes = config.GetValue<long?>("ExtendedLog:MaxFileBytes");
+        if (explicitBytes.HasValue)
+            return Math.Max(1024, explicitBytes.Value);
+
+        var maxFileMB = Math.Max(1, config.GetValue<int?>("ExtendedLog:MaxFileMB") ?? DefaultMaxFileMB);
+        return maxFileMB * 1024L * 1024L;
+    }
+
+    private string GetWritableLogPath(DateTime logDate)
+    {
+        var activePath = Path.Combine(_logFolder, GetLogFilename(logDate));
+        if (!File.Exists(activePath) || new FileInfo(activePath).Length < _maxFileBytes)
+            return activePath;
+
+        RotateLogFiles(logDate, activePath);
+        return activePath;
+    }
+
+    private void RotateLogFiles(DateTime logDate, string activePath)
+    {
+        var oldestPath = GetRotatedLogPath(logDate, _maxFilesPerDay - 1);
+        if (File.Exists(oldestPath))
+            File.Delete(oldestPath);
+
+        for (var i = _maxFilesPerDay - 2; i >= 1; i--)
+        {
+            var source = GetRotatedLogPath(logDate, i);
+            if (!File.Exists(source))
+                continue;
+
+            File.Move(source, GetRotatedLogPath(logDate, i + 1), overwrite: true);
+        }
+
+        File.Move(activePath, GetRotatedLogPath(logDate, 1), overwrite: true);
+    }
+
+    private IEnumerable<string> GetLogPathsForDate(DateTime date)
+    {
+        for (var i = _maxFilesPerDay - 1; i >= 1; i--)
+            yield return GetRotatedLogPath(date, i);
+
+        yield return Path.Combine(_logFolder, GetLogFilename(date));
+    }
+
+    private static string GetLogFilename(DateTime date) => $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl";
+
+    private string GetRotatedLogPath(DateTime date, int index)
+        => Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.{index}.jsonl");
 
     private void LoadLevel()
     {
@@ -205,5 +265,5 @@ public class ExtendedLogService : IDisposable
         }
     }
 
-    private sealed record PendingLogEntry(string LogPath, string Json);
+    private sealed record PendingLogEntry(DateTime LogDate, string Json);
 }
