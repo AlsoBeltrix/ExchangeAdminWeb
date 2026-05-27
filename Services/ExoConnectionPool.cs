@@ -24,6 +24,7 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly ConcurrentBag<PooledRunspace> _available = new();
     private readonly SemaphoreSlim _slots;
     private readonly ILogger<ExoConnectionPool> _logger;
+    private readonly OperationTraceService _operationTrace;
     private readonly string _appId;
     private readonly string _organization;
     private readonly string _certSubject;
@@ -31,9 +32,10 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly Timer _cleanupTimer;
     private bool _disposed;
 
-    public ExoConnectionPool(IConfiguration config, ILogger<ExoConnectionPool> logger)
+    public ExoConnectionPool(IConfiguration config, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
     {
         _logger = logger;
+        _operationTrace = operationTrace;
         _appId = config["ExchangeOnline:AppId"] ?? "";
         _organization = config["ExchangeOnline:Organization"] ?? "";
         _certSubject = config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
@@ -43,8 +45,14 @@ public sealed class ExoConnectionPool : IDisposable
 
     public async Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
     {
+        _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
         if (!await _slots.WaitAsync(TimeSpan.FromMinutes(2), ct))
+        {
+            _operationTrace.Step("ExoPoolSlotRequested", "Failed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["reason"] = "Pool busy" });
             throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
+        }
+
+        _operationTrace.Step("ExoPoolSlotAcquired", backend: "ExchangeOnline");
 
         try
         {
@@ -55,16 +63,19 @@ public sealed class ExoConnectionPool : IDisposable
                     pooled.LastUsed = DateTime.UtcNow;
                     pooled.PowerShell.Commands.Clear();
                     pooled.PowerShell.Streams.ClearStreams();
+                    _operationTrace.Step("ExoConnectionBorrowed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["source"] = "Pool" });
                     return pooled;
                 }
 
+                _operationTrace.Step("ExoConnectionExpired", backend: "ExchangeOnline");
                 DestroyRunspace(pooled);
             }
 
             return CreateConnected();
         }
-        catch
+        catch (Exception ex)
         {
+            _operationTrace.Step("ExoConnectionBorrowed", "Failed", backend: "ExchangeOnline", exception: ex);
             _slots.Release();
             throw;
         }
@@ -76,12 +87,14 @@ public sealed class ExoConnectionPool : IDisposable
         runspace.PowerShell.Commands.Clear();
         runspace.PowerShell.Streams.ClearStreams();
         _available.Add(runspace);
+        _operationTrace.Step("ExoConnectionReturned", backend: "ExchangeOnline");
         _slots.Release();
     }
 
     public void Discard(PooledRunspace runspace)
     {
         DestroyRunspace(runspace);
+        _operationTrace.Step("ExoConnectionDiscarded", backend: "ExchangeOnline");
         _slots.Release();
     }
 
@@ -96,6 +109,8 @@ public sealed class ExoConnectionPool : IDisposable
 
         try
         {
+            _operationTrace.Step("ExoConnectionCreating", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
+
             ps.AddCommand("Import-Module")
               .AddParameter("Name", "ExchangeOnlineManagement")
               .AddParameter("ErrorAction", "Stop");
@@ -121,10 +136,12 @@ public sealed class ExoConnectionPool : IDisposable
             ps.Streams.ClearStreams();
 
             _logger.LogInformation("EXO pool: created new connection (Org={Org})", _organization);
+            _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
             return new PooledRunspace(runspace, ps);
         }
-        catch
+        catch (Exception ex)
         {
+            _operationTrace.Step("ExoConnectionCreated", "Failed", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", exception: ex);
             ps.Dispose();
             runspace.Dispose();
             throw;

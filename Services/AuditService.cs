@@ -1,29 +1,14 @@
-using System.Globalization;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-
 namespace ExchangeAdminWeb.Services;
 
 public class AuditService
 {
-    private readonly string _logFolder;
-    private readonly string _rotationPeriod;
-    private readonly ILogger<AuditService> _logger;
-    private readonly object _lock = new();
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+    private readonly JsonlLogService _log;
+    private readonly OperationTraceService _operationTrace;
 
-    public AuditService(IConfiguration config, ILogger<AuditService> logger)
+    public AuditService(JsonlLogService log, OperationTraceService operationTrace)
     {
-        _logger = logger;
-        var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
-        _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
-        _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
-
-        Directory.CreateDirectory(_logFolder);
+        _log = log;
+        _operationTrace = operationTrace;
     }
 
     public void LogMailboxPermission(
@@ -54,7 +39,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogCalendarPermission(
@@ -83,7 +68,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogMigrationCheck(
@@ -108,7 +93,7 @@ public class AuditService
             ["reasons"] = reasons
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogMigrationBatch(
@@ -140,7 +125,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogMigrationAction(
@@ -165,7 +150,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogLookupAction(
@@ -188,7 +173,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
     public void LogSettingsChange(
@@ -214,39 +199,57 @@ public class AuditService
             ["removed"] = removed.Length > 0 ? removed : null
         };
 
-        WriteEvent(evt);
+        WriteAuditEvent(evt);
     }
 
-    private void WriteEvent(Dictionary<string, object?> evt)
+    private void WriteAuditEvent(Dictionary<string, object?> evt)
     {
-        var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);
-        var json = JsonSerializer.Serialize(filtered, JsonOpts);
-        var logPath = Path.Combine(_logFolder, GetLogFilename());
+        OperationTraceService.OperationScope? implicitScope = null;
+        if (!_operationTrace.HasCurrentOperation)
+        {
+            implicitScope = _operationTrace.BeginOperation(
+                module: GetString(evt, "category") ?? "Audit",
+                action: GetString(evt, "action") ?? "AuditEvent",
+                actor: GetString(evt, "user") ?? "unknown",
+                ipAddress: GetString(evt, "ip") ?? "unknown",
+                target: GetAuditTarget(evt),
+                ticket: GetString(evt, "ticket"),
+                details: new Dictionary<string, object?> { ["source"] = "AuditService" });
+        }
 
         try
         {
-            lock (_lock)
-            {
-                File.AppendAllText(logPath, json + "\n");
-            }
+            evt["eventType"] = "audit";
+            evt["operationId"] = _operationTrace.CurrentOperationId;
+            _log.Write(evt);
+            _operationTrace.Step(
+                "AuditWritten",
+                result: "Success",
+                details: new Dictionary<string, object?>
+                {
+                    ["auditCategory"] = GetString(evt, "category"),
+                    ["auditAction"] = GetString(evt, "action"),
+                    ["auditResult"] = GetString(evt, "result")
+                });
+
+            var operationSucceeded = IsSuccessfulAuditResult(GetString(evt, "result"));
+            var operationMessage = GetString(evt, "error");
+            implicitScope?.Complete(operationSucceeded, operationMessage);
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Failed to write audit event to {Path}", logPath);
+            implicitScope?.Dispose();
         }
     }
 
-    private string GetLogFilename()
-    {
-        var now = DateTime.Now;
-        var suffix = _rotationPeriod switch
-        {
-            "weekly" => $"{now.Year}W{ISOWeek.GetWeekOfYear(now):D2}",
-            "monthly" => now.ToString("yyyyMM"),
-            _ => now.ToString("yyyyMMdd")
-        };
-        return $"exchangeadmin_{suffix}.jsonl";
-    }
+    private static string? GetAuditTarget(IReadOnlyDictionary<string, object?> evt)
+        => GetString(evt, "target") ?? GetString(evt, "batchName") ?? GetString(evt, "section");
+
+    private static string? GetString(IReadOnlyDictionary<string, object?> evt, string key)
+        => evt.TryGetValue(key, out var value) ? value?.ToString() : null;
+
+    private static bool IsSuccessfulAuditResult(string? result)
+        => !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase);
 
     private static string SamName(string identity) =>
         identity.Contains('\\') ? identity.Split('\\')[1] : identity;

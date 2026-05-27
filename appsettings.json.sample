@@ -17,6 +17,9 @@
     "LogRoot": "E:\\WWWOutput",
     "RotationPeriod": "daily"
   },
+  "OperationTrace": {
+    "Enabled": true
+  },
   "Email": {
     "SmtpHost": "smtp.yourcompany.com",
     "SmtpPort": 25,

@@ -50,6 +50,7 @@
                 <option value="MigrationAction">MigrationAction</option>
                 <option value="Lookup">Lookup</option>
                 <option value="AdminSettings">AdminSettings</option>
+                <option value="OperationTrace">OperationTrace</option>
             </select>
         </div>
         <div class="col-auto">
@@ -324,6 +325,7 @@
                                 continue;
                         }
 
+                        var eventType = TryGetString(root, "eventType") ?? "audit";
                         totalParsed++;
                         buffer.Enqueue(new AuditEvent
                         {
@@ -331,11 +333,11 @@
                             Time = tsStr != null ? FormatTimestamp(tsStr) : "",
                             User = TryGetString(root, "user") ?? "",
                             Ip = TryGetString(root, "ip") ?? "",
-                            Action = TryGetString(root, "action") ?? "",
-                            Category = TryGetString(root, "category") ?? "",
+                            Action = FormatAction(root, eventType),
+                            Category = FormatCategory(root, eventType),
                             Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
                             Result = TryGetString(root, "result") ?? "",
-                            Details = ExtractAuditDetails(root)
+                            Details = ExtractAuditDetails(root, eventType)
                         });
                         if (buffer.Count > MaxTotalEvents)
                             buffer.Dequeue();
@@ -379,12 +381,17 @@
         currentPage = 1;
         expandedRow = -1;
         filteredEvents = allEvents.Where(e =>
-            (string.IsNullOrEmpty(selectedCategory) || e.Category.Equals(selectedCategory, StringComparison.OrdinalIgnoreCase)) &&
+            CategoryMatches(e) &&
             (string.IsNullOrEmpty(userFilter) || e.User.Contains(userFilter, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrEmpty(ipFilter) || e.Ip.Contains(ipFilter, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrEmpty(selectedResult) || e.Result.Equals(selectedResult, StringComparison.OrdinalIgnoreCase))
         ).ToList();
     }
+
+    private bool CategoryMatches(AuditEvent evt) =>
+        string.IsNullOrEmpty(selectedCategory)
+        || evt.Category.Equals(selectedCategory, StringComparison.OrdinalIgnoreCase)
+        || (selectedCategory == "OperationTrace" && evt.Category.StartsWith("OperationTrace", StringComparison.OrdinalIgnoreCase));
 
     private List<AuditEvent> GetPage() =>
         filteredEvents.Skip((currentPage - 1) * PageSize).Take(PageSize).ToList();
@@ -411,12 +418,31 @@
         return iso;
     }
 
-    private static List<DetailField> ExtractAuditDetails(JsonElement root)
+    private static string FormatAction(JsonElement root, string eventType)
+    {
+        var action = TryGetString(root, "action") ?? eventType;
+        if (!eventType.StartsWith("operation.", StringComparison.OrdinalIgnoreCase))
+            return action;
+
+        var stage = TryGetString(root, "stage");
+        return string.IsNullOrWhiteSpace(stage) ? action : $"{action} / {stage}";
+    }
+
+    private static string FormatCategory(JsonElement root, string eventType)
+    {
+        if (!eventType.StartsWith("operation.", StringComparison.OrdinalIgnoreCase))
+            return TryGetString(root, "category") ?? "";
+
+        var module = TryGetString(root, "module");
+        return string.IsNullOrWhiteSpace(module) ? "OperationTrace" : $"OperationTrace:{module}";
+    }
+
+    private static List<DetailField> ExtractAuditDetails(JsonElement root, string eventType)
     {
         var details = new List<DetailField>();
         foreach (var property in root.EnumerateObject())
         {
-            if (IsSummaryField(property.Name))
+            if (IsSummaryField(property.Name, eventType))
                 continue;
 
             var value = FormatJsonValue(property.Value);
@@ -427,7 +453,19 @@
         return details;
     }
 
-    private static bool IsSummaryField(string name) => name is "ts" or "user" or "ip" or "action" or "category" or "result" or "target" or "batchName" or "section";
+    private static bool IsSummaryField(string name, string eventType)
+    {
+        if (name is "ts" or "user" or "ip" or "category" or "result" or "target" or "batchName" or "section")
+            return true;
+
+        if (name is "action")
+            return true;
+
+        if (eventType.StartsWith("operation.", StringComparison.OrdinalIgnoreCase))
+            return name is "module" or "stage";
+
+        return false;
+    }
 
     private static string FormatJsonValue(JsonElement value) => value.ValueKind switch
     {

@@ -75,6 +75,8 @@ try
     builder.Services.AddScoped<GroupManagementService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();
+    builder.Services.AddSingleton<JsonlLogService>();
+    builder.Services.AddSingleton<OperationTraceService>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<PermissionValidator>();

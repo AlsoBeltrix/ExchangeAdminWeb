@@ -529,6 +529,9 @@ if ($isUpgrade) {
                 LogRoot = $LogRoot
                 RotationPeriod = "daily"
             }
+            OperationTrace = [ordered]@{
+                Enabled = $true
+            }
             Email = [ordered]@{
                 SmtpHost = $SmtpHost
                 SmtpPort = 25

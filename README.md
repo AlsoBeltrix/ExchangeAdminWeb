@@ -202,6 +202,9 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
     "LogRoot": "E:\\WWWOutput",
     "RotationPeriod": "daily"
   },
+  "OperationTrace": {
+    "Enabled": true
+  },
   "Email": {
     "SmtpHost": "smtp.yourcompany.com",
     "SmtpPort": 25,
@@ -264,7 +267,7 @@ Set-WebConfigurationProperty -Filter '/system.webServer/security/authentication/
 - **Bulk CSV Optimization:** Bulk operations borrow a single pooled session for the entire batch (not per-row), reducing 50-row CSV processing from minutes to seconds.
 - **On-Prem Throttle:** On-premises Exchange operations limited to 2 concurrent PSSession connections with retry (3 attempts, exponential backoff).
 - **Blazor Server:** Interactive Server rendering mode with per-circuit state.
-- **Audit:** Append-only JSONL files rotated daily/weekly/monthly; read by the admin event log viewer.
+- **Audit + Operation Trace:** Append-only JSONL files rotated daily/weekly/monthly; every audit transaction includes a correlated `operationId` plus structured `operation.*` records for SIEM ingestion.
 - **Extended Logging:** Separate JSONL diagnostic log with runtime-configurable level (Admin Settings). Viewable from Event Log page.
 - **Credential Management:** Delinea Secret Server SDK auth via Windows PasswordVault. Per-module secrets isolated in Secret Server.
 - **Thread Safety:** PermissionValidator uses immutable collections with atomic swap; SectionAccessService uses in-memory cache invalidated on save.
@@ -347,11 +350,11 @@ C-Suite, Board of Directors, ceo@example.com
 
 ### Audit Logging
 
-All operations logged as JSON Lines (.jsonl):
+All operations are logged as JSON Lines (.jsonl). The file contains both business audit records and correlated operation trace records:
 
 **Location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
 
-**Common fields:** `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
+**Common audit fields:** `eventType`, `operationId`, `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
 
 **Category-specific fields:**
 - MailboxPermission: `target`, `affectedUser`, `permissionType`, `autoMapping`
@@ -368,6 +371,13 @@ All operations logged as JSON Lines (.jsonl):
 - DhcpAuthorization: `target`, `operation`
 
 Null fields are omitted. `error` appears only on failure.
+
+**Operation trace records:** Each audit transaction writes structured trace events with the same `operationId`:
+- `operation.start` — transaction accepted by the logging pipeline
+- `operation.step` — significant step such as `AuditWritten`, plus shared backend steps where available
+- `operation.complete` — final transaction result and elapsed duration
+
+Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`, `module`, `action`, `stage`, `backend`, `command`, `target`, `ticket`, `result`, `durationMs`, `details`, `errorType`, and `error`. Secret-like detail keys (`password`, `secret`, `token`, `apiKey`, `clientSecret`) are masked as `***`. Shared backend services also emit standalone operation trace records when no audited transaction scope is active, so vault and EXO connection failures are still visible in the event stream. Disable trace records with `OperationTrace:Enabled = false` if needed; audit records remain active.
 
 **Rotation:**
 - `daily` (default): New file each day
@@ -515,7 +525,9 @@ ExchangeAdminWeb/
 ├── Models/            # Data models and enums
 ├── Services/          # Business logic
 │   ├── ExchangeService.cs      # PowerShell EXO operations
-│   ├── AuditService.cs         # JSONL audit logging
+│   ├── AuditService.cs         # JSONL business audit records
+│   ├── OperationTraceService.cs # Correlated operation trace records
+│   ├── JsonlLogService.cs       # Shared JSONL writer
 │   ├── EmailService.cs         # SMTP notifications
 │   └── PermissionValidator.cs  # Security validation
 ├── wwwroot/           # Static assets

@@ -179,7 +179,7 @@ var auth = await AuthorizationService.AuthorizeAsync(user, "MyModuleAdmin");
 if (!auth.Succeeded) { /* deny */ }
 ```
 
-## Audit Requirements
+## Audit And Operation Trace Requirements
 
 All mutating actions must call `AuditService` with:
 - User identity
@@ -188,6 +188,8 @@ All mutating actions must call `AuditService` with:
 - Category (module name)
 - Result (Success/Failed)
 - Relevant context (target, error detail)
+
+`AuditService` writes the business audit record and a correlated operation trace (`operation.start`, `operation.step`, `operation.complete`) with the same `operationId`. Module code that needs a multi-step transaction transcript should begin an `OperationTraceService` scope before the first backend call, then write sanitized `Step(...)` records for important milestones such as authorization checks, vault credential retrieval, Graph/Exchange/AD writes, notifications, or cleanup. Shared backend services emit standalone trace records when no operation scope is active. Never place secrets, tokens, raw PowerShell output, or raw API payloads in trace details.
 
 ## Service Pattern
 
