@@ -1,15 +1,24 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
 
-public class ExtendedLogService
+public class ExtendedLogService : IDisposable
 {
+    private const int DefaultMaxLines = 500;
+    private const int MaxQueuedWrites = 1024;
     private readonly string _logFolder;
     private readonly ILogger<ExtendedLogService> _logger;
-    private readonly object _writeLock = new();
+    private readonly Channel<PendingLogEntry> _writeQueue;
+    private readonly Task _writerTask;
     private volatile LogEventLevel _minimumLevel = LogEventLevel.Fatal;
     private readonly string _configFilePath;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
 
     public ExtendedLogService(IConfiguration config, IWebHostEnvironment env, ILogger<ExtendedLogService> logger)
     {
@@ -17,6 +26,13 @@ public class ExtendedLogService
         var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _configFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
+        _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
+        _writerTask = Task.Run(ProcessQueueAsync);
         Directory.CreateDirectory(_logFolder);
         LoadLevel();
     }
@@ -24,6 +40,8 @@ public class ExtendedLogService
     public string CurrentLevel => _minimumLevel == LogEventLevel.Fatal ? "None" : _minimumLevel.ToString();
 
     public bool IsEnabled => _minimumLevel != LogEventLevel.Fatal;
+
+    public bool IsEnabledFor(LogEventLevel level) => level >= _minimumLevel;
 
     public void SetLevel(string level)
     {
@@ -40,7 +58,9 @@ public class ExtendedLogService
         {
             var dir = Path.GetDirectoryName(_configFilePath)!;
             Directory.CreateDirectory(dir);
-            File.WriteAllText(_configFilePath, level);
+            using var stream = new FileStream(_configFilePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+            using var writer = new StreamWriter(stream);
+            writer.Write(level);
         }
         catch (Exception ex)
         {
@@ -49,8 +69,21 @@ public class ExtendedLogService
     }
 
     public void Write(LogEventLevel level, string message, string? category = null, string? detail = null)
+        => Write(level, message, category, detail is null ? null : () => detail);
+
+    public void Write(LogEventLevel level, string message, string? category, Func<string?>? detailFactory)
     {
-        if (level < _minimumLevel) return;
+        if (!IsEnabledFor(level)) return;
+
+        string? detail = null;
+        try
+        {
+            detail = detailFactory?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to build extended log detail");
+        }
 
         var entry = new
         {
@@ -61,27 +94,17 @@ public class ExtendedLogService
             detail
         };
 
-        var json = JsonSerializer.Serialize(entry, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull });
+        var json = JsonSerializer.Serialize(entry, JsonOptions);
         var logPath = Path.Combine(_logFolder, GetLogFilename());
 
-        try
-        {
-            Directory.CreateDirectory(_logFolder);
-            lock (_writeLock)
-            {
-                File.AppendAllText(logPath, json + "\n");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to write extended log entry");
-        }
+        if (!_writeQueue.Writer.TryWrite(new PendingLogEntry(logPath, json)))
+            _logger.LogWarning("Extended log queue is closed; dropping extended log entry");
     }
 
-    public List<string> GetEntries(DateTime date, int maxLines = 500)
+    public List<string> GetEntries(DateTime date, int maxLines = DefaultMaxLines)
         => GetEntries(date, date, maxLines);
 
-    public List<string> GetEntries(DateTime startDate, DateTime endDate, int maxLines = 500)
+    public List<string> GetEntries(DateTime startDate, DateTime endDate, int maxLines = DefaultMaxLines)
     {
         if (endDate.Date < startDate.Date)
             (startDate, endDate) = (endDate, startDate);
@@ -94,8 +117,14 @@ public class ExtendedLogService
                 var logPath = Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.jsonl");
                 if (!File.Exists(logPath)) continue;
 
-                foreach (var line in File.ReadLines(logPath))
+                using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+
+                while (reader.ReadLine() is { } line)
                 {
+                    if (string.IsNullOrWhiteSpace(line))
+                        continue;
+
                     if (queue.Count == maxLines)
                         queue.Dequeue();
                     queue.Enqueue(line);
@@ -128,6 +157,37 @@ public class ExtendedLogService
         return false;
     }
 
+    public void Dispose()
+    {
+        _writeQueue.Writer.TryComplete();
+        try
+        {
+            _writerTask.Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to flush extended log queue during shutdown");
+        }
+    }
+
+    private async Task ProcessQueueAsync()
+    {
+        await foreach (var entry in _writeQueue.Reader.ReadAllAsync())
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(entry.LogPath)!);
+                await using var stream = new FileStream(entry.LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 4096, useAsync: true);
+                await using var writer = new StreamWriter(stream);
+                await writer.WriteLineAsync(entry.Json);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to write extended log entry");
+            }
+        }
+    }
+
     private string GetLogFilename() => $"exchangeadmin_{DateTime.Now:yyyyMMdd}_extended.jsonl";
 
     private void LoadLevel()
@@ -136,10 +196,14 @@ public class ExtendedLogService
         {
             try
             {
-                var level = File.ReadAllText(_configFilePath).Trim();
+                using var stream = new FileStream(_configFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var reader = new StreamReader(stream);
+                var level = reader.ReadToEnd().Trim();
                 SetLevel(level);
             }
             catch { }
         }
     }
+
+    private sealed record PendingLogEntry(string LogPath, string Json);
 }

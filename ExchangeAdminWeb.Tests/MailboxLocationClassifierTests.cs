@@ -6,6 +6,7 @@ public class MailboxLocationClassifierTests
 {
     [Theory]
     [InlineData("MailUser")]
+    [InlineData(" MailUser ")]
     [InlineData("RemoteUserMailbox")]
     [InlineData("RemoteSharedMailbox")]
     [InlineData("RemoteRoomMailbox")]
@@ -20,6 +21,9 @@ public class MailboxLocationClassifierTests
     [InlineData("SharedMailbox")]
     [InlineData("RoomMailbox")]
     [InlineData("EquipmentMailbox")]
+    [InlineData("LegacyMailbox")]
+    [InlineData("LinkedMailbox")]
+    [InlineData("GroupMailbox")]
     public void ForLookupDisplay_CloudMailboxTypes_ReturnsCloud(string recipientTypeDetails)
     {
         Assert.Equal("Cloud", MailboxLocationClassifier.ForLookupDisplay(recipientTypeDetails));
@@ -29,6 +33,7 @@ public class MailboxLocationClassifierTests
     [InlineData("MailContact")]
     [InlineData("MailUniversalDistributionGroup")]
     [InlineData("")]
+    [InlineData("   ")]
     [InlineData(null)]
     public void ForLookupDisplay_NonMailboxTypes_ReturnsUnknown(string? recipientTypeDetails)
     {
@@ -37,9 +42,13 @@ public class MailboxLocationClassifierTests
 
     [Theory]
     [InlineData("MailUser", "OnPrem")]
+    [InlineData(" MailUser ", "OnPrem")]
     [InlineData("RemoteUserMailbox", "OnPrem")]
     [InlineData("UserMailbox", "Cloud")]
+    [InlineData("LegacyMailbox", "Cloud")]
+    [InlineData("GroupMailbox", "Cloud")]
     [InlineData("MailContact", "Unknown")]
+    [InlineData("   ", "Unknown")]
     public void ForOperationRouting_ReturnsExpectedRoute(string recipientTypeDetails, string expected)
     {
         Assert.Equal(expected, MailboxLocationClassifier.ForOperationRouting(recipientTypeDetails));
