@@ -50,21 +50,23 @@
                         </div>
                     }
                     <div class="nav-item px-3">
-                        <div class="nav-link nav-tree-toggle" style="cursor: pointer;" @onclick="() => configTreeExpanded = !configTreeExpanded" @onclick:stopPropagation="true">
+                        <div class="nav-link nav-tree-toggle" @onclick="() => configTreeExpanded = !configTreeExpanded" @onclick:stopPropagation="true">
                             <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
                             Module Config
                             <span class="ms-auto" style="font-size: 0.7em;">@(configTreeExpanded ? "−" : "+")</span>
                         </div>
                         @if (configTreeExpanded)
                         {
-                            @foreach (var cfgModule in configModulesForGlobalAdmin)
-                            {
-                                <div class="nav-item ps-4">
-                                    <NavLink class="nav-link py-1" href="@($"module-config/{cfgModule.Id}")" style="font-size: 0.85em;">
-                                        @cfgModule.DisplayName
-                                    </NavLink>
-                                </div>
-                            }
+                            <div class="nav-tree-children">
+                                @foreach (var cfgModule in configModulesForGlobalAdmin)
+                                {
+                                    <div class="nav-item nav-tree-child">
+                                        <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                            @cfgModule.DisplayName
+                                        </NavLink>
+                                    </div>
+                                }
+                            </div>
                         }
                     </div>
                 </Authorized>
@@ -87,21 +89,23 @@
             <AuthorizeView Policy="AdminSettings">
                 <NotAuthorized>
                     <div class="nav-item px-3 mt-3 border-top pt-3">
-                        <div class="nav-link nav-tree-toggle" style="cursor: pointer;" @onclick="() => moduleAdminTreeExpanded = !moduleAdminTreeExpanded" @onclick:stopPropagation="true">
+                        <div class="nav-link nav-tree-toggle" @onclick="() => moduleAdminTreeExpanded = !moduleAdminTreeExpanded" @onclick:stopPropagation="true">
                             <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
                             Module Config
                             <span class="ms-auto" style="font-size: 0.7em;">@(moduleAdminTreeExpanded ? "−" : "+")</span>
                         </div>
                         @if (moduleAdminTreeExpanded)
                         {
-                            @foreach (var cfgModule in moduleAdminModules)
-                            {
-                                <div class="nav-item ps-4">
-                                    <NavLink class="nav-link py-1" href="@($"module-config/{cfgModule.Id}")" style="font-size: 0.85em;">
-                                        @cfgModule.DisplayName
-                                    </NavLink>
-                                </div>
-                            }
+                            <div class="nav-tree-children">
+                                @foreach (var cfgModule in moduleAdminModules)
+                                {
+                                    <div class="nav-item nav-tree-child">
+                                        <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                            @cfgModule.DisplayName
+                                        </NavLink>
+                                    </div>
+                                }
+                            </div>
                         }
                     </div>
                 </NotAuthorized>

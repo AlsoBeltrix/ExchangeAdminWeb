@@ -124,8 +124,23 @@
                         @if (expandedRow == evtId)
                         {
                             <tr>
-                                <td colspan="8" class="bg-light">
-                                    <pre class="mb-0 p-2" style="font-size: 0.8em; white-space: pre-wrap;">@evt.RawJson</pre>
+                                <td colspan="8" class="bg-body-tertiary">
+                                    @if (evt.Details.Count == 0)
+                                    {
+                                        <div class="small text-muted p-2">No additional details.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="p-2 small d-grid gap-2" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+                                            @foreach (var detail in evt.Details)
+                                            {
+                                                <div>
+                                                    <div class="text-muted">@detail.Key</div>
+                                                    <div class="text-break">@detail.Value</div>
+                                                </div>
+                                            }
+                                        </div>
+                                    }
                                 </td>
                             </tr>
                         }
@@ -166,8 +181,43 @@
             {
                 <div class="card mt-2">
                     <div class="card-header"><strong>Extended Diagnostic Logs</strong> <small class="text-muted">(@startDate - @endDate)</small></div>
-                    <div class="card-body p-0">
-                        <pre class="m-0 p-3" style="max-height: 400px; overflow-y: auto; font-size: 0.75em; background: #1a1d21; color: #e0e0e0;">@string.Join("\n", extendedLogEntries)</pre>
+                    <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+                        <table class="table table-sm table-dark table-hover mb-0 align-middle">
+                            <thead class="sticky-top">
+                                <tr>
+                                    <th style="width: 150px;">Time</th>
+                                    <th style="width: 90px;">Level</th>
+                                    <th style="width: 130px;">Category</th>
+                                    <th>Event</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in extendedLogEvents)
+                                {
+                                    <tr>
+                                        <td class="text-nowrap small">@entry.Time</td>
+                                        <td><span class="badge @GetExtendedLevelBadge(entry.Level)">@entry.Level</span></td>
+                                        <td class="small">@entry.Category</td>
+                                        <td>
+                                            <div>@entry.Message</div>
+                                            @if (entry.DetailFields.Count > 0)
+                                            {
+                                                <div class="small text-muted mt-1 d-flex flex-wrap gap-2">
+                                                    @foreach (var field in entry.DetailFields)
+                                                    {
+                                                        <span><strong>@field.Key:</strong> @field.Value</span>
+                                                    }
+                                                </div>
+                                            }
+                                            else if (!string.IsNullOrWhiteSpace(entry.Detail))
+                                            {
+                                                <div class="small text-muted mt-1">@entry.Detail</div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             }
@@ -178,7 +228,7 @@
 @code {
     private bool authChecked;
     private bool showExtendedLogs;
-    private List<string> extendedLogEntries = new();
+    private List<ExtendedLogEvent> extendedLogEvents = new();
     private DateOnly startDate = DateOnly.FromDateTime(DateTime.Today);
     private DateOnly endDate = DateOnly.FromDateTime(DateTime.Today);
     private string selectedCategory = "";
@@ -285,7 +335,7 @@
                             Category = TryGetString(root, "category") ?? "",
                             Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
                             Result = TryGetString(root, "result") ?? "",
-                            RawJson = root.ToString() ?? ""
+                            Details = ExtractAuditDetails(root)
                         });
                         if (buffer.Count > MaxTotalEvents)
                             buffer.Dequeue();
@@ -320,6 +370,8 @@
             allEvents[i].Index = i;
 
         ApplyFilters();
+        if (showExtendedLogs)
+            LoadExtendedLogs();
     }
 
     private void ApplyFilters()
@@ -357,6 +409,52 @@
         if (DateTimeOffset.TryParse(iso, out var dt))
             return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
         return iso;
+    }
+
+    private static List<DetailField> ExtractAuditDetails(JsonElement root)
+    {
+        var details = new List<DetailField>();
+        foreach (var property in root.EnumerateObject())
+        {
+            if (IsSummaryField(property.Name))
+                continue;
+
+            var value = FormatJsonValue(property.Value);
+            if (!string.IsNullOrWhiteSpace(value))
+                details.Add(new DetailField(HumanizePropertyName(property.Name), value));
+        }
+
+        return details;
+    }
+
+    private static bool IsSummaryField(string name) => name is "ts" or "user" or "ip" or "action" or "category" or "result" or "target" or "batchName" or "section";
+
+    private static string FormatJsonValue(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() ?? "",
+        JsonValueKind.Number => value.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Array => string.Join(", ", value.EnumerateArray().Select(FormatJsonValue).Where(v => !string.IsNullOrWhiteSpace(v))),
+        JsonValueKind.Object => value.GetRawText(),
+        _ => ""
+    };
+
+    private static string HumanizePropertyName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return name;
+
+        var chars = new List<char>(name.Length + 8);
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i] == '_' ? ' ' : name[i];
+            if (i > 0 && c != ' ' && char.IsUpper(c) && (char.IsLower(name[i - 1]) || char.IsDigit(name[i - 1])))
+                chars.Add(' ');
+            chars.Add(c);
+        }
+
+        return new string(chars.ToArray());
     }
 
     private async Task DownloadCsv()
@@ -398,7 +496,83 @@
     {
         showExtendedLogs = !showExtendedLogs;
         if (showExtendedLogs)
-            extendedLogEntries = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue));
+            LoadExtendedLogs();
+    }
+
+    private void LoadExtendedLogs()
+    {
+        extendedLogEvents = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue))
+            .Select(ParseExtendedLogEntry)
+            .ToList();
+    }
+
+    private static ExtendedLogEvent ParseExtendedLogEntry(string line)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            var ts = TryGetString(root, "ts") ?? "";
+            var detail = TryGetString(root, "detail") ?? "";
+
+            return new ExtendedLogEvent
+            {
+                Time = string.IsNullOrWhiteSpace(ts) ? "" : FormatTimestamp(ts),
+                Level = TryGetString(root, "level") ?? "Info",
+                Category = TryGetString(root, "category") ?? "",
+                Message = TryGetString(root, "message") ?? "",
+                Detail = detail,
+                DetailFields = ParseExtendedDetail(detail)
+            };
+        }
+        catch
+        {
+            return new ExtendedLogEvent
+            {
+                Level = "Raw",
+                Message = "Unparsed log line",
+                Detail = line
+            };
+        }
+    }
+
+    private static List<DetailField> ParseExtendedDetail(string detail)
+    {
+        var fields = new List<DetailField>();
+        if (string.IsNullOrWhiteSpace(detail))
+            return fields;
+
+        foreach (var part in detail.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separator = part.IndexOf('=');
+            if (separator <= 0 || separator == part.Length - 1)
+                return new();
+
+            fields.Add(new DetailField(part[..separator].Trim(), part[(separator + 1)..].Trim()));
+        }
+
+        return fields;
+    }
+
+    private static string GetExtendedLevelBadge(string level) => level.ToLowerInvariant() switch
+    {
+        "error" or "fatal" => "text-bg-danger",
+        "warning" or "warn" => "text-bg-warning",
+        "debug" or "verbose" => "text-bg-secondary",
+        "raw" => "text-bg-light",
+        _ => "text-bg-info"
+    };
+
+    private sealed record DetailField(string Key, string Value);
+
+    private class ExtendedLogEvent
+    {
+        public string Time { get; set; } = "";
+        public string Level { get; set; } = "";
+        public string Category { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string Detail { get; set; } = "";
+        public List<DetailField> DetailFields { get; set; } = new();
     }
 
     private class AuditEvent
@@ -411,6 +585,6 @@
         public string Category { get; set; } = "";
         public string Target { get; set; } = "";
         public string Result { get; set; } = "";
-        public string RawJson { get; set; } = "";
+        public List<DetailField> Details { get; set; } = new();
     }
 }
