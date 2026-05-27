@@ -42,8 +42,6 @@ public class RecipientLookupService : ExchangeServiceBase
                     }
                 }
 
-                r.MailboxLocation = MailboxLocationClassifier.ForLookupDisplay(r.RecipientType);
-
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
@@ -106,6 +104,24 @@ public class RecipientLookupService : ExchangeServiceBase
 
             return r;
         });
+
+        if (result.Error == null)
+        {
+            try
+            {
+                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress) switch
+                {
+                    "OnPrem" => "On-Premises",
+                    "Cloud" => "Cloud",
+                    _ => "Unknown"
+                };
+            }
+            catch (Exception ex)
+            {
+                result.MailboxLocation = "Unknown";
+                result.Warnings.Add($"Could not determine mailbox location: {ex.Message}");
+            }
+        }
 
         if (result.Error == null && result.MailboxLocation == "On-Premises")
         {

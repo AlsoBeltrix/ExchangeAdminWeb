@@ -362,6 +362,13 @@
         try
         {
             var location = await Exchange.GetMailboxLocationAsync(target);
+            if (location == "Unknown")
+            {
+                result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
+                isLoading = false;
+                return;
+            }
+
             if (location == "OnPrem")
             {
                 var onPremAuth = await AuthorizationService.AuthorizeAsync(

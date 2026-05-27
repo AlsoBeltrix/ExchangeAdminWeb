@@ -1355,8 +1355,6 @@ https://admin.exchange.microsoft.com/#/migration";
                     }
                 }
 
-                r.MailboxLocation = MailboxLocationClassifier.ForLookupDisplay(r.RecipientType);
-
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
@@ -1419,6 +1417,24 @@ https://admin.exchange.microsoft.com/#/migration";
 
             return r;
         });
+
+        if (result.Error == null)
+        {
+            try
+            {
+                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress) switch
+                {
+                    "OnPrem" => "On-Premises",
+                    "Cloud" => "Cloud",
+                    _ => "Unknown"
+                };
+            }
+            catch (Exception ex)
+            {
+                result.MailboxLocation = "Unknown";
+                result.Warnings.Add($"Could not determine mailbox location: {ex.Message}");
+            }
+        }
 
         if (result.Error == null && result.MailboxLocation == "On-Premises")
         {
@@ -1729,18 +1745,98 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<string> GetMailboxLocationAsync(string identity)
     {
+        if (await HasCloudMailboxAsync(identity))
+            return "Cloud";
+
+        return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
+    }
+
+    private async Task<bool> HasCloudMailboxAsync(string identity)
+    {
         return await RunPooledQueryAsync(ps =>
         {
-            ps.AddCommand("Get-Recipient")
+            ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", identity)
-              .AddParameter("ErrorAction", "Stop");
-            var results = Invoke(ps);
-            var recip = results.FirstOrDefault()
-                ?? throw new InvalidOperationException($"Recipient '{identity}' not found.");
-
-            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
-            return MailboxLocationClassifier.ForOperationRouting(type);
+              .AddParameter("ErrorAction", "Ignore");
+            return InvokeOptional(ps).Any();
         });
+    }
+
+    private async Task<string?> GetOnPremMailboxLocationAsync(string identity)
+    {
+        if (string.IsNullOrWhiteSpace(_onPremServerUri))
+        {
+            _logger.LogWarning("OnPremExchange:ServerUri is not configured; cannot determine on-prem mailbox location for {Identity}", identity);
+            return null;
+        }
+
+        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        if (creds is null)
+        {
+            _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve credentials from Delinea", identity);
+            return null;
+        }
+
+        return await ThrottledAsync(() => Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                if (OnPremRecipientExists(ps, session, "Get-Mailbox", identity))
+                    return "OnPrem";
+
+                if (OnPremRecipientExists(ps, session, "Get-RemoteMailbox", identity))
+                    return "Cloud";
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to determine on-prem mailbox location for {Identity}", identity);
+                return null;
+            }
+            finally
+            {
+                RemoveOnPremSession(ps);
+            }
+        }), _onPremThrottle);
+    }
+
+    private static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
+    {
+        if (session is null)
+            return false;
+
+        var script = ScriptBlock.Create($"param($Identity) {commandName} -Identity $Identity -ErrorAction SilentlyContinue | Select-Object -First 1 Identity");
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("Session", session)
+          .AddParameter("ScriptBlock", script)
+          .AddParameter("ArgumentList", new object[] { identity });
+        return InvokeOptional(ps).Any();
+    }
+
+    private static void RemoveOnPremSession(PowerShell ps)
+    {
+        try
+        {
+            ps.Commands.Clear();
+            var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+            if (session != null)
+            {
+                ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
+                ps.Invoke();
+            }
+        }
+        catch { }
     }
 
     public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
