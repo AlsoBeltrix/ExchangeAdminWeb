@@ -1355,13 +1355,7 @@ https://admin.exchange.microsoft.com/#/migration";
                     }
                 }
 
-                var typeDetails = r.RecipientType ?? "";
-                if (typeDetails.Contains("Remote", StringComparison.OrdinalIgnoreCase))
-                    r.MailboxLocation = "On-Premises";
-                else if (typeDetails.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
-                    r.MailboxLocation = "Cloud";
-                else
-                    r.MailboxLocation = "Unknown";
+                r.MailboxLocation = MailboxLocationClassifier.ForLookupDisplay(r.RecipientType);
 
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
@@ -1744,12 +1738,8 @@ https://admin.exchange.microsoft.com/#/migration";
             var recip = results.FirstOrDefault()
                 ?? throw new InvalidOperationException($"Recipient '{identity}' not found.");
 
-            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "";
-            if (type.Contains("Remote", StringComparison.OrdinalIgnoreCase))
-                return "OnPrem";
-            if (type.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
-                return "Cloud";
-            return "Unknown";
+            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
+            return MailboxLocationClassifier.ForOperationRouting(type);
         });
     }
 

@@ -391,12 +391,8 @@ public abstract class ExchangeServiceBase
             var recip = results.FirstOrDefault()
                 ?? throw new InvalidOperationException($"Recipient '{identity}' not found.");
 
-            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "";
-            if (type.Contains("Remote", StringComparison.OrdinalIgnoreCase))
-                return "OnPrem";
-            if (type.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
-                return "Cloud";
-            return "Unknown";
+            var type = recip.Properties["RecipientTypeDetails"]?.Value?.ToString();
+            return MailboxLocationClassifier.ForOperationRouting(type);
         });
     }
 

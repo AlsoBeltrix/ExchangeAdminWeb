@@ -42,13 +42,7 @@ public class RecipientLookupService : ExchangeServiceBase
                     }
                 }
 
-                var typeDetails = r.RecipientType ?? "";
-                if (typeDetails.Contains("Remote", StringComparison.OrdinalIgnoreCase))
-                    r.MailboxLocation = "On-Premises";
-                else if (typeDetails.Contains("Mailbox", StringComparison.OrdinalIgnoreCase))
-                    r.MailboxLocation = "Cloud";
-                else
-                    r.MailboxLocation = "Unknown";
+                r.MailboxLocation = MailboxLocationClassifier.ForLookupDisplay(r.RecipientType);
 
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
