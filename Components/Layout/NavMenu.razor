@@ -23,17 +23,21 @@
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
             </NavLink>
         </div>
-        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && m.SortOrder < 900 && Enablement.IsModuleEnabled(m.Id)))
+        @foreach (var category in GetPrimaryModuleGroups())
         {
-            <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
-                <Authorized>
-                    <div class="nav-item px-3">
-                        <NavLink class="nav-link" href="@module.Route">
-                            <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
-                        </NavLink>
-                    </div>
-                </Authorized>
-            </AuthorizeView>
+            <div class="nav-category px-3">@category.Key</div>
+            @foreach (var module in category)
+            {
+                <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
+                    <Authorized>
+                        <div class="nav-item px-3">
+                            <NavLink class="nav-link" href="@module.Route">
+                                <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
+                            </NavLink>
+                        </div>
+                    </Authorized>
+                </AuthorizeView>
+            }
         }
         @{ var systemModules = Catalog.GetOrdered().Where(m => m.IsSystemModule).ToList(); }
         @{ var adminAdjacentModules = Catalog.GetOrdered().Where(m => !m.IsSystemModule && m.SortOrder >= 900 && Enablement.IsModuleEnabled(m.Id)).ToList(); }
@@ -41,9 +45,10 @@
         {
             <AuthorizeView Policy="@systemModules.First().MainPermission.PolicyAlias">
                 <Authorized>
+                    <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
                     @foreach (var module in systemModules)
                     {
-                        <div class="nav-item px-3 @(module == systemModules.First() ? "mt-3 border-top pt-3" : "")">
+                        <div class="nav-item px-3">
                             <NavLink class="nav-link" href="@module.Route">
                                 <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
                             </NavLink>
@@ -88,7 +93,8 @@
         {
             <AuthorizeView Policy="AdminSettings">
                 <NotAuthorized>
-                    <div class="nav-item px-3 mt-3 border-top pt-3">
+                    <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
+                    <div class="nav-item px-3">
                         <div class="nav-link nav-tree-toggle" @onclick="() => moduleAdminTreeExpanded = !moduleAdminTreeExpanded" @onclick:stopPropagation="true">
                             <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
                             Module Config
@@ -130,6 +136,35 @@
     private List<AdminModuleDescriptor> moduleAdminModules = new();
     private bool configTreeExpanded;
     private bool moduleAdminTreeExpanded;
+    private static readonly string[] PrimaryCategoryOrder =
+    [
+        "Exchange",
+        "Directory & Groups",
+        "Identity & Access",
+        "Infrastructure"
+    ];
+
+    private IEnumerable<IGrouping<string, AdminModuleDescriptor>> GetPrimaryModuleGroups()
+    {
+        return Catalog.GetOrdered()
+            .Where(m => !m.IsSystemModule && m.SortOrder < 900 && Enablement.IsModuleEnabled(m.Id))
+            .OrderBy(m => GetCategorySortOrder(m.Category))
+            .ThenBy(m => m.SortOrder)
+            .GroupBy(m => m.Category);
+    }
+
+    private static int GetCategorySortOrder(string category)
+    {
+        for (var i = 0; i < PrimaryCategoryOrder.Length; i++)
+        {
+            if (string.Equals(PrimaryCategoryOrder[i], category, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return 1000;
+    }
 
     protected override async Task OnInitializedAsync()
     {

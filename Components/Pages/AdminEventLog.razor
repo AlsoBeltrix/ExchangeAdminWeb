@@ -50,7 +50,6 @@
                 <option value="MigrationAction">MigrationAction</option>
                 <option value="Lookup">Lookup</option>
                 <option value="AdminSettings">AdminSettings</option>
-                <option value="OperationTrace">OperationTrace</option>
             </select>
         </div>
         <div class="col-auto">
@@ -114,7 +113,7 @@
                             <td><small>@evt.Ip</small></td>
                             <td>@evt.Action</td>
                             <td>@evt.Category</td>
-                            <td><small class="text-break">@evt.Target</small></td>
+                            <td style="max-width: 28rem;"><small class="d-inline-block text-truncate align-bottom" style="max-width: 100%;" title="@evt.FullTarget">@evt.Target</small></td>
                             <td>
                                 <span class="badge @(evt.Result == "Success" ? "bg-success" : evt.Result == "Failed" ? "bg-danger" : "bg-warning text-dark")">
                                     @evt.Result
@@ -326,6 +325,10 @@
                         }
 
                         var eventType = TryGetString(root, "eventType") ?? "audit";
+                        if (!eventType.Equals("audit", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var rawTarget = GetAuditTarget(root);
                         totalParsed++;
                         buffer.Enqueue(new AuditEvent
                         {
@@ -335,9 +338,10 @@
                             Ip = TryGetString(root, "ip") ?? "",
                             Action = FormatAction(root, eventType),
                             Category = FormatCategory(root, eventType),
-                            Target = TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section") ?? "",
+                            Target = FormatTargetSummary(rawTarget),
+                            FullTarget = rawTarget ?? "",
                             Result = TryGetString(root, "result") ?? "",
-                            Details = ExtractAuditDetails(root, eventType)
+                            Details = ExtractAuditDetails(root, eventType, rawTarget)
                         });
                         if (buffer.Count > MaxTotalEvents)
                             buffer.Dequeue();
@@ -411,6 +415,19 @@
     private static string? TryGetString(JsonElement root, string prop) =>
         root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.String ? val.GetString() : null;
 
+    private static string? GetAuditTarget(JsonElement root) =>
+        TryGetString(root, "target") ?? TryGetString(root, "batchName") ?? TryGetString(root, "section");
+
+    private static string FormatTargetSummary(string? target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+            return "";
+
+        var messageIdIndex = target.IndexOf(" MessageId=", StringComparison.OrdinalIgnoreCase);
+        var summary = messageIdIndex > 0 ? target[..messageIdIndex] : target;
+        return summary.Length <= 90 ? summary : $"{summary[..87]}...";
+    }
+
     private static string FormatTimestamp(string iso)
     {
         if (DateTimeOffset.TryParse(iso, out var dt))
@@ -437,20 +454,62 @@
         return string.IsNullOrWhiteSpace(module) ? "OperationTrace" : $"OperationTrace:{module}";
     }
 
-    private static List<DetailField> ExtractAuditDetails(JsonElement root, string eventType)
+    private static List<DetailField> ExtractAuditDetails(JsonElement root, string eventType, string? rawTarget)
     {
         var details = new List<DetailField>();
+        AddTargetDetails(details, rawTarget);
+
         foreach (var property in root.EnumerateObject())
         {
             if (IsSummaryField(property.Name, eventType))
                 continue;
 
-            var value = FormatJsonValue(property.Value);
-            if (!string.IsNullOrWhiteSpace(value))
-                details.Add(new DetailField(HumanizePropertyName(property.Name), value));
+            if (property.Name.Equals("details", StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var detailProperty in property.Value.EnumerateObject())
+                {
+                    AddDetail(details, HumanizePropertyName(detailProperty.Name), FormatJsonValue(detailProperty.Value));
+                }
+                continue;
+            }
+
+            AddDetail(details, HumanizePropertyName(property.Name), FormatJsonValue(property.Value));
         }
 
         return details;
+    }
+
+    private static void AddTargetDetails(List<DetailField> details, string? rawTarget)
+    {
+        if (string.IsNullOrWhiteSpace(rawTarget))
+            return;
+
+        var messageIdIndex = rawTarget.IndexOf(" MessageId=", StringComparison.OrdinalIgnoreCase);
+        var route = messageIdIndex > 0 ? rawTarget[..messageIdIndex] : rawTarget;
+        var arrow = route.IndexOf("->", StringComparison.Ordinal);
+        if (arrow > 0)
+        {
+            AddDetail(details, "Sender", route[..arrow].Trim());
+            AddDetail(details, "Recipient", route[(arrow + 2)..].Trim());
+        }
+
+        if (messageIdIndex > 0)
+        {
+            AddDetail(details, "Message ID", rawTarget[(messageIdIndex + " MessageId=".Length)..].Trim());
+        }
+
+        AddDetail(details, "Full Target", rawTarget);
+    }
+
+    private static void AddDetail(List<DetailField> details, string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return;
+
+        if (details.Any(d => d.Key.Equals(key, StringComparison.OrdinalIgnoreCase) && d.Value.Equals(value, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        details.Add(new DetailField(key, value));
     }
 
     private static bool IsSummaryField(string name, string eventType)
@@ -518,7 +577,7 @@
             csv.WriteField(evt.Ip);
             csv.WriteField(evt.Action);
             csv.WriteField(evt.Category);
-            csv.WriteField(evt.Target);
+            csv.WriteField(evt.FullTarget);
             csv.WriteField(evt.Result);
             await csv.NextRecordAsync();
         }
@@ -622,6 +681,7 @@
         public string Action { get; set; } = "";
         public string Category { get; set; } = "";
         public string Target { get; set; } = "";
+        public string FullTarget { get; set; } = "";
         public string Result { get; set; } = "";
         public List<DetailField> Details { get; set; } = new();
     }

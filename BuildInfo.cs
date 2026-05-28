@@ -12,7 +12,8 @@ public static class BuildInfo
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
                 ?.InformationalVersion;
 
-            return string.IsNullOrWhiteSpace(version) ? "v0.0.0" : $"v{version}";
+            var cleanVersion = version?.Split('+', 2)[0];
+            return string.IsNullOrWhiteSpace(cleanVersion) ? "v0.0.0" : $"v{cleanVersion}";
         }
     }
 }

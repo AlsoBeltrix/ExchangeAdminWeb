@@ -5,12 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <DefaultItemExcludes>$(DefaultItemExcludes);ExchangeAdminWeb.Tests\**</DefaultItemExcludes>
-    <VersionPrefix>2.0</VersionPrefix>
-    <BuildTimestamp>$([System.DateTime]::UtcNow.ToString('yyyyMMdd.HHmmss'))</BuildTimestamp>
-    <InformationalVersion>$(VersionPrefix)+$(BuildTimestamp)</InformationalVersion>
+    <VersionPrefix>2.0.1</VersionPrefix>
+    <InformationalVersion>$(VersionPrefix)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
-    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
+    <FileVersion>2.0.1.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

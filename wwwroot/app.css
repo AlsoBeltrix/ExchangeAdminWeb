@@ -59,6 +59,100 @@ h1:focus {
     line-height: 1;
 }
 
+
+/* Global sidebar icon rules. Kept outside CSS isolation so published IIS builds render icons reliably. */
+.bi {
+    display: inline-block;
+    position: relative;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-right: 0.75rem;
+    top: -1px;
+    background-size: cover;
+}
+
+.bi-house-door-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-house-door-fill' viewBox='0 0 16 16'%3E%3Cpath d='M6.5 14.5v-3.505c0-.245.25-.495.5-.495h2c.25 0 .5.25.5.5v3.5a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.146-.354L13 5.793V2.5a.5.5 0 0 0-.5-.5h-1a.5.5 0 0 0-.5.5v1.293L8.354 1.146a.5.5 0 0 0-.708 0l-6 6A.5.5 0 0 0 1.5 7.5v7a.5.5 0 0 0 .5.5h4a.5.5 0 0 0 .5-.5Z'/%3E%3C/svg%3E");
+}
+
+.bi-plus-square-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-plus-square-fill' viewBox='0 0 16 16'%3E%3Cpath d='M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm6.5 4.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3a.5.5 0 0 1 1 0z'/%3E%3C/svg%3E");
+}
+
+.bi-list-nested-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-list-nested' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M4.5 11.5A.5.5 0 0 1 5 11h10a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5zm-2-4A.5.5 0 0 1 3 7h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm-2-4A.5.5 0 0 1 1 3h10a.5.5 0 0 1 0 1H1a.5.5 0 0 1-.5-.5z'/%3E%3C/svg%3E");
+}
+
+.bi-geo-alt-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' class='bi bi-geo-alt-fill' viewBox='0 0 16 16'%3E%3Cpath d='M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z'/%3E%3C/svg%3E");
+}
+
+
+.bi-person-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M3 14s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1H3zm5-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6z'/%3E%3C/svg%3E");
+}
+
+.bi-calendar-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 5v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V5H1z'/%3E%3C/svg%3E");
+}
+
+.bi-arrow-left-right-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M1 11.5a.5.5 0 0 0 .5.5h11.793l-3.147 3.146a.5.5 0 0 0 .708.708l4-4a.5.5 0 0 0 0-.708l-4-4a.5.5 0 0 0-.708.708L13.293 11H1.5a.5.5 0 0 0-.5.5zm14-7a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 1 0 .708-.708L2.707 5H14.5a.5.5 0 0 0 .5-.5z'/%3E%3C/svg%3E");
+}
+
+.bi-people-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M7 14s-1 0-1-1 1-4 5-4 5 3 5 4-1 1-1 1H7zm4-6a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zm-5.216 6A2.238 2.238 0 0 1 5 13c0-1.355.68-2.75 1.936-3.72A6.325 6.325 0 0 0 5 9c-4 0-5 3-5 4s1 1 1 1h4.784zM4.5 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z'/%3E%3C/svg%3E");
+}
+
+.bi-envelope-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M.05 3.555A2 2 0 0 1 2 2h12a2 2 0 0 1 1.95 1.555L8 8.414.05 3.555zM0 4.697v7.104l5.803-3.558L0 4.697zM6.761 8.83.191 12.86A2 2 0 0 0 2 14h12a2 2 0 0 0 1.808-1.14L9.238 8.83 8 9.586 6.761 8.83zM10.197 8.243 16 11.801V4.697l-5.803 3.546z'/%3E%3C/svg%3E");
+}
+
+.bi-search-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0z'/%3E%3C/svg%3E");
+}
+
+.bi-clock-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z'/%3E%3C/svg%3E");
+}
+
+.bi-gear-fill-nav-menu {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='white' viewBox='0 0 16 16'%3E%3Cpath d='M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1c.895.264 1.318 1.285.872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872l-.1-.34zM8 10.93a2.929 2.929 0 1 1 0-5.858 2.929 2.929 0 0 1 0 5.858z'/%3E%3C/svg%3E");
+}
+
+.nav-category {
+    color: #9ca3af;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-top: 0.9rem;
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+}
+
+
+/* Global sidebar tree rules. Mirrors NavMenu isolation styles for published IIS reliability. */
+.nav-tree-toggle {
+    cursor: pointer;
+}
+
+.nav-tree-children {
+    margin-left: 2.25rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.nav-tree-child {
+    padding-bottom: 0.15rem;
+}
+
+.nav-tree-child .nav-link {
+    min-height: 2.15rem;
+    height: auto;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    line-height: 1.2rem;
+}
 /* Dark mode */
 html.dark {
     color-scheme: dark;
@@ -101,6 +195,74 @@ html.dark .table th {
     color: #e0e0e0;
 }
 
+
+/* Dark mode Bootstrap light-state overrides. Prevent light table/panel utilities from producing unreadable text. */
+html.dark .bg-white,
+html.dark .bg-light {
+    background-color: #252a2f !important;
+    color: #e0e0e0 !important;
+    border-color: #3a3f44 !important;
+}
+
+html.dark pre.bg-light {
+    background-color: #111418 !important;
+    color: #e0e0e0 !important;
+    border: 1px solid #3a3f44;
+}
+
+html.dark .bg-light.text-dark,
+html.dark .badge.bg-light.text-dark,
+html.dark .text-bg-light {
+    background-color: #343a40 !important;
+    border-color: #5a6268 !important;
+    color: #e0e0e0 !important;
+}
+
+html.dark .table-light {
+    --bs-table-bg: #343a40;
+    --bs-table-color: #e0e0e0;
+    --bs-table-border-color: #4b5563;
+    color: #e0e0e0;
+    border-color: #4b5563;
+}
+
+html.dark .table-success {
+    --bs-table-bg: #173523;
+    --bs-table-color: #d6f5e0;
+    --bs-table-border-color: #2f6845;
+    --bs-table-hover-bg: #1d432c;
+    --bs-table-hover-color: #e6fff0;
+    color: #d6f5e0;
+}
+
+html.dark .table-danger {
+    --bs-table-bg: #3a1f23;
+    --bs-table-color: #ffd7dc;
+    --bs-table-border-color: #743840;
+    --bs-table-hover-bg: #48272c;
+    --bs-table-hover-color: #ffe6ea;
+    color: #ffd7dc;
+}
+
+html.dark .table-warning {
+    --bs-table-bg: #3f3518;
+    --bs-table-color: #fff0bf;
+    --bs-table-border-color: #76642d;
+    --bs-table-hover-bg: #4b3f1d;
+    --bs-table-hover-color: #fff5d6;
+    color: #fff0bf;
+}
+
+html.dark .table-info,
+html.dark .table-primary,
+html.dark .table-secondary {
+    --bs-table-bg: #24313d;
+    --bs-table-color: #d9ecff;
+    --bs-table-border-color: #3b5469;
+    --bs-table-hover-bg: #2b3b49;
+    --bs-table-hover-color: #edf7ff;
+    color: #d9ecff;
+}
 html.dark .form-control,
 html.dark .form-select {
     background-color: #2b2f33;
