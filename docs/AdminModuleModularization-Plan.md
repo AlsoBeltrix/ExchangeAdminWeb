@@ -183,7 +183,7 @@ Adapt existing sections as modules:
 | Calendar Permissions | `CalendarPermissions` | `Access` | `OnPrem` |
 | Exchange Migration | `Migration` | `Access` | `Create`, `Manage` |
 | Delegation Report | `DelegationReport` | `Access` | None |
-| Message Trace | `MessageTrace` | `Access` | None |
+| Message Analysis | `MessageTrace` | `Access` | None |
 | Recipient Lookup | `RecipientLookup` | `Access` | None |
 | Out of Office | `OutOfOffice` | `Access` | None |
 | Admin Settings | `AdminSettings` | `Access` | System/non-disableable |
@@ -300,7 +300,7 @@ Split module services over time:
 - `ICalendarPermissionService`
 - `IMigrationService`
 - `IDelegationReportService`
-- `IMessageTraceService`
+- `IMessageAnalysisService`
 - `IRecipientLookupService`
 - `IOutOfOfficeService`
 

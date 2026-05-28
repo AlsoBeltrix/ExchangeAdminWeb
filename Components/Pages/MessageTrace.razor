@@ -1,10 +1,13 @@
+@page "/message-analysis"
 @page "/message-trace"
 @using ExchangeAdminWeb.Models
 @using ExchangeAdminWeb.Services
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Forms
 @attribute [Authorize(Policy = "MessageTrace")]
 @rendermode InteractiveServer
 @inject IExchangeService Exchange
+@inject HeaderAnalysisService HeaderAnalysis
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -12,15 +15,259 @@
 @inject ClientInfoService ClientInfo
 @inject IJSRuntime JS
 
-<PageTitle>Message Trace</PageTitle>
+<PageTitle>Message Analysis</PageTitle>
 
-<div class="container-fluid mt-4">
-    <div class="alert alert-info py-2 mb-3"><small>All searches are logged for audit purposes.</small></div>
-    <h2>Message Trace</h2>
-    <p class="text-muted">Search mail flow by sender, recipient, and date range</p>
+<div class="container-fluid mt-4 message-analysis-page">
+    <div class="alert alert-info py-2 mb-3"><small>Message analysis actions are logged for audit purposes. Ticket number is optional and audit-only.</small></div>
+    <h2>Message Analysis</h2>
+    <p class="text-muted">Analyze message headers, then trace the same message across Exchange Online and on-premises mail flow.</p>
 
-    <div class="card">
-        <div class="card-body">
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <button type="button" class="nav-link @(activeTab == "headers" ? "active" : "")" @onclick="ShowHeadersTab">Header Analysis</button>
+        </li>
+        <li class="nav-item">
+            <button type="button" class="nav-link @(activeTab == "trace" ? "active" : "")" @onclick="ShowTraceTab">Trace Search</button>
+        </li>
+    </ul>
+
+    @if (activeTab == "headers")
+    {
+        <div class="border rounded p-3 mb-3">
+            <div class="row g-3 align-items-end">
+                <div class="col-xl-5 col-lg-6">
+                    <label class="form-label">Upload .eml or .msg</label>
+                    <InputFile class="form-control" OnChange="AnalyzeUploadedFile" accept=".eml,.msg" disabled="@isAnalyzing" />
+                    @if (!string.IsNullOrWhiteSpace(uploadedFileName))
+                    {
+                        <div class="form-text">Analyzed @uploadedFileName</div>
+                    }
+                </div>
+                <div class="col-xl-3 col-lg-3">
+                    <button class="btn btn-outline-secondary w-100" type="button" @onclick="TogglePasteInput" disabled="@isAnalyzing">
+                        @(showPasteInput ? "Hide pasted headers" : "Paste headers")
+                    </button>
+                </div>
+                <div class="col-xl-4 col-lg-3 d-flex gap-2 justify-content-lg-end">
+                    @if (headerAnalysis != null)
+                    {
+                        <button class="btn btn-outline-primary" @onclick="() => UseHeaderTraceSuggestion(false)">Fill Trace Form</button>
+                        <button class="btn btn-primary" @onclick="() => UseHeaderTraceSuggestion(true)" disabled="@isLoading">Run Trace Now</button>
+                    }
+                    <button class="btn btn-outline-secondary" type="button" @onclick="ClearHeaderAnalysis" disabled="@isAnalyzing">Clear</button>
+                </div>
+            </div>
+
+            @if (showPasteInput)
+            {
+                <div class="mt-3">
+                    <label class="form-label">Pasted Headers</label>
+                    <textarea class="form-control font-monospace" rows="8" @bind="headerText" placeholder="Paste raw message headers here" disabled="@isAnalyzing"></textarea>
+                    <div class="mt-2">
+                        <button class="btn btn-primary" @onclick="AnalyzePastedHeaders" disabled="@(isAnalyzing || string.IsNullOrWhiteSpace(headerText))">
+                            @if (isAnalyzing)
+                            {
+                                <span class="spinner-border spinner-border-sm me-2"></span>
+                            }
+                            Analyze Pasted Headers
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(headerAnalysisError))
+        {
+            <div class="alert alert-danger">@headerAnalysisError</div>
+        }
+
+        @if (headerAnalysis == null)
+        {
+            <div class="alert alert-secondary">Upload a message file or paste raw headers to start analysis.</div>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h4 class="mb-1">@(headerAnalysis.Headers.FileName ?? "Headers")</h4>
+                    <div class="text-muted small">@headerAnalysis.HopCount routing hop(s), @HeaderRows().Count() header value(s)</div>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-primary" @onclick="() => UseHeaderTraceSuggestion(false)">Fill Trace Form</button>
+                    <button class="btn btn-primary" @onclick="() => UseHeaderTraceSuggestion(true)" disabled="@isLoading">Run Trace Now</button>
+                </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-xl-8">
+                    <div class="border rounded p-3 h-100">
+                        <h5 class="mb-3">Summary</h5>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0 align-middle">
+                                <tbody>
+                                    <tr><th style="width: 150px;">Subject</th><td class="text-break">@headerAnalysis.Subject</td></tr>
+                                    <tr><th>Message ID</th><td class="text-break">@headerAnalysis.MessageId</td></tr>
+                                    <tr><th>Date</th><td>@headerAnalysis.Date?.ToString("yyyy-MM-dd HH:mm:ss")</td></tr>
+                                    <tr><th>From</th><td class="text-break">@headerAnalysis.From</td></tr>
+                                    <tr><th>Reply-To</th><td class="text-break">@(headerAnalysis.ReplyTo ?? headerAnalysis.From)</td></tr>
+                                    <tr><th>To</th><td class="text-break">@string.Join("; ", headerAnalysis.To)</td></tr>
+                                    @if (headerAnalysis.Cc.Any())
+                                    {
+                                        <tr><th>Cc</th><td class="text-break">@string.Join("; ", headerAnalysis.Cc)</td></tr>
+                                    }
+                                    <tr><th>Return-Path</th><td class="text-break">@headerAnalysis.ReturnPath</td></tr>
+                                    <tr><th>Originating IP</th><td>@headerAnalysis.OriginatingIP</td></tr>
+                                    <tr><th>Delivery Time</th><td>@FormatDelay(headerAnalysis.DeliveryTime)</td></tr>
+                                    <tr><th>Content-Type</th><td class="text-break">@headerAnalysis.Headers.ContentType</td></tr>
+                                    <tr><th>Attachments</th><td>@(headerAnalysis.HasAttachments ? "Yes" : "No")</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-xl-4">
+                    <div class="border rounded p-3 h-100">
+                        <h5 class="mb-3">Authentication</h5>
+                        <div class="d-flex flex-column gap-2">
+                            <div><span class="badge bg-@GetAuthBadge(headerAnalysis.SpfResult)">SPF @headerAnalysis.SpfResult</span></div>
+                            <div><span class="badge bg-@GetAuthBadge(headerAnalysis.DkimResult)">DKIM @headerAnalysis.DkimResult</span></div>
+                            <div><span class="badge bg-@GetAuthBadge(headerAnalysis.DmarcResult)">DMARC @headerAnalysis.DmarcResult</span></div>
+                        </div>
+                        @if (headerAnalysis.Headers.Authentication != null)
+                        {
+                            <dl class="row small mt-3 mb-0">
+                                <dt class="col-4">SPF domain</dt><dd class="col-8 text-break">@headerAnalysis.Headers.Authentication.SPF?.Domain</dd>
+                                <dt class="col-4">SPF client IP</dt><dd class="col-8 text-break">@headerAnalysis.Headers.Authentication.SPF?.ClientIp</dd>
+                                <dt class="col-4">DKIM domain</dt><dd class="col-8 text-break">@(headerAnalysis.Headers.Authentication.DKIM?.HeaderD ?? headerAnalysis.Headers.Authentication.DKIM?.Domain)</dd>
+                                <dt class="col-4">DKIM selector</dt><dd class="col-8 text-break">@headerAnalysis.Headers.Authentication.DKIM?.Selector</dd>
+                                <dt class="col-4">DMARC domain</dt><dd class="col-8 text-break">@headerAnalysis.Headers.Authentication.DMARC?.Domain</dd>
+                                <dt class="col-4">DMARC policy</dt><dd class="col-8 text-break">@headerAnalysis.Headers.Authentication.DMARC?.Policy</dd>
+                            </dl>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            @if (headerAnalysis.Findings.Any())
+            {
+                <div class="border rounded p-3 mb-3">
+                    <h5 class="mb-3">Findings</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead><tr><th>Severity</th><th>Category</th><th>Finding</th><th>Evidence</th></tr></thead>
+                            <tbody>
+                                @foreach (var finding in headerAnalysis.Findings)
+                                {
+                                    <tr>
+                                        <td><span class="badge bg-@GetFindingBadge(finding.Severity)">@finding.Severity</span></td>
+                                        <td>@finding.Category</td>
+                                        <td>@finding.Message</td>
+                                        <td class="text-break"><small>@finding.Evidence</small></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+
+            <div class="border rounded p-3 mb-3">
+                <h5 class="mb-3">Routing Path</h5>
+                @if (headerAnalysis.RoutingPath.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr><th>Hop</th><th>Submitting Host</th><th>Receiving Host</th><th>Protocol</th><th>Time</th><th>Delay</th><th>Raw Received Header</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var hop in headerAnalysis.RoutingPath)
+                                {
+                                    <tr>
+                                        <td>@hop.Hop</td>
+                                        <td class="text-break">@hop.From</td>
+                                        <td class="text-break">@hop.By</td>
+                                        <td>@hop.With</td>
+                                        <td>@hop.Date?.ToString("yyyy-MM-dd HH:mm:ss zzz")</td>
+                                        <td>@FormatDelay(hop.DelayFromPrevious)</td>
+                                        <td class="text-break"><small>@hop.RawValue</small></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-muted">No Received headers found.</div>
+                }
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-xl-5">
+                    <div class="border rounded p-3 h-100">
+                        <h5 class="mb-3">Filtering Signals</h5>
+                        @if (headerAnalysis.SpamScores.Any())
+                        {
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0">
+                                    <tbody>
+                                        @foreach (var score in headerAnalysis.SpamScores)
+                                        {
+                                            <tr><th>@score.Key</th><td class="text-break">@score.Value</td></tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-muted">No spam or filtering score headers found.</div>
+                        }
+                    </div>
+                </div>
+                <div class="col-xl-7">
+                    <div class="border rounded p-3 h-100">
+                        <h5 class="mb-3">Uncommon / Interesting Headers</h5>
+                        @if (headerAnalysis.InterestingHeaders.Any())
+                        {
+                            <div class="small">
+                                @foreach (var header in headerAnalysis.InterestingHeaders)
+                                {
+                                    <div class="text-break mb-1">@header</div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="text-muted">No uncommon headers were flagged.</div>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="border rounded p-3 mb-3">
+                <h5 class="mb-3">All Headers</h5>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle mb-0">
+                        <thead><tr><th style="width: 260px;">Header</th><th>Value</th></tr></thead>
+                        <tbody>
+                            @foreach (var header in HeaderRows())
+                            {
+                                <tr>
+                                    <td class="fw-semibold text-break">@header.Key</td>
+                                    <td class="font-monospace small text-break">@header.Value</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+    else
+    {
+        <div class="border rounded p-3">
             <div class="row g-3 mb-3">
                 <div class="col-md-3">
                     <label class="form-label">Sender</label>
@@ -38,15 +285,22 @@
                     <label class="form-label">End Date</label>
                     <input type="date" class="form-control" @bind="endDate" disabled="@isLoading" />
                 </div>
+                <div class="col-md-2">
+                    <label class="form-label">Ticket Number</label>
+                    <input type="text" class="form-control" @bind="ticketNumber" placeholder="optional" disabled="@isLoading" />
+                </div>
             </div>
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <label class="form-label">Subject Contains</label>
                     <input type="text" class="form-control" @bind="subjectFilter" placeholder="@(IsHistoricalRange ? "(not available for historical search)" : "(optional)")" disabled="@(isLoading || IsHistoricalRange)" />
                 </div>
+                <div class="col-md-4">
+                    <label class="form-label">Message ID</label>
+                    <input type="text" class="form-control" @bind="messageId" placeholder="<message-id@example.com>" disabled="@(isLoading || IsHistoricalRange)" />
+                </div>
                 <div class="col-md-2 d-flex align-items-end">
-                    <button class="btn btn-primary" @onclick="RunTrace"
-                            disabled="@(!IsFormValid || isLoading)">
+                    <button class="btn btn-primary" @onclick="RunTrace" disabled="@(!IsFormValid || isLoading)">
                         @if (isLoading)
                         {
                             <span class="spinner-border spinner-border-sm me-2"></span>
@@ -59,9 +313,8 @@
             @if (IsHistoricalRange)
             {
                 <div class="alert alert-info mb-3">
-                    <strong>Historical search:</strong> Standard message trace only covers the last 10 days.
-                    Older searches are submitted as background jobs and results are emailed when ready (30 min to several hours).
-                    Subject filtering is not available for historical searches.
+                    <strong>Historical search:</strong> Exchange Online realtime trace covers the last 10 days.
+                    Older searches are submitted as background jobs and results are emailed when ready. Subject, Message ID, and on-premises tracking-log search are realtime-only.
                 </div>
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
@@ -83,6 +336,18 @@
                 </div>
             }
 
+            @if (response?.Warnings.Any() == true)
+            {
+                <div class="alert alert-warning">
+                    <ul class="mb-0">
+                        @foreach (var warning in response.Warnings.Distinct(StringComparer.OrdinalIgnoreCase))
+                        {
+                            <li>@warning</li>
+                        }
+                    </ul>
+                </div>
+            }
+
             @if (response?.Error != null)
             {
                 <div class="alert alert-danger">@response.Error</div>
@@ -92,7 +357,7 @@
                 @if (response.Truncated)
                 {
                     <div class="alert alert-warning">
-                        Results limited to @MessageTraceResponse.MaxResults messages. Narrow your search criteria for complete results.
+                        Results limited to @MessageTraceResponse.MaxResults entries. Narrow your search criteria for complete results.
                     </div>
                 }
 
@@ -103,14 +368,17 @@
                         <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
                     </div>
                     <div class="table-responsive">
-                        <table class="table table-sm table-striped">
+                        <table class="table table-sm table-striped align-middle">
                             <thead>
                                 <tr>
                                     <th>Received</th>
+                                    <th>Backend</th>
                                     <th>Sender</th>
                                     <th>Recipient</th>
                                     <th>Subject</th>
-                                    <th>Status</th>
+                                    <th>Status/Event</th>
+                                    <th>Server</th>
+                                    <th>Message ID</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -118,10 +386,13 @@
                                 {
                                     <tr>
                                         <td>@msg.Received.ToString("yyyy-MM-dd HH:mm")</td>
+                                        <td>@msg.Backend</td>
                                         <td>@msg.SenderAddress</td>
                                         <td>@msg.RecipientAddress</td>
                                         <td>@msg.Subject</td>
                                         <td><span class="badge bg-@GetStatusBadge(msg.Status)">@msg.Status</span></td>
+                                        <td>@msg.Server</td>
+                                        <td class="text-break"><small>@msg.MessageId</small></td>
                                     </tr>
                                 }
                             </tbody>
@@ -134,15 +405,17 @@
                 }
             }
         </div>
-    </div>
+    }
 </div>
-
 @code {
+    private string activeTab = "headers";
     private string sender = "";
     private string recipient = "";
     private DateTime startDate = DateTime.Today.AddDays(-2);
     private DateTime endDate = DateTime.Today;
     private string subjectFilter = "";
+    private string messageId = "";
+    private string ticketNumber = "";
     private bool isLoading = false;
     private string? validationError;
     private MessageTraceResponse? response;
@@ -150,10 +423,19 @@
     private string currentUser = "";
     private string userEmail = "";
     private string clientIpAddress = "Unknown";
-
     private string reportEmail = "";
 
-    private bool IsFormValid => !string.IsNullOrWhiteSpace(sender) || !string.IsNullOrWhiteSpace(recipient);
+    private string headerText = "";
+    private string? uploadedFileName;
+    private bool isAnalyzing;
+    private bool showPasteInput;
+    private string? headerAnalysisError;
+    private HeaderAnalysisResult? headerAnalysis;
+
+    private bool IsFormValid => !string.IsNullOrWhiteSpace(sender) || !string.IsNullOrWhiteSpace(recipient) || !string.IsNullOrWhiteSpace(messageId);
+    private void ShowTraceTab() => activeTab = "trace";
+    private void ShowHeadersTab() => activeTab = "headers";
+    private void TogglePasteInput() => showPasteInput = !showPasteInput;
     private bool IsHistoricalRange => (endDate - startDate).TotalDays > 9;
 
     protected override async Task OnInitializedAsync()
@@ -204,6 +486,12 @@
         validationError = ValidateDateRange(startDate, endDate);
         if (validationError != null) return;
 
+        if (IsHistoricalRange && !string.IsNullOrWhiteSpace(messageId))
+        {
+            validationError = "Message ID search is available only for realtime trace windows of 10 days or less.";
+            return;
+        }
+
         if (IsHistoricalRange)
             subjectFilter = "";
 
@@ -236,14 +524,18 @@
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
                 startDate, EffectiveEndDate(endDate),
-                string.IsNullOrWhiteSpace(subjectFilter) ? null : subjectFilter.Trim());
+                string.IsNullOrWhiteSpace(subjectFilter) ? null : subjectFilter.Trim(),
+                string.IsNullOrWhiteSpace(messageId) ? null : messageId.Trim());
 
-            var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, response.Error == null, response.Error);
+            var target = TraceTarget();
+            var auditDetail = response.Error ?? (response.Warnings.Any() ? string.Join(" | ", response.Warnings.Distinct(StringComparer.OrdinalIgnoreCase)) : null);
+            var auditSuccess = response.Error == null && !response.Warnings.Any();
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", target, auditSuccess, auditDetail, ticketNumber.Trim());
         }
         catch (Exception ex)
         {
             response = new MessageTraceResponse { Error = ex.Message };
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, ex.Message, ticketNumber.Trim());
         }
     }
 
@@ -256,7 +548,7 @@
             return;
         }
 
-        var target = $"{(string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim())}->{(string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim())}";
+        var target = TraceTarget();
         var reportTitle = $"MessageTrace_{currentUser}_{startDate:yyyyMMdd}-{endDate:yyyyMMdd}";
 
         try
@@ -276,11 +568,90 @@
                 response = new MessageTraceResponse { Error = result.Error ?? "Failed to submit historical search." };
             }
 
-            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, result.Success, result.Error);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, result.Success, result.Error, ticketNumber.Trim());
         }
         catch (Exception ex)
         {
             response = new MessageTraceResponse { Error = ex.Message };
+            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, false, ex.Message, ticketNumber.Trim());
+        }
+    }
+
+    private async Task AnalyzePastedHeaders()
+    {
+        await AnalyzeHeadersAsync(() => Task.FromResult(HeaderAnalysis.AnalyzeHeaderText(headerText)), "Pasted Headers");
+    }
+
+    private async Task AnalyzeUploadedFile(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        uploadedFileName = file.Name;
+        await AnalyzeHeadersAsync(async () =>
+        {
+            await using var stream = file.OpenReadStream(50 * 1024 * 1024);
+            return await HeaderAnalysis.AnalyzeFileAsync(stream, file.Name, file.Size);
+        }, file.Name);
+    }
+
+    private async Task AnalyzeHeadersAsync(Func<Task<HeaderAnalysisResult>> analyze, string target)
+    {
+        isAnalyzing = true;
+        headerAnalysisError = null;
+        headerAnalysis = null;
+        try
+        {
+            headerAnalysis = await analyze();
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, true, null, ticketNumber.Trim());
+        }
+        catch (Exception ex)
+        {
+            headerAnalysisError = ex.Message;
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageHeaderAnalysis", target, false, ex.Message, ticketNumber.Trim());
+        }
+        finally
+        {
+            isAnalyzing = false;
+        }
+    }
+
+    private async Task UseHeaderTraceSuggestion(bool runNow)
+    {
+        if (headerAnalysis == null)
+            return;
+
+        var suggestion = headerAnalysis.TraceSuggestion;
+        sender = suggestion.Sender ?? sender;
+        recipient = suggestion.Recipient ?? recipient;
+        subjectFilter = suggestion.Subject ?? subjectFilter;
+        messageId = suggestion.MessageId ?? messageId;
+        if (suggestion.StartDate.HasValue)
+            startDate = suggestion.StartDate.Value;
+        if (suggestion.EndDate.HasValue)
+            endDate = suggestion.EndDate.Value > DateTime.Today ? DateTime.Today : suggestion.EndDate.Value;
+
+        activeTab = "trace";
+        if (runNow)
+            await RunTrace();
+    }
+
+    private void ClearHeaderAnalysis()
+    {
+        headerText = "";
+        uploadedFileName = null;
+        headerAnalysisError = null;
+        headerAnalysis = null;
+        showPasteInput = false;
+    }
+
+    private IEnumerable<KeyValuePair<string, string>> HeaderRows()
+    {
+        if (headerAnalysis == null)
+            yield break;
+
+        foreach (var header in headerAnalysis.Headers.Headers.OrderBy(h => h.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            foreach (var value in header.Value)
+                yield return new KeyValuePair<string, string>(header.Key, value);
         }
     }
 
@@ -289,11 +660,13 @@
         if (response?.Results == null || !response.Results.Any()) return;
 
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("Origin Date-Time,Sender Address,Recipient Address,Message Subject,Status,Message ID,Message Size,Sender IP,Recipient IP,Message Trace ID");
+        sb.AppendLine("Origin Date-Time,Backend,Sender Address,Recipient Address,Message Subject,Status,Event ID,Server,Message ID,Message Size,Sender IP,Recipient IP,Message Trace ID");
 
         foreach (var msg in response.Results)
         {
             sb.Append(msg.Received.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.Backend));
             sb.Append(',');
             sb.Append(CsvEscape(msg.SenderAddress));
             sb.Append(',');
@@ -302,6 +675,10 @@
             sb.Append(CsvEscape(msg.Subject));
             sb.Append(',');
             sb.Append(CsvEscape(msg.Status));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.EventId));
+            sb.Append(',');
+            sb.Append(CsvEscape(msg.Server));
             sb.Append(',');
             sb.Append(CsvEscape(msg.MessageId));
             sb.Append(',');
@@ -321,6 +698,14 @@
         await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
     }
 
+    private string TraceTarget()
+    {
+        var from = string.IsNullOrWhiteSpace(sender) ? "*" : sender.Trim();
+        var to = string.IsNullOrWhiteSpace(recipient) ? "*" : recipient.Trim();
+        var id = string.IsNullOrWhiteSpace(messageId) ? "" : $" MessageId={messageId.Trim()}";
+        return $"{from}->{to}{id}";
+    }
+
     private static string CsvEscape(string value)
     {
         if (string.IsNullOrEmpty(value)) return "";
@@ -334,9 +719,42 @@
     private static string GetStatusBadge(string status) => status switch
     {
         "Delivered" => "success",
+        "Expanded" => "success",
+        "Deliver" => "success",
         "Failed" => "danger",
+        "Fail" => "danger",
         "Pending" => "warning",
+        "Deferred" => "warning",
         "FilteredAsSpam" => "secondary",
         _ => "info"
     };
+
+    private static string GetAuthBadge(string result) => result switch
+    {
+        "PASS" => "success",
+        "FAIL" => "danger",
+        "PERMERROR" => "danger",
+        "TEMPERROR" => "warning",
+        "SOFTFAIL" => "warning",
+        _ => "secondary"
+    };
+
+    private static string GetFindingBadge(string severity) => severity switch
+    {
+        "High" => "danger",
+        "Warning" => "warning",
+        "Info" => "info",
+        _ => "secondary"
+    };
+
+    private static string FormatDelay(TimeSpan? delay)
+    {
+        if (!delay.HasValue)
+            return "";
+        if (delay.Value.TotalHours >= 1)
+            return $"{delay.Value.TotalHours:F1}h";
+        if (delay.Value.TotalMinutes >= 1)
+            return $"{delay.Value.TotalMinutes:F1}m";
+        return $"{delay.Value.TotalSeconds:F0}s";
+    }
 }

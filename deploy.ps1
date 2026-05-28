@@ -23,7 +23,6 @@ param(
     [string[]]$AdminGroups,
     [string]$DomainPrefix        = "DOMAIN",
     [string]$PathBase,
-    [string]$OnPremTargetDAG     = "DAG2019",
     [string]$CloudTargetDomain,
     [string]$HybridEndpoint      = "hybrid1",
 
@@ -381,20 +380,8 @@ if ($isUpgrade) {
 
         $configChanged = $false
 
-        # Auto-rename OnPremTargetDatabases → OnPremTargetDAG
-        if ($config.Migration -and
-            (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty) -and
-            -not (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty)) {
-
-            $oldValue = $config.Migration.OnPremTargetDatabases
-            if ($oldValue -is [array] -or ($oldValue -is [string] -and $oldValue -like '*,*')) {
-                Write-Warn "OnPremTargetDatabases contains multiple values -- manual migration required (new key OnPremTargetDAG expects a single DAG name)"
-            } elseif ($oldValue -is [string]) {
-                $config.Migration | Add-Member -NotePropertyName "OnPremTargetDAG" -NotePropertyValue $oldValue
-                $config.Migration.PSObject.Properties.Remove("OnPremTargetDatabases")
-                $configChanged = $true
-                Write-Host "  OK  Migrated config key: OnPremTargetDatabases -> OnPremTargetDAG" -ForegroundColor Green
-            }
+        if ($config.Migration -and (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
+            Write-Warn "Migration:OnPremTargetDAG is obsolete. Move-back batches now pick a random database from Migration:OnPremTargetDatabases or the Migration module configuration."
         }
 
         # Auto-add AdminGroups if supplied via parameter and missing from config

@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
 using Serilog;
 
+System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
     .CreateBootstrapLogger();
@@ -73,6 +75,7 @@ try
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
+    builder.Services.AddScoped<HeaderAnalysisService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();
     builder.Services.AddSingleton<JsonlLogService>();

@@ -32,6 +32,9 @@ public class MessageTraceResult
     public string FromIP { get; set; } = "";
     public string ToIP { get; set; } = "";
     public string MessageTraceId { get; set; } = "";
+    public string Backend { get; set; } = "";
+    public string EventId { get; set; } = "";
+    public string Server { get; set; } = "";
 }
 
 public class MessageTraceResponse
@@ -40,6 +43,7 @@ public class MessageTraceResponse
     public bool Truncated { get; set; }
     public int TotalAvailable { get; set; }
     public string? Error { get; set; }
+    public List<string> Warnings { get; set; } = new();
 
     public static readonly int MaxResults = 1000;
 }

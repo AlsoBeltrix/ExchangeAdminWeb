@@ -140,7 +140,7 @@ public sealed class ModuleCatalog
                 new("HybridEndpoint", "Hybrid Endpoint", "Migration endpoint name", DefaultValue: "hybrid1"),
                 new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
                 new("OnPremTargetDeliveryDomain", "On-Prem Target Domain", "e.g. contoso.com"),
-                new("OnPremTargetDAG", "On-Prem Target DAG", "Database availability group name", Required: false),
+                new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. A database is picked randomly for each move-back batch.", Required: false),
                 new("CloudQuotaGB", "Cloud Quota (GB)", "Max mailbox size for cloud migration", DefaultValue: "100"),
                 new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated AD groups excluded from cloud migration", Required: false)
             ]
@@ -160,9 +160,9 @@ public sealed class ModuleCatalog
         new()
         {
             Id = "MessageTrace",
-            DisplayName = "Message Trace",
-            Description = "Search message delivery logs by sender, recipient, date range, and subject.",
-            Route = "message-trace",
+            DisplayName = "Message Analysis",
+            Description = "Analyze message headers and trace delivery through Exchange Online and on-premises transport logs.",
+            Route = "message-analysis",
             IconCss = "bi bi-envelope-fill-nav-menu",
             SortOrder = 500,
             EnabledByDefault = true,

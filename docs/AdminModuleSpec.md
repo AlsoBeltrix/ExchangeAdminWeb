@@ -1,6 +1,6 @@
 # Admin Module Specification
 
-Version: 1.1 (based on ExchangeAdminWeb v1.5.3 implementation)
+Version: 1.1 (based on ExchangeAdminWeb v1.5.4 implementation)
 
 ## Overview
 

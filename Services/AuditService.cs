@@ -147,6 +147,7 @@ public class AuditService
             ["result"] = success ? "Success" : "Failed",
             ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = target,
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
             ["error"] = success ? null : errorDetail
         };
 
@@ -159,7 +160,8 @@ public class AuditService
         string action,
         string target,
         bool success,
-        string? errorDetail = null)
+        string? errorDetail = null,
+        string ticketNumber = "")
     {
         var evt = new Dictionary<string, object?>
         {
@@ -170,6 +172,7 @@ public class AuditService
             ["category"] = "Lookup",
             ["result"] = success ? "Success" : "Failed",
             ["target"] = target,
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
             ["error"] = success ? null : errorDetail
         };
 

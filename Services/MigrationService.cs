@@ -26,7 +26,6 @@ public class MigrationService : ExchangeServiceBase
     private string _hybridEndpoint => MigrationConfig("HybridEndpoint", "Migration:HybridEndpoint", "hybrid1");
     private string _cloudTargetDomain => MigrationConfig("CloudTargetDeliveryDomain", "Migration:CloudTargetDeliveryDomain");
     private string _onPremTargetDomain => MigrationConfig("OnPremTargetDeliveryDomain", "Migration:OnPremTargetDeliveryDomain");
-    private string _onPremTargetDAG => MigrationConfig("OnPremTargetDAG", "Migration:OnPremTargetDAG");
     private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "100"), out var v) ? v : 100;
     private string[] _excludedADGroups
     {
@@ -213,12 +212,13 @@ public class MigrationService : ExchangeServiceBase
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
-        string[]? targetDatabases = null;
+        string? targetDatabase = null;
         if (direction == MigrationDirection.ToOnPrem)
         {
-            targetDatabases = await ResolveDagDatabasesAsync(_onPremTargetDAG);
-            if (targetDatabases == null || targetDatabases.Length == 0)
-                return PermissionResult.Fail("Unable to resolve target databases from DAG. Check OnPremExchange and Migration:OnPremTargetDAG configuration.");
+            var configuredDatabases = MigrationTargetDatabaseSelector.Resolve(_moduleConfig, _config);
+            targetDatabase = MigrationTargetDatabaseSelector.PickRandom(configuredDatabases);
+            if (string.IsNullOrWhiteSpace(targetDatabase))
+                return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
         return await RunAsync(ps =>
@@ -243,7 +243,7 @@ public class MigrationService : ExchangeServiceBase
                   .AddParameter("Name", batchName)
                   .AddParameter("TargetEndpoint", _hybridEndpoint)
                   .AddParameter("TargetDeliveryDomain", _onPremTargetDomain)
-                  .AddParameter("TargetDatabases", targetDatabases)
+                  .AddParameter("TargetDatabases", new[] { targetDatabase! })
                   .AddParameter("CSVData", csvBytes)
                   .AddParameter("NotificationEmails", _adminNotificationEmails)
                   .AddParameter("ErrorAction", "Stop");
@@ -294,6 +294,7 @@ public class MigrationService : ExchangeServiceBase
 
             var details = $@"Batch Name: {batchName}
 Direction: {direction}
+On-Prem Target Database: {(string.IsNullOrWhiteSpace(targetDatabase) ? "N/A" : targetDatabase)}
 Users: {userList}
 Count: {eligibleEmails.Count}
 Auto-Start: {autoStart}

@@ -17,6 +17,27 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 - Single operations and bulk CSV upload support
 - On-premises mailbox support for authorized power users (see below)
 
+### Exchange Migration (`/migration`)
+
+Check migration eligibility and create move batches between Exchange Online and on-premises Exchange.
+
+- Validates current mailbox location before eligibility decisions
+- Checks on-prem mailbox and archive size before cloud migrations
+- Move-back batches pick one random target database from `OnPremTargetDatabases` in the Migration module config
+- Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
+- Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
+
+### Message Analysis (`/message-analysis`)
+
+Analyze message headers and search mail flow across Exchange Online and on-premises transport logs.
+
+- Realtime trace queries both Exchange Online message trace and on-premises message tracking logs
+- Optional ticket number is recorded in audit logs only; it does not call ServiceNow
+- Header Analysis is the primary workflow and supports pasted headers plus `.eml` and `.msg` uploads
+- Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
+- Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
+- Historical Exchange Online searches are still submitted as background jobs for ranges beyond the realtime window
+- Section access key: `MessageTrace`
 ### On-Premises Permission Operations
 
 When a target mailbox is detected as on-premises:
@@ -319,6 +340,7 @@ Each application feature is independently gated by AD group membership via its s
   "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
   "OutOfOffice": ["DOMAIN\\Exchange-Admins"],
   "MfaReset": ["DOMAIN\\Exchange-Admins"],
+  "NamedLocations": ["DOMAIN\\Exchange-Admins"],
   "GroupManagement": ["DOMAIN\\Exchange-Admins"],
   "GroupManagementOnPrem": ["DOMAIN\\Exchange-Admins"],
   "Comms10k": ["DOMAIN\\Exchange-Admins"],
