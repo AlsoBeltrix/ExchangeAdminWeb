@@ -311,6 +311,24 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "LicensingUpdates",
+            DisplayName = "Licensing Updates",
+            Description = "Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.",
+            Route = "licensing-updates",
+            IconCss = "bi bi-file-earmark-spreadsheet-nav-menu",
+            Category = "Exchange",
+            SortOrder = 450,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to write extensionAttribute11"),
+                new("AllowedLicenseTypes", "Allowed License Types", "Comma-separated valid license values", Required: false, DefaultValue: "E5,EOP2+SOP2,F3,F3+EOP1")
+            ]
+        },
+        new()
+        {
             Id = "ADAttributeEditor",
             DisplayName = "AD Attribute Editor",
             Description = "View and edit allowlisted Active Directory attributes for on-premises user accounts.",

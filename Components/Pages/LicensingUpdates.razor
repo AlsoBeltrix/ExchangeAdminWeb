@@ -1,0 +1,57 @@
+@page "/licensing-updates"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "LicensingUpdates")]
+@rendermode InteractiveServer
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<LicensingUpdates> Logger
+
+<PageTitle>Licensing Updates</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Bulk update Exchange licensing SKU assignments via CSV upload.</small>
+    </div>
+    <h1 class="mb-4">Licensing Updates</h1>
+
+    <p class="text-muted">Module registered. Full UI loading below.</p>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "LicensingUpdates");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+}

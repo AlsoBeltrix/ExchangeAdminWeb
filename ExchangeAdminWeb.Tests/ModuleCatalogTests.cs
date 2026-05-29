@@ -11,7 +11,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(16, _catalog.GetAll().Count);
+        Assert.Equal(17, _catalog.GetAll().Count);
     }
 
     [Fact]
@@ -83,11 +83,12 @@ public class ModuleCatalogTests
         Assert.Contains("GroupManagementOnPrem", aliases);
         Assert.Contains("ConferenceRooms", aliases);
         Assert.Contains("NamedLocations", aliases);
+        Assert.Contains("LicensingUpdates", aliases);
         Assert.Contains("ADAttributeEditor", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
         Assert.Contains("EventLog", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
-        Assert.Equal(20, aliases.Count);
+        Assert.Equal(21, aliases.Count);
     }
 
     [Fact]
