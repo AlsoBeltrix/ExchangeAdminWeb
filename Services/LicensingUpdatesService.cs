@@ -155,26 +155,27 @@ public class LicensingUpdatesService
         var checkFailedCount = results.Count(r => r.Status == "CheckFailed");
         var failed = results.Count(r => r.Status == "Error");
 
-        try
+        foreach (var row in results)
         {
-            foreach (var row in results)
+            try
             {
                 _audit.LogLookupAction(performedBy, ip, "LicensingUpdates_Update",
-                    row.UserPrincipalName ?? row.InputIdentity,
+                    $"{row.UserPrincipalName ?? row.InputIdentity} [{row.Status}] {row.PreviousValue ?? "(empty)"} -> {row.NewValue ?? "(empty)"}",
                     row.Status == "Success" || row.Status == "Unchanged",
                     errorDetail: row.Error,
                     ticketNumber: ticket);
             }
-        }
-        catch (Exception auditEx)
-        {
-            _logger.LogError(auditEx, "Audit write failed for licensing bulk apply — AD writes already committed");
+            catch (Exception auditEx)
+            {
+                _logger.LogError(auditEx, "Audit write failed for {User} — AD writes already committed", row.InputIdentity);
+            }
         }
 
-        var overallSuccess = checkFailedCount == 0;
-        scope.Complete(overallSuccess && failed == 0, failed > 0 ? $"{failed} row(s) failed" : null);
+        var overallSuccess = checkFailedCount == 0 && failed == 0;
+        scope.Complete(overallSuccess, !overallSuccess ? $"{checkFailedCount} check failures, {failed} errors" : null);
 
-        return new(overallSuccess, checkFailedCount > 0 ? "Protection system unavailable for some targets." : null,
+        return new(overallSuccess,
+            checkFailedCount > 0 ? "Protection system unavailable for some targets." : (failed > 0 ? $"{failed} row(s) failed." : null),
             preview.Rows.Count, succeeded, unchanged, protectedCount + checkFailedCount, failed, results);
     }
 

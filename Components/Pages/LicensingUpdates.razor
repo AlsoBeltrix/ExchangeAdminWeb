@@ -331,7 +331,7 @@
             try
             {
                 await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "LicensingUpdates_BulkApply",
-                    applyResult.Failed == 0, ticketNumber.Trim(),
+                    applyResult.Success, ticketNumber.Trim(),
                     new Dictionary<string, string>
                     {
                         ["License Type"] = previewResult.LicenseType,
