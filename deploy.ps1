@@ -16,7 +16,6 @@ param(
     [string]$OnPremServerUri,
     [string]$OnPremTargetDomain,
     [string]$DelineaUrl,
-    [int]$DelineaSecretId,
     [string]$SmtpHost,
     [string]$AdminEmail,
     [string[]]$AllowedGroups,
@@ -31,6 +30,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$BuiltInOnPremTargetDatabases = @(
+    "dbg3-2019-east01", "dbg8-2019-west02", "dbg7-2019-west01", "dbg4-2019-east01",
+    "dbg2-2019-east01", "dbg6-2019-east01", "dbg2-2019-east02", "dbg5-2019-west01",
+    "dbg1-2019-west01", "dbg8-2019-east02", "dbg6-2019-west02", "dbg2-2019-west02",
+    "dbg5-2019-east01", "dbg4-2019-west01", "dbg4-2019-east02", "dbg5-2019-east02",
+    "dbg2-2019-west01", "dbg3-2019-east02", "dbg3-2019-west02", "dbg6-2019-east02",
+    "dbg6-2019-west01", "dbg1-2019-west02", "dbg7-2019-east01", "dbg4-2019-west02",
+    "dbg7-2019-east02", "dbg1-2019-east01", "dbg7-2019-west02", "dbg5-2019-west02",
+    "dbg1-2019-east02", "dbg8-2019-east01", "dbg10-2019-east01", "dbg9-2019-east01",
+    "dbg9-2019-east02", "dbg10-2019-east02", "dbg8-2019-west01", "dbg10-2019-west02",
+    "dbg10-2019-west01", "dbg3-2019-west01", "dbg9-2019-west02", "dbg9-2019-west01"
+)
 
 # --- Helpers ---
 
@@ -119,11 +131,6 @@ if (-not $isUpgrade) {
     if (-not $OnPremServerUri)   { $OnPremServerUri   = Prompt-Value "OnPremServerUri"   "On-prem Exchange PowerShell URI (e.g. http://exch01.domain.com/PowerShell/)" }
     if (-not $OnPremTargetDomain){ $OnPremTargetDomain = Prompt-Value "OnPremTargetDomain" "On-prem email domain (e.g. yourcompany.com)" }
     if (-not $DelineaUrl)        { $DelineaUrl        = Prompt-Value "DelineaUrl"        "Delinea Secret Server URL" }
-    if ($DelineaSecretId -eq 0) {
-        $secretIdInput = Prompt-Value "DelineaSecretId" "Delinea Exchange secret ID" "0"
-        $parsed = 0
-        if ([int]::TryParse($secretIdInput, [ref]$parsed)) { $DelineaSecretId = $parsed }
-    }
     if (-not $SmtpHost)          { $SmtpHost          = Prompt-Value "SmtpHost"          "SMTP relay host" }
     if (-not $AdminEmail)        { $AdminEmail        = Prompt-Value "AdminEmail"        "Admin notification email(s), comma-separated" }
     if (-not $CloudTargetDomain) { $CloudTargetDomain = Prompt-Value "CloudTargetDomain" "Cloud target delivery domain (e.g. contoso.mail.onmicrosoft.com)" }
@@ -144,7 +151,6 @@ if (-not $isUpgrade) {
     if (-not $OnPremServerUri -or -not [uri]::IsWellFormedUriString($OnPremServerUri, [System.UriKind]::Absolute)) { $errors += "OnPremServerUri must be a valid URI" }
     if (-not $OnPremTargetDomain -or $OnPremTargetDomain -notlike '*.*')        { $errors += "OnPremTargetDomain must contain a dot (e.g. yourcompany.com)" }
     if (-not $DelineaUrl -or -not [uri]::IsWellFormedUriString($DelineaUrl, [System.UriKind]::Absolute) -or $DelineaUrl -notlike 'https://*') { $errors += "DelineaUrl must be a valid HTTPS URI" }
-    if ($DelineaSecretId -le 0)                                                 { $errors += "DelineaSecretId must be > 0" }
     if (-not $SmtpHost)                                                         { $errors += "SmtpHost is required" }
     if (-not $AdminEmail -or ($AdminEmail -split ',' | Where-Object { $_.Trim() -notlike '*@*' })) { $errors += "AdminEmail must contain valid email(s)" }
     if (-not $AllowedGroups -or $AllowedGroups.Count -eq 0)                     { $errors += "AllowedGroups must have at least one entry" }
@@ -381,7 +387,26 @@ if ($isUpgrade) {
         $configChanged = $false
 
         if ($config.Migration -and (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
-            Write-Warn "Migration:OnPremTargetDAG is obsolete. Move-back batches now pick a random database from Migration:OnPremTargetDatabases or the Migration module configuration."
+            $hasTargetDatabases = (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
+                                  $config.Migration.OnPremTargetDatabases -and $config.Migration.OnPremTargetDatabases.Count -gt 0
+            if (-not $hasTargetDatabases) {
+                if (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) {
+                    $config.Migration.OnPremTargetDatabases = @($BuiltInOnPremTargetDatabases)
+                } else {
+                    $config.Migration | Add-Member -NotePropertyName "OnPremTargetDatabases" -NotePropertyValue @($BuiltInOnPremTargetDatabases)
+                }
+                $configChanged = $true
+                Write-Success "Seeded Migration:OnPremTargetDatabases from built-in move-back database list"
+            }
+            $config.Migration.PSObject.Properties.Remove("OnPremTargetDAG")
+            $configChanged = $true
+            Write-Warn "Removed obsolete Migration:OnPremTargetDAG. Move-back batches now pick a random database from Migration:OnPremTargetDatabases or the Migration module configuration."
+        }
+
+        if ($config.Delinea -and (Get-Member -InputObject $config.Delinea -Name "ExchangeSecretId" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
+            $config.Delinea.PSObject.Properties.Remove("ExchangeSecretId")
+            $configChanged = $true
+            Write-Success "Removed obsolete Delinea:ExchangeSecretId; configure DelineaSecretId separately per module"
         }
 
         # Auto-add AdminGroups if supplied via parameter and missing from config
@@ -410,6 +435,16 @@ if ($isUpgrade) {
         if (-not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
             -not (Test-Path $sectionAccessFragment)) {
             Write-Warn "Section-level permissions not configured -- use per-module config pages or create config\sectionaccess.json"
+        }
+
+        $protectedPrincipals = Join-Path $PublishPath "config\protected-principals.json"
+        if (-not (Test-Path $protectedPrincipals)) {
+            Write-Warn "config\protected-principals.json not found -- protected principal rules will use defaults until configured"
+        }
+
+        $adEditableAttributes = Join-Path $PublishPath "config\ad-editable-attributes.json"
+        if (-not (Test-Path $adEditableAttributes)) {
+            Write-Warn "config\ad-editable-attributes.json not found -- AD attribute editor will use defaults until configured"
         }
 
         Write-Success "Configuration reconciled"
@@ -509,7 +544,6 @@ if ($isUpgrade) {
             }
             Delinea = [ordered]@{
                 SecretServerUrl = $DelineaUrl
-                ExchangeSecretId = $DelineaSecretId
                 CredentialTarget = "Delinea_Client"
             }
             Audit = [ordered]@{

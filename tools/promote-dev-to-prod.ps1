@@ -5,7 +5,9 @@ param(
     [string]$ProdAppPoolName = "ExchangeAdminWeb",
     [string]$ProdPathBase = "/ExchangeAdminWeb",
     [string]$BackupRoot,
+    [int]$BackupRetention = 3,
     [switch]$Apply,
+    [switch]$IUnderstandThisOverwritesProd,
     [switch]$CopyAppSettings,
     [switch]$SkipConfigFragments
 )
@@ -43,6 +45,68 @@ function Assert-SafeDeploymentPath {
 
     if ([string]::IsNullOrWhiteSpace((Split-Path -Leaf $Path))) {
         throw "$Name is not a safe application directory: $Path"
+    }
+}
+
+function Assert-DevProdPaths {
+    param([string]$Dev, [string]$Prod)
+
+    if ($Dev -notmatch '(?i)dev') {
+        throw "DevPath must clearly identify a dev deployment path. Refusing path without 'Dev': $Dev"
+    }
+
+    if ($Prod -match '(?i)dev') {
+        throw "ProdPath appears to be a dev path. Refusing to promote into: $Prod"
+    }
+}
+
+function Get-DirectorySizeBytes {
+    param([string]$Path)
+
+    $total = 0L
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue |
+        ForEach-Object { $total += $_.Length }
+    return $total
+}
+
+function Assert-BackupFreeSpace {
+    param([string]$SourcePath, [string]$BackupRootPath)
+
+    $required = Get-DirectorySizeBytes -Path $SourcePath
+    $driveRoot = [System.IO.Path]::GetPathRoot((Resolve-Path -LiteralPath $BackupRootPath).Path)
+    $drive = Get-PSDrive -Name $driveRoot.TrimEnd('\').TrimEnd(':') -ErrorAction Stop
+    $cushion = 500MB
+    if ($drive.Free -lt ($required + $cushion)) {
+        throw "Insufficient free space for backup. Required about $([math]::Round(($required + $cushion) / 1GB, 2)) GB, available $([math]::Round($drive.Free / 1GB, 2)) GB on $driveRoot"
+    }
+}
+
+function Remove-OldBackups {
+    param([string]$BackupRootPath, [int]$Retention)
+
+    if ($Retention -lt 1) { return }
+    if (-not (Test-Path -LiteralPath $BackupRootPath -PathType Container)) {
+        if (-not $Apply) { Write-Plan "Skip backup retention cleanup because backup root does not exist yet: $BackupRootPath" }
+        return
+    }
+
+    $resolvedRoot = (Resolve-Path -LiteralPath $BackupRootPath).Path.TrimEnd('\', '/')
+    $driveRoot = [System.IO.Path]::GetPathRoot($resolvedRoot).TrimEnd('\', '/')
+    if ($resolvedRoot -eq $driveRoot) {
+        throw "BackupRoot resolves to a drive root; refusing retention cleanup: $resolvedRoot"
+    }
+
+    $oldBackups = Get-ChildItem -LiteralPath $resolvedRoot -Directory -Filter "ExchangeAdminWeb.backup.*" |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip $Retention
+
+    foreach ($old in $oldBackups) {
+        if (-not $Apply) {
+            Write-Plan "Remove-Item '$($old.FullName)' -Recurse -Force"
+        } else {
+            Remove-Item -LiteralPath $old.FullName -Recurse -Force
+            Write-Ok "Removed old backup $($old.Name)"
+        }
     }
 }
 
@@ -128,7 +192,7 @@ function Stop-AppPoolChecked {
     }
 
     Write-Step "Stopping prod app pool: $Name"
-    try { Stop-WebAppPool -Name $Name -ErrorAction Stop } catch { Write-Warn "Stop-WebAppPool reported: $($_.Exception.Message)" }
+    Stop-WebAppPool -Name $Name -ErrorAction Stop
     Start-Sleep -Seconds 3
 }
 
@@ -149,12 +213,17 @@ $dev = Resolve-ExistingDirectory $DevPath "DevPath"
 $prod = Resolve-ExistingDirectory $ProdPath "ProdPath"
 Assert-SafeDeploymentPath $dev "DevPath"
 Assert-SafeDeploymentPath $prod "ProdPath"
+Assert-DevProdPaths -Dev $dev -Prod $prod
 
 if ($dev.Equals($prod, [StringComparison]::OrdinalIgnoreCase)) {
     throw "DevPath and ProdPath resolve to the same directory. Refusing to continue."
 }
 
-if (-not $BackupRoot) { $BackupRoot = Split-Path -Parent $prod }
+if ($Apply -and -not $IUnderstandThisOverwritesProd) {
+    throw "Apply mode requires -IUnderstandThisOverwritesProd to confirm this promotion overwrites the prod publish folder."
+}
+
+if (-not $BackupRoot) { $BackupRoot = "D:\backups\ExchangeAdminWeb" }
 if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
     if ($Apply) { New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null }
     else { Write-Plan "New-Item -ItemType Directory '$BackupRoot'" }
@@ -180,8 +249,10 @@ if (-not $Apply) {
 if ($Apply) {
     if (-not (Test-IsAdministrator)) { throw "Run this script from an elevated PowerShell session when using -Apply." }
     Import-Module WebAdministration -ErrorAction Stop
+    Assert-BackupFreeSpace -SourcePath $prod -BackupRootPath $backupRootResolved
 } else {
     Write-Plan "Import-Module WebAdministration"
+    Write-Plan "Check free space in $backupRootResolved for prod backup"
 }
 
 $devAppSettings = Join-Path $dev "appsettings.json"
@@ -225,7 +296,9 @@ try {
             'sectionaccess.json',
             'module-config.json',
             'modules-enabled.json',
-            'extended-log-level.txt'
+            'extended-log-level.txt',
+            'protected-principals.json',
+            'ad-editable-attributes.json'
         )
 
         foreach ($name in $configFiles) {
@@ -237,6 +310,8 @@ try {
 } finally {
     Start-AppPoolChecked -Name $ProdAppPoolName
 }
+
+Remove-OldBackups -BackupRootPath $backupRootResolved -Retention $BackupRetention
 
 Write-Host ""
 if ($Apply) {

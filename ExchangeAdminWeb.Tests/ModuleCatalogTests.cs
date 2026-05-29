@@ -1,5 +1,6 @@
 using ExchangeAdminWeb.Modules;
 using Microsoft.AspNetCore.Authorization;
+using System.Text.RegularExpressions;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -10,7 +11,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(15, _catalog.GetAll().Count);
+        Assert.Equal(16, _catalog.GetAll().Count);
     }
 
     [Fact]
@@ -82,10 +83,11 @@ public class ModuleCatalogTests
         Assert.Contains("GroupManagementOnPrem", aliases);
         Assert.Contains("ConferenceRooms", aliases);
         Assert.Contains("NamedLocations", aliases);
+        Assert.Contains("ADAttributeEditor", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
         Assert.Contains("EventLog", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
-        Assert.Equal(19, aliases.Count);
+        Assert.Equal(20, aliases.Count);
     }
 
     [Fact]
@@ -133,5 +135,88 @@ public class ModuleCatalogTests
         Assert.Equal(2, migration.GranularPermissions.Count);
         Assert.Contains(migration.GranularPermissions, p => p.Name == "Create" && p.PolicyAlias == "MigrationCreate");
         Assert.Contains(migration.GranularPermissions, p => p.Name == "Manage" && p.PolicyAlias == "MigrationManage");
+    }
+
+    [Fact]
+    public void Catalog_RoutesHaveMatchingPagesAndPolicies()
+    {
+        var pageRoutes = ReadPageRoutes();
+        var pagePolicies = ReadPagePolicies();
+
+        foreach (var module in _catalog.GetAll())
+        {
+            var route = "/" + module.Route.Trim('/');
+            Assert.Contains(route, pageRoutes);
+            Assert.True(pagePolicies.TryGetValue(route, out var policy), $"Missing authorize policy for {route}");
+            Assert.Equal(module.MainPermission.PolicyAlias, policy);
+        }
+    }
+
+    [Fact]
+    public void ModulePagesHaveCatalogDescriptors()
+    {
+        var catalogRoutes = _catalog.GetAll()
+            .Select(m => "/" + m.Route.Trim('/'))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var allowedNonCatalogRoutes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "/",
+            "/Error",
+            "/access-denied",
+            "/message-trace",
+            "/module-config/{ModuleId}"
+        };
+
+        var modulePageRoutes = ReadPageRoutes()
+            .Where(r => !allowedNonCatalogRoutes.Contains(r))
+            .ToArray();
+
+        Assert.All(modulePageRoutes, route => Assert.Contains(route, catalogRoutes));
+    }
+
+    private static HashSet<string> ReadPageRoutes()
+    {
+        var routes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(GetPagesDirectory(), "*.razor"))
+        {
+            var text = File.ReadAllText(file);
+            foreach (Match match in Regex.Matches(text, "@page\\s+\"([^\"]+)\""))
+                routes.Add(match.Groups[1].Value);
+        }
+
+        return routes;
+    }
+
+    private static Dictionary<string, string> ReadPagePolicies()
+    {
+        var policies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(GetPagesDirectory(), "*.razor"))
+        {
+            var text = File.ReadAllText(file);
+            var policyMatch = Regex.Match(text, "\\[Authorize\\(Policy\\s*=\\s*\"([^\"]+)\"\\)\\]");
+            if (!policyMatch.Success)
+                continue;
+
+            foreach (Match routeMatch in Regex.Matches(text, "@page\\s+\"([^\"]+)\""))
+                policies[routeMatch.Groups[1].Value] = policyMatch.Groups[1].Value;
+        }
+
+        return policies;
+    }
+
+    private static string GetPagesDirectory()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var pages = Path.Combine(dir.FullName, "Components", "Pages");
+            if (Directory.Exists(pages))
+                return pages;
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate Components/Pages from test base directory.");
     }
 }

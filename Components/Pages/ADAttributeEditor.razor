@@ -1,0 +1,449 @@
+@page "/ad-attribute-editor"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "ADAttributeEditor")]
+@rendermode InteractiveServer
+@inject ADAttributeEditorService EditorService
+@inject ProtectedPrincipalService ProtectedPrincipalService
+@inject AuditService Audit
+@inject EmailService Email
+@inject OperationTraceService OperationTrace
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<ADAttributeEditor> Logger
+
+<PageTitle>AD Attribute Editor</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Edit allowlisted Active Directory attributes for on-premises user accounts.</small>
+    </div>
+    <h1 class="mb-4">AD Attribute Editor</h1>
+
+    @if (operationResult != null)
+    {
+        <div class="alert @(operationResult.Value.success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Value.message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-lg-8">
+            <!-- Search -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="input-group">
+                        <input type="text" class="form-control" @bind="searchIdentity" @bind:event="oninput"
+                               @onkeydown="OnSearchKeyDown"
+                               placeholder="UPN, email, sAMAccountName, or employee ID" disabled="@isLoading" />
+                        <button class="btn btn-primary" @onclick="PerformSearch"
+                                disabled="@(isLoading || string.IsNullOrWhiteSpace(searchIdentity))">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Search
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @if (searchError != null)
+            {
+                <div class="alert alert-danger">@searchError</div>
+            }
+
+            @if (protectedBlocked)
+            {
+                <div class="alert alert-warning">
+                    <strong>Protected Principal:</strong> This user is protected and cannot be modified through this interface.
+                </div>
+            }
+
+            @if (isReadOnly && lookupResult?.Principal != null)
+            {
+                <div class="alert alert-info">
+                    <strong>Read-Only:</strong> @(lookupResult.ReadOnlyReason ?? "Cloud-only users cannot be edited in v1. Only on-premises AD users are supported.")
+                </div>
+            }
+
+            <!-- Identity Summary -->
+            @if (lookupResult?.Principal != null && !protectedBlocked)
+            {
+                <div class="card mb-3">
+                    <div class="card-header"><strong>Identity</strong></div>
+                    <div class="card-body py-2">
+                        <div class="row">
+                            <div class="col-sm-6"><small class="text-muted">Display Name</small><br />@lookupResult.Principal.DisplayName</div>
+                            <div class="col-sm-6"><small class="text-muted">UPN</small><br />@lookupResult.Principal.UserPrincipalName</div>
+                        </div>
+                        <div class="row mt-2">
+                            <div class="col-sm-6"><small class="text-muted">sAMAccountName</small><br />@(lookupResult.Principal.SamAccountName ?? "—")</div>
+                            <div class="col-sm-6"><small class="text-muted">Source</small><br />@lookupResult.SourceOfAuthority</div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (!isReadOnly && editableAttributes.Count > 0)
+                {
+                    <!-- Attribute Grid -->
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <strong>Attributes</strong>
+                            <small class="text-muted">@changedCount changed</small>
+                        </div>
+                        <div class="card-body p-0">
+                            <div style="max-height: calc(100vh - 420px); overflow-y: auto;">
+                                <table class="table table-sm mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 200px;">Attribute</th>
+                                            <th>Current</th>
+                                            <th>New Value</th>
+                                            <th style="width: 50px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var attr in editableAttributes)
+                                        {
+                                            var isChanged = HasChanged(attr.Name);
+                                            <tr class="@(isChanged ? "table-warning" : "")">
+                                                <td>
+                                                    @attr.Label
+                                                    <br /><small class="text-muted">@attr.Name</small>
+                                                </td>
+                                                <td><small>@(currentValues.GetValueOrDefault(attr.Name) ?? "<em>empty</em>")</small></td>
+                                                <td>
+                                                    @if (attr.Type == "Choice" && attr.Choices != null)
+                                                    {
+                                                        <select class="form-select form-select-sm"
+                                                                value="@GetEditValue(attr.Name)"
+                                                                @onchange="e => SetEditValue(attr.Name, e.Value?.ToString())"
+                                                                disabled="@isSaving">
+                                                            @if (attr.AllowClear || !attr.Required)
+                                                            {
+                                                                <option value="">— clear —</option>
+                                                            }
+                                                            @foreach (var choice in attr.Choices)
+                                                            {
+                                                                <option value="@choice">@choice</option>
+                                                            }
+                                                        </select>
+                                                    }
+                                                    else
+                                                    {
+                                                        <input type="text" class="form-control form-control-sm"
+                                                               value="@GetEditValue(attr.Name)"
+                                                               @onchange="e => SetEditValue(attr.Name, e.Value?.ToString())"
+                                                               maxlength="@(attr.MaxLength ?? 2048)"
+                                                               disabled="@isSaving" />
+                                                    }
+                                                </td>
+                                                <td>
+                                                    @if (isChanged)
+                                                    {
+                                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ResetAttribute(attr.Name)" disabled="@isSaving" title="Reset">↺</button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
+        </div>
+
+        <!-- Right Panel: Diff Preview / Save -->
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
+                @if (showDiffPreview && pendingChanges.Count > 0)
+                {
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Confirm Changes</strong>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelSave" disabled="@isSaving">Cancel</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3" style="max-height: 250px; overflow-y: auto;">
+                            @foreach (var change in pendingChanges)
+                            {
+                                <div class="border-bottom pb-2 mb-2">
+                                    <strong>@change.Label</strong> <small class="text-muted">(@change.Name)</small>
+                                    <div><small class="text-danger">− @(change.OldValue ?? "<em>empty</em>")</small></div>
+                                    <div><small class="text-success">+ @(change.NewValue ?? "<em>empty</em>")</small></div>
+                                </div>
+                            }
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isSaving" />
+                        </div>
+                        <button class="btn btn-primary w-100" @onclick="ConfirmSave"
+                                disabled="@(isSaving || string.IsNullOrWhiteSpace(ticketNumber))">
+                            @if (isSaving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Save @pendingChanges.Count attribute(s)
+                        </button>
+                    </div>
+                }
+                else if (lookupResult?.Principal != null && !protectedBlocked && !isReadOnly && changedCount > 0)
+                {
+                    <div class="card-header"><strong>Review Changes</strong></div>
+                    <div class="card-body">
+                        <p class="text-muted mb-3">@changedCount attribute(s) modified. Review and save when ready.</p>
+                        <button class="btn btn-primary w-100" @onclick="ShowPreview">Preview Changes</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="card-header"><strong>Actions</strong></div>
+                    <div class="card-body">
+                        <p class="text-muted mb-0">Search for a user, edit attributes, then save changes.</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool isSaving;
+
+    private string searchIdentity = "";
+    private string? searchError;
+    private bool protectedBlocked;
+    private bool isReadOnly;
+
+    private AttributeLookupResult? lookupResult;
+    private List<EditableAttribute> editableAttributes = new();
+    private Dictionary<string, string?> currentValues = new();
+    private Dictionary<string, string?> editValues = new();
+
+    private bool showDiffPreview;
+    private List<AttributeChange> pendingChanges = new();
+    private string ticketNumber = "";
+    private (bool success, string message)? operationResult;
+
+    private int changedCount => editableAttributes.Count(a => HasChanged(a.Name));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "ADAttributeEditor");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchIdentity) && !isLoading)
+            await PerformSearch();
+    }
+
+    private async Task PerformSearch()
+    {
+        isLoading = true;
+        searchError = null;
+        protectedBlocked = false;
+        isReadOnly = false;
+        lookupResult = null;
+        editableAttributes = new();
+        currentValues = new();
+        editValues = new();
+        showDiffPreview = false;
+        pendingChanges = new();
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            var result = await EditorService.LookupAsync(searchIdentity.Trim());
+
+            if (!result.Success)
+            {
+                searchError = result.Error;
+                return;
+            }
+
+            lookupResult = result;
+
+            if (result.IsReadOnly)
+            {
+                isReadOnly = true;
+                return;
+            }
+
+            var protectionCheck = await ProtectedPrincipalService.CheckAsync(result.Principal!);
+            if (protectionCheck.CheckFailed)
+            {
+                searchError = protectionCheck.Reason;
+                return;
+            }
+            if (protectionCheck.IsProtected)
+            {
+                protectedBlocked = true;
+                return;
+            }
+
+            var allowlist = EditorService.GetAllowlist();
+            if (allowlist == null)
+            {
+                searchError = "Attribute allowlist is corrupt. Contact your administrator.";
+                return;
+            }
+
+            editableAttributes = allowlist;
+            currentValues = result.CurrentValues ?? new();
+            editValues = new Dictionary<string, string?>(currentValues, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            searchError = ex.Message;
+            Logger.LogError(ex, "AD attribute lookup failed for {Identity}", searchIdentity);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private bool HasChanged(string name)
+    {
+        var current = currentValues.GetValueOrDefault(name);
+        var edit = editValues.GetValueOrDefault(name);
+        var currentNorm = string.IsNullOrEmpty(current) ? null : current;
+        var editNorm = string.IsNullOrEmpty(edit) ? null : edit;
+        return !string.Equals(currentNorm, editNorm, StringComparison.Ordinal);
+    }
+
+    private string GetEditValue(string name) => editValues.GetValueOrDefault(name) ?? "";
+
+    private void SetEditValue(string name, string? value)
+    {
+        editValues[name] = string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    private void ResetAttribute(string name)
+    {
+        editValues[name] = currentValues.GetValueOrDefault(name);
+    }
+
+    private void ShowPreview()
+    {
+        pendingChanges = editableAttributes
+            .Where(a => HasChanged(a.Name))
+            .Select(a => new AttributeChange(a.Name, a.Label, currentValues.GetValueOrDefault(a.Name), editValues.GetValueOrDefault(a.Name)))
+            .ToList();
+        showDiffPreview = true;
+    }
+
+    private void CancelSave()
+    {
+        showDiffPreview = false;
+        pendingChanges = new();
+    }
+
+    private async Task ConfirmSave()
+    {
+        isSaving = true;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ADAttributeEditor");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = (false, "Authorization denied.");
+                return;
+            }
+
+            var proposedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var change in pendingChanges)
+                proposedValues[change.Name] = change.NewValue;
+
+            var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress);
+
+            if (result.Success)
+            {
+                operationResult = (true, $"Successfully updated {result.AppliedChanges?.Count ?? 0} attribute(s) for {lookupResult.Principal!.DisplayName}.");
+
+                try
+                {
+                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update",
+                        true, ticketNumber.Trim(),
+                        new Dictionary<string, string>
+                        {
+                            ["Target"] = lookupResult.Principal.UserPrincipalName,
+                            ["Changed"] = string.Join(", ", pendingChanges.Select(c => c.Name))
+                        });
+                }
+                catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for AD attribute edit"); }
+
+                showDiffPreview = false;
+                pendingChanges = new();
+                ticketNumber = "";
+
+                if (result.AppliedChanges != null)
+                {
+                    foreach (var change in result.AppliedChanges)
+                        currentValues[change.Name] = change.NewValue;
+                    editValues = new Dictionary<string, string?>(currentValues, StringComparer.OrdinalIgnoreCase);
+                }
+            }
+            else
+            {
+                operationResult = (false, result.Error ?? "Save failed.");
+
+                try
+                {
+                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update",
+                        false, ticketNumber.Trim(),
+                        new Dictionary<string, string>
+                        {
+                            ["Target"] = lookupResult.Principal!.UserPrincipalName,
+                            ["Error"] = result.Error ?? "Unknown"
+                        }, result.Error);
+                }
+                catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for AD attribute edit failure"); }
+            }
+        }
+        catch (Exception ex)
+        {
+            operationResult = (false, ex.Message);
+            Logger.LogError(ex, "AD attribute save failed");
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "ADAttributeEditor_Update", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Target"] = lookupResult?.Principal?.UserPrincipalName ?? searchIdentity }, ex.Message); } catch { }
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

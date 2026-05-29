@@ -108,6 +108,7 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "MailboxPermissions"),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
+                new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by mailbox permission operations", Required: false),
                 new("ExcludedUsers", "Excluded Users", "Comma-separated users, groups, or emails protected from all permission operations (mailbox and calendar)", Required: false),
                 new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves — applies to all permission operations (true/false)", Required: false, DefaultValue: "true")
             ]
@@ -124,7 +125,10 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             MainPermission = new("Access", "CalendarPermissions"),
-            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)]
+            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
+            ConfigFields = [
+                new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by calendar permission operations", Required: false)
+            ]
         },
         new()
         {
@@ -144,6 +148,7 @@ public sealed class ModuleCatalog
                 new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
                 new("OnPremTargetDeliveryDomain", "On-Prem Target Domain", "e.g. contoso.com"),
                 new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. A database is picked randomly for each move-back batch.", Required: false),
+                new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by migration eligibility checks", Required: false),
                 new("CloudQuotaGB", "Cloud Quota (GB)", "Max mailbox size for cloud migration", DefaultValue: "100"),
                 new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated AD groups excluded from cloud migration", Required: false)
             ]
@@ -172,7 +177,10 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
-            MainPermission = new("Access", "MessageTrace")
+            MainPermission = new("Access", "MessageTrace", FailClosed: true),
+            ConfigFields = [
+                new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by message tracking", Required: false)
+            ]
         },
         new()
         {
@@ -185,7 +193,10 @@ public sealed class ModuleCatalog
             SortOrder = 600,
             EnabledByDefault = true,
             IsSystemModule = false,
-            MainPermission = new("Access", "RecipientLookup")
+            MainPermission = new("Access", "RecipientLookup"),
+            ConfigFields = [
+                new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by recipient lookup", Required: false)
+            ]
         },
         new()
         {
@@ -214,6 +225,7 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
+                new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used by synced group membership operations", Required: false),
                 new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (for M365 groups)", Required: false)
             ]
         },
@@ -230,7 +242,8 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
-                new("TargetGroupName", "Target Group", "AD group name to manage")
+                new("TargetGroupName", "Target Group", "AD group name to manage"),
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by Comms-10k operations")
             ]
         },
         new()
@@ -246,7 +259,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields")
+                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields")
             ]
         },
         new()
@@ -276,7 +289,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (requires Policy.ReadWrite.ConditionalAccess)")
+                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (requires Policy.ReadWrite.ConditionalAccess)")
             ]
         },
         new()
@@ -292,7 +305,25 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
+                new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
+            ]
+        },
+        new()
+        {
+            Id = "ADAttributeEditor",
+            DisplayName = "AD Attribute Editor",
+            Description = "View and edit allowlisted Active Directory attributes for on-premises user accounts.",
+            Route = "ad-attribute-editor",
+            IconCss = "bi bi-person-fill-nav-menu",
+            Category = "Directory & Groups",
+            SortOrder = 170,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by attribute read/write operations"),
+                new("DefaultSearchBase", "Default Search Base", "Optional OU DN that limits which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com)", Required: false)
             ]
         },
         new()

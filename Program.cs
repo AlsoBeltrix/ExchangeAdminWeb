@@ -76,6 +76,7 @@ try
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
+    builder.Services.AddScoped<ADAttributeEditorService>();
     builder.Services.AddScoped<HeaderAnalysisService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();
