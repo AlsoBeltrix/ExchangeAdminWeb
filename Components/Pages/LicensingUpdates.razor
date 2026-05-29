@@ -337,8 +337,10 @@
                         ["License Type"] = previewResult.LicenseType,
                         ["Total"] = applyResult.TotalRows.ToString(),
                         ["Succeeded"] = applyResult.Succeeded.ToString(),
+                        ["Unchanged"] = applyResult.Unchanged.ToString(),
+                        ["Protected/Blocked"] = applyResult.Protected.ToString(),
                         ["Failed"] = applyResult.Failed.ToString()
-                    }, applyResult.Failed > 0 ? $"{applyResult.Failed} row(s) failed" : null);
+                    }, applyResult.Error);
             }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for licensing apply"); }
         }

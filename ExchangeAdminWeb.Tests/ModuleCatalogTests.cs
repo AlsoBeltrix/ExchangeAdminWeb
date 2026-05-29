@@ -166,7 +166,8 @@ public class ModuleCatalogTests
             "/Error",
             "/access-denied",
             "/message-trace",
-            "/module-config/{ModuleId}"
+            "/module-config/{ModuleId}",
+            "/protected-principals"
         };
 
         var modulePageRoutes = ReadPageRoutes()

@@ -7,6 +7,7 @@
 @inject ModuleEnablementService Enablement
 @inject ModuleAdminService ModuleAdmin
 @inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -18,83 +19,101 @@
 
 <div class="nav-scrollable" onclick="if (event.target.closest('a.nav-link')) document.querySelector('.navbar-toggler').click()">
     <nav class="flex-column">
-        <div class="nav-item px-3">
+        <div class="nav-item nav-home px-3">
             <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+                Home
             </NavLink>
         </div>
         @foreach (var category in GetPrimaryModuleGroups())
         {
             <div class="nav-category px-3">@category.Key</div>
-            @foreach (var module in category)
-            {
-                <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
-                    <Authorized>
-                        <div class="nav-item px-3">
-                            <NavLink class="nav-link" href="@module.Route">
-                                <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
-                            </NavLink>
-                        </div>
-                    </Authorized>
-                </AuthorizeView>
-            }
+            <div class="nav-section-children">
+                @foreach (var module in category)
+                {
+                    <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
+                        <Authorized>
+                            <div class="nav-item nav-section-child px-3">
+                                <NavLink class="nav-link" href="@module.Route">
+                                    <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
+                                </NavLink>
+                            </div>
+                        </Authorized>
+                    </AuthorizeView>
+                }
+            </div>
         }
         @{ var systemModules = Catalog.GetOrdered().Where(m => m.IsSystemModule).ToList(); }
-        @{ var adminAdjacentModules = Catalog.GetOrdered().Where(m => !m.IsSystemModule && m.SortOrder >= 900 && Enablement.IsModuleEnabled(m.Id)).ToList(); }
-        @if (systemModules.Any() || adminAdjacentModules.Any())
+        @{ var adminAdjacentModules = authorizedAdminAdjacentModules; }
+        @if (isAdminSettingsAuthorized && (systemModules.Any() || adminAdjacentModules.Any()))
         {
-            <AuthorizeView Policy="@systemModules.First().MainPermission.PolicyAlias">
-                <Authorized>
-                    <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
-                    @foreach (var module in systemModules)
+            <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
+            <div class="nav-section-children">
+                @foreach (var module in systemModules)
+                {
+                    <div class="nav-item nav-section-child px-3">
+                        <NavLink class="nav-link" href="@module.Route">
+                            <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
+                        </NavLink>
+                    </div>
+                }
+                <div class="nav-item nav-section-child px-3">
+                    <NavLink class="nav-link" href="protected-principals">
+                        <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span> Protected Principals
+                    </NavLink>
+                </div>
+                <div class="nav-item nav-section-child px-3">
+                    <div class="nav-link nav-tree-toggle" @onclick="() => configTreeExpanded = !configTreeExpanded" @onclick:stopPropagation="true">
+                        <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
+                        Module Config
+                        <span class="ms-auto" style="font-size: 0.7em;">@(configTreeExpanded ? "−" : "+")</span>
+                    </div>
+                    @if (configTreeExpanded)
                     {
-                        <div class="nav-item px-3">
-                            <NavLink class="nav-link" href="@module.Route">
-                                <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
-                            </NavLink>
+                        <div class="nav-tree-children">
+                            @foreach (var cfgModule in configModulesForGlobalAdmin)
+                            {
+                                <div class="nav-item nav-tree-child">
+                                    <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                        @cfgModule.DisplayName
+                                    </NavLink>
+                                </div>
+                            }
                         </div>
                     }
-                    <div class="nav-item px-3">
-                        <div class="nav-link nav-tree-toggle" @onclick="() => configTreeExpanded = !configTreeExpanded" @onclick:stopPropagation="true">
-                            <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
-                            Module Config
-                            <span class="ms-auto" style="font-size: 0.7em;">@(configTreeExpanded ? "−" : "+")</span>
-                        </div>
-                        @if (configTreeExpanded)
-                        {
-                            <div class="nav-tree-children">
-                                @foreach (var cfgModule in configModulesForGlobalAdmin)
-                                {
-                                    <div class="nav-item nav-tree-child">
-                                        <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
-                                            @cfgModule.DisplayName
-                                        </NavLink>
-                                    </div>
-                                }
+                </div>
+                @foreach (var module in adminAdjacentModules)
+                {
+                    <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
+                        <Authorized>
+                            <div class="nav-item nav-section-child px-3">
+                                <NavLink class="nav-link" href="@module.Route">
+                                    <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
+                                </NavLink>
                             </div>
-                        }
-                    </div>
-                </Authorized>
-            </AuthorizeView>
-            @foreach (var module in adminAdjacentModules)
-            {
-                <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
-                    <Authorized>
-                        <div class="nav-item px-3">
-                            <NavLink class="nav-link" href="@module.Route">
-                                <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
-                            </NavLink>
-                        </div>
-                    </Authorized>
-                </AuthorizeView>
-            }
+                        </Authorized>
+                    </AuthorizeView>
+                }
+            </div>
         }
-        @if (moduleAdminModules.Count > 0)
+        else if (adminAdjacentModules.Any() || moduleAdminModules.Count > 0)
         {
-            <AuthorizeView Policy="AdminSettings">
-                <NotAuthorized>
-                    <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
-                    <div class="nav-item px-3">
+            <div class="nav-category px-3 mt-3 border-top pt-3">Administration</div>
+            <div class="nav-section-children">
+                @foreach (var module in adminAdjacentModules)
+                {
+                    <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
+                        <Authorized>
+                            <div class="nav-item nav-section-child px-3">
+                                <NavLink class="nav-link" href="@module.Route">
+                                    <span class="@module.IconCss" aria-hidden="true"></span> @module.DisplayName
+                                </NavLink>
+                            </div>
+                        </Authorized>
+                    </AuthorizeView>
+                }
+                @if (moduleAdminModules.Count > 0)
+                {
+                    <div class="nav-item nav-section-child px-3">
                         <div class="nav-link nav-tree-toggle" @onclick="() => moduleAdminTreeExpanded = !moduleAdminTreeExpanded" @onclick:stopPropagation="true">
                             <span class="bi bi-gear-fill-nav-menu" aria-hidden="true"></span>
                             Module Config
@@ -114,8 +133,8 @@
                             </div>
                         }
                     </div>
-                </NotAuthorized>
-            </AuthorizeView>
+                }
+            </div>
         }
 
         <div class="nav-item px-3 mt-auto pt-3 border-top">
@@ -134,8 +153,10 @@
 @code {
     private List<AdminModuleDescriptor> configModulesForGlobalAdmin = new();
     private List<AdminModuleDescriptor> moduleAdminModules = new();
+    private List<AdminModuleDescriptor> authorizedAdminAdjacentModules = new();
     private bool configTreeExpanded;
     private bool moduleAdminTreeExpanded;
+    private bool isAdminSettingsAuthorized;
     private static readonly string[] PrimaryCategoryOrder =
     [
         "Exchange",
@@ -170,6 +191,7 @@
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
+        isAdminSettingsAuthorized = (await AuthorizationService.AuthorizeAsync(user, "AdminSettings")).Succeeded;
 
         configModulesForGlobalAdmin = Catalog.GetOrdered()
             .Where(m => !m.IsSystemModule)
@@ -178,5 +200,14 @@
         moduleAdminModules = Catalog.GetOrdered()
             .Where(m => !m.IsSystemModule && ModuleAdmin.IsModuleAdmin(m.Id, user))
             .ToList();
+
+        authorizedAdminAdjacentModules = new();
+        foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && m.SortOrder >= 900 && Enablement.IsModuleEnabled(m.Id)))
+        {
+            if ((await AuthorizationService.AuthorizeAsync(user, module.MainPermission.PolicyAlias)).Succeeded)
+            {
+                authorizedAdminAdjacentModules.Add(module);
+            }
+        }
     }
 }
