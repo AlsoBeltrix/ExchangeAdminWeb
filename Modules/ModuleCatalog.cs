@@ -303,6 +303,7 @@ public sealed class ModuleCatalog
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.1.0",
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")

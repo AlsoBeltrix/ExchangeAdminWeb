@@ -11,6 +11,7 @@ public sealed record AdminModuleDescriptor
     public required int SortOrder { get; init; }
     public required bool EnabledByDefault { get; init; }
     public required bool IsSystemModule { get; init; }
+    public string Version { get; init; } = "1.0.0";
     public required ModulePermission MainPermission { get; init; }
     public IReadOnlyList<ModulePermission> GranularPermissions { get; init; } = [];
     public IReadOnlyList<ModuleConfigField> ConfigFields { get; init; } = [];

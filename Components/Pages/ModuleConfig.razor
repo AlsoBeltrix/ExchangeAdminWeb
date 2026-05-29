@@ -5,6 +5,7 @@
 @rendermode InteractiveServer
 @inject ModuleConfigService ModuleConfigSvc
 @inject ModuleAdminService ModuleAdmin
+@inject ModuleEnablementService Enablement
 @inject SectionAccessService SectionAccess
 @inject ModuleCatalog Catalog
 @inject AuditService Audit
@@ -37,7 +38,7 @@
 }
 
 <div class="container-fluid">
-    <h1 class="mb-4">@module.DisplayName</h1>
+    <h1 class="mb-4">@module.DisplayName <small class="text-muted fs-6">v@module.Version</small></h1>
     <p class="text-muted mb-4">@module.Description</p>
 
     @if (!string.IsNullOrEmpty(statusMessage))
@@ -45,6 +46,37 @@
         <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show">
             @statusMessage
             <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+        </div>
+    }
+
+    @if (!module.IsSystemModule)
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Module Status</strong>
+                @if (isGlobalAdmin)
+                {
+                    <button class="btn btn-primary btn-sm" @onclick="SaveModuleEnablementAsync" disabled="@saving">Save Status</button>
+                }
+            </div>
+            <div class="card-body">
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" id="module-enabled"
+                           checked="@moduleEnabled"
+                           disabled="@(!isGlobalAdmin || saving)"
+                           @onchange="(e) => moduleEnabled = (bool)(e.Value ?? false)" />
+                    <label class="form-check-label fw-semibold" for="module-enabled">
+                        @(moduleEnabled ? "Enabled" : "Disabled")
+                    </label>
+                </div>
+                <small class="text-muted">
+                    Disabled modules are hidden from the sidebar and denied by authorization, even when section access and configuration are set.
+                    @if (!isGlobalAdmin)
+                    {
+                        <span> Only global admins can change module status.</span>
+                    }
+                </small>
+            </div>
         </div>
     }
 
@@ -215,6 +247,7 @@
     private Dictionary<string, string> accessInputs = new();
 
     private string? loadedModuleId;
+    private bool moduleEnabled;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -254,6 +287,7 @@
         if (module == null) return;
 
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
+        moduleEnabled = Enablement.IsModuleEnabled(module.Id);
         moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
 
         policyAliases = new List<string> { module.MainPermission.PolicyAlias };
@@ -321,6 +355,57 @@
             statusIsError = true;
         }
         finally { saving = false; }
+    }
+
+    private async Task SaveModuleEnablementAsync()
+    {
+        if (module == null) return;
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded)
+            {
+                statusMessage = "Only global admins can change module status.";
+                statusIsError = true;
+                return;
+            }
+
+            var enablement = Enablement.GetAllEnablement();
+            var previous = enablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
+            enablement[module.Id] = moduleEnabled;
+            Enablement.SaveEnablement(enablement);
+
+            if (previous != moduleEnabled)
+            {
+                try
+                {
+                    var ip = ClientInfo.GetIpForUser(currentUser);
+                    Audit.LogSettingsChange(currentUser, ip, $"Module:{module.Id}",
+                        previous ? new[] { "Enabled" } : Array.Empty<string>(),
+                        moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
+                }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
+            }
+
+            statusMessage = "Module status saved. Refreshing...";
+            statusIsError = false;
+            await Task.Delay(500);
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save module status: {ex.Message}";
+            statusIsError = true;
+        }
+        finally
+        {
+            saving = false;
+        }
     }
 
     private async Task SaveSectionAccessAsync()
