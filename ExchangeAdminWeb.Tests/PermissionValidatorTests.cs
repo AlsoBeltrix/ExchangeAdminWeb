@@ -16,7 +16,8 @@ public class PermissionValidatorTests
     {
         var configData = new Dictionary<string, string?>
         {
-            ["Security:PreventSelfGrant"] = preventSelfGrant.ToString()
+            ["Security:PreventSelfGrant"] = preventSelfGrant.ToString(),
+            ["Delinea:SecretServerUrl"] = "https://fake.local"
         };
 
         if (excludedUsers is not null)
@@ -41,7 +42,19 @@ public class PermissionValidatorTests
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
         var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigLogger);
 
-        return new PermissionValidator(config, moduleConfig, logger, scopeFactory);
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var delineaLogger = Substitute.For<ILogger<DelineaService>>();
+        var extLogLogger = Substitute.For<ILogger<ExtendedLogService>>();
+        var extLog = new ExtendedLogService(config, env, extLogLogger);
+        var jsonlLogger = Substitute.For<ILogger<JsonlLogService>>();
+        var jsonlLog = new JsonlLogService(config, jsonlLogger);
+        var operationTrace = new OperationTraceService(config, jsonlLog);
+        var delineaService = new DelineaService(httpClientFactory, config, delineaLogger, extLog, operationTrace);
+        var protectedPrincipalLogger = Substitute.For<ILogger<ProtectedPrincipalService>>();
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
+
+        return new PermissionValidator(config, moduleConfig, protectedPrincipalService, logger, scopeFactory);
     }
 
     // --- Self-grant validation ---

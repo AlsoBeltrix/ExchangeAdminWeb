@@ -27,7 +27,7 @@
 
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
-        <small>Manages Entra ID Conditional Access named locations. Requires <code>Policy.ReadWrite.ConditionalAccess</code> permission on the app registration.</small>
+        <small>Manage Conditional Access named locations for trusted IP ranges and country/region lists.</small>
     </div>
     <h1 class="mb-4">Named Locations</h1>
 
@@ -45,8 +45,8 @@
         </div>
     }
 
-    <div class="row">
-        <div class="col-md-8">
+    <div class="row g-3">
+        <div class="col-lg-8">
             <div class="card mb-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>Named Locations</strong>
@@ -65,55 +65,44 @@
                     }
                     else if (locations.Count > 0)
                     {
-                        <table class="table table-sm mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Type</th>
-                                    <th>Details</th>
-                                    <th style="width: 140px;"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var loc in locations)
-                                {
+                        <div style="max-height: calc(100vh - 260px); overflow-y: auto;">
+                            <table class="table table-sm mb-0">
+                                <thead>
                                     <tr>
-                                        <td>
-                                            @loc.DisplayName
-                                            @if (loc.IsTrusted)
-                                            {
-                                                <span class="badge bg-success ms-1">Trusted</span>
-                                            }
-                                        </td>
-                                        <td>@(loc.LocationType == NamedLocationType.Ip ? "IP ranges" : "Countries")</td>
-                                        <td>
-                                            <small class="text-muted">
-                                                @if (loc.LocationType == NamedLocationType.Ip)
-                                                {
-                                                    @($"{loc.IpRanges.Count} range(s)")
-                                                }
-                                                else
-                                                {
-                                                    @($"{loc.CountryCodes.Count} country/region(s)")
-                                                }
-                                            </small>
-                                        </td>
-                                        <td>
-                                            @if (confirmDelete == loc.Id)
-                                            {
-                                                <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(loc)" disabled="@isOperating">Yes</button>
-                                                <button class="btn btn-secondary btn-sm" @onclick="() => confirmDelete = null">No</button>
-                                            }
-                                            else
-                                            {
-                                                <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => EditLocation(loc)" disabled="@isOperating">Edit</button>
-                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = loc.Id" disabled="@isOperating">Delete</button>
-                                            }
-                                        </td>
+                                        <th>Name</th>
+                                        <th style="width: 140px;">Type</th>
+                                        <th style="width: 90px;">Trusted</th>
+                                        <th style="width: 140px;">Details</th>
+                                        <th style="width: 80px;"></th>
                                     </tr>
-                                }
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    @foreach (var loc in locations)
+                                    {
+                                        <tr class="@(editingLocation?.Id == loc.Id ? "table-active" : "")">
+                                            <td>@loc.DisplayName</td>
+                                            <td>@(loc.LocationType == NamedLocationType.Ip ? "IP ranges" : "Countries")</td>
+                                            <td>@(loc.IsTrusted ? "Yes" : "No")</td>
+                                            <td>
+                                                <small class="text-muted">
+                                                    @if (loc.LocationType == NamedLocationType.Ip)
+                                                    {
+                                                        @($"{loc.IpRanges.Count} range(s)")
+                                                    }
+                                                    else
+                                                    {
+                                                        @($"{loc.CountryCodes.Count} country/region(s)")
+                                                    }
+                                                </small>
+                                            </td>
+                                            <td>
+                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => EditLocation(loc)" disabled="@isOperating">Edit</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
                     }
                     else if (!isLoading)
                     {
@@ -123,15 +112,23 @@
             </div>
         </div>
 
-        <div class="col-md-4">
-            @if (showForm)
-            {
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <strong>@(editingLocation != null ? "Edit Location" : "New Location")</strong>
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>@(showForm ? (editingLocation != null ? "Edit Location" : "New Location") : "Location Details")</strong>
+                    @if (showForm)
+                    {
                         <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm">Cancel</button>
-                    </div>
-                    <div class="card-body">
+                    }
+                </div>
+                <div class="card-body">
+                    @if (!showForm)
+                    {
+                        <p class="text-muted mb-3">Select a named location to edit it, or create a new one.</p>
+                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isLoading">New Location</button>
+                    }
+                    else
+                    {
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Display Name</label>
                             <input type="text" class="form-control" @bind="formDisplayName" disabled="@isOperating" />
@@ -178,14 +175,35 @@
                             </div>
                         }
 
-                        <button class="btn btn-primary" @onclick="SaveLocation"
-                                disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName))">
-                            @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                            @(editingLocation != null ? "Update" : "Create")
-                        </button>
-                    </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@isOperating" />
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                @if (editingLocation != null)
+                                {
+                                    @if (confirmDelete == editingLocation.Id)
+                                    {
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(editingLocation)" disabled="@(isOperating || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmDelete = null" disabled="@isOperating">Cancel</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = editingLocation.Id" disabled="@isOperating">Delete</button>
+                                    }
+                                }
+                            </div>
+                            <button class="btn btn-primary" @onclick="SaveLocation"
+                                    disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber))">
+                                @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                @(editingLocation != null ? "Update" : "Create")
+                            </button>
+                        </div>
+                    }
                 </div>
-            }
+            </div>
         </div>
     </div>
 </div>
@@ -208,6 +226,7 @@
     private string formType = "ip";
     private string formIpRanges = "";
     private string formCountryCodes = "";
+    private string formTicketNumber = "";
     private bool formIsTrusted;
     private bool formIncludeUnknown;
 
@@ -263,6 +282,7 @@
         formType = "ip";
         formIpRanges = "";
         formCountryCodes = "";
+        formTicketNumber = "";
         formIsTrusted = false;
         formIncludeUnknown = false;
         showForm = true;
@@ -270,10 +290,12 @@
 
     private void EditLocation(NamedLocation loc)
     {
+        confirmDelete = null;
         editingLocation = loc;
         formDisplayName = loc.DisplayName;
         formIpRanges = string.Join("\n", loc.IpRanges);
         formCountryCodes = string.Join("\n", loc.CountryCodes);
+        formTicketNumber = "";
         formIsTrusted = loc.IsTrusted;
         formIncludeUnknown = loc.IncludeUnknownCountries;
         showForm = true;
@@ -281,6 +303,7 @@
 
     private void CancelForm()
     {
+        confirmDelete = null;
         showForm = false;
         editingLocation = null;
     }
@@ -336,16 +359,19 @@
                 }
             }
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, action, target, operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
+            var ticket = formTicketNumber.Trim();
+
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, action, target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, "", new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
 
             if (operationResult.Success)
             {
                 showForm = false;
                 editingLocation = null;
+                confirmDelete = null;
                 await LoadLocations();
             }
         }
@@ -355,8 +381,8 @@
             Logger.LogError(ex, "Failed to save named location");
             var failAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
             var failTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, "", ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, "", new Dictionary<string, string> { ["Location"] = failTarget }, ex.Message); } catch { }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, formTicketNumber.Trim(), ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = failTarget }, ex.Message); } catch { }
         }
         finally
         {
@@ -382,23 +408,29 @@
             }
 
             var target = $"{loc.DisplayName} ({loc.Id})";
+            var ticket = formTicketNumber.Trim();
             operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", target, operationResult.Success, "", operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", operationResult.Success, "", new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for NamedLocations delete"); }
 
             if (operationResult.Success)
+            {
+                showForm = false;
+                editingLocation = null;
+                confirmDelete = null;
                 await LoadLocations();
+            }
         }
         catch (Exception ex)
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete named location {Id}", loc.Id);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", false, "", ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, "", new Dictionary<string, string> { ["Location"] = $"{loc.DisplayName} ({loc.Id})" }, ex.Message); } catch { }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), ex.Message); } catch { }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = $"{loc.DisplayName} ({loc.Id})" }, ex.Message); } catch { }
         }
         finally
         {

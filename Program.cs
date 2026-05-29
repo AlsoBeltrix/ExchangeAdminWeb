@@ -68,6 +68,7 @@ try
         });
 
     builder.Services.AddSingleton<ModuleConfigService>();
+    builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
@@ -82,6 +83,7 @@ try
     builder.Services.AddSingleton<OperationTraceService>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
+    builder.Services.AddSingleton<ProtectedPrincipalService>();
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();

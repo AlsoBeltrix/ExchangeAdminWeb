@@ -13,6 +13,7 @@ public class PermissionValidator
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly ProtectedPrincipalService _protectedPrincipalService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(30);
@@ -20,17 +21,21 @@ public class PermissionValidator
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
 
-    public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
+    public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ProtectedPrincipalService protectedPrincipalService, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _config = config;
         _moduleConfig = moduleConfig;
+        _protectedPrincipalService = protectedPrincipalService;
         _scopeFactory = scopeFactory;
 
         moduleConfig.ConfigSaved += moduleId =>
         {
             if (moduleId == "MailboxPermissions")
+            {
                 InvalidateCache();
+                _protectedPrincipalService.InvalidateCache();
+            }
         };
     }
 
@@ -95,6 +100,31 @@ public class PermissionValidator
 
     public async Task<string?> ValidateTargetMailboxAsync(string targetMailbox)
     {
+        if (_protectedPrincipalService.HasCentralConfig)
+        {
+            var principal = new ResolvedDirectoryPrincipal(
+                Source: "PermissionValidator",
+                DisplayName: targetMailbox,
+                UserPrincipalName: targetMailbox,
+                SamAccountName: null,
+                PrimarySmtpAddress: targetMailbox.Contains('@') ? targetMailbox : null,
+                DistinguishedName: null,
+                ObjectGuid: null,
+                EntraObjectId: null);
+
+            var result = await _protectedPrincipalService.CheckAsync(principal);
+            if (result.CheckFailed)
+            {
+                _logger.LogWarning("Blocking operation on {Target} — protected-principal check failed: {Reason}", targetMailbox, result.Reason);
+                return $"Access denied: {result.Reason}";
+            }
+            if (result.IsProtected)
+            {
+                _logger.LogWarning("Attempted operation on protected principal: {Target} (rules: {Rules})", targetMailbox, string.Join(", ", result.MatchedRules));
+                return $"Access denied: {targetMailbox} is protected and cannot be modified through this interface.";
+            }
+        }
+
         await EnsureInitializedAsync();
 
         if (_initFailed)
