@@ -87,13 +87,7 @@ public class DhcpAuthorizationService
             if (dc == null)
                 return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "DhcpServer")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Add-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
             ps.AddCommand("Invoke-Command")
               .AddParameter("ComputerName", dc)
               .AddParameter("Credential", credential)
@@ -149,13 +143,7 @@ public class DhcpAuthorizationService
             if (dc == null)
                 return new DhcpOperationResult { Success = false, Message = "Could not discover a domain controller." };
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "DhcpServer")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
+            var script = ScriptBlock.Create("param($DnsName, $IPAddress) Import-Module DhcpServer -ErrorAction Stop; Remove-DhcpServerInDC -DnsName $DnsName -IPAddress $IPAddress -ErrorAction Stop");
             ps.AddCommand("Invoke-Command")
               .AddParameter("ComputerName", dc)
               .AddParameter("Credential", credential)
