@@ -303,7 +303,7 @@ public sealed class ModuleCatalog
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
@@ -315,7 +315,7 @@ public sealed class ModuleCatalog
             DisplayName = "Licensing Updates",
             Description = "Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.",
             Route = "licensing-updates",
-            IconCss = "bi bi-file-earmark-spreadsheet-nav-menu",
+            IconCss = "bi bi-list-nested-nav-menu",
             Category = "Exchange",
             SortOrder = 450,
             EnabledByDefault = false,

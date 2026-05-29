@@ -90,7 +90,9 @@ public class LicensingUpdatesService
 
         _operationTrace.Step("LicensingPreviewStarted", details: new Dictionary<string, object?>
         {
-            ["fileName"] = fileName, ["licenseType"] = licenseType, ["rowCount"] = identities.Count
+            ["fileName"] = fileName,
+            ["licenseType"] = licenseType,
+            ["rowCount"] = identities.Count
         });
 
         var rows = new List<LicensePreviewRow>();
@@ -150,15 +152,30 @@ public class LicensingUpdatesService
         var succeeded = results.Count(r => r.Status == "Success");
         var unchanged = results.Count(r => r.Status == "Unchanged");
         var protectedCount = results.Count(r => r.Status == "Protected");
+        var checkFailedCount = results.Count(r => r.Status == "CheckFailed");
         var failed = results.Count(r => r.Status == "Error");
 
-        _audit.LogLookupAction(performedBy, ip, "LicensingUpdates_BulkApply",
-            $"{succeeded} updated, {unchanged} unchanged, {protectedCount} protected, {failed} failed",
-            succeeded + unchanged > 0, errorDetail: null, ticketNumber: ticket);
+        try
+        {
+            foreach (var row in results)
+            {
+                _audit.LogLookupAction(performedBy, ip, "LicensingUpdates_Update",
+                    row.UserPrincipalName ?? row.InputIdentity,
+                    row.Status == "Success" || row.Status == "Unchanged",
+                    errorDetail: row.Error,
+                    ticketNumber: ticket);
+            }
+        }
+        catch (Exception auditEx)
+        {
+            _logger.LogError(auditEx, "Audit write failed for licensing bulk apply — AD writes already committed");
+        }
 
-        scope.Complete(failed == 0, failed > 0 ? $"{failed} row(s) failed" : null);
+        var overallSuccess = checkFailedCount == 0;
+        scope.Complete(overallSuccess && failed == 0, failed > 0 ? $"{failed} row(s) failed" : null);
 
-        return new(true, null, preview.Rows.Count, succeeded, unchanged, protectedCount, failed, results);
+        return new(overallSuccess, checkFailedCount > 0 ? "Protection system unavailable for some targets." : null,
+            preview.Rows.Count, succeeded, unchanged, protectedCount + checkFailedCount, failed, results);
     }
 
     private List<LicensePreviewRow> ResolveUsers(List<string> identities, string licenseType, (string username, string password, string domain) creds)
@@ -255,7 +272,12 @@ public class LicensingUpdatesService
             try
             {
                 var protectionResult = _protectedPrincipalService.CheckAsync(principal).GetAwaiter().GetResult();
-                if (protectionResult.CheckFailed || protectionResult.IsProtected)
+                if (protectionResult.CheckFailed)
+                {
+                    results.Add(new(row.InputIdentity, principal.UserPrincipalName, "CheckFailed", row.CurrentValue, null, protectionResult.Reason));
+                    continue;
+                }
+                if (protectionResult.IsProtected)
                 {
                     results.Add(new(row.InputIdentity, principal.UserPrincipalName, "Protected", row.CurrentValue, null, "Protected principal."));
                     continue;
@@ -313,10 +335,11 @@ public class LicensingUpdatesService
         return results;
     }
 
-    private static List<string> ParseCsv(Stream csvStream)
+    internal static List<string> ParseCsv(Stream csvStream)
     {
         var identities = new List<string>();
         using var reader = new StreamReader(csvStream);
+        var isFirstRow = true;
 
         while (reader.ReadLine() is { } line)
         {
@@ -326,8 +349,12 @@ public class LicensingUpdatesService
             var firstCol = trimmed.Split(',', 2)[0].Trim().Trim('"');
             if (string.IsNullOrWhiteSpace(firstCol)) continue;
 
-            if (identities.Count == 0 && HeaderIndicators.Any(h => firstCol.Contains(h, StringComparison.OrdinalIgnoreCase)))
-                continue;
+            if (isFirstRow)
+            {
+                isFirstRow = false;
+                if (HeaderIndicators.Any(h => string.Equals(firstCol, h, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+            }
 
             identities.Add(firstCol);
         }

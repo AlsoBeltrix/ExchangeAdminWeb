@@ -199,7 +199,7 @@
                         }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isProcessing" />
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isProcessing" />
                         </div>
                         <button class="btn btn-primary w-100" @onclick="RunApply"
                                 disabled="@(isProcessing || string.IsNullOrWhiteSpace(ticketNumber) || readyCount == 0)">

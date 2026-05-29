@@ -120,7 +120,7 @@ public class LicensingUpdatesServiceTests : IDisposable
         Assert.Contains("credentials unavailable", result.Error, StringComparison.OrdinalIgnoreCase);
     }
 
-    // --- CSV parsing ---
+    // --- CSV parsing (tested directly via internal ParseCsv) ---
 
     [Theory]
     [InlineData("User", true)]
@@ -133,30 +133,68 @@ public class LicensingUpdatesServiceTests : IDisposable
     public void ParseCsv_HeaderDetection(string firstLine, bool isHeader)
     {
         var csv = $"{firstLine}\nactual.user@test.com\n";
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        using var stream = MakeCsvStream(csv);
 
-        var service = CreateService();
-        var result = service.PreviewCsvAsync(stream, "test.csv", "E5", "admin", "127.0.0.1").GetAwaiter().GetResult();
+        var result = LicensingUpdatesService.ParseCsv(stream);
 
-        // If credentials fail, we still get past CSV parsing
-        // The key assertion: if header detected, only 1 row; if not, 2 rows
-        // Since creds fail, check error message indicates it got past parsing
-        Assert.False(result.Success);
-        Assert.Contains("credentials", result.Error!, StringComparison.OrdinalIgnoreCase);
+        if (isHeader)
+        {
+            Assert.Single(result);
+            Assert.Equal("actual.user@test.com", result[0]);
+        }
+        else
+        {
+            Assert.Equal(2, result.Count);
+            Assert.Equal(firstLine, result[0]);
+        }
     }
 
     [Fact]
-    public async Task PreviewCsv_MultipleColumns_UsesFirstColumnOnly()
+    public void ParseCsv_MultipleColumns_UsesFirstColumnOnly()
     {
-        var service = CreateService();
         var csv = "user@test.com,extra data,more stuff\nanother@test.com,blah,blah\n";
-        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(csv));
+        using var stream = MakeCsvStream(csv);
 
-        var result = await service.PreviewCsvAsync(stream, "test.csv", "E5", "admin", "127.0.0.1");
+        var result = LicensingUpdatesService.ParseCsv(stream);
 
-        // Gets past parsing (fails on credentials) - confirms CSV was parsed
-        Assert.False(result.Success);
-        Assert.Contains("credentials", result.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, result.Count);
+        Assert.Equal("user@test.com", result[0]);
+        Assert.Equal("another@test.com", result[1]);
+    }
+
+    [Fact]
+    public void ParseCsv_EmptyLines_AreSkipped()
+    {
+        var csv = "user1@test.com\n\n\nuser2@test.com\n  \n";
+        using var stream = MakeCsvStream(csv);
+
+        var result = LicensingUpdatesService.ParseCsv(stream);
+
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
+    public void ParseCsv_QuotedFirstColumn_UnquotesValue()
+    {
+        var csv = "\"user@test.com\",\"Other Col\"\n";
+        using var stream = MakeCsvStream(csv);
+
+        var result = LicensingUpdatesService.ParseCsv(stream);
+
+        Assert.Single(result);
+        Assert.Equal("user@test.com", result[0]);
+    }
+
+    [Fact]
+    public void ParseCsv_HeaderWithMail_IsDetected()
+    {
+        var csv = "mail,department\nuser@test.com,IT\n";
+        using var stream = MakeCsvStream(csv);
+
+        var result = LicensingUpdatesService.ParseCsv(stream);
+
+        Assert.Single(result);
+        Assert.Equal("user@test.com", result[0]);
     }
 
     // --- Target attribute is not configurable ---
