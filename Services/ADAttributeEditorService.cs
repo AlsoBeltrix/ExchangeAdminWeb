@@ -177,9 +177,14 @@ public class ADAttributeEditorService
         {
             Attributes = attributes.Select(a => new AttributeAllowlistEntry
             {
-                Name = a.Name, Label = a.Label, Type = a.Type,
-                Choices = a.Choices, Required = a.Required, AllowClear = a.AllowClear,
-                MaxLength = a.MaxLength, Pattern = a.Pattern
+                Name = a.Name,
+                Label = a.Label,
+                Type = a.Type,
+                Choices = a.Choices,
+                Required = a.Required,
+                AllowClear = a.AllowClear,
+                MaxLength = a.MaxLength,
+                Pattern = a.Pattern
             }).ToArray()
         };
 
@@ -261,7 +266,8 @@ public class ADAttributeEditorService
         ResolvedDirectoryPrincipal target,
         Dictionary<string, string?> proposedValues,
         string performedBy,
-        string ip)
+        string ip,
+        string ticket)
     {
         var allowlist = GetAllowlist();
         if (allowlist == null)
@@ -292,7 +298,7 @@ public class ADAttributeEditorService
 
         try
         {
-            return await Task.Run(() => PerformSave(target, proposedValues, creds.Value, allowlist, performedBy, ip));
+            return await Task.Run(() => PerformSave(target, proposedValues, creds.Value, allowlist, performedBy, ip, ticket));
         }
         finally
         {
@@ -407,7 +413,8 @@ public class ADAttributeEditorService
         (string username, string password, string domain) creds,
         List<EditableAttribute> allowlist,
         string performedBy,
-        string ip)
+        string ip,
+        string ticket)
     {
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -457,42 +464,24 @@ public class ADAttributeEditorService
                 replace[change.Name] = change.NewValue;
         }
 
-        if (replace.Count > 0)
-        {
-            ps.AddCommand("Set-ADUser")
-              .AddParameter("Identity", target.DistinguishedName)
-              .AddParameter("Replace", replace)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+        // Single Set-ADUser call with both -Replace and -Clear to avoid partial-write risk
+        ps.AddCommand("Set-ADUser")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        if (replace.Count > 0) ps.AddParameter("Replace", replace);
+        if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
+        ps.Invoke();
+        ps.Commands.Clear();
 
-            if (ps.HadErrors)
-            {
-                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Set-ADUser failed.";
-                return new(false, errMsg, null);
-            }
+        if (ps.HadErrors)
+        {
+            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Set-ADUser failed.";
+            LogAudit(target, changes, performedBy, ip, ticket, false, errMsg);
+            return new(false, errMsg, null);
         }
 
-        if (clear.Count > 0)
-        {
-            var clearDict = clear.ToDictionary(c => c, _ => (object?)null);
-            ps.AddCommand("Set-ADUser")
-              .AddParameter("Identity", target.DistinguishedName)
-              .AddParameter("Clear", clear.ToArray())
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            if (ps.HadErrors)
-            {
-                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Clear attributes failed.";
-                return new(false, errMsg, null);
-            }
-        }
-
-        LogAudit(target, changes, performedBy, ip, true);
+        LogAudit(target, changes, performedBy, ip, ticket, true, null);
 
         return new(true, null, changes);
     }
@@ -596,7 +585,7 @@ public class ADAttributeEditorService
         return null;
     }
 
-    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, bool success)
+    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail)
     {
         var changedAttrs = changes.Select(c => c.Name).ToArray();
         var details = new Dictionary<string, object?>
@@ -608,25 +597,7 @@ public class ADAttributeEditorService
 
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
-        var auditEvt = new Dictionary<string, object?>
-        {
-            ["ts"] = DateTime.UtcNow.ToString("O"),
-            ["user"] = performedBy.Contains('\\') ? performedBy.Split('\\')[1] : performedBy,
-            ["ip"] = ip,
-            ["action"] = "ADAttributeEditor_Update",
-            ["category"] = "ADAttributeEditor",
-            ["result"] = success ? "Success" : "Failed",
-            ["target"] = target.UserPrincipalName,
-            ["changedAttributes"] = changedAttrs
-        };
-
-        foreach (var change in changes)
-        {
-            auditEvt[$"old_{change.Name}"] = change.OldValue;
-            auditEvt[$"new_{change.Name}"] = change.NewValue;
-        }
-
-        _audit.LogLookupAction(performedBy, ip, "ADAttributeEditor_Update", target.UserPrincipalName, success);
+        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail);
     }
 
     private static string[] GetPropertiesToLoad(List<EditableAttribute> allowlist)

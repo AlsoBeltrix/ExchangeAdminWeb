@@ -179,6 +179,39 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    public void LogADAttributeEdit(
+        string performedBy,
+        string ipAddress,
+        string target,
+        List<AttributeChange> changes,
+        bool success,
+        string ticketNumber,
+        string? errorDetail = null)
+    {
+        var changedAttrs = changes.Select(c => c.Name).ToArray();
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = "ADAttributeEditor_Update",
+            ["category"] = "ADAttributeEditor",
+            ["result"] = success ? "Success" : "Failed",
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["target"] = target,
+            ["changedAttributes"] = changedAttrs,
+            ["error"] = success ? null : errorDetail
+        };
+
+        foreach (var change in changes)
+        {
+            evt[$"old_{change.Name}"] = change.OldValue;
+            evt[$"new_{change.Name}"] = change.NewValue;
+        }
+
+        WriteAuditEvent(evt);
+    }
+
     public void LogSettingsChange(
         string performedBy,
         string ipAddress,
@@ -236,7 +269,7 @@ public class AuditService
                 });
 
             var operationSucceeded = IsSuccessfulAuditResult(GetString(evt, "result"));
-            var operationMessage = GetString(evt, "error");
+            var operationMessage = operationSucceeded ? null : "Audit event recorded failure";
             implicitScope?.Complete(operationSucceeded, operationMessage);
         }
         finally

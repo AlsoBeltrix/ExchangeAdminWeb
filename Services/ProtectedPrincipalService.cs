@@ -172,6 +172,97 @@ public class ProtectedPrincipalService
         return (config, GetLegacyExclusions(), null);
     }
 
+    /// <summary>
+    /// Resolves an identity (UPN, email, sAMAccountName) to a full ResolvedDirectoryPrincipal
+    /// using the configured directory-read credential. Returns null if resolution is unavailable.
+    /// </summary>
+    public async Task<ResolvedDirectoryPrincipal?> ResolveDirectoryPrincipalAsync(string identity)
+    {
+        if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
+        {
+            _logger.LogDebug("Skipping principal resolution — credential recently failed");
+            return null;
+        }
+
+        var secretIdStr = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
+        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+        {
+            _logger.LogDebug("Cannot resolve principal — ProtectedPrincipalDirectoryReadSecretId not configured");
+            return null;
+        }
+
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId);
+        if (creds == null)
+        {
+            _lastCredentialFailure = DateTime.UtcNow;
+            _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
+            return null;
+        }
+
+        try
+        {
+            if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            {
+                _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
+                return null;
+            }
+
+            try
+            {
+                return await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
+            }
+            finally
+            {
+                _adThrottle.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
+            return null;
+        }
+    }
+
+    private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(username, password, domain);
+        var escaped = EscapeLdapFilter(identity);
+        var filter = $"(|(userPrincipalName={escaped})(mail={escaped})(sAMAccountName={escaped}))";
+
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("LDAPFilter", filter)
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var users = ps.Invoke();
+        ps.Commands.Clear();
+
+        var adUser = users.FirstOrDefault();
+        if (adUser == null)
+            return null;
+
+        return new ResolvedDirectoryPrincipal(
+            Source: "ProtectedPrincipalService-AD",
+            DisplayName: adUser.Properties["DisplayName"]?.Value?.ToString() ?? identity,
+            UserPrincipalName: adUser.Properties["UserPrincipalName"]?.Value?.ToString() ?? identity,
+            SamAccountName: adUser.Properties["SamAccountName"]?.Value?.ToString(),
+            PrimarySmtpAddress: adUser.Properties["mail"]?.Value?.ToString(),
+            DistinguishedName: adUser.Properties["DistinguishedName"]?.Value?.ToString(),
+            ObjectGuid: adUser.Properties["ObjectGUID"]?.Value?.ToString(),
+            EntraObjectId: null);
+    }
+
     public void SaveConfig(ProtectedPrincipalConfig config)
     {
         var configDir = Path.GetDirectoryName(_configFilePath!)!;
@@ -309,9 +400,17 @@ public class ProtectedPrincipalService
 
             try
             {
-                var groupMatches = await Task.Run(() =>
+                var (groupMatches, expansionHadErrors) = await Task.Run(() =>
                     CheckTransitiveGroupMembership(cfg.Groups, target, creds.Value.username, creds.Value.password, creds.Value.domain));
                 matches.AddRange(groupMatches);
+
+                // Fail closed: if expansion had errors and no matches were found,
+                // we cannot confirm the user is NOT in a protected group
+                if (expansionHadErrors && matches.Count == 0)
+                {
+                    _logger.LogWarning("Group expansion had errors and no matches found — failing closed for {Target}", target.UserPrincipalName);
+                    return (matches, true, "Group membership check was incomplete due to expansion errors. Cannot confirm target is not protected.");
+                }
             }
             finally
             {
@@ -327,11 +426,12 @@ public class ProtectedPrincipalService
         return (matches, false, null);
     }
 
-    private List<string> CheckTransitiveGroupMembership(
+    private (List<string> matches, bool expansionHadErrors) CheckTransitiveGroupMembership(
         string[] protectedGroups, ResolvedDirectoryPrincipal target,
         string username, string password, string domain)
     {
         var matches = new List<string>();
+        bool expansionHadErrors = false;
 
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -360,7 +460,7 @@ public class ProtectedPrincipalService
         }
 
         if (string.IsNullOrEmpty(targetDn))
-            return matches;
+            return (matches, false);
 
         ps.AddCommand("Get-ADUser")
           .AddParameter("Identity", targetDn)
@@ -419,19 +519,83 @@ public class ProtectedPrincipalService
                     toExpand.Enqueue(singleParent);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogWarning(ex, "Failed to expand group {GroupDn} during transitive membership check", groupDn);
+                expansionHadErrors = true;
                 ps.Commands.Clear();
             }
         }
 
         foreach (var protectedGroup in protectedGroups)
         {
-            if (expandedGroups.Any(g => g.Contains(protectedGroup, StringComparison.OrdinalIgnoreCase)))
+            if (expandedGroups.Any(g => MatchesDnToProtectedGroup(g, protectedGroup)))
                 matches.Add($"Group:{protectedGroup}");
         }
 
-        return matches;
+        return (matches, expansionHadErrors);
+    }
+
+    /// <summary>
+    /// Matches a Distinguished Name from expandedGroups against a protectedGroup config value.
+    /// Supports three formats:
+    /// - Full DN (contains "DC=" or "CN="): compare full DN case-insensitively
+    /// - DOMAIN\GroupName: extract name after backslash, compare against CN extracted from DN
+    /// - Simple name: extract CN from DN and compare case-insensitively
+    /// </summary>
+    internal static bool MatchesDnToProtectedGroup(string groupDn, string protectedGroup)
+    {
+        if (string.IsNullOrEmpty(groupDn) || string.IsNullOrEmpty(protectedGroup))
+            return false;
+
+        // If protectedGroup looks like a DN, compare full DN
+        if (protectedGroup.Contains("DC=", StringComparison.OrdinalIgnoreCase) ||
+            protectedGroup.Contains("CN=", StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(groupDn, protectedGroup, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Extract the CN from the group DN for name-based comparisons
+        var cn = ExtractCnFromDn(groupDn);
+        if (cn == null)
+            return false;
+
+        // If protectedGroup is in DOMAIN\GroupName format, extract the name part
+        if (protectedGroup.Contains('\\'))
+        {
+            var parts = protectedGroup.Split('\\', 2);
+            if (parts.Length == 2)
+                return string.Equals(cn, parts[1], StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Simple name comparison against extracted CN
+        return string.Equals(cn, protectedGroup, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Extracts the Common Name (CN) from a Distinguished Name.
+    /// For "CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com" returns "Domain Admins".
+    /// Handles escaped commas (\,) within the CN value.
+    /// </summary>
+    internal static string? ExtractCnFromDn(string dn)
+    {
+        if (string.IsNullOrEmpty(dn))
+            return null;
+
+        const string cnPrefix = "CN=";
+        if (!dn.StartsWith(cnPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var valueStart = cnPrefix.Length;
+        // Find the first unescaped comma
+        for (int i = valueStart; i < dn.Length; i++)
+        {
+            if (dn[i] == ',' && (i == 0 || dn[i - 1] != '\\'))
+                return dn[valueStart..i];
+        }
+
+        // No comma found — entire remaining string is the CN value
+        return dn[valueStart..];
     }
 
     private static void CheckLegacyExclusions(string[] exclusions, ResolvedDirectoryPrincipal target, List<string> matchedRules)

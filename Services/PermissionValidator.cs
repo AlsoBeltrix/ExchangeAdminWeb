@@ -102,15 +102,43 @@ public class PermissionValidator
     {
         if (_protectedPrincipalService.HasCentralConfig)
         {
-            var principal = new ResolvedDirectoryPrincipal(
-                Source: "PermissionValidator",
-                DisplayName: targetMailbox,
-                UserPrincipalName: targetMailbox,
-                SamAccountName: null,
-                PrimarySmtpAddress: targetMailbox.Contains('@') ? targetMailbox : null,
-                DistinguishedName: null,
-                ObjectGuid: null,
-                EntraObjectId: null);
+            var (cfg, _, loadError) = _protectedPrincipalService.LoadEffectiveConfig();
+
+            if (loadError != null)
+            {
+                _logger.LogWarning("Blocking operation on {Target} — protected-principal config load failed: {Reason}", targetMailbox, loadError);
+                return $"Access denied: {loadError}";
+            }
+
+            bool requiresFullResolution = cfg != null &&
+                (cfg.Groups.Length > 0 || cfg.OrganizationalUnits.Length > 0 || cfg.SamAccountNamePatterns.Length > 0);
+
+            ResolvedDirectoryPrincipal principal;
+
+            if (requiresFullResolution)
+            {
+                var resolved = await _protectedPrincipalService.ResolveDirectoryPrincipalAsync(targetMailbox);
+                if (resolved == null)
+                {
+                    _logger.LogWarning(
+                        "Blocking operation on {Target} — cannot resolve full identity but Group/OU/Pattern rules are configured",
+                        targetMailbox);
+                    return "Access denied: Protected-principal identity resolution is unavailable. Contact your administrator.";
+                }
+                principal = resolved;
+            }
+            else
+            {
+                principal = new ResolvedDirectoryPrincipal(
+                    Source: "PermissionValidator",
+                    DisplayName: targetMailbox,
+                    UserPrincipalName: targetMailbox,
+                    SamAccountName: null,
+                    PrimarySmtpAddress: targetMailbox.Contains('@') ? targetMailbox : null,
+                    DistinguishedName: null,
+                    ObjectGuid: null,
+                    EntraObjectId: null);
+            }
 
             var result = await _protectedPrincipalService.CheckAsync(principal);
             if (result.CheckFailed)
