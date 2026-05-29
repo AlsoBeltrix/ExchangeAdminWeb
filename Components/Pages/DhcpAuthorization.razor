@@ -32,13 +32,16 @@
     </div>
     <h1 class="mb-4">DHCP Authorization</h1>
 
-    @if (loadError != null)
+    @if (operationResult != null)
     {
-        <div class="alert alert-danger">Failed to load authorized servers: @loadError</div>
+        <div class="alert @(operationResult.Success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
     }
 
-    <div class="row">
-        <div class="col-md-8">
+    <div class="row g-3">
+        <div class="col-lg-8">
             <div class="card mb-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>Authorized DHCP Servers</strong>
@@ -48,39 +51,45 @@
                     </button>
                 </div>
                 <div class="card-body p-0">
-                    @if (servers.Count > 0)
+                    @if (loadError != null)
                     {
-                        <table class="table table-sm mb-0">
-                            <thead>
-                                <tr>
-                                    <th>DNS Name</th>
-                                    <th>IP Address</th>
-                                    <th style="width: 120px;"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var server in servers)
-                                {
-                                    <tr>
-                                        <td>@server.DnsName</td>
-                                        <td>@server.IpAddress</td>
-                                        <td>
-                                            @if (confirmRemove == server)
-                                            {
-                                                <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveServer(server)" disabled="@isOperating">Yes</button>
-                                                <button class="btn btn-secondary btn-sm" @onclick="() => confirmRemove = null">No</button>
-                                            }
-                                            else
-                                            {
-                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemove = server" disabled="@isOperating">Remove</button>
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
+                        <div class="alert alert-danger m-3">@loadError</div>
                     }
-                    else if (loadError == null)
+                    else if (servers.Count > 0)
+                    {
+                        <div style="max-height: calc(100vh - 260px); overflow-y: auto;">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>DNS Name</th>
+                                        <th>IP Address</th>
+                                        <th style="width: 120px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var server in servers)
+                                    {
+                                        <tr>
+                                            <td>@server.DnsName</td>
+                                            <td>@server.IpAddress</td>
+                                            <td>
+                                                @if (confirmRemove == server)
+                                                {
+                                                    <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveServer(server)" disabled="@(isOperating || string.IsNullOrWhiteSpace(ticketNumber))">Yes</button>
+                                                    <button class="btn btn-secondary btn-sm" @onclick="() => confirmRemove = null">No</button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemove = server" disabled="@isOperating">Remove</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else if (!isLoading)
                     {
                         <p class="text-muted p-3 mb-0">No authorized DHCP servers found.</p>
                     }
@@ -88,8 +97,8 @@
             </div>
         </div>
 
-        <div class="col-md-4">
-            <div class="card">
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
                 <div class="card-header"><strong>Authorize New Server</strong></div>
                 <div class="card-body">
                     <div class="mb-3">
@@ -113,18 +122,6 @@
             </div>
         </div>
     </div>
-
-    @if (operationResult != null)
-    {
-        <div class="row mt-3">
-            <div class="col-md-8">
-                <div class="alert @(operationResult.Success ? "alert-success" : "alert-danger") alert-dismissible">
-                    @operationResult.Message
-                    <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
-                </div>
-            </div>
-        </div>
-    }
 </div>
 
 @code {
