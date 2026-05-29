@@ -294,6 +294,25 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "EmergencyDisable",
+            DisplayName = "Emergency Disable",
+            Description = "Rapidly disable a compromised user account across on-prem AD and Entra ID with session revocation.",
+            Route = "emergency-disable",
+            IconCss = "bi bi-person-fill-nav-menu",
+            Category = "Identity & Access",
+            SortOrder = 740,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
+                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret (requires User.ReadWrite.All)"),
+                new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions")
+            ]
+        },
+        new()
+        {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
             Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Enterprise Admin credentials via Secret Server.",

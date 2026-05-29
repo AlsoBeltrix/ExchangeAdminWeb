@@ -1,0 +1,329 @@
+@page "/emergency-disable"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "EmergencyDisable")]
+@rendermode InteractiveServer
+@inject EmergencyDisableService DisableService
+@inject ProtectedPrincipalService ProtectedPrincipalService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<EmergencyDisable> Logger
+
+<PageTitle>Emergency Disable</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-danger py-2 mb-3">
+        <small><strong>High-Impact Operation:</strong> Disabling an account revokes all sessions, resets the password, and blocks sign-in across AD and Entra ID. This action is audited and security team is notified immediately.</small>
+    </div>
+    <h1 class="mb-4">Emergency Disable</h1>
+
+    @if (operationResult != null)
+    {
+        <div class="alert @(operationResult.Value.success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Value.message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-lg-8">
+            <!-- Search -->
+            <div class="card mb-3">
+                <div class="card-body">
+                    <div class="input-group">
+                        <input type="text" class="form-control" @bind="searchIdentity" @bind:event="oninput"
+                               @onkeydown="OnSearchKeyDown"
+                               placeholder="UPN or email of the account to disable" disabled="@(isLoading || isDisabling)" />
+                        <button class="btn btn-danger" @onclick="PerformLookup"
+                                disabled="@(isLoading || isDisabling || string.IsNullOrWhiteSpace(searchIdentity))">
+                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Lookup
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @if (lookupError != null)
+            {
+                <div class="alert alert-danger">@lookupError</div>
+            }
+
+            @if (protectedBlocked)
+            {
+                <div class="alert alert-warning">
+                    <strong>Protected Principal:</strong> This account is protected and cannot be disabled through this interface.
+                </div>
+            }
+
+            <!-- Identity Summary -->
+            @if (resolvedPrincipal != null && !protectedBlocked)
+            {
+                <div class="card mb-3 border-danger">
+                    <div class="card-header bg-danger text-white"><strong>Target Account</strong></div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm-6"><small class="text-muted">Display Name</small><br /><strong>@resolvedPrincipal.DisplayName</strong></div>
+                            <div class="col-sm-6"><small class="text-muted">UPN</small><br />@resolvedPrincipal.UserPrincipalName</div>
+                        </div>
+                        <div class="row mt-2">
+                            <div class="col-sm-6"><small class="text-muted">sAMAccountName</small><br />@(resolvedPrincipal.SamAccountName ?? "—")</div>
+                            <div class="col-sm-6"><small class="text-muted">DN</small><br /><small>@(resolvedPrincipal.DistinguishedName ?? "—")</small></div>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <!-- Step Results -->
+            @if (disableResult != null)
+            {
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Operation Steps</strong>
+                        @if (disableResult.Snapshot != null)
+                        {
+                            <small class="text-muted">ID: @disableResult.Snapshot.OperationId[..12]...</small>
+                        }
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Step</th>
+                                    <th style="width: 100px;">Status</th>
+                                    <th>Detail</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var step in disableResult.Steps)
+                                {
+                                    var rowClass = step.Status == "OK" ? "table-success" : step.Status == "SKIPPED" ? "table-secondary" : "table-danger";
+                                    <tr class="@rowClass">
+                                        <td>@step.Step</td>
+                                        <td><strong>@step.Status</strong></td>
+                                        <td><small>@step.Detail</small></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <button class="btn btn-outline-secondary" @onclick="ResetForm">New Operation</button>
+            }
+        </div>
+
+        <!-- Right Panel: Confirm -->
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
+                @if (resolvedPrincipal != null && !protectedBlocked && disableResult == null)
+                {
+                    <div class="card-header bg-danger text-white"><strong>Confirm Disable</strong></div>
+                    <div class="card-body">
+                        <p class="mb-2">You are about to:</p>
+                        <ul class="mb-3" style="font-size: 0.9em;">
+                            <li>Disable the AD account</li>
+                            <li>Reset password to random value</li>
+                            <li>Revoke all Entra ID sessions</li>
+                            <li>Disable Entra ID sign-in</li>
+                        </ul>
+                        <p class="text-danger mb-3"><strong>This is not easily reversible.</strong></p>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isDisabling" />
+                        </div>
+                        <div class="mb-3 form-check">
+                            <input type="checkbox" class="form-check-input" id="chkConfirm" @bind="confirmed" disabled="@isDisabling" />
+                            <label class="form-check-label" for="chkConfirm">I understand this will immediately lock out <strong>@resolvedPrincipal.DisplayName</strong></label>
+                        </div>
+                        <button class="btn btn-danger w-100" @onclick="ExecuteDisable"
+                                disabled="@(isDisabling || !confirmed || string.IsNullOrWhiteSpace(ticketNumber))">
+                            @if (isDisabling) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Disable Account Now
+                        </button>
+                    </div>
+                }
+                else if (disableResult != null)
+                {
+                    <div class="card-header"><strong>Result</strong></div>
+                    <div class="card-body">
+                        @if (disableResult.Success)
+                        {
+                            <p class="text-success"><strong>Account disabled successfully.</strong></p>
+                            <p class="text-muted">Security team has been notified. A snapshot has been saved for potential re-enablement.</p>
+                        }
+                        else
+                        {
+                            <p class="text-danger"><strong>Operation failed or partially completed.</strong></p>
+                            <p class="text-muted">Review the step results. Manual follow-up may be required for failed steps.</p>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="card-header"><strong>Instructions</strong></div>
+                    <div class="card-body">
+                        <p class="text-muted mb-2">1. Enter the UPN or email of the compromised account</p>
+                        <p class="text-muted mb-2">2. Verify the resolved identity</p>
+                        <p class="text-muted mb-2">3. Enter a ticket number</p>
+                        <p class="text-muted mb-0">4. Confirm and execute</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool isDisabling;
+
+    private string searchIdentity = "";
+    private string? lookupError;
+    private bool protectedBlocked;
+    private ResolvedDirectoryPrincipal? resolvedPrincipal;
+
+    private string ticketNumber = "";
+    private bool confirmed;
+    private EmergencyDisableResult? disableResult;
+    private (bool success, string message)? operationResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "EmergencyDisable");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchIdentity) && !isLoading && !isDisabling)
+            await PerformLookup();
+    }
+
+    private async Task PerformLookup()
+    {
+        isLoading = true;
+        lookupError = null;
+        protectedBlocked = false;
+        resolvedPrincipal = null;
+        disableResult = null;
+        operationResult = null;
+        confirmed = false;
+        ticketNumber = "";
+        await Task.Yield();
+
+        try
+        {
+            var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(searchIdentity.Trim());
+            if (resolved == null)
+            {
+                lookupError = $"Could not resolve '{searchIdentity.Trim()}' to an AD user. Verify the UPN or email.";
+                return;
+            }
+
+            var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+            if (protectionCheck.CheckFailed)
+            {
+                lookupError = protectionCheck.Reason;
+                return;
+            }
+            if (protectionCheck.IsProtected)
+            {
+                resolvedPrincipal = resolved;
+                protectedBlocked = true;
+                return;
+            }
+
+            resolvedPrincipal = resolved;
+        }
+        catch (Exception ex)
+        {
+            lookupError = ex.Message;
+            Logger.LogError(ex, "Emergency disable lookup failed for {Identity}", searchIdentity);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task ExecuteDisable()
+    {
+        if (resolvedPrincipal == null || !confirmed) return;
+        isDisabling = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "EmergencyDisable");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = (false, "Authorization denied.");
+                return;
+            }
+
+            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress);
+
+            if (disableResult.Success)
+            {
+                operationResult = (true, $"Account {resolvedPrincipal.DisplayName} has been disabled. Security team notified.");
+            }
+            else
+            {
+                operationResult = (false, disableResult.Error ?? "Operation failed or partially completed. Review step results.");
+            }
+        }
+        catch (Exception ex)
+        {
+            operationResult = (false, ex.Message);
+            Logger.LogError(ex, "Emergency disable execution failed");
+        }
+        finally
+        {
+            isDisabling = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        searchIdentity = "";
+        lookupError = null;
+        protectedBlocked = false;
+        resolvedPrincipal = null;
+        disableResult = null;
+        operationResult = null;
+        confirmed = false;
+        ticketNumber = "";
+    }
+}
