@@ -2,6 +2,9 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "LicensingUpdates")]
 @rendermode InteractiveServer
+@inject LicensingUpdatesService LicenseService
+@inject AuditService Audit
+@inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -24,17 +27,216 @@
 
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
-        <small>Bulk update Exchange licensing SKU assignments via CSV upload.</small>
+        <small>Bulk update Exchange licensing SKU assignments via CSV upload. Target attribute: <code>extensionAttribute11</code>.</small>
     </div>
     <h1 class="mb-4">Licensing Updates</h1>
 
-    <p class="text-muted">Module registered. Full UI loading below.</p>
+    @if (operationResult != null)
+    {
+        <div class="alert @(operationResult.Value.success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Value.message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-lg-8">
+            <!-- Upload Card -->
+            <div class="card mb-3">
+                <div class="card-header"><strong>Upload CSV</strong></div>
+                <div class="card-body">
+                    <div class="row g-3 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label fw-semibold">License Type</label>
+                            <select class="form-select" @bind="selectedLicenseType" disabled="@(isProcessing || previewResult != null)">
+                                @foreach (var lt in allowedLicenseTypes)
+                                {
+                                    <option value="@lt">@lt</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label fw-semibold">CSV File (first column = user identifier)</label>
+                            <InputFile OnChange="OnFileSelected" disabled="@(isProcessing || previewResult != null)" class="form-control" accept=".csv,.txt" />
+                        </div>
+                        <div class="col-md-3">
+                            <button class="btn btn-primary w-100" @onclick="RunPreview"
+                                    disabled="@(isProcessing || selectedFile == null || previewResult != null)">
+                                @if (isProcessing && applyResult == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Preview
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            @if (previewError != null)
+            {
+                <div class="alert alert-danger">@previewError</div>
+            }
+
+            <!-- Preview Table -->
+            @if (previewResult != null && applyResult == null)
+            {
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Preview — @previewResult.Rows.Count row(s)</strong>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm">Cancel</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div style="max-height: calc(100vh - 380px); overflow-y: auto;">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>User</th>
+                                        <th>Display Name</th>
+                                        <th>Current</th>
+                                        <th>Proposed</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in previewResult.Rows)
+                                    {
+                                        <tr class="@(row.Error != null ? "table-danger" : row.CurrentValue == row.ProposedValue ? "table-secondary" : "")">
+                                            <td><small>@row.InputIdentity</small></td>
+                                            <td><small>@(row.Principal?.DisplayName ?? "—")</small></td>
+                                            <td><small>@(row.CurrentValue ?? "<em>empty</em>")</small></td>
+                                            <td><small><strong>@row.ProposedValue</strong></small></td>
+                                            <td>
+                                                @if (row.Error != null)
+                                                {
+                                                    <small class="text-danger">@row.Error</small>
+                                                }
+                                                else if (row.CurrentValue == row.ProposedValue)
+                                                {
+                                                    <small class="text-muted">No change</small>
+                                                }
+                                                else
+                                                {
+                                                    <small class="text-success">Ready</small>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <!-- Apply Results -->
+            @if (applyResult != null)
+            {
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>Results — @applyResult.TotalRows row(s)</strong>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="ResetForm">New Upload</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="px-3 py-2 border-bottom bg-light">
+                            <span class="badge bg-success me-1">@applyResult.Succeeded succeeded</span>
+                            <span class="badge bg-secondary me-1">@applyResult.Unchanged unchanged</span>
+                            <span class="badge bg-warning text-dark me-1">@applyResult.Protected protected</span>
+                            <span class="badge bg-danger me-1">@applyResult.Failed failed</span>
+                        </div>
+                        <div style="max-height: calc(100vh - 380px); overflow-y: auto;">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>User</th>
+                                        <th>Status</th>
+                                        <th>Previous</th>
+                                        <th>New</th>
+                                        <th>Error</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in applyResult.Rows)
+                                    {
+                                        var rowClass = row.Status switch
+                                        {
+                                            "Success" => "table-success",
+                                            "Unchanged" => "",
+                                            "Protected" => "table-warning",
+                                            _ => "table-danger"
+                                        };
+                                        <tr class="@rowClass">
+                                            <td><small>@(row.UserPrincipalName ?? row.InputIdentity)</small></td>
+                                            <td><small><strong>@row.Status</strong></small></td>
+                                            <td><small>@(row.PreviousValue ?? "—")</small></td>
+                                            <td><small>@(row.NewValue ?? "—")</small></td>
+                                            <td><small class="text-danger">@row.Error</small></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <!-- Right Panel: Apply -->
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
+                @if (previewResult != null && applyResult == null)
+                {
+                    var readyCount = previewResult.Rows.Count(r => r.Error == null && r.CurrentValue != r.ProposedValue);
+                    <div class="card-header"><strong>Apply Changes</strong></div>
+                    <div class="card-body">
+                        <p class="mb-2">
+                            <strong>@readyCount</strong> user(s) will be updated to <strong>@previewResult.LicenseType</strong>.
+                        </p>
+                        @if (previewResult.Rows.Any(r => r.Error != null))
+                        {
+                            <p class="text-warning mb-2"><small>@previewResult.Rows.Count(r => r.Error != null) row(s) have errors and will be skipped.</small></p>
+                        }
+                        @if (previewResult.Rows.Any(r => r.CurrentValue == r.ProposedValue && r.Error == null))
+                        {
+                            <p class="text-muted mb-2"><small>@previewResult.Rows.Count(r => r.CurrentValue == r.ProposedValue && r.Error == null) row(s) already have this value.</small></p>
+                        }
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isProcessing" />
+                        </div>
+                        <button class="btn btn-primary w-100" @onclick="RunApply"
+                                disabled="@(isProcessing || string.IsNullOrWhiteSpace(ticketNumber) || readyCount == 0)">
+                            @if (isProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Apply to @readyCount user(s)
+                        </button>
+                    </div>
+                }
+                else
+                {
+                    <div class="card-header"><strong>Instructions</strong></div>
+                    <div class="card-body">
+                        <p class="text-muted mb-2">1. Select a license type</p>
+                        <p class="text-muted mb-2">2. Upload a CSV (first column = UPN, email, or sAMAccountName)</p>
+                        <p class="text-muted mb-2">3. Preview to verify resolved users</p>
+                        <p class="text-muted mb-0">4. Enter a ticket number and apply</p>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
 </div>
 
 @code {
     private string currentUser = "";
     private string clientIpAddress = "Unknown";
     private bool authChecked;
+    private bool isProcessing;
+
+    private string[] allowedLicenseTypes = [];
+    private string selectedLicenseType = "";
+    private IBrowserFile? selectedFile;
+    private string? previewError;
+    private LicensePreviewResult? previewResult;
+    private LicenseBulkResult? applyResult;
+    private string ticketNumber = "";
+    private (bool success, string message)? operationResult;
 
     protected override async Task OnInitializedAsync()
     {
@@ -52,6 +254,112 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+
+        allowedLicenseTypes = LicenseService.GetAllowedLicenseTypes();
+        if (allowedLicenseTypes.Length > 0)
+            selectedLicenseType = allowedLicenseTypes[0];
+
         authChecked = true;
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+        previewError = null;
+    }
+
+    private async Task RunPreview()
+    {
+        if (selectedFile == null) return;
+        isProcessing = true;
+        previewError = null;
+        previewResult = null;
+        await Task.Yield();
+
+        try
+        {
+            using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            var result = await LicenseService.PreviewCsvAsync(stream, selectedFile.Name, selectedLicenseType, currentUser, clientIpAddress);
+
+            if (!result.Success)
+            {
+                previewError = result.Error;
+                return;
+            }
+
+            previewResult = result;
+        }
+        catch (Exception ex)
+        {
+            previewError = ex.Message;
+            Logger.LogError(ex, "Licensing preview failed");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private async Task RunApply()
+    {
+        if (previewResult == null) return;
+        isProcessing = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "LicensingUpdates");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = (false, "Authorization denied.");
+                return;
+            }
+
+            applyResult = await LicenseService.ApplyCsvAsync(previewResult, ticketNumber.Trim(), currentUser, clientIpAddress);
+
+            if (applyResult.Success)
+            {
+                operationResult = (true, $"Completed: {applyResult.Succeeded} updated, {applyResult.Unchanged} unchanged, {applyResult.Protected} protected, {applyResult.Failed} failed.");
+            }
+            else
+            {
+                operationResult = (false, applyResult.Error ?? "Apply failed.");
+            }
+
+            try
+            {
+                await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "LicensingUpdates_BulkApply",
+                    applyResult.Failed == 0, ticketNumber.Trim(),
+                    new Dictionary<string, string>
+                    {
+                        ["License Type"] = previewResult.LicenseType,
+                        ["Total"] = applyResult.TotalRows.ToString(),
+                        ["Succeeded"] = applyResult.Succeeded.ToString(),
+                        ["Failed"] = applyResult.Failed.ToString()
+                    }, applyResult.Failed > 0 ? $"{applyResult.Failed} row(s) failed" : null);
+            }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for licensing apply"); }
+        }
+        catch (Exception ex)
+        {
+            operationResult = (false, ex.Message);
+            Logger.LogError(ex, "Licensing apply failed");
+        }
+        finally
+        {
+            isProcessing = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        selectedFile = null;
+        previewResult = null;
+        applyResult = null;
+        previewError = null;
+        ticketNumber = "";
+        operationResult = null;
     }
 }
