@@ -111,7 +111,8 @@ public class PermissionValidator
             }
 
             bool requiresFullResolution = cfg != null &&
-                (cfg.Groups.Length > 0 || cfg.OrganizationalUnits.Length > 0 || cfg.SamAccountNamePatterns.Length > 0);
+                (cfg.Groups.Length > 0 || cfg.OrganizationalUnits.Length > 0 || cfg.SamAccountNamePatterns.Length > 0
+                 || cfg.Users.Any(u => !u.Contains('@') && !u.Contains('\\')));
 
             ResolvedDirectoryPrincipal principal;
 

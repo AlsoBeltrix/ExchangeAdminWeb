@@ -13,7 +13,6 @@ public class DelineaService
     private readonly string _secretServerUrl;
     private string _apiUsername = string.Empty;
     private string _apiKey = string.Empty;
-    private readonly int _exchangeSecretId;
     private string? _accessToken;
     private DateTime _tokenExpiry = DateTime.MinValue;
     private readonly SemaphoreSlim _tokenLock = new(1, 1);
@@ -25,7 +24,6 @@ public class DelineaService
         _extLog = extLog;
         _operationTrace = operationTrace;
         _secretServerUrl = config["Delinea:SecretServerUrl"] ?? throw new InvalidOperationException("Delinea:SecretServerUrl not configured");
-        _exchangeSecretId = int.Parse(config["Delinea:ExchangeSecretId"] ?? throw new InvalidOperationException("Delinea:ExchangeSecretId not configured"));
 
         _credentialTarget = config["Delinea:CredentialTarget"] ?? "Delinea_Client";
         LoadCredentials();
@@ -48,9 +46,6 @@ public class DelineaService
             _apiKey = password;
         }
     }
-
-    public Task<(string username, string password, string domain)?> GetExchangeCredentialsAsync()
-        => GetCredentialsBySecretIdAsync(_exchangeSecretId);
 
     public async Task<Dictionary<string, string>?> GetSecretFieldsAsync(int secretId)
     {
@@ -86,6 +81,8 @@ public class DelineaService
 
             if (!response.IsSuccessStatusCode)
             {
+                _logger.LogError("Failed to retrieve secret fields for secret {SecretId}: {StatusCode}", secretId, response.StatusCode);
+                _extLog.Write(LogEventLevel.Error, "Delinea secret field request failed", "Delinea", () => $"SecretId={secretId}; Status={response.StatusCode}");
                 _operationTrace.Step("VaultSecretFieldsRetrieved", "Failed", backend: "Delinea", command: "GET /api/v1/secrets/{secretId}", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["status"] = response.StatusCode.ToString() });
                 return null;
             }
@@ -247,10 +244,13 @@ public class DelineaService
             _extLog.Write(LogEventLevel.Debug, "Authenticating to Delinea Secret Server", "Delinea", () => $"Target={_credentialTarget}");
             _operationTrace.Step("VaultTokenRequested", backend: "Delinea", command: "oauth2/token", details: new Dictionary<string, object?> { ["credentialTarget"] = _credentialTarget });
 
+            var clientId = _apiUsername.StartsWith("sdk-client-", StringComparison.OrdinalIgnoreCase)
+                ? _apiUsername
+                : $"sdk-client-{_apiUsername}";
             var authBody = new FormUrlEncodedContent(new[]
             {
                 new KeyValuePair<string, string>("grant_type", "client_credentials"),
-                new KeyValuePair<string, string>("client_id", $"sdk-client-{_apiUsername}"),
+                new KeyValuePair<string, string>("client_id", clientId),
                 new KeyValuePair<string, string>("client_secret", _apiKey)
             });
 
@@ -260,7 +260,36 @@ public class DelineaService
             {
                 var errorBody = await authResponse.Content.ReadAsStringAsync();
                 var oauthError = GetOAuthErrorCode(errorBody);
-                _logger.LogError("Delinea auth failed: {Status} | CredentialTarget: {Target} | OAuthError: {OAuthError}",
+                _logger.LogWarning("Delinea auth failed: {Status} | OAuthError: {OAuthError} — reloading credentials and retrying",
+                    authResponse.StatusCode, oauthError);
+
+                LoadCredentials();
+                if (!string.IsNullOrEmpty(_apiUsername) && !string.IsNullOrEmpty(_apiKey))
+                {
+                    var retryClientId = _apiUsername.StartsWith("sdk-client-", StringComparison.OrdinalIgnoreCase)
+                        ? _apiUsername
+                        : $"sdk-client-{_apiUsername}";
+                    var retryAuthBody = new FormUrlEncodedContent(new[]
+                    {
+                        new KeyValuePair<string, string>("grant_type", "client_credentials"),
+                        new KeyValuePair<string, string>("client_id", retryClientId),
+                        new KeyValuePair<string, string>("client_secret", _apiKey)
+                    });
+                    var retryResponse = await _httpClient.PostAsync($"{_secretServerUrl}/oauth2/token", retryAuthBody);
+                    if (retryResponse.IsSuccessStatusCode)
+                    {
+                        var retryContent = await retryResponse.Content.ReadAsStringAsync();
+                        using var retryDoc = JsonDocument.Parse(retryContent);
+                        _accessToken = retryDoc.RootElement.GetProperty("access_token").GetString()!;
+                        var retryExpiresIn = retryDoc.RootElement.GetProperty("expires_in").GetInt32();
+                        _tokenExpiry = DateTime.UtcNow.AddSeconds(retryExpiresIn);
+                        _logger.LogInformation("Delinea authentication succeeded after credential reload");
+                        _operationTrace.Step("VaultTokenAcquired", backend: "Delinea", command: "oauth2/token (retry)", details: new Dictionary<string, object?> { ["credentialTarget"] = _credentialTarget });
+                        return _accessToken;
+                    }
+                }
+
+                _logger.LogError("Delinea auth failed after retry: {Status} | CredentialTarget: {Target} | OAuthError: {OAuthError}",
                     authResponse.StatusCode, _credentialTarget, oauthError);
                 _extLog.Write(LogEventLevel.Error, "Delinea authentication failed", "Delinea", () => $"Target={_credentialTarget}; Status={authResponse.StatusCode}; OAuthError={oauthError}");
                 _operationTrace.Step("VaultTokenRequested", "Failed", backend: "Delinea", command: "oauth2/token", details: new Dictionary<string, object?> { ["credentialTarget"] = _credentialTarget, ["status"] = authResponse.StatusCode.ToString(), ["oauthError"] = oauthError });
