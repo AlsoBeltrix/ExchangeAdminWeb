@@ -13,6 +13,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject ADAttributeEditorService AttrEditorService
 @inject ILogger<ModuleConfig> Logger
 
 <PageTitle>Module Config — @(module?.DisplayName ?? ModuleId)</PageTitle>
@@ -186,6 +187,88 @@
         </div>
     }
 
+    @* AD Attribute Editor — Editable Attributes *@
+    @if (module.Id == "ADAttributeEditor")
+    {
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Editable Attributes</strong>
+                <div>
+                    <button class="btn btn-outline-primary btn-sm me-1" @onclick="AddAttribute" disabled="@saving">Add Attribute</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveAllowlistAsync" disabled="@(saving || allowlistAttributes.Count == 0)">Save Allowlist</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3"><small>Configure which AD attributes users can edit. Attributes on the hard denylist (security-sensitive attributes like userAccountControl, memberOf, etc.) are automatically blocked.</small></p>
+
+                @if (allowlistError != null)
+                {
+                    <div class="alert alert-danger py-2">@allowlistError</div>
+                }
+                @if (allowlistSaved)
+                {
+                    <div class="alert alert-success py-2 alert-dismissible">
+                        Allowlist saved successfully.
+                        <button type="button" class="btn-close" @onclick="() => allowlistSaved = false"></button>
+                    </div>
+                }
+
+                @if (allowlistAttributes.Count == 0)
+                {
+                    <p class="text-muted fst-italic">No editable attributes configured. Users will see an empty editor.</p>
+                }
+                else
+                {
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>LDAP Name</th>
+                                    <th>Label</th>
+                                    <th style="width: 100px;">Type</th>
+                                    <th style="width: 80px;">Required</th>
+                                    <th style="width: 90px;">Allow Clear</th>
+                                    <th style="width: 80px;">Max Len</th>
+                                    <th style="width: 50px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @for (var i = 0; i < allowlistAttributes.Count; i++)
+                                {
+                                    var idx = i;
+                                    var attr = allowlistAttributes[idx];
+                                    <tr>
+                                        <td><input type="text" class="form-control form-control-sm" value="@attr.Name" @onchange="e => UpdateAttrName(idx, e)" placeholder="extensionAttribute1" /></td>
+                                        <td><input type="text" class="form-control form-control-sm" value="@attr.Label" @onchange="e => UpdateAttrLabel(idx, e)" placeholder="Display Label" /></td>
+                                        <td>
+                                            <select class="form-select form-select-sm" value="@attr.Type" @onchange="e => UpdateAttrType(idx, e)">
+                                                <option value="String">String</option>
+                                                <option value="Choice">Choice</option>
+                                            </select>
+                                        </td>
+                                        <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.Required" @onchange="e => UpdateAttrRequired(idx, e)" /></td>
+                                        <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.AllowClear" @onchange="e => UpdateAttrAllowClear(idx, e)" /></td>
+                                        <td><input type="number" class="form-control form-control-sm" value="@attr.MaxLength" @onchange="e => UpdateAttrMaxLength(idx, e)" placeholder="—" /></td>
+                                        <td><button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveAttribute(idx)">×</button></td>
+                                    </tr>
+                                    @if (attr.Type == "Choice")
+                                    {
+                                        <tr>
+                                            <td colspan="7" class="ps-4 pt-0">
+                                                <small class="text-muted">Choices (comma-separated):</small>
+                                                <input type="text" class="form-control form-control-sm" value="@string.Join(", ", attr.Choices ?? [])" @onchange="e => UpdateAttrChoices(idx, e)" placeholder="Option1, Option2, Option3" />
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
     @* Module Admins (global admin only) *@
     @if (isGlobalAdmin)
     {
@@ -301,6 +384,9 @@
             accessState[alias] = new List<string>(SectionAccess.GetGroupsForSection(alias));
             accessInputs[alias] = string.Empty;
         }
+
+        if (module.Id == "ADAttributeEditor")
+            LoadAllowlist();
     }
 
     private string GetConfigValue(string key, string defaultValue) =>
@@ -545,5 +631,114 @@
     private void HandleAdminKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Enter") AddModuleAdmin();
+    }
+
+    // --- AD Attribute Editor Allowlist ---
+
+    private List<AllowlistRow> allowlistAttributes = new();
+    private string? allowlistError;
+    private bool allowlistSaved;
+
+    private void LoadAllowlist()
+    {
+        var list = AttrEditorService.GetAllowlist();
+        if (list == null)
+        {
+            allowlistError = "Allowlist config is corrupt. Fix or delete config/ad-editable-attributes.json.";
+            allowlistAttributes = new();
+            return;
+        }
+
+        allowlistAttributes = list.Select(a => new AllowlistRow
+        {
+            Name = a.Name, Label = a.Label, Type = a.Type,
+            Choices = a.Choices, Required = a.Required, AllowClear = a.AllowClear,
+            MaxLength = a.MaxLength, Pattern = a.Pattern
+        }).ToList();
+        allowlistError = null;
+    }
+
+    private void AddAttribute()
+    {
+        allowlistAttributes.Add(new AllowlistRow
+        {
+            Name = "", Label = "", Type = "String",
+            Required = false, AllowClear = true
+        });
+    }
+
+    private void RemoveAttribute(int index)
+    {
+        if (index >= 0 && index < allowlistAttributes.Count)
+            allowlistAttributes.RemoveAt(index);
+    }
+
+    private void UpdateAttrName(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Name = e.Value?.ToString() ?? "";
+    private void UpdateAttrLabel(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Label = e.Value?.ToString() ?? "";
+    private void UpdateAttrType(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Type = e.Value?.ToString() ?? "String";
+    private void UpdateAttrRequired(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Required = bool.TryParse(e.Value?.ToString(), out var v) && v;
+    private void UpdateAttrAllowClear(int idx, ChangeEventArgs e) => allowlistAttributes[idx].AllowClear = bool.TryParse(e.Value?.ToString(), out var v) && v;
+    private void UpdateAttrMaxLength(int idx, ChangeEventArgs e)
+    {
+        allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
+    }
+    private void UpdateAttrChoices(int idx, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString() ?? "";
+        var parsed = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        allowlistAttributes[idx].Choices = parsed.Length > 0 ? parsed : null;
+    }
+
+    private async Task SaveAllowlistAsync()
+    {
+        saving = true;
+        allowlistError = null;
+        allowlistSaved = false;
+        await Task.Yield();
+
+        try
+        {
+            var valid = allowlistAttributes
+                .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Label))
+                .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern))
+                .ToList();
+
+            var denied = valid.Where(a => ADAttributeEditorService.IsDenylisted(a.Name)).ToList();
+            if (denied.Count > 0)
+            {
+                allowlistError = $"Cannot save: {string.Join(", ", denied.Select(d => d.Name))} are on the hard denylist.";
+                return;
+            }
+
+            AttrEditorService.SaveAllowlist(valid);
+            allowlistSaved = true;
+
+            try
+            {
+                var ip = ClientInfo.GetIpForUser(currentUser);
+                Audit.LogSettingsChange(currentUser, ip, "ADAttributeEditor:Allowlist",
+                    Array.Empty<string>(),
+                    valid.Select(a => a.Name).ToArray());
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for allowlist save"); }
+        }
+        catch (Exception ex)
+        {
+            allowlistError = $"Failed to save: {ex.Message}";
+            Logger.LogError(ex, "Allowlist save failed");
+        }
+        finally { saving = false; }
+    }
+
+    private sealed class AllowlistRow
+    {
+        public string Name { get; set; } = "";
+        public string Label { get; set; } = "";
+        public string Type { get; set; } = "String";
+        public string[]? Choices { get; set; }
+        public bool Required { get; set; }
+        public bool AllowClear { get; set; }
+        public int? MaxLength { get; set; }
+        public string? Pattern { get; set; }
     }
 }
