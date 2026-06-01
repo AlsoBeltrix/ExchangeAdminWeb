@@ -410,6 +410,21 @@
                 return;
             }
 
+            var saveMaxLevel = await DetermineMaxLevelAsync();
+            var authorizedAllowlist = EditorService.GetAllowlistForLevel(saveMaxLevel);
+            if (authorizedAllowlist == null)
+            {
+                operationResult = (false, "Attribute allowlist is corrupt.");
+                return;
+            }
+            var authorizedNames = authorizedAllowlist.Select(a => a.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var unauthorized = pendingChanges.Where(c => !authorizedNames.Contains(c.Name)).ToList();
+            if (unauthorized.Count > 0)
+            {
+                operationResult = (false, $"Access denied: you do not have permission to edit {string.Join(", ", unauthorized.Select(u => u.Name))}.");
+                return;
+            }
+
             var proposedValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var change in pendingChanges)
                 proposedValues[change.Name] = change.NewValue;

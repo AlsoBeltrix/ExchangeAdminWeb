@@ -248,7 +248,12 @@
         {
             var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
-            if (!ticketValidation.IsValid) { opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}"); return; }
+            if (!ticketValidation.IsValid)
+            {
+                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
+                return;
+            }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
@@ -289,7 +294,12 @@
         {
             var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
-            if (!ticketValidation.IsValid) { opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}"); return; }
+            if (!ticketValidation.IsValid)
+            {
+                opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
+                return;
+            }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
