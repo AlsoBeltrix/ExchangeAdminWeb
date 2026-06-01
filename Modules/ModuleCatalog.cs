@@ -374,9 +374,13 @@ public sealed class ModuleCatalog
             SortOrder = 170,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.3.0",
             MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
-            GranularPermissions = [],
+            GranularPermissions = [
+                new("Level1", "ADAttributeEditorLevel1", FailClosed: true),
+                new("Level2", "ADAttributeEditorLevel2", FailClosed: true),
+                new("Level3", "ADAttributeEditorLevel3", FailClosed: true)
+            ],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by attribute read/write operations"),
                 new("DefaultSearchBase", "Default Search Base", "Optional OU DN that limits which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com)", Required: false)

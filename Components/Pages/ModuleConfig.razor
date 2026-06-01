@@ -229,6 +229,7 @@
                                     <th style="width: 80px;">Required</th>
                                     <th style="width: 90px;">Allow Clear</th>
                                     <th style="width: 80px;">Max Len</th>
+                                    <th style="width: 60px;">Level</th>
                                     <th style="width: 50px;"></th>
                                 </tr>
                             </thead>
@@ -249,6 +250,13 @@
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.Required" @onchange="e => UpdateAttrRequired(idx, e)" /></td>
                                         <td class="text-center"><input type="checkbox" class="form-check-input" checked="@attr.AllowClear" @onchange="e => UpdateAttrAllowClear(idx, e)" /></td>
                                         <td><input type="number" class="form-control form-control-sm" value="@attr.MaxLength" @onchange="e => UpdateAttrMaxLength(idx, e)" placeholder="—" /></td>
+                                        <td>
+                                            <select class="form-select form-select-sm" value="@attr.Level" @onchange="e => UpdateAttrLevel(idx, e)">
+                                                <option value="1">1</option>
+                                                <option value="2">2</option>
+                                                <option value="3">3</option>
+                                            </select>
+                                        </td>
                                         <td><button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveAttribute(idx)">×</button></td>
                                     </tr>
                                     @if (attr.Type == "Choice")
@@ -653,7 +661,7 @@
         {
             Name = a.Name, Label = a.Label, Type = a.Type,
             Choices = a.Choices, Required = a.Required, AllowClear = a.AllowClear,
-            MaxLength = a.MaxLength, Pattern = a.Pattern
+            MaxLength = a.MaxLength, Pattern = a.Pattern, Level = a.Level
         }).ToList();
         allowlistError = null;
     }
@@ -709,7 +717,7 @@
 
             var valid = allowlistAttributes
                 .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Label))
-                .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern))
+                .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level))
                 .ToList();
 
             var denied = valid.Where(a => ADAttributeEditorService.IsDenylisted(a.Name)).ToList();
@@ -739,6 +747,11 @@
         finally { saving = false; }
     }
 
+    private void UpdateAttrLevel(int idx, ChangeEventArgs e)
+    {
+        allowlistAttributes[idx].Level = int.TryParse(e.Value?.ToString(), out var v) && v >= 1 && v <= 3 ? v : 1;
+    }
+
     private sealed class AllowlistRow
     {
         public string Name { get; set; } = "";
@@ -749,5 +762,6 @@
         public bool AllowClear { get; set; }
         public int? MaxLength { get; set; }
         public string? Pattern { get; set; }
+        public int Level { get; set; } = 1;
     }
 }

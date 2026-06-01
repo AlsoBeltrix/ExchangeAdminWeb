@@ -13,7 +13,8 @@ public sealed record EditableAttribute(
     bool Required,
     bool AllowClear,
     int? MaxLength,
-    string? Pattern);
+    string? Pattern,
+    int Level = 1);
 
 public sealed record AttributeLookupResult(
     bool Success,
@@ -155,7 +156,7 @@ public class ADAttributeEditorService
                 validated.Add(new EditableAttribute(
                     attr.Name, attr.Label, attr.Type,
                     attr.Choices, attr.Required, attr.AllowClear,
-                    attr.MaxLength, attr.Pattern));
+                    attr.MaxLength, attr.Pattern, attr.Level > 0 ? attr.Level : 1));
             }
 
             lock (_allowlistLock)
@@ -170,6 +171,12 @@ public class ADAttributeEditorService
             _logger.LogError(ex, "Failed to parse ad-editable-attributes.json — failing closed");
             return null;
         }
+    }
+
+    public List<EditableAttribute>? GetAllowlistForLevel(int maxLevel)
+    {
+        var all = GetAllowlist();
+        return all?.Where(a => a.Level <= maxLevel).ToList();
     }
 
     public void SaveAllowlist(List<EditableAttribute> attributes)
@@ -189,7 +196,8 @@ public class ADAttributeEditorService
                 Required = a.Required,
                 AllowClear = a.AllowClear,
                 MaxLength = a.MaxLength,
-                Pattern = a.Pattern
+                Pattern = a.Pattern,
+                Level = a.Level
             }).ToArray()
         };
 
@@ -698,5 +706,6 @@ public class ADAttributeEditorService
         public bool AllowClear { get; set; }
         public int? MaxLength { get; set; }
         public string? Pattern { get; set; }
+        public int Level { get; set; } = 1;
     }
 }

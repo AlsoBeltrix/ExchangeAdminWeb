@@ -312,10 +312,16 @@
                 return;
             }
 
-            var allowlist = EditorService.GetAllowlist();
+            var maxLevel = await DetermineMaxLevelAsync();
+            var allowlist = EditorService.GetAllowlistForLevel(maxLevel);
             if (allowlist == null)
             {
                 searchError = "Attribute allowlist is corrupt. Contact your administrator.";
+                return;
+            }
+            if (allowlist.Count == 0 && maxLevel == 0)
+            {
+                searchError = "You do not have permission to edit any attributes. Contact your administrator.";
                 return;
             }
 
@@ -348,6 +354,17 @@
     private void SetEditValue(string name, string? value)
     {
         editValues[name] = string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    private async Task<int> DetermineMaxLevelAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        int maxLevel = 0;
+        if ((await AuthorizationService.AuthorizeAsync(user, "ADAttributeEditorLevel3")).Succeeded) maxLevel = 3;
+        else if ((await AuthorizationService.AuthorizeAsync(user, "ADAttributeEditorLevel2")).Succeeded) maxLevel = 2;
+        else if ((await AuthorizationService.AuthorizeAsync(user, "ADAttributeEditorLevel1")).Succeeded) maxLevel = 1;
+        return maxLevel;
     }
 
     private string GetDisplayValue(EditableAttribute attr, string? value)
