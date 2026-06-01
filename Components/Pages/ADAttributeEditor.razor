@@ -189,7 +189,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isSaving" />
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isSaving" />
                         </div>
                         <button class="btn btn-primary w-100" @onclick="ConfirmSave"
                                 disabled="@(isSaving || string.IsNullOrWhiteSpace(ticketNumber))">
@@ -429,7 +429,7 @@
             foreach (var change in pendingChanges)
                 proposedValues[change.Name] = change.NewValue;
 
-            var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim());
+            var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), saveMaxLevel);
 
             if (result.Success)
             {

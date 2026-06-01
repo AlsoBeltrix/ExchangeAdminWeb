@@ -109,7 +109,7 @@
                     {
                         <div class="row g-2 mb-3">
                             <div class="col-auto">
-                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" disabled="@isLoading" style="width: 140px;" />
+                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" @bind:event="oninput" disabled="@isLoading" style="width: 140px;" />
                             </div>
                             <div class="col-auto">
                                 <div class="input-group input-group-sm">

@@ -76,7 +76,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetupSingleRoom"
                                 disabled="@(isLoading || string.IsNullOrWhiteSpace(roomEmail) || string.IsNullOrWhiteSpace(ticketNumber))">
@@ -93,7 +93,7 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvTicketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="csvTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
@@ -167,7 +167,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="typeTicketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                         </div>
                         <button class="btn btn-primary" @onclick="SetRoomType"
                                 disabled="@(isLoading || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">

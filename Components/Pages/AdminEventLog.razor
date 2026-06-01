@@ -92,9 +92,13 @@
     {
         <div class="alert alert-danger">@loadError</div>
     }
+    else if (emptyResultMessage != null)
+    {
+        <p class="text-muted">@emptyResultMessage</p>
+    }
     else if (filteredEvents.Count == 0)
     {
-        <div class="alert alert-info">No events found for the selected filters.</div>
+        <p class="text-muted">No events found for the selected filters.</p>
     }
     else
     {
@@ -246,6 +250,7 @@
     private string selectedResult = "";
     private string? loadError;
     private string? loadWarning;
+    private string? emptyResultMessage;
     private int currentPage = 1;
     private int expandedRow = -1;
     private const int PageSize = 50;
@@ -275,6 +280,7 @@
     {
         loadError = null;
         loadWarning = null;
+        emptyResultMessage = null;
         allEvents = new List<AuditEvent>();
         expandedRow = -1;
         currentPage = 1;
@@ -362,11 +368,16 @@
         var anyFileFound = filesFound > 0;
         if (buffer.Count == 0 && loadError == null)
         {
-            loadError = !anyFileFound
-                ? (effectiveStart == effectiveEnd
+            if (!anyFileFound)
+            {
+                loadError = effectiveStart == effectiveEnd
                     ? $"No log file found for {effectiveStart:yyyy-MM-dd}"
-                    : $"No log files found for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}")
-                : $"No events matched the selected date range.";
+                    : $"No log files found for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}";
+            }
+            else
+            {
+                emptyResultMessage = "No events matched the selected date range.";
+            }
             filteredEvents = new();
             return;
         }

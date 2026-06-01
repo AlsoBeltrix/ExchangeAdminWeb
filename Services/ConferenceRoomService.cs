@@ -16,6 +16,19 @@ public class ConferenceRoomService : ExchangeServiceBase
 
     public async Task<PermissionResult> SetRoomMetadataAsync(string roomEmail, string city, string building, int capacity, string floor, string timezone)
     {
+        // Validate timezone before any Exchange mutations to avoid partial commits
+        if (!string.IsNullOrWhiteSpace(timezone))
+        {
+            try
+            {
+                TimeZoneInfo.FindSystemTimeZoneById(timezone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return PermissionResult.Fail($"Invalid timezone: '{timezone}'. Use a valid Windows timezone ID (e.g. 'Eastern Standard Time').");
+            }
+        }
+
         return await RunAsync((ps, tracker) =>
         {
             // Set-Place for room metadata
@@ -81,6 +94,19 @@ public class ConferenceRoomService : ExchangeServiceBase
 
     public async Task<PermissionResult> SetRoomTypeAsync(string roomEmail, string roomType, string timezone)
     {
+        // Validate timezone before any Exchange mutations to avoid partial commits
+        if (!string.IsNullOrWhiteSpace(timezone))
+        {
+            try
+            {
+                TimeZoneInfo.FindSystemTimeZoneById(timezone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return PermissionResult.Fail($"Invalid timezone: '{timezone}'. Use a valid Windows timezone ID (e.g. 'Eastern Standard Time').");
+            }
+        }
+
         return await RunAsync((ps, tracker) =>
         {
             switch (roomType.ToLowerInvariant())

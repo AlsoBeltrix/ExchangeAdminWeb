@@ -337,11 +337,16 @@ public class ADAttributeEditorService
         Dictionary<string, string?> proposedValues,
         string performedBy,
         string ip,
-        string ticket)
+        string ticket,
+        int? maxLevel = null)
     {
         var allowlist = GetAllowlist();
         if (allowlist == null)
             return new(false, "Attribute allowlist configuration is corrupt.", null);
+
+        // If a maxLevel is provided, filter the allowlist to enforce server-side level restrictions
+        if (maxLevel.HasValue)
+            allowlist = allowlist.Where(a => a.Level <= maxLevel.Value).ToList();
 
         var validationError = ValidateProposedValues(proposedValues, allowlist);
         if (validationError != null)

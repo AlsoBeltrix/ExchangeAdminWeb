@@ -55,7 +55,7 @@
 
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isLoading" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                     </div>
                 </div>
             </div>
