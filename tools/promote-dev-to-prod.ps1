@@ -346,6 +346,7 @@ Invoke-RobocopyChecked -Description "Backing up prod publish folder" -RobocopyAr
 
 Stop-AppPoolChecked -Name $ProdAppPoolName
 
+$promotionFailed = $false
 try {
     Invoke-RobocopyChecked -Description "Promoting dev binaries to prod" -RobocopyArgs @(
         $dev, $prod,
@@ -382,8 +383,33 @@ try {
     } else {
         Write-Warn "Skipping config fragment copy by request."
     }
+} catch {
+    $promotionFailed = $true
+    Write-Host ""
+    Write-Host "  X  Promotion FAILED: $_" -ForegroundColor Red
+    Write-Host ""
+
+    if ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
+        Write-Step "Rolling back prod from backup: $backup"
+        try {
+            & robocopy $backup $prod '/MIR' '/XD' 'logs' '/NFL' '/NDL' '/NJH' '/NJS' '/R:2' '/W:1'
+            if ($LASTEXITCODE -ge 8) {
+                Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE — prod may be in an inconsistent state" -ForegroundColor Red
+            } else {
+                Write-Ok "Rolled back prod to pre-promotion state"
+            }
+        } catch {
+            Write-Host "  X  Rollback failed: $_ — restore manually from $backup" -ForegroundColor Red
+        }
+    } else {
+        Write-Warn "No backup available for automatic rollback. Restore manually."
+    }
 } finally {
     Start-AppPoolChecked -Name $ProdAppPoolName
+}
+
+if ($promotionFailed) {
+    throw "Promotion failed and was rolled back. Prod has been restored from backup."
 }
 
 Remove-OldBackups -BackupRootPath $backupRootResolved -Retention $BackupRetention
