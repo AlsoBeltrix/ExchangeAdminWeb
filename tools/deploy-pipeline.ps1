@@ -9,8 +9,9 @@
     -Prod  Build from source, deploy to dev, then promote to prod.
            Prod always goes through dev first. Backup taken before overwrite.
 
-    Config fragments (module-config.json, sectionaccess.json, etc.) are
-    never overwritten in prod unless you pass -CopyConfigFragments.
+    Config fragments are merged key-by-key during prod promotion:
+    new keys from dev are added, existing prod values are preserved.
+    This is the default behavior — no flag needed.
 
 .EXAMPLE
     .\deploy-pipeline.ps1 -Dev

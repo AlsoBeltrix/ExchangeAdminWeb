@@ -103,7 +103,7 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC0000000" disabled="@isSetting" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC0000000" disabled="@isSetting" />
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Action</label>

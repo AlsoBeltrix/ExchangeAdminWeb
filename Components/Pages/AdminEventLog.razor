@@ -368,16 +368,11 @@
         var anyFileFound = filesFound > 0;
         if (buffer.Count == 0 && loadError == null)
         {
-            if (!anyFileFound)
-            {
-                loadError = effectiveStart == effectiveEnd
-                    ? $"No log file found for {effectiveStart:yyyy-MM-dd}"
-                    : $"No log files found for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}";
-            }
-            else
-            {
-                emptyResultMessage = "No events matched the selected date range.";
-            }
+            emptyResultMessage = !anyFileFound
+                ? (effectiveStart == effectiveEnd
+                    ? $"No events recorded for {effectiveStart:yyyy-MM-dd}."
+                    : $"No events recorded for {effectiveStart:yyyy-MM-dd} to {effectiveEnd:yyyy-MM-dd}.")
+                : "No events matched the selected date range.";
             filteredEvents = new();
             return;
         }

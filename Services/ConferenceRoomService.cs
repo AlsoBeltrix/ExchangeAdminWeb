@@ -143,12 +143,14 @@ public class ConferenceRoomService : ExchangeServiceBase
                     throw new InvalidOperationException($"Unknown room type: {roomType}");
             }
 
-            // Also set timezone on regional config
-            ps.AddCommand("Set-MailboxRegionalConfiguration")
-              .AddParameter("Identity", roomEmail)
-              .AddParameter("TimeZone", timezone)
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
+            if (!string.IsNullOrWhiteSpace(timezone))
+            {
+                ps.AddCommand("Set-MailboxRegionalConfiguration")
+                  .AddParameter("Identity", roomEmail)
+                  .AddParameter("TimeZone", timezone)
+                  .AddParameter("ErrorAction", "Stop");
+                Invoke(ps, tracker);
+            }
         });
     }
 
