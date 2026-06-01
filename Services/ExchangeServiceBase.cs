@@ -344,7 +344,7 @@ public abstract class ExchangeServiceBase
         return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
     }
 
-    private async Task<bool> HasCloudMailboxAsync(string identity)
+    protected async Task<bool> HasCloudMailboxAsync(string identity)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
@@ -404,7 +404,7 @@ public abstract class ExchangeServiceBase
         }), _onPremThrottle);
     }
 
-    private static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
+    protected static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
     {
         if (session is null)
             return false;
@@ -417,7 +417,7 @@ public abstract class ExchangeServiceBase
         return InvokeOptional(ps).Any();
     }
 
-    private static void RemoveOnPremSession(PowerShell ps)
+    protected static void RemoveOnPremSession(PowerShell ps)
     {
         try
         {

@@ -11,20 +11,14 @@ using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
 
-public class ExchangeService : IExchangeService, IIdentityResolver
+public class ExchangeService : ExchangeServiceBase, IExchangeService, IIdentityResolver
 {
     private readonly string _appId;
     private readonly string _organization;
     private readonly string _certSubject;
-    private readonly ILogger<ExchangeService> _logger;
     private readonly string[] _adminNotificationEmails;
-    private readonly string _onPremServerUri;
-    private readonly DelineaService _delineaService;
-    private readonly ModuleCredentialService _moduleCredentials;
-    private readonly ExoConnectionPool _exoPool;
     private readonly ExtendedLogService _extLog;
     private readonly IConfiguration _config;
-    private static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
     private readonly ModuleConfigService _moduleConfig;
 
@@ -57,13 +51,13 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     }
 
     public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ModuleCredentialService moduleCredentials, ExoConnectionPool exoPool, ModuleConfigService moduleConfig, ExtendedLogService extLog)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "ExchangeService")
     {
         _appId = config["ExchangeOnline:AppId"]
             ?? throw new InvalidOperationException("ExchangeOnline:AppId is not configured.");
         _organization = config["ExchangeOnline:Organization"]
             ?? throw new InvalidOperationException("ExchangeOnline:Organization is not configured.");
         _certSubject = config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
-        _logger = logger;
         _config = config;
         _moduleConfig = moduleConfig;
 
@@ -74,10 +68,6 @@ public class ExchangeService : IExchangeService, IIdentityResolver
             .Where(e => !string.IsNullOrWhiteSpace(e))
             .ToArray();
 
-        _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "";
-        _delineaService = delineaService;
-        _moduleCredentials = moduleCredentials;
-        _exoPool = exoPool;
         _extLog = extLog;
     }
 
@@ -1867,47 +1857,6 @@ https://admin.exchange.microsoft.com/#/migration";
             : $"Auto-reply set to {state} for {emailAddress}.", (string?)null));
     }
 
-    public static double? ParseSizeToGB(string? sizeString)
-    {
-        if (string.IsNullOrWhiteSpace(sizeString)) return null;
-
-        // Exchange returns sizes like "1.234 GB (1,234,567,890 bytes)" or "500.1 MB (524,396,544 bytes)"
-        // Try parenthesized bytes first (most reliable)
-        var parenMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"\(([\d,]+)\s+bytes\)");
-        if (parenMatch.Success && long.TryParse(parenMatch.Groups[1].Value.Replace(",", ""), out var parenBytes))
-            return Math.Round(parenBytes / 1073741824.0, 2);
-
-        // Bare bytes format: "1,234,567 bytes"
-        var bareMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"^([\d,]+)\s*bytes$");
-        if (bareMatch.Success && long.TryParse(bareMatch.Groups[1].Value.Replace(",", ""), out var bareBytes))
-            return Math.Round(bareBytes / 1073741824.0, 2);
-
-        // Human-readable GB: "1.234 GB"
-        var gbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*GB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (gbMatch.Success && double.TryParse(gbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var gb))
-            return Math.Round(gb, 2);
-
-        // Human-readable MB: "500.1 MB"
-        var mbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*MB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (mbMatch.Success && double.TryParse(mbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mb))
-            return Math.Round(mb / 1024.0, 2);
-
-        // Human-readable KB: "512 KB"
-        var kbMatch = System.Text.RegularExpressions.Regex.Match(sizeString, @"([\d.]+)\s*KB", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        if (kbMatch.Success && double.TryParse(kbMatch.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var kb))
-            return Math.Round(kb / 1048576.0, 4);
-
-        return null;
-    }
-
-    private static long? ParseLong(object? value)
-    {
-        if (value is long l) return l;
-        if (value is int i) return i;
-        if (value != null && long.TryParse(value.ToString(), out var parsed)) return parsed;
-        return null;
-    }
-
     // -------------------------------------------------------------------------
     // On-Prem Exchange Operations
     // -------------------------------------------------------------------------
@@ -2007,17 +1956,6 @@ https://admin.exchange.microsoft.com/#/migration";
         return await GetOnPremMailboxLocationAsync(identity, moduleId) ?? "Unknown";
     }
 
-    private async Task<bool> HasCloudMailboxAsync(string identity)
-    {
-        return await RunPooledQueryAsync((ps, tracker) =>
-        {
-            ps.AddCommand("Get-Mailbox")
-              .AddParameter("Identity", identity)
-              .AddParameter("ErrorAction", "Ignore");
-            return InvokeOptional(ps, tracker).Any();
-        });
-    }
-
     private async Task<string?> GetOnPremMailboxLocationAsync(string identity, string moduleId)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
@@ -2065,34 +2003,6 @@ https://admin.exchange.microsoft.com/#/migration";
                 RemoveOnPremSession(ps);
             }
         }), _onPremThrottle);
-    }
-
-    private static bool OnPremRecipientExists(PowerShell ps, object? session, string commandName, string identity)
-    {
-        if (session is null)
-            return false;
-
-        var script = ScriptBlock.Create($"param($Identity) {commandName} -Identity $Identity -ErrorAction SilentlyContinue | Select-Object -First 1 Identity");
-        ps.AddCommand("Invoke-Command")
-          .AddParameter("Session", session)
-          .AddParameter("ScriptBlock", script)
-          .AddParameter("ArgumentList", new object[] { identity });
-        return InvokeOptional(ps).Any();
-    }
-
-    private static void RemoveOnPremSession(PowerShell ps)
-    {
-        try
-        {
-            ps.Commands.Clear();
-            var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
-            if (session != null)
-            {
-                ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
-                ps.Invoke();
-            }
-        }
-        catch { }
     }
 
     public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
@@ -2351,7 +2261,7 @@ https://admin.exchange.microsoft.com/#/migration";
         }), _onPremThrottle);
     }
 
-    private void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
+    private new void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
             ? username
@@ -2397,89 +2307,7 @@ https://admin.exchange.microsoft.com/#/migration";
         throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
     }
 
-    private static double ParseExchangeSize(string? sizeString)
-    {
-        return ParseSizeToGB(sizeString) ?? 0;
-    }
-
     // -------------------------------------------------------------------------
-
-    private string GetCalendarFolderName(PowerShell ps, string mailbox)
-    {
-        ps.AddCommand("Get-MailboxFolderStatistics")
-          .AddParameter("Identity", mailbox)
-          .AddParameter("FolderScope", "Calendar")
-          .AddParameter("ErrorAction", "Stop");
-
-        var result = Invoke(ps);
-        var folder = result.FirstOrDefault();
-
-        if (folder is null)
-            throw new InvalidOperationException($"No calendar folder found for {mailbox}");
-
-        var rawFolderPath = folder.Properties["FolderPath"]?.Value?.ToString();
-        _logger.LogInformation("Calendar folder lookup for {Mailbox}: raw FolderPath = '{RawPath}'", mailbox, rawFolderPath ?? "<null>");
-
-        var folderPath = rawFolderPath ?? @"\Calendar";
-        // Exchange Online may return forward slashes, but cmdlets require backslashes
-        folderPath = folderPath.Replace("/", @"\");
-
-        var fullPath = $"{mailbox}:{folderPath}";
-        _logger.LogInformation("Constructed calendar identity: '{FullPath}'", fullPath);
-        return fullPath;
-    }
-
-    private async Task<PermissionResult> RunAsync(Action<PowerShell, ExchangeServiceBase.ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null)
-    {
-        var pooled = await _exoPool.BorrowAsync();
-        bool discard = false;
-        try
-        {
-            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
-            var result = await Task.Run(() =>
-            {
-                var ps = pooled.PowerShell;
-                try
-                {
-                    operation(ps, tracker);
-
-                    if (successFormatter is not null)
-                    {
-                        var (message, detail) = successFormatter();
-                        return new PermissionResult { Success = true, Message = message, Detail = detail };
-                    }
-                    return PermissionResult.Ok();
-                }
-                catch (Exception ex)
-                {
-                    var psErrors = ps.Streams.Error
-                        .Select(e => e.Exception?.Message ?? e.ToString())
-                        .Where(m => !string.IsNullOrWhiteSpace(m))
-                        .ToList();
-
-                    var primary = psErrors.FirstOrDefault() ?? ex.Message;
-                    var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
-
-                    if (IsConnectionError(ex))
-                        tracker.HasConnectionError = true;
-
-                    _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                    return PermissionResult.Fail(primary, detail);
-                }
-            });
-
-            discard = tracker.HasConnectionError;
-            return result;
-        }
-        finally
-        {
-            if (discard)
-                _exoPool.Discard(pooled);
-            else
-                _exoPool.Return(pooled);
-        }
-    }
-
 
     public async Task<string?> ResolveToObjectIdAsync(string identity)
     {
@@ -2503,51 +2331,13 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
-    {
-        if (throttle != null)
-        {
-            if (!await throttle.WaitAsync(TimeSpan.FromMinutes(2)))
-                throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");
-            try { return await operation(); }
-            finally { throttle.Release(); }
-        }
-        return await operation();
-    }
-
-    private async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ExchangeServiceBase.ConnectionErrorTracker, T> query)
+    private async Task RunPooledBatchAsync(Func<PowerShell, ConnectionErrorTracker, Task> batchOperation)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
-            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
-            var result = await Task.Run(() => query(pooled.PowerShell, tracker));
-
-            discard = tracker.HasConnectionError;
-            return result;
-        }
-        catch (Exception ex) when (IsConnectionError(ex))
-        {
-            discard = true;
-            throw;
-        }
-        finally
-        {
-            if (discard)
-                _exoPool.Discard(pooled);
-            else
-                _exoPool.Return(pooled);
-        }
-    }
-
-    private async Task RunPooledBatchAsync(Func<PowerShell, ExchangeServiceBase.ConnectionErrorTracker, Task> batchOperation)
-    {
-        var pooled = await _exoPool.BorrowAsync();
-        bool discard = false;
-        try
-        {
-            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
+            var tracker = new ConnectionErrorTracker();
             await Task.Run(async () =>
             {
                 await batchOperation(pooled.PowerShell, tracker);
@@ -2569,7 +2359,7 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private PermissionResult ExecuteMailboxPermission(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker, string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping, bool isAdd)
+    private PermissionResult ExecuteMailboxPermission(PowerShell ps, ConnectionErrorTracker tracker, string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping, bool isAdd)
     {
         try
         {
@@ -2635,7 +2425,7 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private PermissionResult ExecuteCalendarPermission(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker, string targetMailbox, string user, string? accessRight, bool isSet)
+    private PermissionResult ExecuteCalendarPermission(PowerShell ps, ConnectionErrorTracker tracker, string targetMailbox, string user, string? accessRight, bool isSet)
     {
         try
         {
@@ -2690,12 +2480,6 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private static bool IsConnectionError(Exception? ex) =>
-        ex != null && (
-            ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase));
-
     private void CheckAdGroupMembership(MigrationEligibilityResult result)
     {
         var iss = InitialSessionState.CreateDefault();
@@ -2743,80 +2527,18 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private static string ValidateMailbox(PowerShell ps, string mailbox)
-    {
-        ps.AddCommand("Get-Mailbox")
-          .AddParameter("Identity", mailbox)
-          .AddParameter("ErrorAction", "Stop");
-        var result = Invoke(ps);
-        var mbx = result.FirstOrDefault();
 
-        return mbx?.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? mailbox;
-    }
 
-    private static void ValidateRecipient(PowerShell ps, string identity)
-    {
-        ps.AddCommand("Get-Recipient")
-          .AddParameter("Identity", identity)
-          .AddParameter("ErrorAction", "Stop");
-        var result = Invoke(ps);
-        if (result.Count == 0)
-            throw new InvalidOperationException($"Recipient '{identity}' not found.");
-    }
 
-    private static Collection<PSObject> Invoke(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker)
-    {
-        Collection<PSObject> result;
-        try
-        {
-            result = ps.Invoke();
-        }
-        catch (RuntimeException ex)
-        {
-            if (IsConnectionError(ex))
-                tracker.HasConnectionError = true;
-            throw new InvalidOperationException(ex.Message, ex);
-        }
 
-        if (ps.HadErrors)
-        {
-            var err = ps.Streams.Error.FirstOrDefault();
-            var msg = err?.Exception?.Message ?? err?.ToString() ?? "An unknown error occurred.";
-            if (IsConnectionError(err?.Exception))
-                tracker.HasConnectionError = true;
-            throw new InvalidOperationException(msg);
-        }
 
-        ps.Commands.Clear();
-        return result;
-    }
 
-    private static Collection<PSObject> Invoke(PowerShell ps)
-    {
-        return Invoke(ps, new ExchangeServiceBase.ConnectionErrorTracker());
-    }
 
-    private static Collection<PSObject> InvokeOptional(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker)
-    {
-        var result = ps.Invoke();
-        if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-            tracker.HasConnectionError = true;
-        ps.Streams.Error.Clear();
-        ps.Commands.Clear();
-        return result;
-    }
 
-    private static Collection<PSObject> InvokeOptional(PowerShell ps)
-    {
-        return InvokeOptional(ps, new ExchangeServiceBase.ConnectionErrorTracker());
-    }
 
-    private static bool ParseBool(string? value) =>
-        value?.Trim().ToLowerInvariant() switch
-        {
-            "yes" or "true" or "1" or "x" => true,
-            _ => false
-        };
+
+
+
 }
 
 public class MailboxPermissionCsvRow
