@@ -12,6 +12,7 @@
 @inject ILogger<AdminSettings> Logger
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
+@inject ProtectedPrincipalService ProtectedPrincipalService
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -70,6 +71,121 @@
         </div>
     </div>
 
+    <!-- Protected Principals -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Protected Principals</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveProtectedPrincipals" disabled="@saving">Save Protected Principals</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.</small></p>
+
+            @if (ppLoadError != null)
+            {
+                <div class="alert alert-danger py-2">@ppLoadError</div>
+            }
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Protected Users</label>
+                    <small class="text-muted d-block mb-1">UPN, email, sAMAccountName, or DOMAIN\username</small>
+                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                        @if (ppUsers.Count > 0)
+                        {
+                            @foreach (var u in ppUsers.ToList())
+                            {
+                                var captured = u;
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <small>@captured</small>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppUsers.Remove(captured)">×</button>
+                                </div>
+                            }
+                        }
+                        else { <small class="text-muted fst-italic">None</small> }
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" @bind="ppNewUser" @bind:event="oninput" @onkeydown="OnPpUserKey" placeholder="user@contoso.com" />
+                        <button class="btn btn-outline-success" @onclick="AddPpUser" disabled="@string.IsNullOrWhiteSpace(ppNewUser)">Add</button>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Protected Groups</label>
+                    <small class="text-muted d-block mb-1">DN, DOMAIN\GroupName, or CN — transitive membership</small>
+                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                        @if (ppGroups.Count > 0)
+                        {
+                            @foreach (var g in ppGroups.ToList())
+                            {
+                                var captured = g;
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <small>@captured</small>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppGroups.Remove(captured)">×</button>
+                                </div>
+                            }
+                        }
+                        else { <small class="text-muted fst-italic">None</small> }
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" @bind="ppNewGroup" @bind:event="oninput" @onkeydown="OnPpGroupKey" placeholder="DOMAIN\Domain Admins" />
+                        <button class="btn btn-outline-success" @onclick="AddPpGroup" disabled="@string.IsNullOrWhiteSpace(ppNewGroup)">Add</button>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Protected OUs</label>
+                    <small class="text-muted d-block mb-1">Distinguished Name — all objects beneath are protected</small>
+                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                        @if (ppOus.Count > 0)
+                        {
+                            @foreach (var o in ppOus.ToList())
+                            {
+                                var captured = o;
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <small>@captured</small>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppOus.Remove(captured)">×</button>
+                                </div>
+                            }
+                        }
+                        else { <small class="text-muted fst-italic">None</small> }
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" @bind="ppNewOu" @bind:event="oninput" @onkeydown="OnPpOuKey" placeholder="OU=Tier0,DC=ad,DC=contoso,DC=com" />
+                        <button class="btn btn-outline-success" @onclick="AddPpOu" disabled="@string.IsNullOrWhiteSpace(ppNewOu)">Add</button>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">sAMAccountName Patterns</label>
+                    <small class="text-muted d-block mb-1">Wildcard patterns (e.g. adm-*, svc-*)</small>
+                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                        @if (ppPatterns.Count > 0)
+                        {
+                            @foreach (var p in ppPatterns.ToList())
+                            {
+                                var captured = p;
+                                <div class="d-flex justify-content-between align-items-center py-1">
+                                    <small>@captured</small>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppPatterns.Remove(captured)">×</button>
+                                </div>
+                            }
+                        }
+                        else { <small class="text-muted fst-italic">None</small> }
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" @bind="ppNewPattern" @bind:event="oninput" @onkeydown="OnPpPatternKey" placeholder="adm-*" />
+                        <button class="btn btn-outline-success" @onclick="AddPpPattern" disabled="@string.IsNullOrWhiteSpace(ppNewPattern)">Add</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Directory Read Credential (Delinea Secret ID)</label>
+                    <input type="text" class="form-control form-control-sm" @bind="ppDirectoryReadSecretId" @bind:event="oninput" placeholder="Required when groups or OUs are configured" />
+                    <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Extended Logging</strong>
@@ -108,6 +224,14 @@
     private Dictionary<string, bool> moduleEnablement = new();
     private string selectedLogLevel = "None";
 
+    private List<string> ppUsers = new();
+    private List<string> ppGroups = new();
+    private List<string> ppOus = new();
+    private List<string> ppPatterns = new();
+    private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "";
+    private string ppDirectoryReadSecretId = "";
+    private string? ppLoadError;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -123,6 +247,7 @@
 
         moduleEnablement = Enablement.GetAllEnablement();
         selectedLogLevel = ExtendedLog.CurrentLevel;
+        LoadProtectedPrincipals();
         authChecked = true;
     }
 
@@ -215,5 +340,73 @@
         {
             saving = false;
         }
+    }
+
+    private void LoadProtectedPrincipals()
+    {
+        var (cfg, _, error) = ProtectedPrincipalService.LoadEffectiveConfig();
+        if (error != null) { ppLoadError = error; return; }
+        if (cfg != null)
+        {
+            ppUsers = cfg.Users.ToList();
+            ppGroups = cfg.Groups.ToList();
+            ppOus = cfg.OrganizationalUnits.ToList();
+            ppPatterns = cfg.SamAccountNamePatterns.ToList();
+        }
+        ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
+    }
+
+    private void OnPpUserKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpUser(); }
+    private void OnPpGroupKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpGroup(); }
+    private void OnPpOuKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpOu(); }
+    private void OnPpPatternKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpPattern(); }
+
+    private void AddPpUser() { var v = ppNewUser.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppUsers.Contains(v, StringComparer.OrdinalIgnoreCase)) ppUsers.Add(v); ppNewUser = ""; }
+    private void AddPpGroup() { var v = ppNewGroup.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppGroups.Contains(v, StringComparer.OrdinalIgnoreCase)) ppGroups.Add(v); ppNewGroup = ""; }
+    private void AddPpOu() { var v = ppNewOu.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppOus.Contains(v, StringComparer.OrdinalIgnoreCase)) ppOus.Add(v); ppNewOu = ""; }
+    private void AddPpPattern() { var v = ppNewPattern.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase)) ppPatterns.Add(v); ppNewPattern = ""; }
+
+    private async Task SaveProtectedPrincipals()
+    {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+
+            var newConfig = new ProtectedPrincipalConfig
+            {
+                Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                Groups = ppGroups.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                OrganizationalUnits = ppOus.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
+            };
+
+            ProtectedPrincipalService.SaveConfig(newConfig);
+            ProtectedPrincipalService.SaveDirectoryReadSecretId(ppDirectoryReadSecretId.Trim());
+
+            try
+            {
+                var ip = ClientInfo.GetIpForUser(currentUser);
+                Audit.LogSettingsChange(currentUser, ip, "ProtectedPrincipals",
+                    Array.Empty<string>(),
+                    new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length}" });
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
+
+            statusMessage = "Protected principals saved. Changes are effective immediately.";
+            statusIsError = false;
+            ppLoadError = null;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally { saving = false; }
     }
 }

@@ -71,6 +71,9 @@ public class ProtectedPrincipalService
         _configFilePath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
     }
 
+    public const string DirectoryReadSecretConfigKey = "DirectoryReadSecretId";
+    public const string ProtectedPrincipalsModuleKey = "ProtectedPrincipals";
+
     public bool HasCentralConfig => File.Exists(_configFilePath);
 
     public void InvalidateCache()
@@ -185,14 +188,14 @@ public class ProtectedPrincipalService
             return null;
         }
 
-        var secretIdStr = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
-        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
         {
-            _logger.LogDebug("Cannot resolve principal — ProtectedPrincipalDirectoryReadSecretId not configured");
+            _logger.LogDebug("Cannot resolve principal — directory-read credential not configured");
             return null;
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId);
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
@@ -292,6 +295,26 @@ public class ProtectedPrincipalService
         _logger.LogInformation("Protected-principals config saved and cache invalidated");
     }
 
+    public int? GetDirectoryReadSecretId()
+    {
+        var fromModuleConfig = _moduleConfig.GetValue(ProtectedPrincipalsModuleKey, DirectoryReadSecretConfigKey);
+        if (int.TryParse(fromModuleConfig, out var moduleId) && moduleId > 0)
+            return moduleId;
+
+        var fromAppSettings = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
+        if (int.TryParse(fromAppSettings, out var appId) && appId > 0)
+            return appId;
+
+        return null;
+    }
+
+    public void SaveDirectoryReadSecretId(string value)
+    {
+        var current = _moduleConfig.GetModuleConfig(ProtectedPrincipalsModuleKey);
+        current[DirectoryReadSecretConfigKey] = value;
+        _moduleConfig.SaveModuleConfig(ProtectedPrincipalsModuleKey, current);
+    }
+
     private string[] GetLegacyExclusions()
     {
         var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
@@ -379,14 +402,14 @@ public class ProtectedPrincipalService
         if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
             return (matches, true, "Directory-read credential recently failed. Retry shortly or check configuration.");
 
-        var secretIdStr = _config["Security:ProtectedPrincipalDirectoryReadSecretId"];
-        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+        var secretId = GetDirectoryReadSecretId();
+        if (secretId == null)
         {
-            _logger.LogError("Security:ProtectedPrincipalDirectoryReadSecretId is not configured but protected groups are defined");
-            return (matches, true, "Protected-principal directory-read credential is not configured. Contact your administrator.");
+            _logger.LogError("Directory-read credential is not configured but protected groups are defined — configure it on the Protected Principals admin page");
+            return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Protected Principals admin page.");
         }
 
-        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId);
+        var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
         if (creds == null)
         {
             _lastCredentialFailure = DateTime.UtcNow;
