@@ -98,7 +98,6 @@ try
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();
     builder.Services.AddScoped<MigrationService>();
-    builder.Services.AddScoped<IExchangeService, ExchangeService>();
     builder.Services.AddScoped<IIdentityResolver, ExchangeIdentityResolver>();
     builder.Services.AddScoped<ClientInfoService>();
 
