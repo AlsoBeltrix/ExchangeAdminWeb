@@ -79,6 +79,9 @@ try
     builder.Services.AddScoped<ADAttributeEditorService>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
+    builder.Services.AddScoped<DelegationReportService>();
+    builder.Services.AddScoped<OutOfOfficeService>();
+    builder.Services.AddScoped<RecipientLookupService>();
     builder.Services.AddScoped<HeaderAnalysisService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();

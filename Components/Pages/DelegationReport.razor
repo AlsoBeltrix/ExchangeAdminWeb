@@ -4,7 +4,7 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "DelegationReport")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject DelegationReportService DelegationService
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -142,7 +142,7 @@
 
         try
         {
-            result = await Exchange.GetMailboxDelegationAsync(emailAddress.Trim());
+            result = await DelegationService.GetMailboxDelegationAsync(emailAddress.Trim());
             Audit.LogLookupAction(currentUser, clientIpAddress, "DelegationReport", emailAddress.Trim(), result.Error == null, result.Error);
         }
         catch (Exception ex)

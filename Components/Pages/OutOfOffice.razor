@@ -4,7 +4,7 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "OutOfOffice")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject OutOfOfficeService OofService
 @inject AuditService Audit
 @inject EmailService Email
 @inject PermissionValidator Validator
@@ -227,7 +227,7 @@
 
         try
         {
-            checkResult = await Exchange.GetOutOfOfficeAsync(checkEmail.Trim());
+            checkResult = await OofService.GetOutOfOfficeAsync(checkEmail.Trim());
             Audit.LogLookupAction(currentUser, clientIpAddress, "CheckOutOfOffice", checkEmail.Trim(), checkResult.Error == null, checkResult.Error);
         }
         catch (Exception ex)
@@ -278,7 +278,7 @@
 
         try
         {
-            setResult = await Exchange.SetOutOfOfficeAsync(
+            setResult = await OofService.SetOutOfOfficeAsync(
                 setEmail.Trim(), oofState,
                 oofState != "Disabled" ? internalMessage : null,
                 oofState != "Disabled" ? externalMessage : null,

@@ -4,7 +4,7 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "RecipientLookup")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject RecipientLookupService LookupService
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -154,7 +154,7 @@
 
         try
         {
-            result = await Exchange.GetRecipientInfoAsync(emailAddress.Trim());
+            result = await LookupService.GetRecipientInfoAsync(emailAddress.Trim());
             Audit.LogLookupAction(currentUser, clientIpAddress, "RecipientLookup", emailAddress.Trim(), result.Error == null, result.Error);
         }
         catch (Exception ex)

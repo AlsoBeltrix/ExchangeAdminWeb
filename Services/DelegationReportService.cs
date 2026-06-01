@@ -5,8 +5,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class DelegationReportService : ExchangeServiceBase
 {
-    public DelegationReportService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
-        : base(exoPool, delineaService, logger, onPremServerUri) { }
+    public DelegationReportService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<DelegationReportService> logger, IConfiguration config)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "") { }
 
     public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {

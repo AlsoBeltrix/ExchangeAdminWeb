@@ -5,8 +5,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class OutOfOfficeService : ExchangeServiceBase
 {
-    public OutOfOfficeService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
-        : base(exoPool, delineaService, logger, onPremServerUri) { }
+    public OutOfOfficeService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<OutOfOfficeService> logger, IConfiguration config)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "") { }
 
     public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
