@@ -82,6 +82,18 @@ public class EmergencyDisableService
 
         var steps = new List<DisableStepResult>();
 
+        if (string.IsNullOrWhiteSpace(ticket))
+        {
+            const string msg = "Ticket number is required for emergency disable operations.";
+            _operationTrace.Step("TicketValidation", "Failed");
+            steps.Add(new DisableStepResult("TicketValidation", "FAILED", msg));
+            opScope.Complete(false, msg);
+            return new EmergencyDisableResult(false, msg, null, steps);
+        }
+
+        ticket = ticket.Trim();
+        steps.Add(new DisableStepResult("TicketValidation", "OK", null));
+
         // 1. Protected principal check (fail-closed)
         var protectionResult = await _protectedPrincipalService.CheckAsync(target);
         if (protectionResult.CheckFailed)

@@ -303,6 +303,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.1",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
