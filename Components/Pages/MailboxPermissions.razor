@@ -2,7 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "MailboxPermissions")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject MailboxPermissionService MailboxService
 @inject AuditService Audit
 @inject EmailService Email
 @inject PermissionValidator Validator
@@ -361,7 +361,7 @@
 
         try
         {
-            var location = await Exchange.GetMailboxLocationAsync(target, "MailboxPermissions");
+            var location = await MailboxService.GetMailboxLocationAsync(target);
             if (location == "Unknown")
             {
                 result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
@@ -391,8 +391,8 @@
             }
 
             var opResult = tabIndex == 0
-                ? await Exchange.AddMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs, autoMapping)
-                : await Exchange.RemoveMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs);
+                ? await MailboxService.AddMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs, autoMapping)
+                : await MailboxService.RemoveMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs);
 
             var perms = new List<string>();
             if (grantFullAccess) perms.Add("FullAccess");
@@ -463,7 +463,7 @@
             }
 
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            bulkResult = await Exchange.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket);
+            bulkResult = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket);
 
             var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
 
@@ -523,8 +523,8 @@
             }
 
             var opResult = tabIndex == 0
-                ? await Exchange.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
-                : await Exchange.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
+                ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
+                : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
 
             var actionVerb = tabIndex == 0 ? "Add" : "Remove";
             var succeeded = opResult.Detail?.Split(',', StringSplitOptions.TrimEntries) ?? Array.Empty<string>();

@@ -10,8 +10,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class MailboxPermissionService : ExchangeServiceBase
 {
-    public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "MailboxPermissions") { }
+    public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions") { }
 
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
     {

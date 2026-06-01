@@ -360,7 +360,7 @@ public abstract class ExchangeServiceBase
         }), _onPremThrottle);
     }
 
-    protected async Task<string> GetMailboxLocationAsync(string identity)
+    public async Task<string> GetMailboxLocationAsync(string identity)
     {
         if (await HasCloudMailboxAsync(identity))
             return "Cloud";

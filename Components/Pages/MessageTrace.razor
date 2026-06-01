@@ -6,7 +6,7 @@
 @using Microsoft.AspNetCore.Components.Forms
 @attribute [Authorize(Policy = "MessageTrace")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject MessageTraceService MsgTrace
 @inject HeaderAnalysisService HeaderAnalysis
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
@@ -518,7 +518,7 @@
     {
         try
         {
-            response = await Exchange.GetMessageTraceAsync(
+            response = await MsgTrace.GetMessageTraceAsync(
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
                 startDate, EffectiveEndDate(endDate),
@@ -551,7 +551,7 @@
 
         try
         {
-            var result = await Exchange.StartHistoricalSearchAsync(
+            var result = await MsgTrace.StartHistoricalSearchAsync(
                 string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
                 string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
                 startDate, EffectiveEndDate(endDate),

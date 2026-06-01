@@ -83,6 +83,9 @@ try
     builder.Services.AddScoped<OutOfOfficeService>();
     builder.Services.AddScoped<RecipientLookupService>();
     builder.Services.AddScoped<HeaderAnalysisService>();
+    builder.Services.AddScoped<MessageTraceService>();
+    builder.Services.AddScoped<MailboxPermissionService>();
+    builder.Services.AddScoped<CalendarPermissionService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();
     builder.Services.AddSingleton<JsonlLogService>();
@@ -94,6 +97,7 @@ try
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();
+    builder.Services.AddScoped<MigrationService>();
     builder.Services.AddScoped<IExchangeService, ExchangeService>();
     builder.Services.AddScoped<IIdentityResolver>(sp => (IIdentityResolver)sp.GetRequiredService<IExchangeService>());
     builder.Services.AddScoped<ClientInfoService>();

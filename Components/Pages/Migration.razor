@@ -3,7 +3,7 @@
 @using ExchangeAdminWeb.Services
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "MigrationCheck")]
-@inject IExchangeService Exchange
+@inject MigrationService MigrationSvc
 @inject AuditService Audit
 @inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
@@ -749,7 +749,7 @@
 
         try
         {
-            singleResult = await Exchange.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
+            singleResult = await MigrationSvc.CheckMigrationEligibilityAsync(singleEmail.Trim(), singleMigrationDirection);
 
             var ipAddress = clientIpAddress;
 
@@ -799,7 +799,7 @@
                 ? singleResult.EmailAddress
                 : singleBatchName.Trim();
 
-            singleCreateResult = await Exchange.CreateMigrationBatchAsync(
+            singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
                 singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete);
 
             var ipAddress = clientIpAddress;
@@ -859,7 +859,7 @@
             await stream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
 
-            bulkResult = await Exchange.CheckBulkMigrationEligibilityAsync(memoryStream, migrationDirection);
+            bulkResult = await MigrationSvc.CheckBulkMigrationEligibilityAsync(memoryStream, migrationDirection);
 
             var ipAddress = clientIpAddress;
 
@@ -921,7 +921,7 @@
                 ? $"{DateTime.Now:yyyy-MM-dd}_{(migrationDirection == MigrationDirection.ToCloud ? "Move" : "MoveBack")}"
                 : bulkBatchName.Trim();
 
-            createResult = await Exchange.CreateMigrationBatchAsync(
+            createResult = await MigrationSvc.CreateMigrationBatchAsync(
                 migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete);
 
             var ipAddress = clientIpAddress;
@@ -965,7 +965,7 @@
 
         try
         {
-            migrationBatches = await Exchange.GetMigrationBatchesAsync();
+            migrationBatches = await MigrationSvc.GetMigrationBatchesAsync();
             batchActionResult = null;
         }
         catch (Exception ex)
@@ -997,7 +997,7 @@
 
         try
         {
-            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(batchName);
         }
         catch
         {
@@ -1015,7 +1015,7 @@
 
         try
         {
-            batchUsers = await Exchange.GetMigrationBatchUsersAsync(batchName);
+            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(batchName);
         }
         catch
         {
@@ -1027,12 +1027,12 @@
         }
     }
 
-    private void CompleteBatch(string name) => StageBatchAction("Complete Batch", name, t => ExecuteBatchAction(() => Exchange.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name, t));
-    private void CompleteUser(string email) => StageUserAction("Complete User", email, t => ExecuteUserAction(() => Exchange.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email, t));
-    private void ApproveUser(string email) => StageUserAction("Approve User", email, t => ExecuteUserAction(() => Exchange.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email, t));
-    private void PauseUser(string email) => StageUserAction("Pause User", email, t => ExecuteUserAction(() => Exchange.StopMigrationUserAsync(email), "StopMigrationUser", email, t));
-    private void ResumeUser(string email) => StageUserAction("Resume User", email, t => ExecuteUserAction(() => Exchange.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email, t));
-    private void ClearUser(string email) => StageUserAction("Clear User", email, t => ExecuteUserAction(() => Exchange.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email, t));
+    private void CompleteBatch(string name) => StageBatchAction("Complete Batch", name, t => ExecuteBatchAction(() => MigrationSvc.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name, t));
+    private void CompleteUser(string email) => StageUserAction("Complete User", email, t => ExecuteUserAction(() => MigrationSvc.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email, t));
+    private void ApproveUser(string email) => StageUserAction("Approve User", email, t => ExecuteUserAction(() => MigrationSvc.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email, t));
+    private void PauseUser(string email) => StageUserAction("Pause User", email, t => ExecuteUserAction(() => MigrationSvc.StopMigrationUserAsync(email), "StopMigrationUser", email, t));
+    private void ResumeUser(string email) => StageUserAction("Resume User", email, t => ExecuteUserAction(() => MigrationSvc.ResumeMigrationUserAsync(email), "ResumeMigrationUser", email, t));
+    private void ClearUser(string email) => StageUserAction("Clear User", email, t => ExecuteUserAction(() => MigrationSvc.RemoveMigrationUserAsync(email), "RemoveMigrationUser", email, t));
 
     private void StageBatchAction(string label, string target, Func<string, Task> callback)
     {
@@ -1172,7 +1172,7 @@
             }
 
             if (result.Success && expandedBatch != null)
-                batchUsers = await Exchange.GetMigrationBatchUsersAsync(expandedBatch);
+                batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch);
         }
         catch (Exception ex)
         {
@@ -1212,7 +1212,7 @@
 
             foreach (var batch in toRemove)
             {
-                var result = await Exchange.RemoveMigrationBatchAsync(batch.BatchName);
+                var result = await MigrationSvc.RemoveMigrationBatchAsync(batch.BatchName);
                 if (result.Success)
                 {
                     removed++;
@@ -1297,12 +1297,12 @@
                 batchUsers = null;
                 StateHasChanged();
 
-                batchUsers = await Exchange.GetMigrationBatchUsersAsync(matchedBatch.BatchName);
+                batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName);
                 loadingBatchUsers = null;
                 return;
             }
 
-            var searchResult = await Exchange.FindMigrationUserBatchAsync(query);
+            var searchResult = await MigrationSvc.FindMigrationUserBatchAsync(query);
 
             if (searchResult.Error != null)
             {
@@ -1328,7 +1328,7 @@
             batchUsers = null;
             StateHasChanged();
 
-            batchUsers = await Exchange.GetMigrationBatchUsersAsync(searchResult.BatchId!);
+            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!);
             loadingBatchUsers = null;
         }
         catch (Exception ex)
@@ -1356,7 +1356,7 @@
 
         try
         {
-            userReport = await Exchange.GetMigrationUserReportAsync(emailAddress);
+            userReport = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
             reportUser = emailAddress;
         }
         catch (Exception ex)

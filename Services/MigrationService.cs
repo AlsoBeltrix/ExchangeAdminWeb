@@ -40,8 +40,8 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
-    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "Migration")
+    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MigrationService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "Migration")
     {
         _config = config;
         _moduleConfig = moduleConfig;

@@ -10,8 +10,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class CalendarPermissionService : ExchangeServiceBase
 {
-    public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "CalendarPermissions") { }
+    public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<CalendarPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "CalendarPermissions") { }
 
     public Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, string user, CalendarAccessRight accessRight)
     {

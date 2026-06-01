@@ -2,7 +2,7 @@
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "CalendarPermissions")]
 @rendermode InteractiveServer
-@inject IExchangeService Exchange
+@inject CalendarPermissionService CalendarService
 @inject AuditService Audit
 @inject EmailService Email
 @inject PermissionValidator Validator
@@ -348,7 +348,7 @@
 
         try
         {
-            var location = await Exchange.GetMailboxLocationAsync(target, "CalendarPermissions");
+            var location = await CalendarService.GetMailboxLocationAsync(target);
             if (location == "Unknown")
             {
                 result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
@@ -382,13 +382,13 @@
 
             if (tabIndex == 0)
             {
-                opResult = await Exchange.SetCalendarPermissionAsync(target, user, accessRight);
+                opResult = await CalendarService.SetCalendarPermissionAsync(target, user, accessRight);
                 action = "SetCalendar";
                 level = accessRight.ToString();
             }
             else
             {
-                opResult = await Exchange.RemoveCalendarPermissionAsync(target, user);
+                opResult = await CalendarService.RemoveCalendarPermissionAsync(target, user);
                 action = "RemoveCalendar";
                 level = null;
             }
@@ -458,7 +458,7 @@
             }
 
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            bulkResult = await Exchange.ProcessCalendarPermissionsCsvAsync(stream, bulkIsSet, Validator, currentUser, Audit, ipAddress, ticket);
+            bulkResult = await CalendarService.ProcessCalendarPermissionsCsvAsync(stream, bulkIsSet, Validator, currentUser, Audit, ipAddress, ticket);
 
             var action = bulkIsSet ? "BulkSetCalendar" : "BulkRemoveCalendar";
 
@@ -525,9 +525,9 @@
 
             PermissionResult opResult;
             if (tabIndex == 0)
-                opResult = await Exchange.SetCalendarPermissionOnPremAsync(target, user, onPremAccessRight.ToString());
+                opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, user, onPremAccessRight.ToString());
             else
-                opResult = await Exchange.RemoveCalendarPermissionOnPremAsync(target, user);
+                opResult = await CalendarService.RemoveCalendarPermissionOnPremAsync(target, user);
 
             Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
