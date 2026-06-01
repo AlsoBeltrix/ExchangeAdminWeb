@@ -214,8 +214,8 @@ public sealed class ModuleCatalog
         new()
         {
             Id = "GroupManagement",
-            DisplayName = "Group Management",
-            Description = "Search, view membership, and manage distribution lists and security groups.",
+            DisplayName = "AD Group Management",
+            Description = "Search, view membership, and manage on-premises distribution lists and security groups.",
             Route = "group-management",
             IconCss = "bi bi-people-fill-nav-menu",
             Category = "Directory & Groups",
