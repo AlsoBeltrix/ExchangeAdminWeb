@@ -231,7 +231,7 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@isOperating" />
+                            <input type="text" class="form-control" @bind="formTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isOperating" />
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -458,8 +458,8 @@
             Logger.LogError(ex, "Failed to save M365 group");
             var failAction = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
             var failTarget = editingGroup != null ? $"{formDisplayName.Trim()} ({editingGroup.Id})" : formDisplayName.Trim();
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, formTicketNumber.Trim(), ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = failTarget }, ex.Message); } catch { }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = failTarget }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", failAction); }
         }
         finally
         {
@@ -510,8 +510,8 @@
         {
             operationResult = new M365GroupResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete M365 group {Id}", group.Id);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), ex.Message); } catch { }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})" }, ex.Message); } catch { }
+            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})" }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for M365 group delete"); }
         }
         finally
         {
