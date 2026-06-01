@@ -69,7 +69,7 @@ Write-Host ""
     -LogRoot $LogRoot `
     -NonInteractive
 
-if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+if ($LASTEXITCODE -ge 8) {
     throw "Dev deployment failed with exit code $LASTEXITCODE"
 }
 Write-Ok "Dev deployment complete at $DevPath"
@@ -113,7 +113,7 @@ if ($CopyAppSettings) {
 
 & $promoteScript @promoteArgs
 
-if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+if ($LASTEXITCODE -ge 8) {
     throw "Prod promotion failed with exit code $LASTEXITCODE"
 }
 
