@@ -698,6 +698,15 @@
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var user = authState.User;
+            var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+            if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module!.Id, user))
+            {
+                allowlistError = "You are not authorized to save the attribute allowlist.";
+                return;
+            }
+
             var valid = allowlistAttributes
                 .Where(a => !string.IsNullOrWhiteSpace(a.Name) && !string.IsNullOrWhiteSpace(a.Label))
                 .Select(a => new EditableAttribute(a.Name.Trim(), a.Label.Trim(), a.Type, a.Choices, a.Required, a.AllowClear, a.MaxLength, a.Pattern))

@@ -365,6 +365,13 @@ public class EmergencyDisableService
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
 
+                var verifyError = VerifyBoundObject(ps, target, credential);
+                if (verifyError != null)
+                {
+                    _operationTrace.Step("DisableAD", "Failed", backend: "ActiveDirectory", details: new Dictionary<string, object?> { ["reason"] = verifyError });
+                    return new DisableStepResult("DisableAD", "FAILED", verifyError);
+                }
+
                 ps.AddCommand("Set-ADUser")
                   .AddParameter("Identity", target.DistinguishedName)
                   .AddParameter("Enabled", false)
@@ -418,6 +425,14 @@ public class EmergencyDisableService
                 ps.Commands.Clear();
 
                 var credential = CreatePSCredential(creds.username, creds.password, creds.domain);
+
+                var verifyError = VerifyBoundObject(ps, target, credential);
+                if (verifyError != null)
+                {
+                    _operationTrace.Step("ResetPassword", "Failed", backend: "ActiveDirectory", details: new Dictionary<string, object?> { ["reason"] = verifyError });
+                    return new DisableStepResult("ResetPassword", "FAILED", verifyError);
+                }
+
                 var newPassword = GenerateRandomPassword(32);
                 var secureNewPassword = new System.Security.SecureString();
                 foreach (var c in newPassword) secureNewPassword.AppendChar(c);
@@ -595,6 +610,29 @@ public class EmergencyDisableService
         {
             _logger.LogError(ex, "Failed to send security team notification for EmergencyDisable of {Target}", target.UserPrincipalName);
         }
+    }
+
+    private static string? VerifyBoundObject(PowerShell ps, ResolvedDirectoryPrincipal target, PSCredential credential)
+    {
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", target.DistinguishedName)
+          .AddParameter("Properties", new[] { "ObjectGUID" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var reRead = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (reRead.Count == 0)
+            return "Target object no longer exists at the recorded DN.";
+
+        if (!string.IsNullOrEmpty(target.ObjectGuid))
+        {
+            var freshGuid = reRead[0].Properties["ObjectGUID"]?.Value?.ToString();
+            if (!string.Equals(freshGuid, target.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+                return $"Bound-object mismatch: expected GUID {target.ObjectGuid}, found {freshGuid}.";
+        }
+
+        return null;
     }
 
     private static string GenerateRandomPassword(int length)

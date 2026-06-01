@@ -296,7 +296,7 @@ public class LicensingUpdatesService
 
                 ps.AddCommand("Get-ADUser")
                   .AddParameter("Identity", principal.DistinguishedName)
-                  .AddParameter("Properties", new[] { TargetAttribute })
+                  .AddParameter("Properties", new[] { TargetAttribute, "ObjectGUID" })
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
                 var reRead = ps.Invoke();
@@ -306,6 +306,16 @@ public class LicensingUpdatesService
                 {
                     results.Add(new(row.InputIdentity, principal.UserPrincipalName, "Error", null, null, "Object no longer exists."));
                     continue;
+                }
+
+                if (!string.IsNullOrEmpty(principal.ObjectGuid))
+                {
+                    var freshGuid = reRead[0].Properties["ObjectGUID"]?.Value?.ToString();
+                    if (!string.Equals(freshGuid, principal.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        results.Add(new(row.InputIdentity, principal.UserPrincipalName, "Error", null, null, $"Bound-object mismatch: expected {principal.ObjectGuid}, found {freshGuid}."));
+                        continue;
+                    }
                 }
 
                 var freshValue = reRead[0].Properties[TargetAttribute]?.Value?.ToString();

@@ -252,9 +252,16 @@ public class ProtectedPrincipalService
         var users = ps.Invoke();
         ps.Commands.Clear();
 
-        var adUser = users.FirstOrDefault();
-        if (adUser == null)
+        if (users.Count == 0)
             return null;
+
+        if (users.Count > 1)
+        {
+            _logger.LogWarning("Ambiguous identity resolution for '{Identity}': matched {Count} AD users — failing closed", identity, users.Count);
+            return null;
+        }
+
+        var adUser = users[0];
 
         return new ResolvedDirectoryPrincipal(
             Source: "ProtectedPrincipalService-AD",
