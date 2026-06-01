@@ -251,6 +251,11 @@ public class ADAttributeEditorService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to load ad-editable-attributes-legend.json — choices will display without descriptions");
+            lock (_allowlistLock)
+            {
+                _cachedLegend = new();
+                _legendLoadedAt = DateTime.UtcNow;
+            }
             return new();
         }
     }
