@@ -31,6 +31,8 @@ public sealed record AttributeSavePreview(
     string? Error,
     List<AttributeChange>? Changes);
 
+public sealed record AttributeLegendEntry(string Description, string? Note = null, string? Source = null);
+
 public sealed record AttributeSaveResult(
     bool Success,
     string? Error,
@@ -50,6 +52,8 @@ public class ADAttributeEditorService
 
     private List<EditableAttribute>? _cachedAllowlist;
     private DateTime _allowlistLoadedAt = DateTime.MinValue;
+    private Dictionary<string, Dictionary<string, AttributeLegendEntry>>? _cachedLegend;
+    private DateTime _legendLoadedAt = DateTime.MinValue;
     private static readonly TimeSpan AllowlistCacheTtl = TimeSpan.FromSeconds(30);
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
@@ -208,6 +212,58 @@ public class ADAttributeEditorService
         }
 
         InvalidateAllowlistCache();
+    }
+
+    public Dictionary<string, Dictionary<string, AttributeLegendEntry>> GetLegend()
+    {
+        lock (_allowlistLock)
+        {
+            if (_cachedLegend != null && DateTime.UtcNow - _legendLoadedAt < AllowlistCacheTtl)
+                return _cachedLegend;
+        }
+
+        var configPath = Path.Combine(_env.ContentRootPath, "config", "ad-editable-attributes-legend.json");
+        if (!File.Exists(configPath))
+        {
+            lock (_allowlistLock)
+            {
+                _cachedLegend = new();
+                _legendLoadedAt = DateTime.UtcNow;
+            }
+            return new();
+        }
+
+        try
+        {
+            var json = File.ReadAllText(configPath);
+            var parsed = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, AttributeLegendEntry>>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? new();
+
+            lock (_allowlistLock)
+            {
+                _cachedLegend = parsed;
+                _legendLoadedAt = DateTime.UtcNow;
+            }
+            return parsed;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load ad-editable-attributes-legend.json — choices will display without descriptions");
+            return new();
+        }
+    }
+
+    public string GetChoiceDisplayText(string attributeName, string value)
+    {
+        var legend = GetLegend();
+        if (legend.TryGetValue(attributeName, out var attrLegend) &&
+            attrLegend.TryGetValue(value, out var entry))
+        {
+            return $"{value} — {entry.Description}";
+        }
+        return value;
     }
 
     public async Task<AttributeLookupResult> LookupAsync(string identity)

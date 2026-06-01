@@ -367,7 +367,8 @@ try {
             'module-config.json',
             'modules-enabled.json',
             'protected-principals.json',
-            'ad-editable-attributes.json'
+            'ad-editable-attributes.json',
+            'ad-editable-attributes-legend.json'
         )
 
         foreach ($name in $jsonConfigFiles) {

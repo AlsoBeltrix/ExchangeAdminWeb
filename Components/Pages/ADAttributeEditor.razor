@@ -123,7 +123,7 @@
                                                     @attr.Label
                                                     <br /><small class="text-muted">@attr.Name</small>
                                                 </td>
-                                                <td><small>@(currentValues.GetValueOrDefault(attr.Name) ?? "<em>empty</em>")</small></td>
+                                                <td><small>@GetDisplayValue(attr, currentValues.GetValueOrDefault(attr.Name))</small></td>
                                                 <td>
                                                     @if (attr.Type == "Choice" && attr.Choices != null)
                                                     {
@@ -137,7 +137,7 @@
                                                             }
                                                             @foreach (var choice in attr.Choices)
                                                             {
-                                                                <option value="@choice">@choice</option>
+                                                                <option value="@choice">@EditorService.GetChoiceDisplayText(attr.Name, choice)</option>
                                                             }
                                                         </select>
                                                     }
@@ -348,6 +348,14 @@
     private void SetEditValue(string name, string? value)
     {
         editValues[name] = string.IsNullOrEmpty(value) ? null : value;
+    }
+
+    private string GetDisplayValue(EditableAttribute attr, string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(empty)";
+        if (attr.Type == "Choice")
+            return EditorService.GetChoiceDisplayText(attr.Name, value);
+        return value;
     }
 
     private void ResetAttribute(string name)
