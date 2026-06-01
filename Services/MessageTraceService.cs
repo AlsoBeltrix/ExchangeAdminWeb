@@ -9,8 +9,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class MessageTraceService : ExchangeServiceBase
 {
-    public MessageTraceService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MessageTraceService> logger, IConfiguration config, ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MessageTrace") { }
+    public MessageTraceService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MessageTraceService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MessageTrace", operationTrace) { }
 
     public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId = null)
     {

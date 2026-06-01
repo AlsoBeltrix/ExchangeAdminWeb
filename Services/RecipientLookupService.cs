@@ -5,8 +5,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class RecipientLookupService : ExchangeServiceBase
 {
-    public RecipientLookupService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<RecipientLookupService> logger, IConfiguration config, ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "RecipientLookup") { }
+    public RecipientLookupService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<RecipientLookupService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "RecipientLookup", operationTrace) { }
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {

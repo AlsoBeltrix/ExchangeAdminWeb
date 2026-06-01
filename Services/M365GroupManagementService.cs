@@ -164,7 +164,17 @@ public class M365GroupManagementService
             foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
                 results.Add(ParseMember(item));
 
-            url = doc.RootElement.TryGetProperty("@odata.nextLink", out var next) ? next.GetString() : null;
+            if (doc.RootElement.TryGetProperty("@odata.nextLink", out var next))
+            {
+                var nextUrl = next.GetString();
+                if (nextUrl != null && nextUrl.StartsWith("https://graph.microsoft.com/v1.0", StringComparison.OrdinalIgnoreCase))
+                    nextUrl = nextUrl["https://graph.microsoft.com/v1.0".Length..];
+                url = nextUrl;
+            }
+            else
+            {
+                url = null;
+            }
         }
 
         return results.OrderBy(m => m.DisplayName).ToList();
