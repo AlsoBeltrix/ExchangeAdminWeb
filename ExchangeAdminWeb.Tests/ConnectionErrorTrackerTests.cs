@@ -28,7 +28,7 @@ public class ConnectionErrorTrackerTests
         {
             tracker.HasConnectionError = true;
             await Task.Yield();
-        });
+        }, TestContext.Current.CancellationToken);
 
         Assert.True(tracker.HasConnectionError);
     }
@@ -40,10 +40,10 @@ public class ConnectionErrorTrackerTests
 
         await Task.Run(async () =>
         {
-            await Task.Delay(1);
+            await Task.Delay(1, TestContext.Current.CancellationToken);
             tracker.HasConnectionError = true;
-            await Task.Delay(1);
-        });
+            await Task.Delay(1, TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken);
 
         Assert.True(tracker.HasConnectionError);
     }
@@ -54,7 +54,7 @@ public class ConnectionErrorTrackerTests
         var tracker1 = new ExchangeServiceBase.ConnectionErrorTracker();
         var tracker2 = new ExchangeServiceBase.ConnectionErrorTracker();
 
-        await Task.Run(() => tracker1.HasConnectionError = true);
+        await Task.Run(() => tracker1.HasConnectionError = true, TestContext.Current.CancellationToken);
 
         Assert.True(tracker1.HasConnectionError);
         Assert.False(tracker2.HasConnectionError);
@@ -71,7 +71,7 @@ public class ConnectionErrorTrackerTests
             await Task.Yield();
             tracker.HasConnectionError = true;
             await Task.Yield();
-        });
+        }, TestContext.Current.CancellationToken);
 
         discard = tracker.HasConnectionError;
         Assert.True(discard);

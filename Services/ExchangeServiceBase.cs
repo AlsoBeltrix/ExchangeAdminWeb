@@ -11,6 +11,7 @@ public abstract class ExchangeServiceBase
     protected readonly DelineaService _delineaService;
     protected readonly ModuleCredentialService? _moduleCredentials;
     protected readonly ILogger _logger;
+    protected readonly OperationTraceService? _operationTrace;
     protected readonly string _onPremServerUri;
     protected readonly string _moduleId;
     protected static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
@@ -21,12 +22,14 @@ public abstract class ExchangeServiceBase
         ILogger logger,
         string onPremServerUri,
         ModuleCredentialService? moduleCredentials = null,
-        string moduleId = "")
+        string moduleId = "",
+        OperationTraceService? operationTrace = null)
     {
         _exoPool = exoPool;
         _delineaService = delineaService;
         _moduleCredentials = moduleCredentials;
         _logger = logger;
+        _operationTrace = operationTrace;
         _onPremServerUri = onPremServerUri;
         _moduleId = moduleId;
     }
@@ -252,11 +255,13 @@ public abstract class ExchangeServiceBase
 
                 ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
                 _logger.LogInformation("Connected to on-prem Exchange at {Uri} (attempt {Attempt})", _onPremServerUri, attempt);
+                _operationTrace?.Step("OnPremConnected", backend: "OnPremExchange", details: new Dictionary<string, object?> { ["uri"] = _onPremServerUri, ["attempt"] = attempt });
                 return;
             }
             catch (Exception ex) when (attempt < maxRetries)
             {
                 _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying", attempt, maxRetries);
+                _operationTrace?.Step("OnPremConnectionRetry", "Warning", backend: "OnPremExchange", details: new Dictionary<string, object?> { ["attempt"] = attempt, ["maxRetries"] = maxRetries });
                 Thread.Sleep(2000 * attempt);
             }
         }
@@ -287,10 +292,12 @@ public abstract class ExchangeServiceBase
             return null;
         }
 
+        _operationTrace?.Step("OnPremMailboxSizeRequested", backend: "OnPremExchange", target: emailAddress);
         var creds = await GetModuleCredentialsAsync("on-prem mailbox size check");
         if (creds is null)
         {
             _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
+            _operationTrace?.Step("OnPremMailboxSizeRequested", "Failed", backend: "OnPremExchange", target: emailAddress, details: new Dictionary<string, object?> { ["reason"] = "Credentials unavailable" });
             return null;
         }
 
