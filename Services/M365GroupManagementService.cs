@@ -83,7 +83,7 @@ public class M365GroupManagementService
     public async Task<M365Group?> GetGroupDetailsAsync(string groupId)
     {
         var client = await GetGraphClientAsync();
-        using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}?$select=id,displayName,mail,description,visibility,groupTypes,mailEnabled,securityEnabled");
+        using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}?$select=id,displayName,mail,description,visibility,groupTypes,mailEnabled,securityEnabled,createdDateTime");
         if (doc == null) return null;
         return ParseGroup(doc.RootElement);
     }
@@ -142,34 +142,32 @@ public class M365GroupManagementService
 
     public async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
     {
-        var client = await GetGraphClientAsync();
-        var members = new List<M365GroupMember>();
-
-        using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=displayName,mail,userPrincipalName&$top=999");
-        if (doc == null) return members;
-
-        foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
-        {
-            members.Add(ParseMember(item));
-        }
-
-        return members.OrderBy(m => m.DisplayName).ToList();
+        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=displayName,mail,userPrincipalName&$top=999");
     }
 
     public async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
     {
+        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=displayName,mail,userPrincipalName&$top=999");
+    }
+
+    private async Task<List<M365GroupMember>> GetPagedMembersAsync(string initialUrl)
+    {
         var client = await GetGraphClientAsync();
-        var owners = new List<M365GroupMember>();
+        var results = new List<M365GroupMember>();
+        var url = initialUrl;
 
-        using var doc = await client.GetAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=displayName,mail,userPrincipalName&$top=999");
-        if (doc == null) return owners;
-
-        foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
+        while (!string.IsNullOrEmpty(url))
         {
-            owners.Add(ParseMember(item));
+            using var doc = await client.GetAsync(url);
+            if (doc == null) break;
+
+            foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
+                results.Add(ParseMember(item));
+
+            url = doc.RootElement.TryGetProperty("@odata.nextLink", out var next) ? next.GetString() : null;
         }
 
-        return owners.OrderBy(o => o.DisplayName).ToList();
+        return results.OrderBy(m => m.DisplayName).ToList();
     }
 
     private static M365Group ParseGroup(JsonElement item)

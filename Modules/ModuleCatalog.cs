@@ -242,7 +242,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret (requires Group.ReadWrite.All)")
+                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
             ]
         },
         new()
