@@ -213,7 +213,7 @@ public abstract class ExchangeServiceBase
     // On-Prem connection
     // -------------------------------------------------------------------------
 
-    protected void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
+    protected void ConnectOnPrem(PowerShell ps, string username, string password, string domain, int maxRetries = 3)
     {
         var fullUsername = username.Contains('\\') || username.Contains('@')
             ? username
@@ -226,18 +226,42 @@ public abstract class ExchangeServiceBase
 
         var credential = new PSCredential(fullUsername, securePassword);
 
-        ps.AddCommand("New-PSSession")
-          .AddParameter("ConfigurationName", "Microsoft.Exchange")
-          .AddParameter("ConnectionUri", _onPremServerUri)
-          .AddParameter("Authentication", "Kerberos")
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var sessions = Invoke(ps);
-        var session = sessions.FirstOrDefault() ?? throw new InvalidOperationException("Failed to create on-prem Exchange session");
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                ps.Commands.Clear();
+                ps.Streams.Error.Clear();
 
-        ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
+                ps.AddScript("New-PSSessionOption -OperationTimeout 15000 -OpenTimeout 10000");
+                var optResult = ps.Invoke();
+                ps.Commands.Clear();
+                var sessionOpt = optResult.FirstOrDefault()?.BaseObject;
 
-        _logger.LogInformation("Connected to on-prem Exchange at {Uri}", _onPremServerUri);
+                ps.AddCommand("New-PSSession")
+                  .AddParameter("ConfigurationName", "Microsoft.Exchange")
+                  .AddParameter("ConnectionUri", _onPremServerUri)
+                  .AddParameter("Authentication", "Kerberos")
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                if (sessionOpt != null)
+                    ps.AddParameter("SessionOption", sessionOpt);
+                var sessions = Invoke(ps);
+                var session = sessions.FirstOrDefault()
+                    ?? throw new InvalidOperationException("New-PSSession returned no session object");
+
+                ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
+                _logger.LogInformation("Connected to on-prem Exchange at {Uri} (attempt {Attempt})", _onPremServerUri, attempt);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying", attempt, maxRetries);
+                Thread.Sleep(2000 * attempt);
+            }
+        }
+
+        throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
     }
 
     protected async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)

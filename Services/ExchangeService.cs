@@ -2261,51 +2261,6 @@ https://admin.exchange.microsoft.com/#/migration";
         }), _onPremThrottle);
     }
 
-    private new void ConnectOnPrem(PowerShell ps, string username, string password, string domain)
-    {
-        var fullUsername = username.Contains('\\') || username.Contains('@')
-            ? username
-            : $"{domain}\\{username}";
-
-        var securePassword = new System.Security.SecureString();
-        foreach (var c in password)
-            securePassword.AppendChar(c);
-        securePassword.MakeReadOnly();
-
-        var credential = new PSCredential(fullUsername, securePassword);
-
-        const int maxRetries = 3;
-        for (int attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            try
-            {
-                ps.Commands.Clear();
-                ps.Streams.Error.Clear();
-                ps.AddCommand("New-PSSession")
-                  .AddParameter("ConfigurationName", "Microsoft.Exchange")
-                  .AddParameter("ConnectionUri", _onPremServerUri)
-                  .AddParameter("Authentication", "Kerberos")
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                var sessions = Invoke(ps);
-                var session = sessions.FirstOrDefault()
-                    ?? throw new InvalidOperationException("New-PSSession returned no session object");
-
-                ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
-                _logger.LogInformation("Connected to on-prem Exchange at {Uri} (attempt {Attempt})", _onPremServerUri, attempt);
-                _extLog.Write(LogEventLevel.Debug, "Connected to on-prem Exchange", "OnPremExchange", () => $"Uri={_onPremServerUri}; Attempt={attempt}; CredentialUserPresent=true");
-                return;
-            }
-            catch (Exception ex) when (attempt < maxRetries)
-            {
-                _logger.LogWarning(ex, "On-prem connection attempt {Attempt}/{Max} failed, retrying after delay", attempt, maxRetries);
-                _extLog.Write(LogEventLevel.Warning, "On-prem Exchange connection attempt failed", "OnPremExchange", () => $"Uri={_onPremServerUri}; Attempt={attempt}; Max={maxRetries}; ErrorType={ex.GetType().Name}");
-                Thread.Sleep(2000 * attempt);
-            }
-        }
-
-        throw new InvalidOperationException($"Failed to connect to on-prem Exchange at {_onPremServerUri} after {maxRetries} attempts");
-    }
 
     // -------------------------------------------------------------------------
 
