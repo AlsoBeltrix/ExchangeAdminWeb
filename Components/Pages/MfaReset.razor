@@ -174,13 +174,20 @@
 
         try
         {
-            methods = await MfaService.GetUserMethodsAsync(userPrincipalName.Trim());
+            var upn = userPrincipalName.Trim();
+            methods = await MfaService.GetUserMethodsAsync(upn);
             if (methods.Count == 0)
                 result = new MfaResetResult { Success = true, Message = "No MFA methods registered for this user." };
+
+            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_ListMethods", upn, true,
+                totalMethods: methods.Count,
+                methodTypes: methods.Select(m => m.MethodType).ToArray());
         }
         catch (Exception ex)
         {
             result = new MfaResetResult { Success = false, Message = $"Error: {ex.Message}" };
+            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_ListMethods", userPrincipalName.Trim(), false,
+                errorDetail: ex.Message);
         }
         finally
         {
@@ -204,13 +211,18 @@
         resetConfirmPending = false;
         await Task.Yield();
 
+        var upn = userPrincipalName.Trim();
+        var ticket = ticketNumber.Trim();
+        var methodTypesBeforeReset = methods.Select(m => m.MethodType).ToArray();
+
         try
         {
-            var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = new MfaResetResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                    errorDetail: $"Ticket validation failed: {ticketValidation.Message}");
                 return;
             }
 
@@ -219,21 +231,27 @@
             if (!authCheck.Succeeded)
             {
                 result = new MfaResetResult { Success = false, Message = "Authorization denied." };
+                Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                    errorDetail: "Authorization denied");
                 return;
             }
 
-            var upn = userPrincipalName.Trim();
             result = await MfaService.ResetAllMethodsAsync(upn);
 
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "MfaReset", upn, result.Success, ticket,
-                result.Success ? null : result.Message);
+            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, result.Success, ticket,
+                errorDetail: result.Success ? null : result.Message,
+                removedCount: result.RemovedCount,
+                totalMethods: result.TotalMethods,
+                methodTypes: methodTypesBeforeReset);
 
             Logger.LogInformation("User {Admin} reset MFA for {Target} (ticket {Ticket}): {Result}", currentUser, upn, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new MfaResetResult { Success = false, Message = ex.Message };
-            Audit.LogMigrationAction(currentUser, clientIpAddress, "MfaReset", userPrincipalName.Trim(), false, ticketNumber.Trim(), ex.Message);
+            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                errorDetail: ex.Message,
+                methodTypes: methodTypesBeforeReset);
         }
         finally
         {

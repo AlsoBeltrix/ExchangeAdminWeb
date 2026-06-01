@@ -361,7 +361,7 @@
 
             var ticket = formTicketNumber.Trim();
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, action, target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
@@ -381,7 +381,7 @@
             Logger.LogError(ex, "Failed to save named location");
             var failAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
             var failTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, formTicketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, failAction, "NamedLocations", failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = failTarget }, ex.Message); } catch { }
         }
         finally
@@ -411,7 +411,7 @@
             var ticket = formTicketNumber.Trim();
             operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
 
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
@@ -429,7 +429,7 @@
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete named location {Id}", loc.Id);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "NamedLocations_Delete", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = $"{loc.DisplayName} ({loc.Id})" }, ex.Message); } catch { }
         }
         finally

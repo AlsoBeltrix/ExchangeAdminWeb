@@ -153,6 +153,39 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
+    public void LogModuleAction(
+        string performedBy,
+        string ipAddress,
+        string action,
+        string category,
+        string target,
+        bool success,
+        string ticketNumber = "",
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
+    {
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = category,
+            ["result"] = success ? "Success" : "Failed",
+            ["target"] = target,
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["error"] = success ? null : errorDetail
+        };
+
+        if (extra != null)
+        {
+            foreach (var kvp in extra)
+                evt[kvp.Key] = kvp.Value;
+        }
+
+        WriteAuditEvent(evt);
+    }
+
     public void LogLookupAction(
         string performedBy,
         string ipAddress,
@@ -174,6 +207,75 @@ public class AuditService
             ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
             ["error"] = success ? null : errorDetail
         };
+
+        WriteAuditEvent(evt);
+    }
+
+    public void LogMfaResetAction(
+        string performedBy,
+        string ipAddress,
+        string action,
+        string target,
+        bool success,
+        string ticketNumber = "",
+        string? errorDetail = null,
+        int? removedCount = null,
+        int? totalMethods = null,
+        string[]? methodTypes = null)
+    {
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "MfaReset",
+            ["result"] = success ? "Success" : "Failed",
+            ["target"] = target,
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["error"] = success ? null : errorDetail,
+            ["removedCount"] = removedCount,
+            ["totalMethods"] = totalMethods,
+            ["methodTypes"] = methodTypes is { Length: > 0 } ? methodTypes : null
+        };
+
+        WriteAuditEvent(evt);
+    }
+
+    public void LogConferenceRoomAction(
+        string performedBy,
+        string ipAddress,
+        string action,
+        string target,
+        bool success,
+        string ticketNumber = "",
+        string? errorDetail = null,
+        Dictionary<string, object?>? oldValues = null,
+        Dictionary<string, object?>? newValues = null)
+    {
+        var evt = new Dictionary<string, object?>
+        {
+            ["ts"] = DateTime.UtcNow.ToString("O"),
+            ["user"] = SamName(performedBy),
+            ["ip"] = ipAddress,
+            ["action"] = action,
+            ["category"] = "ConferenceRooms",
+            ["result"] = success ? "Success" : "Failed",
+            ["target"] = target,
+            ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
+            ["error"] = success ? null : errorDetail
+        };
+
+        if (oldValues != null)
+        {
+            foreach (var kv in oldValues)
+                evt[$"old_{kv.Key}"] = kv.Value;
+        }
+        if (newValues != null)
+        {
+            foreach (var kv in newValues)
+                evt[$"new_{kv.Key}"] = kv.Value;
+        }
 
         WriteAuditEvent(evt);
     }

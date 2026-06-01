@@ -257,7 +257,7 @@
 
             opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup.Name}:{newMember.Trim()}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim(), ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
@@ -269,7 +269,7 @@
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_AddMember", $"{selectedGroup!.Name}:{newMember.Trim()}", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup!.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = newMember.Trim() }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
@@ -293,7 +293,7 @@
 
             opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup.Name}:{member}", opResult.Success, ticket, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member, ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
@@ -302,7 +302,7 @@
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", $"{selectedGroup!.Name}:{member}", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup!.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = member }, ex.Message); } catch { }
         }
         finally { isLoading = false; }

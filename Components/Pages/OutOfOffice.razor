@@ -264,8 +264,8 @@
             setResult = PermissionResult.Fail(protectedError);
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress,
-                    "SetOutOfOffice_Denied", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
+                Audit.LogModuleAction(currentUser, clientIpAddress,
+                    "OutOfOffice_Denied", "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), protectedError);
             }
             catch (Exception ex)
             {
@@ -278,6 +278,16 @@
 
         try
         {
+            // Fetch current state before mutation for audit trail
+            string previousState = "Unknown";
+            try
+            {
+                var currentOof = await OofService.GetOutOfOfficeAsync(setEmail.Trim());
+                if (currentOof != null && currentOof.Error == null)
+                    previousState = currentOof.State ?? "Unknown";
+            }
+            catch { /* best-effort; do not block mutation */ }
+
             setResult = await OofService.SetOutOfOfficeAsync(
                 setEmail.Trim(), oofState,
                 oofState != "Disabled" ? internalMessage : null,
@@ -285,12 +295,18 @@
                 oofState == "Scheduled" ? startTime : null,
                 oofState == "Scheduled" ? endTime : null);
 
+            var action = oofState == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set";
+            var extra = new Dictionary<string, object?>
+            {
+                ["previousState"] = previousState,
+                ["newState"] = oofState
+            };
+
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress,
-                    oofState == "Disabled" ? "DisableOutOfOffice" : "SetOutOfOffice",
-                    setEmail.Trim(), setResult.Success, ticketNumber.Trim(),
-                    setResult.Success ? null : setResult.Message);
+                Audit.LogModuleAction(currentUser, clientIpAddress,
+                    action, "OutOfOffice", setEmail.Trim(), setResult.Success, ticketNumber.Trim(),
+                    setResult.Success ? null : setResult.Message, extra);
             }
             catch (Exception ex)
             {
@@ -328,6 +344,17 @@
         catch (Exception ex)
         {
             setResult = PermissionResult.Fail(ex.Message);
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress,
+                    oofState == "Disabled" ? "OutOfOffice_Disable" : "OutOfOffice_Set",
+                    "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), ex.Message,
+                    new Dictionary<string, object?> { ["newState"] = oofState });
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for OutOfOffice on {Target}", setEmail.Trim());
+            }
         }
         finally
         {

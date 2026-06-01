@@ -252,36 +252,78 @@
         result = null;
         await Task.Yield();
 
+        var email = roomEmail.Trim();
+        var ticket = ticketNumber.Trim();
+        var newCity = city.Trim();
+        var newBuilding = building.Trim();
+        var newFloor = floor.Trim();
+        var newTimezone = timezone.Trim();
+
         try
         {
-            var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
                 return;
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+            if (!authCheck.Succeeded)
+            {
+                result = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                return;
+            }
 
-            var email = roomEmail.Trim();
-            result = await RoomService.SetRoomMetadataAsync(email, city.Trim(), building.Trim(), capacity, floor.Trim(), timezone.Trim());
+            // Capture old values before mutation (best-effort)
+            Dictionary<string, object?>? oldValues = null;
+            try
+            {
+                var existing = await RoomService.GetRoomInfoAsync(email);
+                if (existing != null)
+                {
+                    oldValues = new Dictionary<string, object?>
+                    {
+                        ["city"] = existing.City,
+                        ["building"] = existing.Building,
+                        ["capacity"] = existing.Capacity,
+                        ["floor"] = existing.Floor
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before metadata update", email);
+            }
+
+            var newValues = new Dictionary<string, object?>
+            {
+                ["city"] = newCity,
+                ["building"] = newBuilding,
+                ["capacity"] = capacity,
+                ["floor"] = newFloor
+            };
+
+            result = await RoomService.SetRoomMetadataAsync(email, newCity, newBuilding, capacity, newFloor, newTimezone);
+
+            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, oldValues: oldValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetMetadata"); }
 
             if (result.Success)
             {
-                var addResult = await RoomService.AddToRoomListAsync(email, city.Trim());
+                var addResult = await RoomService.AddToRoomListAsync(email, newCity);
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_AddToRoomList", email, addResult.Success, ticket, errorDetail: addResult.Success ? null : addResult.Message, newValues: new Dictionary<string, object?> { ["roomList"] = $"RoomList-{newCity}" }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_AddToRoomList"); }
+
                 if (!addResult.Success)
                     result = PermissionResult.Fail($"Metadata set but failed to add to room list: {addResult.Message}");
             }
-
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", email, result.Success, ticket, result.Success ? null : result.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRoom_Setup"); }
         }
         catch (Exception ex)
         {
             result = PermissionResult.Fail(ex.Message);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", roomEmail.Trim(), false, ticketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
         }
         finally
         {
@@ -344,32 +386,71 @@
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", "(bulk)", false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
                 return;
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+            if (!authCheck.Succeeded)
+            {
+                result = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", "(bulk)", false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                return;
+            }
 
             foreach (var row in csvRows)
             {
                 try
                 {
+                    // Capture old values before mutation (best-effort)
+                    Dictionary<string, object?>? oldValues = null;
+                    try
+                    {
+                        var existing = await RoomService.GetRoomInfoAsync(row.PrimarySmtpAddress);
+                        if (existing != null)
+                        {
+                            oldValues = new Dictionary<string, object?>
+                            {
+                                ["city"] = existing.City,
+                                ["building"] = existing.Building,
+                                ["capacity"] = existing.Capacity,
+                                ["floor"] = existing.Floor
+                            };
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before bulk metadata update", row.PrimarySmtpAddress);
+                    }
+
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        ["city"] = row.City,
+                        ["building"] = row.Building,
+                        ["capacity"] = row.Capacity,
+                        ["floor"] = row.Floor
+                    };
+
                     var r = await RoomService.SetRoomMetadataAsync(row.PrimarySmtpAddress, row.City, row.Building, row.Capacity, row.Floor, row.TimeZone);
+
+                    try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", row.PrimarySmtpAddress, r.Success, ticket, errorDetail: r.Success ? null : r.Message, oldValues: oldValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
+
                     if (r.Success && !string.IsNullOrWhiteSpace(row.City))
                     {
                         var addResult = await RoomService.AddToRoomListAsync(row.PrimarySmtpAddress, row.City);
+                        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_AddToRoomList", row.PrimarySmtpAddress, addResult.Success, ticket, errorDetail: addResult.Success ? null : addResult.Message, newValues: new Dictionary<string, object?> { ["roomList"] = $"RoomList-{row.City}" }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
+
                         if (!addResult.Success)
                             r = PermissionResult.Fail($"Metadata set but room list failed: {addResult.Message}");
                     }
 
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = r.Success, Message = r.Message });
-                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, r.Success, ticket, r.Success ? null : r.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
                 }
                 catch (Exception ex)
                 {
                     csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = false, Message = ex.Message });
-                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_Setup", row.PrimarySmtpAddress, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
+                    try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", row.PrimarySmtpAddress, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
                 }
 
                 StateHasChanged();
@@ -397,29 +478,42 @@
         result = null;
         await Task.Yield();
 
+        var email = typeRoomEmail.Trim();
+        var ticket = typeTicketNumber.Trim();
+        var newTimezone = typeTimezone.Trim();
+
         try
         {
-            var ticket = typeTicketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
                 return;
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded) { result = PermissionResult.Fail("Authorization denied."); return; }
+            if (!authCheck.Succeeded)
+            {
+                result = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                return;
+            }
 
-            var email = typeRoomEmail.Trim();
-            result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, typeTimezone.Trim());
+            result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, newTimezone);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", $"{email} -> {selectedRoomType}", result.Success, ticket, result.Success ? null : result.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRoom_SetType"); }
+            var newValues = new Dictionary<string, object?>
+            {
+                ["roomType"] = selectedRoomType,
+                ["timezone"] = newTimezone
+            };
+            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetType"); }
         }
         catch (Exception ex)
         {
             result = PermissionResult.Fail(ex.Message);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "ConferenceRoom_SetType", typeRoomEmail.Trim(), false, typeTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
         }
         finally
         {

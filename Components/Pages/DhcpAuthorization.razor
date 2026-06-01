@@ -213,8 +213,8 @@
 
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "DHCP_Authorize",
-                    $"{dns} ({ip})", operationResult.Success, ticket,
+                Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize",
+                    "DhcpAuthorization", $"{dns} ({ip})", operationResult.Success, ticket,
                     operationResult.Success ? null : operationResult.Message);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize"); }
@@ -241,7 +241,7 @@
         catch (Exception ex)
         {
             operationResult = new DhcpOperationResult { Success = false, Message = ex.Message };
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "DHCP_Authorize", $"{newDnsName.Trim()} ({newIpAddress.Trim()})", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{newDnsName.Trim()} ({newIpAddress.Trim()})", false, ticketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "DHCP_Authorize", false, ticketNumber.Trim(), new Dictionary<string, string> { ["DNS Name"] = newDnsName.Trim(), ["IP Address"] = newIpAddress.Trim() }, ex.Message); } catch { }
         }
         finally
@@ -285,8 +285,8 @@
 
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "DHCP_Deauthorize",
-                    $"{server.DnsName} ({server.IpAddress})", operationResult.Success, ticket,
+                Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize",
+                    "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", operationResult.Success, ticket,
                     operationResult.Success ? null : operationResult.Message);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize"); }
@@ -308,7 +308,7 @@
         catch (Exception ex)
         {
             operationResult = new DhcpOperationResult { Success = false, Message = ex.Message };
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "DHCP_Deauthorize", $"{server.DnsName} ({server.IpAddress})", false, ticketNumber.Trim(), ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "DHCP_Deauthorize", false, ticketNumber.Trim(), new Dictionary<string, string> { ["DNS Name"] = server.DnsName, ["IP Address"] = server.IpAddress }, ex.Message); } catch { }
         }
         finally

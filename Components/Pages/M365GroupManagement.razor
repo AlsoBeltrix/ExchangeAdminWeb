@@ -437,7 +437,7 @@
 
             var ticket = formTicketNumber.Trim();
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, action, target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, operationResult.Success ? null : operationResult.Message); }
@@ -458,7 +458,7 @@
             Logger.LogError(ex, "Failed to save M365 group");
             var failAction = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
             var failTarget = editingGroup != null ? $"{formDisplayName.Trim()} ({editingGroup.Id})" : formDisplayName.Trim();
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, failAction, failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, failAction, "M365GroupManagement", failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = failTarget }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", failAction); }
         }
         finally
@@ -488,7 +488,7 @@
             var ticket = formTicketNumber.Trim();
             operationResult = await GroupService.DeleteGroupAsync(group.Id, group.DisplayName);
 
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
 
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, operationResult.Success ? null : operationResult.Message); }
@@ -510,7 +510,7 @@
         {
             operationResult = new M365GroupResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete M365 group {Id}", group.Id);
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})" }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for M365 group delete"); }
         }
         finally
