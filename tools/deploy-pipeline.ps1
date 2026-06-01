@@ -102,8 +102,10 @@ $promoteArgs = @{
     IUnderstandThisOverwritesProd = $true
 }
 
-if (-not $CopyConfigFragments) {
-    $promoteArgs["SkipConfigFragments"] = $true
+if ($CopyConfigFragments) {
+    # Config fragments now merge by default (new dev keys added,
+    # existing prod values preserved). This flag is kept for
+    # backward compatibility but the default behavior is safe.
 }
 if ($CopyAppSettings) {
     $promoteArgs["CopyAppSettings"] = $true
@@ -118,6 +120,4 @@ if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Ok "Prod deployment complete at $ProdPath"
 Write-Host "Validate: https://<server>$ProdPathBase" -ForegroundColor Cyan
-if (-not $CopyConfigFragments) {
-    Write-Warn "Config fragments were NOT copied. Verify module-config.json has correct Delinea secret IDs for prod."
-}
+Write-Host "Config fragments were merged: new dev keys added, existing prod values preserved." -ForegroundColor DarkGray

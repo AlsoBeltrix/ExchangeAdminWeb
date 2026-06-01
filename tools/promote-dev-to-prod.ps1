@@ -128,6 +128,76 @@ function Invoke-RobocopyChecked {
     Write-Ok "$Description completed (robocopy exit $exit)"
 }
 
+function Merge-JsonConfig {
+    param([string]$DevFile, [string]$ProdFile, [string]$Name)
+
+    $devExists = Test-Path -LiteralPath $DevFile -PathType Leaf
+    $prodExists = Test-Path -LiteralPath $ProdFile -PathType Leaf
+
+    if (-not $devExists -and -not $prodExists) { return }
+
+    if (-not $devExists) {
+        if (-not $Apply) { Write-Plan "No dev $Name — prod keeps its version" }
+        else { Write-Ok "$Name — no dev version, prod unchanged" }
+        return
+    }
+
+    if (-not $prodExists) {
+        Copy-FileChecked -Source $DevFile -Destination $ProdFile
+        return
+    }
+
+    if (-not $Apply) {
+        Write-Plan "Merge $Name (dev adds new keys, prod keeps existing values)"
+        return
+    }
+
+    try {
+        $devJson = Get-Content -LiteralPath $DevFile -Raw | ConvertFrom-Json
+        $prodJson = Get-Content -LiteralPath $ProdFile -Raw | ConvertFrom-Json
+
+        $merged = Merge-Object -Base $prodJson -Overlay $devJson
+        $prodDir = Split-Path -Parent $ProdFile
+        if (-not (Test-Path -LiteralPath $prodDir -PathType Container)) {
+            New-Item -ItemType Directory -Path $prodDir -Force | Out-Null
+        }
+        $tmp = Join-Path $prodDir ("$Name.merge.{0}.tmp" -f [guid]::NewGuid().ToString("N"))
+        try {
+            $merged | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $tmp -Encoding UTF8
+            Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json | Out-Null
+            Move-Item -LiteralPath $tmp -Destination $ProdFile -Force
+            Write-Ok "Merged $Name (prod values preserved, new dev keys added)"
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Warn "Failed to merge $Name — prod file left unchanged. Error: $_"
+    }
+}
+
+function Merge-Object {
+    param($Base, $Overlay)
+
+    if ($null -eq $Base) { return $Overlay }
+    if ($null -eq $Overlay) { return $Base }
+
+    if ($Base -is [PSCustomObject] -and $Overlay -is [PSCustomObject]) {
+        $result = $Base.PSObject.Copy()
+        foreach ($prop in $Overlay.PSObject.Properties) {
+            $existing = $result.PSObject.Properties[$prop.Name]
+            if ($null -eq $existing) {
+                $result | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
+            } elseif ($existing.Value -is [PSCustomObject] -and $prop.Value -is [PSCustomObject]) {
+                $existing.Value = Merge-Object -Base $existing.Value -Overlay $prop.Value
+            }
+            # else: prod value wins, don't overwrite
+        }
+        return $result
+    }
+
+    return $Base
+}
+
 function Copy-FileChecked {
     param([string]$Source, [string]$Destination)
 
@@ -292,18 +362,22 @@ try {
     Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase
 
     if (-not $SkipConfigFragments) {
-        $configFiles = @(
+        $jsonConfigFiles = @(
             'sectionaccess.json',
             'module-config.json',
             'modules-enabled.json',
-            'extended-log-level.txt',
             'protected-principals.json',
             'ad-editable-attributes.json'
         )
 
-        foreach ($name in $configFiles) {
-            Copy-FileChecked -Source (Join-Path $dev "config\$name") -Destination (Join-Path $prod "config\$name")
+        foreach ($name in $jsonConfigFiles) {
+            Merge-JsonConfig `
+                -DevFile (Join-Path $dev "config\$name") `
+                -ProdFile (Join-Path $prod "config\$name") `
+                -Name $name
         }
+
+        Copy-FileChecked -Source (Join-Path $dev "config\extended-log-level.txt") -Destination (Join-Path $prod "config\extended-log-level.txt")
     } else {
         Write-Warn "Skipping config fragment copy by request."
     }
