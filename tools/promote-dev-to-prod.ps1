@@ -137,8 +137,8 @@ function Merge-JsonConfig {
     if (-not $devExists -and -not $prodExists) { return }
 
     if (-not $devExists) {
-        if (-not $Apply) { Write-Plan "No dev $Name — prod keeps its version" }
-        else { Write-Ok "$Name — no dev version, prod unchanged" }
+        if (-not $Apply) { Write-Plan "No dev $Name - prod keeps its version" }
+        else { Write-Ok "$Name - no dev version, prod unchanged" }
         return
     }
 
@@ -171,7 +171,7 @@ function Merge-JsonConfig {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        Write-Warn "Failed to merge $Name — prod file left unchanged. Error: $_"
+        Write-Warn "Failed to merge $Name - prod file left unchanged. Error: $_"
     }
 }
 
@@ -394,12 +394,12 @@ try {
         try {
             & robocopy $backup $prod '/MIR' '/XD' 'logs' '/NFL' '/NDL' '/NJH' '/NJS' '/R:2' '/W:1'
             if ($LASTEXITCODE -ge 8) {
-                Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE — prod may be in an inconsistent state" -ForegroundColor Red
+                Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE - prod may be in an inconsistent state" -ForegroundColor Red
             } else {
                 Write-Ok "Rolled back prod to pre-promotion state"
             }
         } catch {
-            Write-Host "  X  Rollback failed: $_ — restore manually from $backup" -ForegroundColor Red
+            Write-Host "  X  Rollback failed: $_ - restore manually from $backup" -ForegroundColor Red
         }
     } else {
         Write-Warn "No backup available for automatic rollback. Restore manually."
