@@ -99,7 +99,7 @@ try
     builder.Services.AddSingleton<ExoConnectionPool>();
     builder.Services.AddScoped<MigrationService>();
     builder.Services.AddScoped<IExchangeService, ExchangeService>();
-    builder.Services.AddScoped<IIdentityResolver>(sp => (IIdentityResolver)sp.GetRequiredService<IExchangeService>());
+    builder.Services.AddScoped<IIdentityResolver, ExchangeIdentityResolver>();
     builder.Services.AddScoped<ClientInfoService>();
 
     var app = builder.Build();
