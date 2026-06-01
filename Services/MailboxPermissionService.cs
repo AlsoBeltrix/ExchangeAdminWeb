@@ -19,7 +19,7 @@ public class MailboxPermissionService : ExchangeServiceBase
         if (fullAccess) permissions.Add("FullAccess");
         if (sendAs) permissions.Add("SendAs");
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -32,7 +32,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                   .AddParameter("AccessRights", "FullAccess")
                   .AddParameter("AutoMapping", autoMapping)
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             if (sendAs)
@@ -42,7 +42,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                   .AddParameter("Trustee", user)
                   .AddParameter("AccessRights", "SendAs")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () =>
         {
@@ -59,7 +59,7 @@ public class MailboxPermissionService : ExchangeServiceBase
         if (fullAccess) permissions.Add("FullAccess");
         if (sendAs) permissions.Add("SendAs");
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -71,7 +71,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", "FullAccess")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             if (sendAs)
@@ -81,7 +81,7 @@ public class MailboxPermissionService : ExchangeServiceBase
                   .AddParameter("Trustee", user)
                   .AddParameter("AccessRights", "SendAs")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () =>
         {

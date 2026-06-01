@@ -10,7 +10,7 @@ public class DelegationReportService : ExchangeServiceBase
 
     public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new DelegationReportResult { EmailAddress = emailAddress };
 
@@ -20,7 +20,7 @@ public class DelegationReportService : ExchangeServiceBase
                 ps.AddCommand("Get-MailboxPermission")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var perms = Invoke(ps);
+                var perms = Invoke(ps, tracker);
                 foreach (var perm in perms)
                 {
                     var user = perm.Properties["User"]?.Value?.ToString();
@@ -37,7 +37,7 @@ public class DelegationReportService : ExchangeServiceBase
                 ps.AddCommand("Get-RecipientPermission")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var recipPerms = Invoke(ps);
+                var recipPerms = Invoke(ps, tracker);
                 foreach (var perm in recipPerms)
                 {
                     var trustee = perm.Properties["Trustee"]?.Value?.ToString();
@@ -54,7 +54,7 @@ public class DelegationReportService : ExchangeServiceBase
                     ps.AddCommand("Get-MailboxFolderPermission")
                       .AddParameter("Identity", calendarPath)
                       .AddParameter("ErrorAction", "Stop");
-                    var calPerms = Invoke(ps);
+                    var calPerms = Invoke(ps, tracker);
                     foreach (var perm in calPerms)
                     {
                         var user = perm.Properties["User"]?.Value?.ToString();

@@ -16,7 +16,7 @@ public class ConferenceRoomService : ExchangeServiceBase
 
     public async Task<PermissionResult> SetRoomMetadataAsync(string roomEmail, string city, string building, int capacity, string floor, string timezone)
     {
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             // Set-Place for room metadata
             ps.AddCommand("Set-Place")
@@ -26,14 +26,14 @@ public class ConferenceRoomService : ExchangeServiceBase
               .AddParameter("Capacity", capacity)
               .AddParameter("Floor", floor)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             // Set-User for additional properties
             ps.AddCommand("Set-User")
               .AddParameter("Identity", roomEmail)
               .AddParameter("City", city)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             // Set-MailboxRegionalConfiguration for timezone (skip if not provided)
             if (!string.IsNullOrWhiteSpace(timezone))
@@ -42,14 +42,14 @@ public class ConferenceRoomService : ExchangeServiceBase
                   .AddParameter("Identity", roomEmail)
                   .AddParameter("TimeZone", timezone)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         });
     }
 
     public async Task<PermissionResult> AddToRoomListAsync(string roomEmail, string city)
     {
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             var roomListName = $"RoomList-{city}";
 
@@ -57,7 +57,7 @@ public class ConferenceRoomService : ExchangeServiceBase
             ps.AddCommand("Get-DistributionGroup")
               .AddParameter("Identity", roomListName)
               .AddParameter("ErrorAction", "SilentlyContinue");
-            var existing = InvokeOptional(ps);
+            var existing = InvokeOptional(ps, tracker);
 
             if (existing.Count == 0)
             {
@@ -67,7 +67,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                   .AddParameter("DisplayName", $"{city} Rooms")
                   .AddParameter("RoomList")
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             // Add room to room list
@@ -75,13 +75,13 @@ public class ConferenceRoomService : ExchangeServiceBase
               .AddParameter("Identity", roomListName)
               .AddParameter("Member", roomEmail)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         });
     }
 
     public async Task<PermissionResult> SetRoomTypeAsync(string roomEmail, string roomType, string timezone)
     {
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             switch (roomType.ToLowerInvariant())
             {
@@ -91,7 +91,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                       .AddParameter("AutomateProcessing", "AutoAccept")
                       .AddParameter("AllowConflicts", false)
                       .AddParameter("ErrorAction", "Stop");
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                     break;
 
                 case "workspace":
@@ -100,7 +100,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                       .AddParameter("AutomateProcessing", "AutoAccept")
                       .AddParameter("AllowConflicts", true)
                       .AddParameter("ErrorAction", "Stop");
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                     break;
 
                 case "restricted":
@@ -110,7 +110,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                       .AddParameter("AllBookInPolicy", false)
                       .AddParameter("AllowConflicts", false)
                       .AddParameter("ErrorAction", "Stop");
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                     break;
 
                 default:
@@ -122,25 +122,25 @@ public class ConferenceRoomService : ExchangeServiceBase
               .AddParameter("Identity", roomEmail)
               .AddParameter("TimeZone", timezone)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         });
     }
 
     public async Task<RoomInfo?> GetRoomInfoAsync(string roomEmail)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", roomEmail)
               .AddParameter("ErrorAction", "Stop");
-            var mbxResults = Invoke(ps);
+            var mbxResults = Invoke(ps, tracker);
             var mbx = mbxResults.FirstOrDefault();
             if (mbx == null) return null;
 
             ps.AddCommand("Get-Place")
               .AddParameter("Identity", roomEmail)
               .AddParameter("ErrorAction", "Stop");
-            var placeResults = Invoke(ps);
+            var placeResults = Invoke(ps, tracker);
             var place = placeResults.FirstOrDefault();
 
             return new RoomInfo

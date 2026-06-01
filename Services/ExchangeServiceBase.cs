@@ -35,26 +35,26 @@ public abstract class ExchangeServiceBase
     // Pool / Run helpers
     // -------------------------------------------------------------------------
 
-    protected async Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
+    protected async Task<PermissionResult> RunAsync(Action<PowerShell, ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
-            var (result, hadConnectionError) = await Task.Run(() =>
+            var tracker = new ConnectionErrorTracker();
+            var result = await Task.Run(() =>
             {
-                ConnectionErrorFlag = false;
                 var ps = pooled.PowerShell;
                 try
                 {
-                    operation(ps);
+                    operation(ps, tracker);
 
                     if (successFormatter is not null)
                     {
                         var (message, detail) = successFormatter();
-                        return (new PermissionResult { Success = true, Message = message, Detail = detail }, ConnectionErrorFlag);
+                        return new PermissionResult { Success = true, Message = message, Detail = detail };
                     }
-                    return (PermissionResult.Ok(), ConnectionErrorFlag);
+                    return PermissionResult.Ok();
                 }
                 catch (Exception ex)
                 {
@@ -66,12 +66,15 @@ public abstract class ExchangeServiceBase
                     var primary = psErrors.FirstOrDefault() ?? ex.Message;
                     var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
 
+                    if (IsConnectionError(ex))
+                        tracker.HasConnectionError = true;
+
                     _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                    return (PermissionResult.Fail(primary, detail), IsConnectionError(ex) || ConnectionErrorFlag);
+                    return PermissionResult.Fail(primary, detail);
                 }
             });
 
-            discard = hadConnectionError;
+            discard = tracker.HasConnectionError;
             return result;
         }
         finally
@@ -83,20 +86,16 @@ public abstract class ExchangeServiceBase
         }
     }
 
-    protected async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, T> query)
+    protected async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
-            var (result, hadConnectionError) = await Task.Run(() =>
-            {
-                ConnectionErrorFlag = false;
-                var r = query(pooled.PowerShell);
-                return (r, ConnectionErrorFlag);
-            });
+            var tracker = new ConnectionErrorTracker();
+            var result = await Task.Run(() => query(pooled.PowerShell, tracker));
 
-            discard = hadConnectionError;
+            discard = tracker.HasConnectionError;
             return result;
         }
         catch (Exception ex) when (IsConnectionError(ex))
@@ -126,12 +125,19 @@ public abstract class ExchangeServiceBase
     }
 
     // -------------------------------------------------------------------------
+    // Connection error tracking
+    // -------------------------------------------------------------------------
+
+    protected internal sealed class ConnectionErrorTracker
+    {
+        public bool HasConnectionError { get; set; }
+    }
+
+    // -------------------------------------------------------------------------
     // Invoke helpers
     // -------------------------------------------------------------------------
 
-    [ThreadStatic] protected static bool ConnectionErrorFlag;
-
-    protected static Collection<PSObject> Invoke(PowerShell ps)
+    protected static Collection<PSObject> Invoke(PowerShell ps, ConnectionErrorTracker tracker)
     {
         Collection<PSObject> result;
         try
@@ -141,7 +147,7 @@ public abstract class ExchangeServiceBase
         catch (RuntimeException ex)
         {
             if (IsConnectionError(ex))
-                ConnectionErrorFlag = true;
+                tracker.HasConnectionError = true;
             throw new InvalidOperationException(ex.Message, ex);
         }
 
@@ -150,7 +156,7 @@ public abstract class ExchangeServiceBase
             var err = ps.Streams.Error.FirstOrDefault();
             var msg = err?.Exception?.Message ?? err?.ToString() ?? "An unknown error occurred.";
             if (IsConnectionError(err?.Exception))
-                ConnectionErrorFlag = true;
+                tracker.HasConnectionError = true;
             throw new InvalidOperationException(msg);
         }
 
@@ -158,14 +164,24 @@ public abstract class ExchangeServiceBase
         return result;
     }
 
-    protected static Collection<PSObject> InvokeOptional(PowerShell ps)
+    protected static Collection<PSObject> Invoke(PowerShell ps)
+    {
+        return Invoke(ps, new ConnectionErrorTracker());
+    }
+
+    protected static Collection<PSObject> InvokeOptional(PowerShell ps, ConnectionErrorTracker tracker)
     {
         var result = ps.Invoke();
         if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-            ConnectionErrorFlag = true;
+            tracker.HasConnectionError = true;
         ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;
+    }
+
+    protected static Collection<PSObject> InvokeOptional(PowerShell ps)
+    {
+        return InvokeOptional(ps, new ConnectionErrorTracker());
     }
 
     // -------------------------------------------------------------------------
@@ -330,12 +346,12 @@ public abstract class ExchangeServiceBase
 
     private async Task<bool> HasCloudMailboxAsync(string identity)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", identity)
               .AddParameter("ErrorAction", "Ignore");
-            return InvokeOptional(ps).Any();
+            return InvokeOptional(ps, tracker).Any();
         });
     }
 

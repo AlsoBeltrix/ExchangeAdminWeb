@@ -51,13 +51,13 @@ public class GroupManagementService : ExchangeServiceBase
         var results = new List<GroupInfo>();
 
         // Search EXO distribution groups and mail-enabled security groups
-        var exoResults = await RunPooledQueryAsync(ps =>
+        var exoResults = await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-DistributionGroup")
               .AddParameter("Filter", $"Name -like '*{searchTerm.Replace("'", "''")}*' -or PrimarySmtpAddress -like '*{searchTerm.Replace("'", "''")}*'")
               .AddParameter("ResultSize", 25)
               .AddParameter("ErrorAction", "Stop");
-            return Invoke(ps);
+            return Invoke(ps, tracker);
         });
 
         foreach (var group in exoResults)
@@ -148,14 +148,14 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<GroupMemberList> GetExoMembersAsync(string groupIdentity)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new GroupMemberList { GroupName = groupIdentity };
             ps.AddCommand("Get-DistributionGroupMember")
               .AddParameter("Identity", groupIdentity)
               .AddParameter("ResultSize", "Unlimited")
               .AddParameter("ErrorAction", "Stop");
-            var members = Invoke(ps);
+            var members = Invoke(ps, tracker);
 
             foreach (var m in members)
             {
@@ -172,26 +172,26 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> AddExoMemberAsync(string groupIdentity, string member)
     {
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Add-DistributionGroupMember")
               .AddParameter("Identity", groupIdentity)
               .AddParameter("Member", member)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"{member} added to {groupIdentity}.", null));
     }
 
     private async Task<PermissionResult> RemoveExoMemberAsync(string groupIdentity, string member)
     {
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-DistributionGroupMember")
               .AddParameter("Identity", groupIdentity)
               .AddParameter("Member", member)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"{member} removed from {groupIdentity}.", null));
     }
 

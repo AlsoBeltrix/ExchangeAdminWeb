@@ -55,7 +55,7 @@ public class MigrationService : ExchangeServiceBase
 
     public async Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction)
     {
-        var result = await RunPooledQueryAsync(ps =>
+        var result = await RunPooledQueryAsync((ps, tracker) =>
         {
             var r = new MigrationEligibilityResult
             {
@@ -68,7 +68,7 @@ public class MigrationService : ExchangeServiceBase
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var migUser = InvokeOptional(ps);
+                var migUser = InvokeOptional(ps, tracker);
                 if (migUser.Any())
                 {
                     r.Status = MigrationStatus.Ineligible;
@@ -78,7 +78,7 @@ public class MigrationService : ExchangeServiceBase
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var cloudMbx = InvokeOptional(ps);
+                var cloudMbx = InvokeOptional(ps, tracker);
                 var isCloudMailbox = false;
 
                 if (cloudMbx.Any())
@@ -223,7 +223,7 @@ public class MigrationService : ExchangeServiceBase
                 return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             // Create CSV content in memory
             var csvContent = "EmailAddress\r\n" + string.Join("\r\n", eligibleEmails);
@@ -251,7 +251,7 @@ public class MigrationService : ExchangeServiceBase
                   .AddParameter("ErrorAction", "Stop");
             }
 
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             // Auto-start if requested
             if (autoStart)
@@ -259,7 +259,7 @@ public class MigrationService : ExchangeServiceBase
                 ps.AddCommand("Start-MigrationBatch")
                   .AddParameter("Identity", batchName)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             // Auto-complete if requested
@@ -269,7 +269,7 @@ public class MigrationService : ExchangeServiceBase
                   .AddParameter("Identity", batchName)
                   .AddParameter("CompleteAfter", DateTime.Now.AddHours(-1))
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
         }, () =>
@@ -311,7 +311,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var batches = new List<MigrationBatchInfo>();
 
@@ -321,7 +321,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-MigrationBatch")
                   .AddParameter("ErrorAction", "Ignore");
 
-                var batchResults = InvokeOptional(ps);
+                var batchResults = InvokeOptional(ps, tracker);
 
                 foreach (var batchObj in batchResults)
                 {
@@ -380,7 +380,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var users = new List<MigrationUserInfo>();
 
@@ -390,7 +390,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("BatchId", batchName)
                   .AddParameter("ErrorAction", "Ignore");
 
-                var userResults = InvokeOptional(ps);
+                var userResults = InvokeOptional(ps, tracker);
 
                 foreach (var userObj in userResults)
                 {
@@ -424,33 +424,33 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public Task<PermissionResult> CompleteMigrationBatchAsync(string batchName)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null));
     }
 
     public Task<PermissionResult> CompleteMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", DateTime.UtcNow)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> ApproveMigrationUserAsync(string emailAddress)
     {
         // Mirrors ApproveMigrationUser.ps1: approve skipped items, set complete, resume move request
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var pastDate = DateTime.Now.AddDays(-1);
 
@@ -458,96 +458,96 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
 
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
 
             ps.AddCommand("Set-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("SkippedItemApprovalTime", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Resume-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
         }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> StopMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Stop-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration stopped for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> ResumeMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Start-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration resumed for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> RemoveMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration user {emailAddress} removed.", (string?)null));
     }
 
     public Task<PermissionResult> RemoveMigrationBatchAsync(string batchName)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration batch '{batchName}' removed.", (string?)null));
     }
 
     public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -556,7 +556,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("IncludeReport", true)
                   .AddParameter("ErrorAction", "Stop");
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var stats = results.FirstOrDefault();
                 if (stats is null) return (string?)null;
 
@@ -599,7 +599,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -607,7 +607,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("ResultSize", "Unlimited")
                   .AddParameter("ErrorAction", "Stop");
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
 
                 var users = new List<(string Email, string? BatchId)>();
                 foreach (var user in results)

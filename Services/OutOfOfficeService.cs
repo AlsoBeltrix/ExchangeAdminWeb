@@ -10,7 +10,7 @@ public class OutOfOfficeService : ExchangeServiceBase
 
     public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
 
@@ -19,7 +19,7 @@ public class OutOfOfficeService : ExchangeServiceBase
                 ps.AddCommand("Get-MailboxAutoReplyConfiguration")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var config = results.FirstOrDefault();
 
                 if (config == null)
@@ -46,7 +46,7 @@ public class OutOfOfficeService : ExchangeServiceBase
 
     public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MailboxAutoReplyConfiguration")
               .AddParameter("Identity", emailAddress)
@@ -69,7 +69,7 @@ public class OutOfOfficeService : ExchangeServiceBase
                     ps.AddParameter("EndTime", endTime.Value);
             }
 
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => (state == "Disabled"
             ? $"Auto-reply disabled for {emailAddress}."
             : $"Auto-reply set to {state} for {emailAddress}.", (string?)null));

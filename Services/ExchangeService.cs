@@ -87,7 +87,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         if (fullAccess) permissions.Add("FullAccess");
         if (sendAs) permissions.Add("SendAs");
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -100,7 +100,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("AccessRights", "FullAccess")
                   .AddParameter("AutoMapping", autoMapping)
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             if (sendAs)
@@ -110,7 +110,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("Trustee", user)
                   .AddParameter("AccessRights", "SendAs")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () =>
         {
@@ -127,7 +127,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         if (fullAccess) permissions.Add("FullAccess");
         if (sendAs) permissions.Add("SendAs");
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -139,7 +139,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", "FullAccess")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             if (sendAs)
@@ -149,7 +149,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("Trustee", user)
                   .AddParameter("AccessRights", "SendAs")
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () =>
         {
@@ -162,7 +162,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     {
         string? calendarPath = null;
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -177,7 +177,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
               .AddParameter("ErrorAction", "Stop");
             try
             {
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
             catch
             {
@@ -188,7 +188,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", level)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () => ($"{user} granted {accessRight} permission to {calendarPath}", null));
     }
@@ -197,7 +197,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     {
         string? calendarPath = null;
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -207,7 +207,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
               .AddParameter("Identity", calendarPath)
               .AddParameter("User", user)
               .AddParameter("Confirm", false);
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Calendar permission removed for {user} on {calendarPath}", null));
     }
 
@@ -333,11 +333,11 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
         if (pendingRows.Count > 0)
         {
-            await RunPooledBatchAsync(ps => Task.Run(() =>
+            await RunPooledBatchAsync((ps, tracker) => Task.Run(() =>
             {
                 foreach (var (row, fullAccess, sendAs, autoMap, permType) in pendingRows)
                 {
-                    var result = ExecuteMailboxPermission(ps, row.Target, row.User, fullAccess, sendAs, autoMap, isAdd);
+                    var result = ExecuteMailboxPermission(ps, tracker, row.Target, row.User, fullAccess, sendAs, autoMap, isAdd);
 
                     var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
                     audit.LogMailboxPermission(
@@ -477,11 +477,11 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
         if (pendingRows.Count > 0)
         {
-            await RunPooledBatchAsync(ps => Task.Run(() =>
+            await RunPooledBatchAsync((ps, tracker) => Task.Run(() =>
             {
                 foreach (var (row, permType) in pendingRows)
                 {
-                    var result = ExecuteCalendarPermission(ps, row.Target, row.User, isSet ? row.AccessRight : null, isSet);
+                    var result = ExecuteCalendarPermission(ps, tracker, row.Target, row.User, isSet ? row.AccessRight : null, isSet);
 
                     var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
                     audit.LogCalendarPermission(
@@ -533,7 +533,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
     public async Task<MigrationEligibilityResult> CheckMigrationEligibilityAsync(string emailAddress, MigrationDirection direction)
     {
-        var result = await RunPooledQueryAsync(ps =>
+        var result = await RunPooledQueryAsync((ps, tracker) =>
         {
             var r = new MigrationEligibilityResult
             {
@@ -546,7 +546,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 ps.AddCommand("Get-MigrationUser")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var migUser = InvokeOptional(ps);
+                var migUser = InvokeOptional(ps, tracker);
                 if (migUser.Any())
                 {
                     r.Status = MigrationStatus.Ineligible;
@@ -556,7 +556,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var cloudMbx = InvokeOptional(ps);
+                var cloudMbx = InvokeOptional(ps, tracker);
                 var isCloudMailbox = false;
 
                 if (cloudMbx.Any())
@@ -701,7 +701,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
-        return await RunAsync(ps =>
+        return await RunAsync((ps, tracker) =>
         {
             // Create CSV content in memory
             var csvContent = "EmailAddress\r\n" + string.Join("\r\n", eligibleEmails);
@@ -729,7 +729,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("ErrorAction", "Stop");
             }
 
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             // Auto-start if requested
             if (autoStart)
@@ -737,7 +737,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                 ps.AddCommand("Start-MigrationBatch")
                   .AddParameter("Identity", batchName)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             // Auto-complete if requested
@@ -747,7 +747,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
                   .AddParameter("Identity", batchName)
                   .AddParameter("CompleteAfter", DateTime.Now.AddHours(-1))
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
         }, () =>
@@ -789,7 +789,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var batches = new List<MigrationBatchInfo>();
 
@@ -799,7 +799,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-MigrationBatch")
                   .AddParameter("ErrorAction", "Ignore");
 
-                var batchResults = InvokeOptional(ps);
+                var batchResults = InvokeOptional(ps, tracker);
 
                 foreach (var batchObj in batchResults)
                 {
@@ -858,7 +858,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var users = new List<MigrationUserInfo>();
 
@@ -868,7 +868,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("BatchId", batchName)
                   .AddParameter("ErrorAction", "Ignore");
 
-                var userResults = InvokeOptional(ps);
+                var userResults = InvokeOptional(ps, tracker);
 
                 foreach (var userObj in userResults)
                 {
@@ -906,33 +906,33 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public Task<PermissionResult> CompleteMigrationBatchAsync(string batchName)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null));
     }
 
     public Task<PermissionResult> CompleteMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", DateTime.UtcNow)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> ApproveMigrationUserAsync(string emailAddress)
     {
         // Mirrors ApproveMigrationUser.ps1: approve skipped items, set complete, resume move request
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var pastDate = DateTime.Now.AddDays(-1);
 
@@ -940,96 +940,96 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Set-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ApproveSkippedItems", true)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
 
             ps.AddCommand("Set-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("CompleteAfter", pastDate)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
 
             ps.AddCommand("Set-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("SkippedItemApprovalTime", pastDate)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Resume-MoveRequest")
               .AddParameter("Identity", emailAddress)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
 
             ps.AddCommand("Complete-MigrationBatch")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Ignore");
-            InvokeOptional(ps);
+            InvokeOptional(ps, tracker);
         }, () => ($"Approved skipped items and initiated completion for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> StopMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Stop-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration stopped for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> ResumeMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Start-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration resumed for {emailAddress}.", (string?)null));
     }
 
     public Task<PermissionResult> RemoveMigrationUserAsync(string emailAddress)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationUser")
               .AddParameter("Identity", emailAddress)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration user {emailAddress} removed.", (string?)null));
     }
 
     public Task<PermissionResult> RemoveMigrationBatchAsync(string batchName)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Remove-MigrationBatch")
               .AddParameter("Identity", batchName)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Migration batch '{batchName}' removed.", (string?)null));
     }
 
     public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -1038,7 +1038,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("IncludeReport", true)
                   .AddParameter("ErrorAction", "Stop");
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var stats = results.FirstOrDefault();
                 if (stats is null) return (string?)null;
 
@@ -1081,7 +1081,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             try
             {
@@ -1089,7 +1089,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("ResultSize", "Unlimited")
                   .AddParameter("ErrorAction", "Stop");
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
 
                 var users = new List<(string Email, string? BatchId)>();
                 foreach (var user in results)
@@ -1149,7 +1149,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new DelegationReportResult { EmailAddress = emailAddress };
 
@@ -1159,7 +1159,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-MailboxPermission")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var perms = Invoke(ps);
+                var perms = Invoke(ps, tracker);
                 foreach (var perm in perms)
                 {
                     var user = perm.Properties["User"]?.Value?.ToString();
@@ -1176,7 +1176,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-RecipientPermission")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var recipPerms = Invoke(ps);
+                var recipPerms = Invoke(ps, tracker);
                 foreach (var perm in recipPerms)
                 {
                     var trustee = perm.Properties["Trustee"]?.Value?.ToString();
@@ -1193,7 +1193,7 @@ https://admin.exchange.microsoft.com/#/migration";
                     ps.AddCommand("Get-MailboxFolderPermission")
                       .AddParameter("Identity", calendarPath)
                       .AddParameter("ErrorAction", "Stop");
-                    var calPerms = Invoke(ps);
+                    var calPerms = Invoke(ps, tracker);
                     foreach (var perm in calPerms)
                     {
                         var user = perm.Properties["User"]?.Value?.ToString();
@@ -1267,7 +1267,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private async Task<MessageTraceResponse> GetCloudMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var response = new MessageTraceResponse();
 
@@ -1295,7 +1295,7 @@ https://admin.exchange.microsoft.com/#/migration";
                     if (!string.IsNullOrWhiteSpace(messageId))
                         ps.AddParameter("MessageId", messageId.Trim());
 
-                    var results = Invoke(ps);
+                    var results = Invoke(ps, tracker);
                     if (!results.Any())
                         break;
 
@@ -1627,7 +1627,7 @@ https://admin.exchange.microsoft.com/#/migration";
     }
     public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var response = new HistoricalSearchResponse();
 
@@ -1646,7 +1646,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 if (!string.IsNullOrWhiteSpace(recipient))
                     ps.AddParameter("RecipientAddress", recipient);
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var result = results.FirstOrDefault();
                 response.JobId = result?.Properties["JobId"]?.Value?.ToString();
                 response.Success = true;
@@ -1663,7 +1663,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
-        var result = await RunPooledQueryAsync(ps =>
+        var result = await RunPooledQueryAsync((ps, tracker) =>
         {
             var r = new RecipientInfoResult { EmailAddress = emailAddress };
 
@@ -1672,7 +1672,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-Recipient")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var recipients = Invoke(ps);
+                var recipients = Invoke(ps, tracker);
                 var recip = recipients.FirstOrDefault();
 
                 if (recip == null)
@@ -1698,7 +1698,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var mbxResults = InvokeOptional(ps);
+                var mbxResults = InvokeOptional(ps, tracker);
                 var mbx = mbxResults.FirstOrDefault();
 
                 if (mbx != null)
@@ -1711,7 +1711,7 @@ https://admin.exchange.microsoft.com/#/migration";
                         ps.AddCommand("Get-MailboxStatistics")
                           .AddParameter("Identity", emailAddress)
                           .AddParameter("ErrorAction", "Stop");
-                        var stats = Invoke(ps);
+                        var stats = Invoke(ps, tracker);
                         var stat = stats.FirstOrDefault();
                         if (stat != null)
                         {
@@ -1733,7 +1733,7 @@ https://admin.exchange.microsoft.com/#/migration";
                           .AddParameter("Identity", emailAddress)
                           .AddParameter("Archive", true)
                           .AddParameter("ErrorAction", "Stop");
-                        var archiveStats = Invoke(ps);
+                        var archiveStats = Invoke(ps, tracker);
                         var archiveStat = archiveStats.FirstOrDefault();
                         if (archiveStat != null)
                         {
@@ -1802,7 +1802,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
 
@@ -1811,7 +1811,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 ps.AddCommand("Get-MailboxAutoReplyConfiguration")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var config = results.FirstOrDefault();
 
                 if (config == null)
@@ -1838,7 +1838,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
     {
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MailboxAutoReplyConfiguration")
               .AddParameter("Identity", emailAddress)
@@ -1861,7 +1861,7 @@ https://admin.exchange.microsoft.com/#/migration";
                     ps.AddParameter("EndTime", endTime.Value);
             }
 
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => (state == "Disabled"
             ? $"Auto-reply disabled for {emailAddress}."
             : $"Auto-reply set to {state} for {emailAddress}.", (string?)null));
@@ -2009,12 +2009,12 @@ https://admin.exchange.microsoft.com/#/migration";
 
     private async Task<bool> HasCloudMailboxAsync(string identity)
     {
-        return await RunPooledQueryAsync(ps =>
+        return await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", identity)
               .AddParameter("ErrorAction", "Ignore");
-            return InvokeOptional(ps).Any();
+            return InvokeOptional(ps, tracker).Any();
         });
     }
 
@@ -2429,26 +2429,26 @@ https://admin.exchange.microsoft.com/#/migration";
         return fullPath;
     }
 
-    private async Task<PermissionResult> RunAsync(Action<PowerShell> operation, Func<(string message, string? detail)>? successFormatter = null)
+    private async Task<PermissionResult> RunAsync(Action<PowerShell, ExchangeServiceBase.ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
-            var (result, hadConnectionError) = await Task.Run(() =>
+            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
+            var result = await Task.Run(() =>
             {
-                ConnectionErrorFlag = false;
                 var ps = pooled.PowerShell;
                 try
                 {
-                    operation(ps);
+                    operation(ps, tracker);
 
                     if (successFormatter is not null)
                     {
                         var (message, detail) = successFormatter();
-                        return (new PermissionResult { Success = true, Message = message, Detail = detail }, ConnectionErrorFlag);
+                        return new PermissionResult { Success = true, Message = message, Detail = detail };
                     }
-                    return (PermissionResult.Ok(), ConnectionErrorFlag);
+                    return PermissionResult.Ok();
                 }
                 catch (Exception ex)
                 {
@@ -2460,12 +2460,15 @@ https://admin.exchange.microsoft.com/#/migration";
                     var primary = psErrors.FirstOrDefault() ?? ex.Message;
                     var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
 
+                    if (IsConnectionError(ex))
+                        tracker.HasConnectionError = true;
+
                     _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                    return (PermissionResult.Fail(primary, detail), IsConnectionError(ex) || ConnectionErrorFlag);
+                    return PermissionResult.Fail(primary, detail);
                 }
             });
 
-            discard = hadConnectionError;
+            discard = tracker.HasConnectionError;
             return result;
         }
         finally
@@ -2482,13 +2485,13 @@ https://admin.exchange.microsoft.com/#/migration";
     {
         try
         {
-            return await RunPooledQueryAsync(ps =>
+            return await RunPooledQueryAsync((ps, tracker) =>
             {
                 ps.AddCommand("Get-Recipient")
                   .AddParameter("Identity", identity)
                   .AddParameter("ErrorAction", "Stop");
 
-                var results = Invoke(ps);
+                var results = Invoke(ps, tracker);
                 var recipient = results.FirstOrDefault();
                 return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
             });
@@ -2512,20 +2515,16 @@ https://admin.exchange.microsoft.com/#/migration";
         return await operation();
     }
 
-    private async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, T> query)
+    private async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ExchangeServiceBase.ConnectionErrorTracker, T> query)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
-            var (result, hadConnectionError) = await Task.Run(() =>
-            {
-                ConnectionErrorFlag = false;
-                var r = query(pooled.PowerShell);
-                return (r, ConnectionErrorFlag);
-            });
+            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
+            var result = await Task.Run(() => query(pooled.PowerShell, tracker));
 
-            discard = hadConnectionError;
+            discard = tracker.HasConnectionError;
             return result;
         }
         catch (Exception ex) when (IsConnectionError(ex))
@@ -2542,18 +2541,19 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private async Task RunPooledBatchAsync(Func<PowerShell, Task> batchOperation)
+    private async Task RunPooledBatchAsync(Func<PowerShell, ExchangeServiceBase.ConnectionErrorTracker, Task> batchOperation)
     {
         var pooled = await _exoPool.BorrowAsync();
         bool discard = false;
         try
         {
+            var tracker = new ExchangeServiceBase.ConnectionErrorTracker();
             await Task.Run(async () =>
             {
-                ConnectionErrorFlag = false;
-                await batchOperation(pooled.PowerShell);
-                if (ConnectionErrorFlag) discard = true;
+                await batchOperation(pooled.PowerShell, tracker);
             });
+
+            discard = tracker.HasConnectionError;
         }
         catch (Exception ex) when (IsConnectionError(ex))
         {
@@ -2569,7 +2569,7 @@ https://admin.exchange.microsoft.com/#/migration";
         }
     }
 
-    private PermissionResult ExecuteMailboxPermission(PowerShell ps, string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping, bool isAdd)
+    private PermissionResult ExecuteMailboxPermission(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker, string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping, bool isAdd)
     {
         try
         {
@@ -2586,7 +2586,7 @@ https://admin.exchange.microsoft.com/#/migration";
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("AutoMapping", autoMapping)
                       .AddParameter("Confirm", false);
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
                 if (sendAs)
                 {
@@ -2595,7 +2595,7 @@ https://admin.exchange.microsoft.com/#/migration";
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
             }
             else
@@ -2607,7 +2607,7 @@ https://admin.exchange.microsoft.com/#/migration";
                       .AddParameter("User", user)
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("Confirm", false);
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
                 if (sendAs)
                 {
@@ -2616,7 +2616,7 @@ https://admin.exchange.microsoft.com/#/migration";
                       .AddParameter("Trustee", user)
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
             }
 
@@ -2630,12 +2630,12 @@ https://admin.exchange.microsoft.com/#/migration";
                 .ToList();
             ps.Streams.Error.Clear();
             var primary = psErrors.FirstOrDefault() ?? ex.Message;
-            if (IsConnectionError(ex)) ConnectionErrorFlag = true;
+            if (IsConnectionError(ex)) tracker.HasConnectionError = true;
             return PermissionResult.Fail(primary);
         }
     }
 
-    private PermissionResult ExecuteCalendarPermission(PowerShell ps, string targetMailbox, string user, string? accessRight, bool isSet)
+    private PermissionResult ExecuteCalendarPermission(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker, string targetMailbox, string user, string? accessRight, bool isSet)
     {
         try
         {
@@ -2652,7 +2652,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("ErrorAction", "Stop");
                 try
                 {
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
                 catch
                 {
@@ -2663,7 +2663,7 @@ https://admin.exchange.microsoft.com/#/migration";
                       .AddParameter("User", user)
                       .AddParameter("AccessRights", accessRight)
                       .AddParameter("ErrorAction", "Stop");
-                    Invoke(ps);
+                    Invoke(ps, tracker);
                 }
             }
             else
@@ -2672,7 +2672,7 @@ https://admin.exchange.microsoft.com/#/migration";
                   .AddParameter("Identity", calendarPath)
                   .AddParameter("User", user)
                   .AddParameter("Confirm", false);
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
 
             return PermissionResult.Ok();
@@ -2685,12 +2685,10 @@ https://admin.exchange.microsoft.com/#/migration";
                 .ToList();
             ps.Streams.Error.Clear();
             var primary = psErrors.FirstOrDefault() ?? ex.Message;
-            if (IsConnectionError(ex)) ConnectionErrorFlag = true;
+            if (IsConnectionError(ex)) tracker.HasConnectionError = true;
             return PermissionResult.Fail(primary);
         }
     }
-
-    [ThreadStatic] private static bool ConnectionErrorFlag;
 
     private static bool IsConnectionError(Exception? ex) =>
         ex != null && (
@@ -2766,7 +2764,7 @@ https://admin.exchange.microsoft.com/#/migration";
             throw new InvalidOperationException($"Recipient '{identity}' not found.");
     }
 
-    private static Collection<PSObject> Invoke(PowerShell ps)
+    private static Collection<PSObject> Invoke(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker)
     {
         Collection<PSObject> result;
         try
@@ -2776,7 +2774,7 @@ https://admin.exchange.microsoft.com/#/migration";
         catch (RuntimeException ex)
         {
             if (IsConnectionError(ex))
-                ConnectionErrorFlag = true;
+                tracker.HasConnectionError = true;
             throw new InvalidOperationException(ex.Message, ex);
         }
 
@@ -2785,7 +2783,7 @@ https://admin.exchange.microsoft.com/#/migration";
             var err = ps.Streams.Error.FirstOrDefault();
             var msg = err?.Exception?.Message ?? err?.ToString() ?? "An unknown error occurred.";
             if (IsConnectionError(err?.Exception))
-                ConnectionErrorFlag = true;
+                tracker.HasConnectionError = true;
             throw new InvalidOperationException(msg);
         }
 
@@ -2793,14 +2791,24 @@ https://admin.exchange.microsoft.com/#/migration";
         return result;
     }
 
-    private static Collection<PSObject> InvokeOptional(PowerShell ps)
+    private static Collection<PSObject> Invoke(PowerShell ps)
+    {
+        return Invoke(ps, new ExchangeServiceBase.ConnectionErrorTracker());
+    }
+
+    private static Collection<PSObject> InvokeOptional(PowerShell ps, ExchangeServiceBase.ConnectionErrorTracker tracker)
     {
         var result = ps.Invoke();
         if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-            ConnectionErrorFlag = true;
+            tracker.HasConnectionError = true;
         ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;
+    }
+
+    private static Collection<PSObject> InvokeOptional(PowerShell ps)
+    {
+        return InvokeOptional(ps, new ExchangeServiceBase.ConnectionErrorTracker());
     }
 
     private static bool ParseBool(string? value) =>

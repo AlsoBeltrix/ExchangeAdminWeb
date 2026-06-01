@@ -10,7 +10,7 @@ public class RecipientLookupService : ExchangeServiceBase
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
-        var result = await RunPooledQueryAsync(ps =>
+        var result = await RunPooledQueryAsync((ps, tracker) =>
         {
             var r = new RecipientInfoResult { EmailAddress = emailAddress };
 
@@ -19,7 +19,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 ps.AddCommand("Get-Recipient")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Stop");
-                var recipients = Invoke(ps);
+                var recipients = Invoke(ps, tracker);
                 var recip = recipients.FirstOrDefault();
 
                 if (recip == null)
@@ -45,7 +45,7 @@ public class RecipientLookupService : ExchangeServiceBase
                 ps.AddCommand("Get-Mailbox")
                   .AddParameter("Identity", emailAddress)
                   .AddParameter("ErrorAction", "Ignore");
-                var mbxResults = InvokeOptional(ps);
+                var mbxResults = InvokeOptional(ps, tracker);
                 var mbx = mbxResults.FirstOrDefault();
 
                 if (mbx != null)
@@ -58,7 +58,7 @@ public class RecipientLookupService : ExchangeServiceBase
                         ps.AddCommand("Get-MailboxStatistics")
                           .AddParameter("Identity", emailAddress)
                           .AddParameter("ErrorAction", "Stop");
-                        var stats = Invoke(ps);
+                        var stats = Invoke(ps, tracker);
                         var stat = stats.FirstOrDefault();
                         if (stat != null)
                         {
@@ -80,7 +80,7 @@ public class RecipientLookupService : ExchangeServiceBase
                           .AddParameter("Identity", emailAddress)
                           .AddParameter("Archive", true)
                           .AddParameter("ErrorAction", "Stop");
-                        var archiveStats = Invoke(ps);
+                        var archiveStats = Invoke(ps, tracker);
                         var archiveStat = archiveStats.FirstOrDefault();
                         if (archiveStat != null)
                         {

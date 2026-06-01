@@ -17,7 +17,7 @@ public class CalendarPermissionService : ExchangeServiceBase
     {
         string? calendarPath = null;
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -32,7 +32,7 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("ErrorAction", "Stop");
             try
             {
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
             catch
             {
@@ -43,7 +43,7 @@ public class CalendarPermissionService : ExchangeServiceBase
                   .AddParameter("User", user)
                   .AddParameter("AccessRights", level)
                   .AddParameter("ErrorAction", "Stop");
-                Invoke(ps);
+                Invoke(ps, tracker);
             }
         }, () => ($"{user} granted {accessRight} permission to {calendarPath}", null));
     }
@@ -52,7 +52,7 @@ public class CalendarPermissionService : ExchangeServiceBase
     {
         string? calendarPath = null;
 
-        return RunAsync(ps =>
+        return RunAsync((ps, tracker) =>
         {
             var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
             ValidateRecipient(ps, user);
@@ -62,7 +62,7 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("Identity", calendarPath)
               .AddParameter("User", user)
               .AddParameter("Confirm", false);
-            Invoke(ps);
+            Invoke(ps, tracker);
         }, () => ($"Calendar permission removed for {user} on {calendarPath}", null));
     }
 
