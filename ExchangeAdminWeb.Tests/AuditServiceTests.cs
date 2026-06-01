@@ -53,28 +53,37 @@ public class AuditServiceTests : IDisposable
         return (new AuditService(log, trace), trace);
     }
 
-    private string GetCurrentLogPath()
+    private string GetCurrentAuditLogPath()
     {
         var dir = Path.Combine(_tempDir, "ExchangeAdminWeb");
-        var files = Directory.GetFiles(dir, "exchangeadmin_*.jsonl");
+        var files = Directory.GetFiles(dir, "exchangeadmin_*.jsonl")
+            .Where(f => !Path.GetFileNameWithoutExtension(f).EndsWith("_trace", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
         Assert.Single(files);
         return files[0];
     }
 
-    private JsonDocument[] ReadEvents()
+    private string GetCurrentTraceLogPath()
     {
-        var path = GetCurrentLogPath();
+        var dir = Path.Combine(_tempDir, "ExchangeAdminWeb");
+        var files = Directory.GetFiles(dir, "exchangeadmin_*_trace.jsonl");
+        Assert.Single(files);
+        return files[0];
+    }
+
+    private static JsonDocument[] ReadEvents(string path)
+    {
         return File.ReadAllLines(path)
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .Select(l => JsonDocument.Parse(l))
             .ToArray();
     }
 
-    private JsonDocument[] ReadAuditEvents() => ReadEvents()
+    private JsonDocument[] ReadAuditEvents() => ReadEvents(GetCurrentAuditLogPath())
         .Where(e => e.RootElement.TryGetProperty("eventType", out var type) && type.GetString() == "audit")
         .ToArray();
 
-    private JsonDocument[] ReadOperationEvents() => ReadEvents()
+    private JsonDocument[] ReadOperationEvents() => ReadEvents(GetCurrentTraceLogPath())
         .Where(e => e.RootElement.TryGetProperty("eventType", out var type) && type.GetString()!.StartsWith("operation.", StringComparison.Ordinal))
         .ToArray();
 
@@ -87,6 +96,7 @@ public class AuditServiceTests : IDisposable
         var events = ReadAuditEvents();
         Assert.Single(events);
         Assert.Equal(3, ReadOperationEvents().Length);
+        Assert.NotEqual(GetCurrentAuditLogPath(), GetCurrentTraceLogPath());
     }
 
     [Fact]
@@ -277,5 +287,25 @@ public class AuditServiceTests : IDisposable
         Assert.Contains(operationEvents, e => e.GetProperty("operationId").GetString() == backendOperationId && e.GetProperty("eventType").GetString() == "operation.complete");
         Assert.Contains(operationEvents, e => e.GetProperty("operationId").GetString() == auditOperationId && e.GetProperty("stage").GetString() == "AuditWritten");
         Assert.Contains(operationEvents, e => e.GetProperty("operationId").GetString() == auditOperationId && e.GetProperty("eventType").GetString() == "operation.complete");
+    }
+
+    [Fact]
+    public void OperationTrace_DoesNotWriteRawExceptionMessages()
+    {
+        _trace.Step(
+            "VaultCredentialRequested",
+            result: "Failed",
+            backend: "Delinea",
+            command: "oauth2/token",
+            details: new Dictionary<string, object?> { ["secretId"] = 123 },
+            exception: new InvalidOperationException("raw oauth response body"));
+
+        var operationEvents = ReadOperationEvents().Select(e => e.RootElement).ToArray();
+        var failedStep = operationEvents.Single(e => e.GetProperty("stage").GetString() == "VaultCredentialRequested");
+
+        Assert.Equal("InvalidOperationException", failedStep.GetProperty("errorType").GetString());
+        Assert.False(failedStep.TryGetProperty("error", out _));
+        Assert.Equal("***", failedStep.GetProperty("details").GetProperty("secretId").GetString());
+        Assert.DoesNotContain(operationEvents, e => e.GetRawText().Contains("raw oauth response body", StringComparison.Ordinal));
     }
 }

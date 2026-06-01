@@ -200,13 +200,31 @@ public class EmergencyDisableService
         steps.Add(new DisableStepResult("PersistSnapshot", "OK", null));
 
         // 6. Execute disable steps
-        // 6a. Disable AD account
-        var disableAdResult = await ExecuteDisableAD(target, adCreds.Value);
-        steps.Add(disableAdResult);
+        DisableStepResult disableAdResult;
+        DisableStepResult resetPwResult;
+        if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+        {
+            disableAdResult = new DisableStepResult("DisableAD", "FAILED", "AD throttle timeout.");
+            resetPwResult = new DisableStepResult("ResetPassword", "FAILED", "AD throttle timeout.");
+            steps.Add(disableAdResult);
+            steps.Add(resetPwResult);
+        }
+        else
+        {
+            try
+            {
+                // 6a/6b. Hold the AD slot across both AD mutations so another emergency op cannot interleave between disable and reset.
+                disableAdResult = await ExecuteDisableAD(target, adCreds.Value, adSlotHeld: true);
+                steps.Add(disableAdResult);
 
-        // 6b. Reset AD password
-        var resetPwResult = await ExecuteResetPassword(target, adCreds.Value);
-        steps.Add(resetPwResult);
+                resetPwResult = await ExecuteResetPassword(target, adCreds.Value, adSlotHeld: true);
+                steps.Add(resetPwResult);
+            }
+            finally
+            {
+                _adThrottle.Release();
+            }
+        }
 
         // 6c. Revoke Entra sign-in sessions
         var revokeResult = await ExecuteRevokeEntraSessions(target.UserPrincipalName, graphClient);
@@ -325,9 +343,9 @@ public class EmergencyDisableService
         throw new InvalidOperationException("Graph API response missing accountEnabled property.");
     }
 
-    private async Task<DisableStepResult> ExecuteDisableAD(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds)
+    private async Task<DisableStepResult> ExecuteDisableAD(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
     {
-        if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+        if (!adSlotHeld && !await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             return new DisableStepResult("DisableAD", "FAILED", "AD throttle timeout.");
 
         try
@@ -374,13 +392,14 @@ public class EmergencyDisableService
         }
         finally
         {
-            _adThrottle.Release();
+            if (!adSlotHeld)
+                _adThrottle.Release();
         }
     }
 
-    private async Task<DisableStepResult> ExecuteResetPassword(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds)
+    private async Task<DisableStepResult> ExecuteResetPassword(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
     {
-        if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+        if (!adSlotHeld && !await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             return new DisableStepResult("ResetPassword", "FAILED", "AD throttle timeout.");
 
         try
@@ -431,7 +450,8 @@ public class EmergencyDisableService
         }
         finally
         {
-            _adThrottle.Release();
+            if (!adSlotHeld)
+                _adThrottle.Release();
         }
     }
 
@@ -581,9 +601,8 @@ public class EmergencyDisableService
     {
         const string chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+[]{}|;:,.<>?";
         var password = new char[length];
-        var bytes = RandomNumberGenerator.GetBytes(length);
         for (int i = 0; i < length; i++)
-            password[i] = chars[bytes[i] % chars.Length];
+            password[i] = chars[RandomNumberGenerator.GetInt32(chars.Length)];
         return new string(password);
     }
 

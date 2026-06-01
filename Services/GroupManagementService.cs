@@ -18,8 +18,9 @@ public class GroupManagementService : ExchangeServiceBase
         ModuleConfigService moduleConfig,
         IHttpClientFactory httpClientFactory,
         IConfiguration config,
-        ILogger<GroupManagementService> logger)
-        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "")
+        ILogger<GroupManagementService> logger,
+        ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "GroupManagement")
     {
         _moduleConfig = moduleConfig;
         _httpClientFactory = httpClientFactory;
@@ -198,7 +199,7 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<GroupMemberList> GetOnPremMembersAsync(string? samAccountName, string groupIdentity)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem AD group membership lookup");
         if (creds is null)
             return new GroupMemberList { GroupName = groupIdentity, Error = "AD credentials unavailable." };
 
@@ -252,7 +253,7 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> AddOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem AD group membership add");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 
@@ -298,7 +299,7 @@ public class GroupManagementService : ExchangeServiceBase
 
     private async Task<PermissionResult> RemoveOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem AD group membership remove");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 

@@ -145,7 +145,6 @@ public class AuditService
             ["action"] = action,
             ["category"] = "MigrationAction",
             ["result"] = success ? "Success" : "Failed",
-            ["ticket"] = string.IsNullOrEmpty(ticketNumber) ? null : ticketNumber,
             ["target"] = target,
             ["ticket"] = string.IsNullOrWhiteSpace(ticketNumber) ? null : ticketNumber.Trim(),
             ["error"] = success ? null : errorDetail

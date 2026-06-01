@@ -289,7 +289,7 @@
         }
     }
 
-    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    private async Task HandleCsvUpload(InputFileChangeEventArgs e)
     {
         csvRows = new();
         csvResults = new();
@@ -297,7 +297,7 @@
 
         try
         {
-            using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
             using var reader = new System.IO.StreamReader(stream);
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
@@ -305,10 +305,10 @@
                 MissingFieldFound = null
             };
             using var csv = new CsvReader(reader, csvConfig);
-            csv.Read();
+            await csv.ReadAsync();
             csv.ReadHeader();
 
-            while (csv.Read())
+            while (await csv.ReadAsync())
             {
                 var email = csv.GetField("PrimarySmtpAddress")?.Trim();
                 if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;

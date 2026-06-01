@@ -278,7 +278,7 @@
 
         try
         {
-            using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            await using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
             var result = await LicenseService.PreviewCsvAsync(stream, selectedFile.Name, selectedLicenseType, currentUser, clientIpAddress);
 
             if (!result.Success)

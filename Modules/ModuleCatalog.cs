@@ -226,7 +226,7 @@ public sealed class ModuleCatalog
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used by synced group membership operations", Required: false),
-                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (for M365 groups)", Required: false)
+                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields", Required: false)
             ]
         },
         new()
@@ -259,7 +259,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields")
+                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
             ]
         },
         new()
@@ -289,7 +289,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
-                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret fields (requires Policy.ReadWrite.ConditionalAccess)")
+                new("DelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
             ]
         },
         new()
@@ -308,7 +308,7 @@ public sealed class ModuleCatalog
             GranularPermissions = [],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
-                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing TenantId, ClientId, ClientSecret (requires User.ReadWrite.All)"),
+                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
                 new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions")
             ]
         },

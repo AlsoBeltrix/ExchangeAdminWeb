@@ -834,11 +834,12 @@
         }
     }
 
-    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    private Task HandleCsvUpload(InputFileChangeEventArgs e)
     {
         csvFile = e.File;
         bulkResult = null;
         createResult = null;
+        return Task.CompletedTask;
     }
 
     private async Task CheckBulkEligibility()
@@ -853,8 +854,8 @@
 
         try
         {
-            using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
-            using var memoryStream = new MemoryStream();
+            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 5 * 1024 * 1024);
+            await using var memoryStream = new MemoryStream();
             await stream.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
 

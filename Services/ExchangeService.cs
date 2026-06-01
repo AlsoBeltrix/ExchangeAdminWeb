@@ -20,6 +20,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
     private readonly string[] _adminNotificationEmails;
     private readonly string _onPremServerUri;
     private readonly DelineaService _delineaService;
+    private readonly ModuleCredentialService _moduleCredentials;
     private readonly ExoConnectionPool _exoPool;
     private readonly ExtendedLogService _extLog;
     private readonly IConfiguration _config;
@@ -55,7 +56,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         }
     }
 
-    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ExoConnectionPool exoPool, ModuleConfigService moduleConfig, ExtendedLogService extLog)
+    public ExchangeService(IConfiguration config, ILogger<ExchangeService> logger, DelineaService delineaService, ModuleCredentialService moduleCredentials, ExoConnectionPool exoPool, ModuleConfigService moduleConfig, ExtendedLogService extLog)
     {
         _appId = config["ExchangeOnline:AppId"]
             ?? throw new InvalidOperationException("ExchangeOnline:AppId is not configured.");
@@ -75,6 +76,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
 
         _onPremServerUri = config["OnPremExchange:ServerUri"] ?? "";
         _delineaService = delineaService;
+        _moduleCredentials = moduleCredentials;
         _exoPool = exoPool;
         _extLog = extLog;
     }
@@ -220,7 +222,13 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<MailboxPermissionCsvRow>().Take(201).ToList();
+        var records = new List<MailboxPermissionCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<MailboxPermissionCsvRow>())
+        {
+            records.Add(row);
+            if (records.Count > 200)
+                break;
+        }
         if (records.Count > 200)
             return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
@@ -386,7 +394,13 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<CalendarPermissionCsvRow>().Take(201).ToList();
+        var records = new List<CalendarPermissionCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<CalendarPermissionCsvRow>())
+        {
+            records.Add(row);
+            if (records.Count > 200)
+                break;
+        }
         if (records.Count > 200)
             return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
@@ -600,7 +614,7 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         {
             try
             {
-                var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
+                var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress, "Migration");
 
                 if (sizeResult is not null)
                 {
@@ -648,7 +662,9 @@ public class ExchangeService : IExchangeService, IIdentityResolver
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<MigrationCsvRow>().ToList();
+        var records = new List<MigrationCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<MigrationCsvRow>())
+            records.Add(row);
         var results = new List<MigrationEligibilityResult>();
 
         foreach (var row in records)
@@ -1345,10 +1361,10 @@ https://admin.exchange.microsoft.com/#/migration";
             return response;
         }
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("MessageTrace", "on-prem message tracking");
         if (creds is null)
         {
-            response.Error = "On-prem message tracking failed: could not retrieve Exchange credentials from Delinea.";
+            response.Error = "On-prem message tracking failed: Message Analysis DelineaSecretId is not configured or credentials are unavailable.";
             return response;
         }
 
@@ -1746,7 +1762,7 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             try
             {
-                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress) switch
+                result.MailboxLocation = await GetMailboxLocationAsync(emailAddress, "RecipientLookup") switch
                 {
                     "OnPrem" => "On-Premises",
                     "Cloud" => "Cloud",
@@ -1764,7 +1780,7 @@ https://admin.exchange.microsoft.com/#/migration";
         {
             try
             {
-                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress);
+                var onPremSize = await GetOnPremMailboxSizeAsync(emailAddress, "RecipientLookup");
                 if (onPremSize != null)
                 {
                     result.MailboxSizeGB = onPremSize.Value.mailboxSizeGB;
@@ -1896,17 +1912,17 @@ https://admin.exchange.microsoft.com/#/migration";
     // On-Prem Exchange Operations
     // -------------------------------------------------------------------------
 
-    public async Task<(double mailboxSizeGB, double archiveSizeGB)?> GetOnPremMailboxSizeAsync(string emailAddress)
+    public async Task<(double mailboxSizeGB, double archiveSizeGB)?> GetOnPremMailboxSizeAsync(string emailAddress, string moduleId)
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
             throw new InvalidOperationException("OnPremExchange:ServerUri is not configured");
 
-        _extLog.Write(LogEventLevel.Debug, "Retrieving on-prem Exchange credentials for mailbox size check", "OnPremExchange", () => $"Target={emailAddress}");
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        _extLog.Write(LogEventLevel.Debug, "Retrieving on-prem Exchange credentials for mailbox size check", "OnPremExchange", () => $"Module={moduleId}; Target={emailAddress}");
+        var creds = await _moduleCredentials.GetCredentialsAsync(moduleId, "on-prem mailbox size check");
         if (creds is null)
         {
-            _extLog.Write(LogEventLevel.Error, "On-prem Exchange credentials unavailable for mailbox size check", "OnPremExchange", () => $"Target={emailAddress}");
-            throw new InvalidOperationException("Failed to retrieve on-prem credentials from Delinea — check Secret Server connectivity and Delinea:ExchangeSecretId config");
+            _extLog.Write(LogEventLevel.Error, "On-prem Exchange credentials unavailable for mailbox size check", "OnPremExchange", () => $"Module={moduleId}; Target={emailAddress}");
+            throw new InvalidOperationException($"Failed to retrieve on-prem credentials from Delinea — configure DelineaSecretId for the {moduleId} module");
         }
 
         return await ThrottledAsync(() => Task.Run(() =>
@@ -1983,12 +1999,12 @@ https://admin.exchange.microsoft.com/#/migration";
     // On-Prem Permission Operations
     // -------------------------------------------------------------------------
 
-    public async Task<string> GetMailboxLocationAsync(string identity)
+    public async Task<string> GetMailboxLocationAsync(string identity, string moduleId)
     {
         if (await HasCloudMailboxAsync(identity))
             return "Cloud";
 
-        return await GetOnPremMailboxLocationAsync(identity) ?? "Unknown";
+        return await GetOnPremMailboxLocationAsync(identity, moduleId) ?? "Unknown";
     }
 
     private async Task<bool> HasCloudMailboxAsync(string identity)
@@ -2002,7 +2018,7 @@ https://admin.exchange.microsoft.com/#/migration";
         });
     }
 
-    private async Task<string?> GetOnPremMailboxLocationAsync(string identity)
+    private async Task<string?> GetOnPremMailboxLocationAsync(string identity, string moduleId)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
         {
@@ -2010,10 +2026,10 @@ https://admin.exchange.microsoft.com/#/migration";
             return null;
         }
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync(moduleId, "on-prem mailbox location check");
         if (creds is null)
         {
-            _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve credentials from Delinea", identity);
+            _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve {Module} credentials from Delinea", identity, moduleId);
             return null;
         }
 
@@ -2081,7 +2097,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("MailboxPermissions", "on-prem mailbox permission add");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -2163,7 +2179,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("MailboxPermissions", "on-prem mailbox permission remove");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -2245,7 +2261,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, string user, string accessRight)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("CalendarPermissions", "on-prem calendar permission set");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -2293,7 +2309,7 @@ https://admin.exchange.microsoft.com/#/migration";
 
     public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, string user)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("CalendarPermissions", "on-prem calendar permission remove");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 

@@ -9,16 +9,26 @@ public abstract class ExchangeServiceBase
 {
     protected readonly ExoConnectionPool _exoPool;
     protected readonly DelineaService _delineaService;
+    protected readonly ModuleCredentialService? _moduleCredentials;
     protected readonly ILogger _logger;
     protected readonly string _onPremServerUri;
+    protected readonly string _moduleId;
     protected static readonly SemaphoreSlim _onPremThrottle = new(2, 2);
 
-    protected ExchangeServiceBase(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
+    protected ExchangeServiceBase(
+        ExoConnectionPool exoPool,
+        DelineaService delineaService,
+        ILogger logger,
+        string onPremServerUri,
+        ModuleCredentialService? moduleCredentials = null,
+        string moduleId = "")
     {
         _exoPool = exoPool;
         _delineaService = delineaService;
+        _moduleCredentials = moduleCredentials;
         _logger = logger;
         _onPremServerUri = onPremServerUri;
+        _moduleId = moduleId;
     }
 
     // -------------------------------------------------------------------------
@@ -214,6 +224,17 @@ public abstract class ExchangeServiceBase
         _logger.LogInformation("Connected to on-prem Exchange at {Uri}", _onPremServerUri);
     }
 
+    protected async Task<(string username, string password, string domain)?> GetModuleCredentialsAsync(string purpose)
+    {
+        if (_moduleCredentials is null || string.IsNullOrWhiteSpace(_moduleId))
+        {
+            _logger.LogError("Cannot retrieve credentials for {Purpose}: service has no module credential context", purpose);
+            return null;
+        }
+
+        return await _moduleCredentials.GetCredentialsAsync(_moduleId, purpose);
+    }
+
     // -------------------------------------------------------------------------
     // On-Prem queries (shared by multiple services)
     // -------------------------------------------------------------------------
@@ -226,7 +247,7 @@ public abstract class ExchangeServiceBase
             return null;
         }
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox size check");
         if (creds is null)
         {
             _logger.LogError("Cannot connect to on-prem Exchange: failed to retrieve credentials from Delinea");
@@ -326,7 +347,7 @@ public abstract class ExchangeServiceBase
             return null;
         }
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox location check");
         if (creds is null)
         {
             _logger.LogError("Cannot determine on-prem mailbox location for {Identity}: failed to retrieve credentials from Delinea", identity);

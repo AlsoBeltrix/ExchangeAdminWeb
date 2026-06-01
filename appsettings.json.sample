@@ -57,7 +57,6 @@
   },
   "Delinea": {
     "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
-    "ExchangeSecretId": 0,
     "CredentialTarget": "Delinea_Client"
   },
   "OnPremExchange": {

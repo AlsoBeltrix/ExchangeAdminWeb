@@ -25,7 +25,7 @@ public class NamedLocationsService
 
         var fields = await _delineaService.GetSecretFieldsAsync(secretId);
         if (fields == null)
-            throw new InvalidOperationException("Cannot retrieve credentials from Secret Server.");
+            throw new InvalidOperationException($"Cannot retrieve Named Locations Graph app secret {secretId} from Secret Server. Verify this is the correct Secret ID and that the Delinea SDK client can view it.");
 
         var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
         var clientId = fields.GetValueOrDefault("Application ID") ?? "";
@@ -107,7 +107,7 @@ public class NamedLocationsService
 
         using var doc = await client.PostAsync("/identity/conditionalAccess/namedLocations", body);
         if (doc == null)
-            return new NamedLocationResult { Success = false, Message = "Failed to create named location. Check permissions (Policy.ReadWrite.ConditionalAccess)." };
+            return new NamedLocationResult { Success = false, Message = "Failed to create named location. Check module configuration and Graph app access." };
 
         var id = doc.RootElement.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
         _logger.LogInformation("Created IP named location '{Name}' (id={Id})", displayName, id);
@@ -127,7 +127,7 @@ public class NamedLocationsService
 
         using var doc = await client.PostAsync("/identity/conditionalAccess/namedLocations", body);
         if (doc == null)
-            return new NamedLocationResult { Success = false, Message = "Failed to create named location. Check permissions (Policy.ReadWrite.ConditionalAccess)." };
+            return new NamedLocationResult { Success = false, Message = "Failed to create named location. Check module configuration and Graph app access." };
 
         _logger.LogInformation("Created country named location '{Name}'", displayName);
         return new NamedLocationResult { Success = true, Message = $"Created country location '{displayName}'." };

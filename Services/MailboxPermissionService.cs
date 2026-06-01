@@ -10,8 +10,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class MailboxPermissionService : ExchangeServiceBase
 {
-    public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
-        : base(exoPool, delineaService, logger, onPremServerUri) { }
+    public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "MailboxPermissions") { }
 
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
     {
@@ -101,7 +101,13 @@ public class MailboxPermissionService : ExchangeServiceBase
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<MailboxPermissionCsvRow>().Take(201).ToList();
+        var records = new List<MailboxPermissionCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<MailboxPermissionCsvRow>())
+        {
+            records.Add(row);
+            if (records.Count > 200)
+                break;
+        }
         if (records.Count > 200)
             return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
@@ -248,7 +254,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
     public async Task<PermissionResult> AddMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -330,7 +336,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
     public async Task<PermissionResult> RemoveMailboxPermissionsOnPremAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem mailbox permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 

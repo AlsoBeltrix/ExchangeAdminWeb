@@ -52,6 +52,7 @@ public class ADAttributeEditorService
     private DateTime _allowlistLoadedAt = DateTime.MinValue;
     private static readonly TimeSpan AllowlistCacheTtl = TimeSpan.FromSeconds(30);
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
     private static readonly HashSet<string> HardDenylistExact = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -574,7 +575,7 @@ public class ADAttributeEditorService
             if (attr.MaxLength.HasValue && value.Length > attr.MaxLength.Value)
                 return $"Attribute '{attr.Label}' exceeds maximum length of {attr.MaxLength.Value}.";
 
-            if (!string.IsNullOrEmpty(attr.Pattern) && !Regex.IsMatch(value, attr.Pattern))
+            if (!string.IsNullOrEmpty(attr.Pattern) && !Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout))
                 return $"Attribute '{attr.Label}' does not match the required pattern.";
 
             if (attr.Type == "Choice" && attr.Choices != null &&

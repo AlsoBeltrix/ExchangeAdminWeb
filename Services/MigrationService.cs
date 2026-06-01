@@ -40,8 +40,8 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
-    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleConfigService moduleConfig)
-        : base(exoPool, delineaService, logger, onPremServerUri)
+    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "Migration")
     {
         _config = config;
         _moduleConfig = moduleConfig;
@@ -184,7 +184,9 @@ public class MigrationService : ExchangeServiceBase
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<MigrationCsvRow>().ToList();
+        var records = new List<MigrationCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<MigrationCsvRow>())
+            records.Add(row);
         var results = new List<MigrationEligibilityResult>();
 
         foreach (var row in records)

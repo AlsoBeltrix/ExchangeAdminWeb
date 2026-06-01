@@ -348,7 +348,7 @@
 
         try
         {
-            var location = await Exchange.GetMailboxLocationAsync(target);
+            var location = await Exchange.GetMailboxLocationAsync(target, "CalendarPermissions");
             if (location == "Unknown")
             {
                 result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
@@ -429,10 +429,11 @@
         }
     }
 
-    private void HandleCsvUpload(InputFileChangeEventArgs e)
+    private Task HandleCsvUpload(InputFileChangeEventArgs e)
     {
         csvFile = e.File;
         bulkResult = null;
+        return Task.CompletedTask;
     }
 
     private async Task ProcessBulk()

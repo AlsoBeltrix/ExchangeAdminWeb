@@ -209,7 +209,7 @@
         finally { isLoading = false; }
     }
 
-    private void HandleFileUpload(InputFileChangeEventArgs e)
+    private async Task HandleFileUpload(InputFileChangeEventArgs e)
     {
         parsedEmails = new();
         resolveResult = null;
@@ -218,7 +218,7 @@
 
         try
         {
-            using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
             using var reader = new System.IO.StreamReader(stream);
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
@@ -226,7 +226,7 @@
                 MissingFieldFound = null
             };
             using var csv = new CsvReader(reader, csvConfig);
-            csv.Read();
+            await csv.ReadAsync();
             csv.ReadHeader();
 
             var matchedHeader = csv.HeaderRecord?.FirstOrDefault(h => h.Trim().Equals("Email", StringComparison.OrdinalIgnoreCase))
@@ -240,7 +240,7 @@
 
             var fieldName = matchedHeader;
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            while (csv.Read())
+            while (await csv.ReadAsync())
             {
                 var val = csv.GetField(fieldName)?.Trim();
                 if (!string.IsNullOrWhiteSpace(val) && val.Contains('@') && seen.Add(val))

@@ -175,3 +175,27 @@
     margin-bottom: 0.25rem;
     text-transform: uppercase;
 }
+
+.nav-home ::deep .nav-link {
+    padding-left: 0;
+}
+
+.nav-section-children {
+    margin-left: 2.25rem;
+    padding-left: 0.75rem;
+    border-left: 1px solid rgba(255, 255, 255, 0.22);
+    margin-bottom: 0.35rem;
+}
+
+.nav-section-child {
+    padding-left: 0 !important;
+    padding-right: 1rem !important;
+    padding-bottom: 0.2rem;
+}
+
+.nav-section-child ::deep .nav-link {
+    min-height: 2.35rem;
+    height: auto;
+    padding: 0.35rem 0.75rem;
+    line-height: 1.2rem;
+}

@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using CsvHelper;
+using CsvHelper.Configuration;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -84,7 +87,7 @@ public class LicensingUpdatesService
         if (creds == null)
             return new(false, "AD credentials unavailable. Configure the module's Delinea Secret ID.", licenseType, []);
 
-        var identities = ParseCsv(csvStream);
+        var identities = await ParseCsvAsync(csvStream);
         if (identities.Count == 0)
             return new(false, "CSV contains no valid user rows.", licenseType, []);
 
@@ -136,13 +139,19 @@ public class LicensingUpdatesService
             target: $"{applyRows.Count} users",
             ticket: ticket);
 
+        var protectionResults = new Dictionary<string, ProtectedPrincipalResult>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in applyRows)
+        {
+            protectionResults[PrincipalKey(row.Principal!)] = await _protectedPrincipalService.CheckAsync(row.Principal!);
+        }
+
         if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
             return new(false, "AD service is busy.", 0, 0, 0, 0, 0, []);
 
         List<LicenseApplyRow> results;
         try
         {
-            results = await Task.Run(() => ApplyChanges(applyRows, preview.LicenseType, creds.Value, performedBy, ip, ticket));
+            results = await Task.Run(() => ApplyChanges(applyRows, preview.LicenseType, creds.Value, protectionResults));
         }
         finally
         {
@@ -250,7 +259,7 @@ public class LicensingUpdatesService
     private List<LicenseApplyRow> ApplyChanges(
         List<LicensePreviewRow> rows, string licenseType,
         (string username, string password, string domain) creds,
-        string performedBy, string ip, string ticket)
+        Dictionary<string, ProtectedPrincipalResult> protectionResults)
     {
         var results = new List<LicenseApplyRow>();
 
@@ -272,7 +281,8 @@ public class LicensingUpdatesService
             var principal = row.Principal!;
             try
             {
-                var protectionResult = _protectedPrincipalService.CheckAsync(principal).GetAwaiter().GetResult();
+                if (!protectionResults.TryGetValue(PrincipalKey(principal), out var protectionResult))
+                    protectionResult = ProtectedPrincipalResult.Failed("Protected-principal check result is unavailable.");
                 if (protectionResult.CheckFailed)
                 {
                     results.Add(new(row.InputIdentity, principal.UserPrincipalName, "CheckFailed", row.CurrentValue, null, protectionResult.Reason));
@@ -336,18 +346,19 @@ public class LicensingUpdatesService
         return results;
     }
 
+    private static string PrincipalKey(ResolvedDirectoryPrincipal principal) =>
+        principal.ObjectGuid ?? principal.DistinguishedName ?? principal.UserPrincipalName;
+
     internal static List<string> ParseCsv(Stream csvStream)
     {
         var identities = new List<string>();
         using var reader = new StreamReader(csvStream);
+        using var csv = CreateCsvReader(reader);
         var isFirstRow = true;
 
-        while (reader.ReadLine() is { } line)
+        while (csv.Read())
         {
-            var trimmed = line.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed)) continue;
-
-            var firstCol = trimmed.Split(',', 2)[0].Trim().Trim('"');
+            var firstCol = csv.GetField(0)?.Trim();
             if (string.IsNullOrWhiteSpace(firstCol)) continue;
 
             if (isFirstRow)
@@ -361,6 +372,43 @@ public class LicensingUpdatesService
         }
 
         return identities;
+    }
+
+    internal static async Task<List<string>> ParseCsvAsync(Stream csvStream)
+    {
+        var identities = new List<string>();
+        using var reader = new StreamReader(csvStream);
+        using var csv = CreateCsvReader(reader);
+        var isFirstRow = true;
+
+        while (await csv.ReadAsync())
+        {
+            var firstCol = csv.GetField(0)?.Trim();
+            if (string.IsNullOrWhiteSpace(firstCol)) continue;
+
+            if (isFirstRow)
+            {
+                isFirstRow = false;
+                if (HeaderIndicators.Any(h => string.Equals(firstCol, h, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+            }
+
+            identities.Add(firstCol);
+        }
+
+        return identities;
+    }
+
+    private static CsvReader CreateCsvReader(TextReader reader)
+    {
+        var config = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HasHeaderRecord = false,
+            HeaderValidated = null,
+            MissingFieldFound = null,
+            BadDataFound = null
+        };
+        return new CsvReader(reader, config);
     }
 
     private static PSCredential CreateCredential(string username, string password, string domain)

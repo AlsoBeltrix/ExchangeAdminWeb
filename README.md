@@ -33,6 +33,7 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 
 - Realtime trace queries both Exchange Online message trace and on-premises message tracking logs
 - Optional ticket number is recorded in audit logs only; it does not call ServiceNow
+- Historical-search reports are delivered only to the authenticated user's email address
 - Header Analysis is the primary workflow and supports pasted headers plus `.eml` and `.msg` uploads
 - Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
@@ -55,11 +56,12 @@ Module enablement controls, gated by `Security:AdminGroups`.
 
 Each module has its own config page (linked in the sidebar) with:
 
+- **Module Status** — enable/disable the module (global admin only)
 - **Section Access** — which AD groups can use the module (global admin only)
 - **Configuration** — module-specific settings (config fields)
 - **Module Admins** — AD groups that can configure this module without global admin
 
-Changes are persisted to `config/sectionaccess.json` and `config/module-config.json` and take effect immediately.
+Changes are persisted to `config/modules-enabled.json`, `config/sectionaccess.json`, and `config/module-config.json` and take effect immediately.
 Global admins see all module config links; module admins see only their delegated modules.
 
 ### Admin Event Log Page (`/admin-event-log`)
@@ -221,7 +223,9 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
   },
   "Audit": {
     "LogRoot": "E:\\WWWOutput",
-    "RotationPeriod": "daily"
+    "RotationPeriod": "daily",
+    "MaxFileMB": 50,
+    "MaxFilesPerPeriod": 5
   },
   "OperationTrace": {
     "Enabled": true
@@ -372,9 +376,11 @@ C-Suite, Board of Directors, ceo@example.com
 
 ### Audit Logging
 
-All operations are logged as JSON Lines (.jsonl). The file contains both business audit records and correlated operation trace records:
+All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:
 
-**Location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
+**Audit location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
+
+**Trace location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD_trace.jsonl`
 
 **Common audit fields:** `eventType`, `operationId`, `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
 
@@ -399,23 +405,23 @@ Null fields are omitted. `error` appears only on failure.
 - `operation.step` — significant step such as `AuditWritten`, plus shared backend steps where available
 - `operation.complete` — final transaction result and elapsed duration
 
-Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`, `module`, `action`, `stage`, `backend`, `command`, `target`, `ticket`, `result`, `durationMs`, `details`, `errorType`, and `error`. Secret-like detail keys (`password`, `secret`, `token`, `apiKey`, `clientSecret`) are masked as `***`. Shared backend services also emit standalone operation trace records when no audited transaction scope is active, so vault and EXO connection failures are still visible in the event stream. Disable trace records with `OperationTrace:Enabled = false` if needed; audit records remain active.
+Trace fields are SIEM-friendly: `eventType`, `operationId`, `parentOperationId`, `module`, `action`, `stage`, `backend`, `command`, `target`, `ticket`, `result`, `durationMs`, `details`, and `errorType`. Raw exception messages are not written to trace records. Secret-like detail keys (`password`, `secret`, `token`, `apiKey`, `clientSecret`) are masked as `***`. Shared backend services also emit standalone operation trace records when no operation scope is active, so vault and EXO connection failures are still visible in the trace stream. Disable trace records with `OperationTrace:Enabled = false` if needed; audit records remain active.
 
 **Rotation:**
 - `daily` (default): New file each day
 - `weekly`: New file each week
 - `monthly`: New file each month
+- `Audit:MaxFileMB` and `Audit:MaxFilesPerPeriod` cap both audit and trace file growth
 
 **Extended diagnostics:** Admin Settings can enable a separate UI-viewable diagnostic stream for troubleshooting Delinea/on-prem connectivity. It defaults to off, writes to `exchangeadmin_YYYYMMDD_extended.jsonl`, rotates at 10 MB by default, and keeps 5 files per day including the active file. Tune with `ExtendedLog:MaxFileMB` and `ExtendedLog:MaxFilesPerDay` if needed. The queue is bounded and drops oldest entries under sustained bursts, so this is best-effort diagnostics, not an audit trail. Keep Admin Event Log access tightly scoped.
 
-### Delinea Secret Server (On-Prem Credentials)
+### Delinea Secret Server
 
-On-prem Exchange operations retrieve credentials from Delinea Secret Server:
+The app uses one shared Delinea API bootstrap credential, then each module retrieves its own privileged secret by module config. Do not put on-prem Exchange, AD, DHCP, or Graph application credentials in global appsettings.
 
 ```json
 "Delinea": {
   "SecretServerUrl": "https://secretserver.yourcompany.com/secretserver",
-  "ExchangeSecretId": 0,
   "CredentialTarget": "Delinea_Client"
 }
 ```
@@ -423,10 +429,11 @@ On-prem Exchange operations retrieve credentials from Delinea Secret Server:
 | Key | Purpose |
 |-----|---------|
 | `SecretServerUrl` | Base URL of Delinea/Thycotic Secret Server |
-| `ExchangeSecretId` | Secret ID containing on-prem Exchange service account (Username, Password, Domain fields) |
 | `CredentialTarget` | Windows Credential Manager entry name storing Delinea API client credentials |
 
-The secret must contain fields named `Username`, `Password`, and `Domain`.
+Modules that need privileged on-prem or AD access expose their own `DelineaSecretId` field on that module's config page. Those secrets must contain fields named `Username`, `Password`, and `Domain`. Graph-backed modules use their own Delinea secret containing `Tenant ID`, `Application ID`, and `Client Secret`.
+
+Module secrets must be directly readable by the Delinea API bootstrap credential and must not require checkout, approval, or another interactive Secret Server workflow. The web app cannot complete a checkout prompt during background API calls.
 
 ### Application Settings
 

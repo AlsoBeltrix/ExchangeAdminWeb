@@ -7,7 +7,13 @@ namespace ExchangeAdminWeb.Services;
 public class HeaderAnalysisService
 {
     private const long MaxFileSizeBytes = 50 * 1024 * 1024;
+    private const string MsgTempFilePrefix = "ExchangeAdminWeb_";
+    private const string MsgTempFilePattern = "ExchangeAdminWeb_*.msg";
+    private static readonly TimeSpan StaleTempFileAge = TimeSpan.FromHours(4);
+    private static readonly TimeSpan StaleTempFileSweepInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
+    private static readonly object MsgTempSweepLock = new();
+    private static DateTime _lastMsgTempSweepUtc = DateTime.MinValue;
 
     private static readonly Regex ReceivedFromRegex = new(@"from\s+([^\s]+)(?:\s+\(([^)]+)\))?", RegexOptions.IgnoreCase | RegexOptions.Compiled, RegexTimeout);
     private static readonly Regex IpInParensRegex = new(@"\[?(\d+\.\d+\.\d+\.\d+)\]?", RegexOptions.Compiled, RegexTimeout);
@@ -105,7 +111,9 @@ public class HeaderAnalysisService
 
     private async Task<EmailHeaders> ParseMsgAsync(Stream stream, string fileName)
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"ExchangeAdminWeb_{Guid.NewGuid():N}.msg");
+        SweepStaleMsgTempFiles();
+
+        var tempPath = Path.Combine(Path.GetTempPath(), $"{MsgTempFilePrefix}{Guid.NewGuid():N}.msg");
         try
         {
             await using (var temp = File.Create(tempPath))
@@ -150,7 +158,53 @@ public class HeaderAnalysisService
         }
         finally
         {
-            try { File.Delete(tempPath); } catch { }
+            DeleteTempMsgFile(tempPath);
+        }
+    }
+
+    private void SweepStaleMsgTempFiles()
+    {
+        lock (MsgTempSweepLock)
+        {
+            var now = DateTime.UtcNow;
+            if (now - _lastMsgTempSweepUtc < StaleTempFileSweepInterval)
+                return;
+            _lastMsgTempSweepUtc = now;
+        }
+
+        try
+        {
+            var cutoff = DateTime.UtcNow - StaleTempFileAge;
+            foreach (var path in Directory.EnumerateFiles(Path.GetTempPath(), MsgTempFilePattern))
+            {
+                try
+                {
+                    var info = new FileInfo(path);
+                    if (info.LastWriteTimeUtc < cutoff)
+                        DeleteTempMsgFile(path);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to inspect stale MSG temp file {Path}", path);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to enumerate stale MSG temp files");
+        }
+    }
+
+    private void DeleteTempMsgFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete MSG temp file {Path}", path);
         }
     }
 

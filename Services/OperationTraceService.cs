@@ -88,7 +88,7 @@ public class OperationTraceService
 
         Write("operation.start", context, stage: "Standalone", result: "Started", details: new Dictionary<string, object?> { ["source"] = "BackendStep" });
         Write("operation.step", context, stage, result, backend, command, target, details, exception);
-        Complete(context, !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase), exception?.Message, exception);
+        Complete(context, !string.Equals(result, "Failed", StringComparison.OrdinalIgnoreCase), exception is null ? null : "Backend operation failed", exception);
     }
 
     private void Complete(OperationContext context, bool success, string? message = null, Exception? exception = null)
@@ -140,11 +140,10 @@ public class OperationTraceService
             ["result"] = result,
             ["durationMs"] = context.Started.ElapsedMilliseconds,
             ["details"] = SanitizeDetails(details),
-            ["errorType"] = exception?.GetType().Name,
-            ["error"] = exception?.Message
+            ["errorType"] = exception?.GetType().Name
         };
 
-        _log.Write(evt);
+        _log.WriteTrace(evt);
     }
 
     private static Dictionary<string, object?>? SanitizeDetails(IReadOnlyDictionary<string, object?>? details)

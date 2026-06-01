@@ -319,7 +319,8 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Send report to</label>
-                        <input type="email" class="form-control" @bind="reportEmail" placeholder="your.email@analog.com" disabled="@isLoading" />
+                        <input type="email" class="form-control" value="@userEmail" disabled />
+                        <div class="form-text">Historical-search reports are sent only to your authenticated email address.</div>
                     </div>
                 </div>
             }
@@ -332,7 +333,7 @@
             @if (historicalSubmitted)
             {
                 <div class="alert alert-success">
-                    Historical search submitted successfully. Results will be emailed to <strong>@reportEmail</strong> when processing is complete.
+                    Historical search submitted successfully. Results will be emailed to <strong>@userEmail</strong> when processing is complete.
                 </div>
             }
 
@@ -423,7 +424,6 @@
     private string currentUser = "";
     private string userEmail = "";
     private string clientIpAddress = "Unknown";
-    private string reportEmail = "";
 
     private string headerText = "";
     private string? uploadedFileName;
@@ -455,8 +455,6 @@
             ?? user.FindFirst("email")?.Value
             ?? user.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
             ?? "";
-        reportEmail = userEmail;
-
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
@@ -541,10 +539,10 @@
 
     private async Task RunHistoricalSearch()
     {
-        var notifyAddress = reportEmail?.Trim();
+        var notifyAddress = userEmail?.Trim();
         if (string.IsNullOrWhiteSpace(notifyAddress) || !notifyAddress.Contains('@'))
         {
-            validationError = "A valid email address is required for historical search results delivery.";
+            validationError = "Your authenticated email address is required for historical search results delivery.";
             return;
         }
 

@@ -12,6 +12,7 @@
 @inject IJSRuntime JS
 @inject ILogger<AdminEventLog> Logger
 @inject ExtendedLogService ExtendedLog
+@inject JsonlLogService JsonlLog
 
 <PageTitle>Event Log</PageTitle>
 
@@ -270,10 +271,6 @@
         expandedRow = -1;
         currentPage = 1;
 
-        var logRoot = Config["Audit:LogRoot"] ?? @"E:\WWWOutput";
-        var logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
-        var rotationPeriod = Config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
-
         // Ensure startDate <= endDate
         var effectiveStart = startDate <= endDate ? startDate : endDate;
         var effectiveEnd = startDate <= endDate ? endDate : startDate;
@@ -281,7 +278,7 @@
         var filesLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var buffer = new Queue<AuditEvent>(MaxTotalEvents + 1);
         var filesNotFound = 0;
-        var totalDays = effectiveEnd.DayNumber - effectiveStart.DayNumber + 1;
+        var filesFound = 0;
         var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var rangeEndUtc = effectiveEnd.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
         var totalParsed = 0;
@@ -289,74 +286,72 @@
         for (var d = effectiveStart; d <= effectiveEnd; d = d.AddDays(1))
         {
             var date = d.ToDateTime(TimeOnly.MinValue);
-            var suffix = rotationPeriod switch
+            var pathsForDate = JsonlLog.GetAuditLogPaths(date).ToList();
+            var foundFileForDate = false;
+            foreach (var filePath in pathsForDate)
             {
-                "weekly" => $"{date.Year}W{System.Globalization.ISOWeek.GetWeekOfYear(date):D2}",
-                "monthly" => date.ToString("yyyyMM"),
-                _ => date.ToString("yyyyMMdd")
-            };
+                if (!filesLoaded.Add(filePath))
+                    continue;
 
-            var filePath = Path.Combine(logFolder, $"exchangeadmin_{suffix}.jsonl");
+                if (!File.Exists(filePath))
+                    continue;
 
-            if (!filesLoaded.Add(filePath))
-                continue;
-
-            if (!File.Exists(filePath))
-            {
-                filesNotFound++;
-                continue;
-            }
-
-            try
-            {
-                foreach (var line in File.ReadLines(filePath))
+                foundFileForDate = true;
+                filesFound++;
+                try
                 {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    try
+                    foreach (var line in ReadLinesShared(filePath))
                     {
-                        using var doc = JsonDocument.Parse(line);
-                        var root = doc.RootElement;
-
-                        var tsStr = TryGetString(root, "ts");
-                        if (tsStr != null && DateTimeOffset.TryParse(tsStr, out var eventTime))
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        try
                         {
-                            if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                            using var doc = JsonDocument.Parse(line);
+                            var root = doc.RootElement;
+
+                            var tsStr = TryGetString(root, "ts");
+                            if (tsStr != null && DateTimeOffset.TryParse(tsStr, out var eventTime))
+                            {
+                                if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                                    continue;
+                            }
+
+                            var eventType = TryGetString(root, "eventType") ?? "audit";
+                            if (!eventType.Equals("audit", StringComparison.OrdinalIgnoreCase))
                                 continue;
+
+                            var rawTarget = GetAuditTarget(root);
+                            totalParsed++;
+                            buffer.Enqueue(new AuditEvent
+                            {
+                                Index = 0,
+                                Time = tsStr != null ? FormatTimestamp(tsStr) : "",
+                                User = TryGetString(root, "user") ?? "",
+                                Ip = TryGetString(root, "ip") ?? "",
+                                Action = FormatAction(root, eventType),
+                                Category = FormatCategory(root, eventType),
+                                Target = FormatTargetSummary(rawTarget),
+                                FullTarget = rawTarget ?? "",
+                                Result = TryGetString(root, "result") ?? "",
+                                Details = ExtractAuditDetails(root, eventType, rawTarget)
+                            });
+                            if (buffer.Count > MaxTotalEvents)
+                                buffer.Dequeue();
                         }
-
-                        var eventType = TryGetString(root, "eventType") ?? "audit";
-                        if (!eventType.Equals("audit", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        var rawTarget = GetAuditTarget(root);
-                        totalParsed++;
-                        buffer.Enqueue(new AuditEvent
-                        {
-                            Index = 0,
-                            Time = tsStr != null ? FormatTimestamp(tsStr) : "",
-                            User = TryGetString(root, "user") ?? "",
-                            Ip = TryGetString(root, "ip") ?? "",
-                            Action = FormatAction(root, eventType),
-                            Category = FormatCategory(root, eventType),
-                            Target = FormatTargetSummary(rawTarget),
-                            FullTarget = rawTarget ?? "",
-                            Result = TryGetString(root, "result") ?? "",
-                            Details = ExtractAuditDetails(root, eventType, rawTarget)
-                        });
-                        if (buffer.Count > MaxTotalEvents)
-                            buffer.Dequeue();
+                        catch { }
                     }
-                    catch { }
+                }
+                catch (Exception ex)
+                {
+                    loadError = $"Error reading log: {ex.Message}";
+                    Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
                 }
             }
-            catch (Exception ex)
-            {
-                loadError = $"Error reading log: {ex.Message}";
-                Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
-            }
+
+            if (!foundFileForDate)
+                filesNotFound++;
         }
 
-        var anyFileFound = filesLoaded.Count > filesNotFound;
+        var anyFileFound = filesFound > 0;
         if (buffer.Count == 0 && loadError == null)
         {
             loadError = !anyFileFound
@@ -601,6 +596,14 @@
         extendedLogEvents = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue))
             .Select(ParseExtendedLogEntry)
             .ToList();
+    }
+
+    private static IEnumerable<string> ReadLinesShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+            yield return line;
     }
 
     private static ExtendedLogEvent ParseExtendedLogEntry(string line)

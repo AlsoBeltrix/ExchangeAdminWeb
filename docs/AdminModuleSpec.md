@@ -104,7 +104,7 @@ File: `config/modules-enabled.json`
 - Absent file: all modules use `EnabledByDefault`
 - Corrupt file: all non-system modules disabled (fail-closed)
 - System modules always enabled regardless of file content
-- Managed via Admin Settings toggle switches
+- Managed via Admin Settings toggle switches or the module's own config page
 
 ## Registration
 
@@ -130,16 +130,18 @@ The catalog validates at startup:
 ### Rules
 
 1. Declare a `DelineaSecretId` config field in the module descriptor. The operator sets the secret ID via the module's config page.
-2. Call `DelineaService.GetCredentialsBySecretIdAsync(secretId)` with the module's configured ID — never `GetExchangeCredentialsAsync()` (which is for the core Exchange module only).
+2. Retrieve credentials through `ModuleCredentialService.GetCredentialsAsync(moduleId, purpose)` or call `DelineaService.GetCredentialsBySecretIdAsync(secretId)` only after reading the secret ID from the same module's config. Never use a global or another module's credential.
 3. If the secret ID is not configured or credentials are unavailable, **fail closed** — return an error, do not fall back to the app pool identity or another module's secret.
 4. The Delinea API bootstrap credential (PasswordVault target `Delinea_Client`) is shared infrastructure. Individual module secrets retrieved through it are isolated.
+5. Module secrets must be directly readable by the Delinea API bootstrap credential and must not require checkout, approval, or other interactive workflows. Noninteractive module calls cannot complete a Secret Server checkout flow.
 
 ### For Graph API modules
 
-1. Declare `TenantId`, `ClientId`, and `CredentialTarget` config fields.
-2. Create a `GraphTokenClient` from module config on each operation — do not cache across config changes.
+1. Declare a module-specific `DelineaSecretId` config field that points to a Secret Server record containing the Graph app fields.
+2. The Graph app secret must contain `Tenant ID`, `Application ID`, and `Client Secret` fields.
 3. Each module uses its own Entra app registration with minimal permissions.
-4. Reusing an app registration across modules is allowed ONLY if the operator explicitly enters the same values in each module's config. The code must never fall back to another module's config.
+4. Create a `GraphTokenClient` from the module's own Delinea secret on each operation. Do not fall back to another module's config or credential.
+5. Reusing an app registration across modules is allowed ONLY if the operator explicitly enters the same Secret ID in each module's config.
 
 ### Example (DHCP Authorization)
 
@@ -150,9 +152,7 @@ ConfigFields = [
 ```
 
 ```csharp
-var secretId = GetSecretId(); // reads from module config
-if (secretId is null) return Fail("Module not configured.");
-var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
+var creds = await _moduleCredentials.GetCredentialsAsync("DhcpAuthorization", "DHCP authorization");
 if (creds is null) return Fail("Credentials unavailable.");
 ```
 
@@ -189,7 +189,7 @@ All mutating actions must call `AuditService` with:
 - Result (Success/Failed)
 - Relevant context (target, error detail)
 
-`AuditService` writes the business audit record and a correlated operation trace (`operation.start`, `operation.step`, `operation.complete`) with the same `operationId`. Module code that needs a multi-step transaction transcript should begin an `OperationTraceService` scope before the first backend call, then write sanitized `Step(...)` records for important milestones such as authorization checks, vault credential retrieval, Graph/Exchange/AD writes, notifications, or cleanup. Shared backend services emit standalone trace records when no operation scope is active. Never place secrets, tokens, raw PowerShell output, or raw API payloads in trace details.
+`AuditService` writes the business audit record to the audit JSONL file. Correlated operation trace records (`operation.start`, `operation.step`, `operation.complete`) use the same `operationId` but are written to the separate trace JSONL file. Module code that needs a multi-step transaction transcript should begin an `OperationTraceService` scope before the first backend call, then write sanitized `Step(...)` records for important milestones such as authorization checks, vault credential retrieval, Graph/Exchange/AD writes, notifications, or cleanup. Shared backend services emit standalone trace records when no operation scope is active. Never place secrets, tokens, raw exception messages, raw PowerShell output, or raw API payloads in trace details.
 
 ## Service Pattern
 

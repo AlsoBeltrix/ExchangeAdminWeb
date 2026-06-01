@@ -99,19 +99,20 @@
 
         <div class="col-lg-4">
             <div class="card" style="position: sticky; top: 1rem;">
-                <div class="card-header"><strong>Authorize New Server</strong></div>
+                <div class="card-header"><strong>DHCP Operation Details</strong></div>
                 <div class="card-body">
                     <div class="mb-3">
                         <label class="form-label fw-semibold">DNS Name</label>
-                        <input type="text" class="form-control" @bind="newDnsName" placeholder="dhcp01.contoso.com" disabled="@isOperating" />
+                        <input type="text" class="form-control" @bind="newDnsName" @bind:event="oninput" placeholder="dhcp01.contoso.com" disabled="@isOperating" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">IP Address</label>
-                        <input type="text" class="form-control" @bind="newIpAddress" placeholder="10.0.0.1" disabled="@isOperating" />
+                        <input type="text" class="form-control" @bind="newIpAddress" @bind:event="oninput" placeholder="10.0.0.1" disabled="@isOperating" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" placeholder="INC/REQ number" disabled="@isOperating" />
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isOperating" />
+                        <small class="text-muted">Required for both authorize and deauthorize operations.</small>
                     </div>
                     <button class="btn btn-primary" @onclick="AuthorizeServer"
                             disabled="@(isOperating || string.IsNullOrWhiteSpace(newDnsName) || string.IsNullOrWhiteSpace(newIpAddress) || string.IsNullOrWhiteSpace(ticketNumber))">

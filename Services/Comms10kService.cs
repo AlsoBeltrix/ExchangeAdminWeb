@@ -7,14 +7,14 @@ public class Comms10kService
 {
     private readonly ILogger<Comms10kService> _logger;
     private readonly ModuleConfigService _moduleConfig;
-    private readonly DelineaService _delineaService;
+    private readonly ModuleCredentialService _moduleCredentials;
     private readonly IConfiguration _config;
 
-    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, DelineaService delineaService, IConfiguration config)
+    public Comms10kService(ILogger<Comms10kService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, IConfiguration config)
     {
         _logger = logger;
         _moduleConfig = moduleConfig;
-        _delineaService = delineaService;
+        _moduleCredentials = moduleCredentials;
         _config = config;
     }
 
@@ -29,15 +29,17 @@ public class Comms10kService
     }
 
 
-    public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup);
+    private bool HasCredentialSecret => int.TryParse(_moduleConfig.GetValue("Comms10k", "DelineaSecretId"), out var id) && id > 0;
+
+    public bool IsConfigured => !string.IsNullOrEmpty(TargetGroup) && HasCredentialSecret;
 
     public async Task<Comms10kMemberList> GetMembersAsync(int? limit = null)
     {
         var group = TargetGroup;
         if (string.IsNullOrEmpty(group))
-            throw new InvalidOperationException("Comms10k module is not configured. Set TargetGroupName in Admin Settings.");
+            throw new InvalidOperationException("Comms10k module is not configured. Set TargetGroupName in Module Config.");
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD membership lookup");
         if (creds is null)
             throw new InvalidOperationException("Cannot connect to AD: credentials unavailable.");
 
@@ -106,7 +108,7 @@ public class Comms10kService
         if (string.IsNullOrEmpty(group))
             return new Comms10kResolveResult { Success = false, Message = "Module not configured." };
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD user resolution");
         if (creds is null)
             return new Comms10kResolveResult { Success = false, Message = "AD credentials unavailable." };
 
@@ -173,7 +175,7 @@ public class Comms10kService
         if (string.IsNullOrEmpty(group))
             return new Comms10kUpdateResult { Success = false, Message = "Module not configured." };
 
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await _moduleCredentials.GetCredentialsAsync("Comms10k", "Comms-10k AD membership replacement");
         if (creds is null)
             return new Comms10kUpdateResult { Success = false, Message = "AD credentials unavailable." };
 

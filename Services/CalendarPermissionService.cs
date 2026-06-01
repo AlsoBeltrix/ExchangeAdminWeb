@@ -10,8 +10,8 @@ namespace ExchangeAdminWeb.Services;
 
 public class CalendarPermissionService : ExchangeServiceBase
 {
-    public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri)
-        : base(exoPool, delineaService, logger, onPremServerUri) { }
+    public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger logger, string onPremServerUri, ModuleCredentialService moduleCredentials)
+        : base(exoPool, delineaService, logger, onPremServerUri, moduleCredentials, "CalendarPermissions") { }
 
     public Task<PermissionResult> SetCalendarPermissionAsync(string targetMailbox, string user, CalendarAccessRight accessRight)
     {
@@ -77,7 +77,13 @@ public class CalendarPermissionService : ExchangeServiceBase
         using var reader = new StreamReader(csvStream, Encoding.UTF8);
         using var csv = new CsvReader(reader, config);
 
-        var records = csv.GetRecords<CalendarPermissionCsvRow>().Take(201).ToList();
+        var records = new List<CalendarPermissionCsvRow>();
+        await foreach (var row in csv.GetRecordsAsync<CalendarPermissionCsvRow>())
+        {
+            records.Add(row);
+            if (records.Count > 200)
+                break;
+        }
         if (records.Count > 200)
             return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
         var errors = new List<string>();
@@ -198,7 +204,7 @@ public class CalendarPermissionService : ExchangeServiceBase
 
     public async Task<PermissionResult> SetCalendarPermissionOnPremAsync(string targetMailbox, string user, string accessRight)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 
@@ -246,7 +252,7 @@ public class CalendarPermissionService : ExchangeServiceBase
 
     public async Task<PermissionResult> RemoveCalendarPermissionOnPremAsync(string targetMailbox, string user)
     {
-        var creds = await _delineaService.GetExchangeCredentialsAsync();
+        var creds = await GetModuleCredentialsAsync("on-prem calendar permission operation");
         if (creds is null)
             return PermissionResult.Fail("Cannot connect to on-prem Exchange: credentials unavailable.");
 

@@ -54,6 +54,7 @@ public class ProtectedPrincipalService
 
     private DateTime _lastCredentialFailure = DateTime.MinValue;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
     public ProtectedPrincipalService(
         IWebHostEnvironment env,
@@ -354,7 +355,7 @@ public class ProtectedPrincipalService
     internal static bool MatchesWildcardPattern(string pattern, string value)
     {
         var regexPattern = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-        return Regex.IsMatch(value, regexPattern, RegexOptions.IgnoreCase);
+        return Regex.IsMatch(value, regexPattern, RegexOptions.IgnoreCase, RegexTimeout);
     }
 
     private static void CheckOuMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
@@ -462,78 +463,89 @@ public class ProtectedPrincipalService
         if (string.IsNullOrEmpty(targetDn))
             return (matches, false);
 
-        ps.AddCommand("Get-ADUser")
-          .AddParameter("Identity", targetDn)
-          .AddParameter("Properties", new[] { "memberOf" })
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
-        var adUser = ps.Invoke();
-        ps.Commands.Clear();
-
-        var memberOfRaw = adUser.FirstOrDefault()?.Properties["memberOf"]?.Value;
-        var allGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (memberOfRaw is System.Collections.IEnumerable enumerable)
+        foreach (var protectedGroup in protectedGroups.Where(g => !string.IsNullOrWhiteSpace(g)))
         {
-            foreach (var item in enumerable)
-                if (item != null) allGroups.Add(item.ToString()!);
-        }
-        else if (memberOfRaw is string singleGroup)
-        {
-            allGroups.Add(singleGroup);
-        }
-
-        var expandedGroups = new HashSet<string>(allGroups, StringComparer.OrdinalIgnoreCase);
-        var toExpand = new Queue<string>(allGroups);
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        while (toExpand.Count > 0)
-        {
-            var groupDn = toExpand.Dequeue();
-            if (!visited.Add(groupDn)) continue;
-
             try
             {
-                ps.AddCommand("Get-ADGroup")
-                  .AddParameter("Identity", groupDn)
-                  .AddParameter("Properties", new[] { "memberOf" })
+                var groupDn = ResolveProtectedGroupDn(ps, credential, protectedGroup);
+                if (string.IsNullOrWhiteSpace(groupDn))
+                {
+                    _logger.LogWarning("Protected group {ProtectedGroup} could not be resolved during membership check", protectedGroup);
+                    expansionHadErrors = true;
+                    continue;
+                }
+
+                var targetFilter = EscapeLdapFilter(targetDn);
+                var groupFilter = EscapeLdapFilter(groupDn);
+                ps.AddCommand("Get-ADUser")
+                  .AddParameter("LDAPFilter", $"(&(distinguishedName={targetFilter})(memberOf:1.2.840.113556.1.4.1941:={groupFilter}))")
                   .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var groupResult = ps.Invoke();
+                  .AddParameter("ErrorAction", "Stop");
+                var userResult = ps.Invoke();
                 ps.Commands.Clear();
 
-                var parentGroups = groupResult.FirstOrDefault()?.Properties["memberOf"]?.Value;
-                if (parentGroups is System.Collections.IEnumerable parentEnum)
+                if (ps.HadErrors)
                 {
-                    foreach (var parent in parentEnum)
-                    {
-                        if (parent != null)
-                        {
-                            var parentDn = parent.ToString()!;
-                            if (expandedGroups.Add(parentDn))
-                                toExpand.Enqueue(parentDn);
-                        }
-                    }
+                    expansionHadErrors = true;
+                    ps.Streams.Error.Clear();
+                    continue;
                 }
-                else if (parentGroups is string singleParent && expandedGroups.Add(singleParent))
-                {
-                    toExpand.Enqueue(singleParent);
-                }
+
+                if (userResult.Count > 0)
+                    matches.Add($"Group:{protectedGroup}");
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to expand group {GroupDn} during transitive membership check", groupDn);
+                _logger.LogWarning(ex, "Failed to evaluate protected group {ProtectedGroup} during transitive membership check", protectedGroup);
                 expansionHadErrors = true;
                 ps.Commands.Clear();
+                ps.Streams.Error.Clear();
             }
         }
 
-        foreach (var protectedGroup in protectedGroups)
+        return (matches, expansionHadErrors);
+    }
+
+    private string? ResolveProtectedGroupDn(PowerShell ps, PSCredential credential, string protectedGroup)
+    {
+        if (protectedGroup.Contains("DC=", StringComparison.OrdinalIgnoreCase) ||
+            protectedGroup.Contains("CN=", StringComparison.OrdinalIgnoreCase))
         {
-            if (expandedGroups.Any(g => MatchesDnToProtectedGroup(g, protectedGroup)))
-                matches.Add($"Group:{protectedGroup}");
+            return protectedGroup;
         }
 
-        return (matches, expansionHadErrors);
+        var groupIdentity = protectedGroup.Contains('\\')
+            ? protectedGroup.Split('\\', 2)[1]
+            : protectedGroup;
+
+        try
+        {
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Identity", groupIdentity)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var result = ps.Invoke();
+            ps.Commands.Clear();
+
+            var dn = result.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
+            if (!string.IsNullOrWhiteSpace(dn))
+                return dn;
+        }
+        catch
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+        }
+
+        var escaped = EscapeLdapFilter(groupIdentity);
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("LDAPFilter", $"(|(cn={escaped})(sAMAccountName={escaped})(name={escaped}))")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var fallback = ps.Invoke();
+        ps.Commands.Clear();
+
+        return fallback.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
     }
 
     /// <summary>
