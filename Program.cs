@@ -74,6 +74,7 @@ try
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
     builder.Services.AddSingleton<NamedLocationsService>();
+    builder.Services.AddSingleton<M365GroupManagementService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
     builder.Services.AddScoped<ADAttributeEditorService>();
