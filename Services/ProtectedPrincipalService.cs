@@ -412,8 +412,8 @@ public class ProtectedPrincipalService
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
-            _logger.LogError("Directory-read credential is not configured but protected groups are defined — configure it on the Protected Principals admin page");
-            return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Protected Principals admin page.");
+            _logger.LogError("Directory-read credential is not configured but protected groups are defined — configure it on the Admin Settings page");
+            return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
         var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
