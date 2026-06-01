@@ -290,7 +290,8 @@
                         ["city"] = existing.City,
                         ["building"] = existing.Building,
                         ["capacity"] = existing.Capacity,
-                        ["floor"] = existing.Floor
+                        ["floor"] = existing.Floor,
+                        ["timezone"] = existing.TimeZone
                     };
                 }
             }
@@ -304,7 +305,8 @@
                 ["city"] = newCity,
                 ["building"] = newBuilding,
                 ["capacity"] = capacity,
-                ["floor"] = newFloor
+                ["floor"] = newFloor,
+                ["timezone"] = newTimezone
             };
 
             result = await RoomService.SetRoomMetadataAsync(email, newCity, newBuilding, capacity, newFloor, newTimezone);
@@ -415,7 +417,8 @@
                                 ["city"] = existing.City,
                                 ["building"] = existing.Building,
                                 ["capacity"] = existing.Capacity,
-                                ["floor"] = existing.Floor
+                                ["floor"] = existing.Floor,
+                                ["timezone"] = existing.TimeZone
                             };
                         }
                     }
@@ -429,7 +432,8 @@
                         ["city"] = row.City,
                         ["building"] = row.Building,
                         ["capacity"] = row.Capacity,
-                        ["floor"] = row.Floor
+                        ["floor"] = row.Floor,
+                        ["timezone"] = row.TimeZone
                     };
 
                     var r = await RoomService.SetRoomMetadataAsync(row.PrimarySmtpAddress, row.City, row.Building, row.Capacity, row.Floor, row.TimeZone);
@@ -501,6 +505,24 @@
                 return;
             }
 
+            // Capture old state before mutation (best-effort)
+            Dictionary<string, object?>? oldTypeValues = null;
+            try
+            {
+                var existing = await RoomService.GetRoomInfoAsync(email);
+                if (existing != null)
+                {
+                    oldTypeValues = new Dictionary<string, object?>
+                    {
+                        ["timezone"] = existing.TimeZone
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before type change", email);
+            }
+
             result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, newTimezone);
 
             var newValues = new Dictionary<string, object?>
@@ -508,7 +530,7 @@
                 ["roomType"] = selectedRoomType,
                 ["timezone"] = newTimezone
             };
-            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetType"); }
+            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, oldValues: oldTypeValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetType"); }
         }
         catch (Exception ex)
         {

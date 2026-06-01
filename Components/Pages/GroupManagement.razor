@@ -253,7 +253,12 @@
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
-            if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
+            if (!authCheck.Succeeded)
+            {
+                opResult = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
+                return;
+            }
 
             opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
@@ -289,7 +294,12 @@
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
-            if (!authCheck.Succeeded) { opResult = PermissionResult.Fail("Authorization denied."); return; }
+            if (!authCheck.Succeeded)
+            {
+                opResult = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
+                return;
+            }
 
             opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 

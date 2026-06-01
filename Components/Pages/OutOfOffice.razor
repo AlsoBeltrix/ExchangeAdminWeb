@@ -286,7 +286,7 @@
                 if (currentOof != null && currentOof.Error == null)
                     previousState = currentOof.State ?? "Unknown";
             }
-            catch { /* best-effort; do not block mutation */ }
+            catch (Exception ex) { Logger.LogWarning(ex, "Could not retrieve current OOF state for {Target} before mutation", setEmail.Trim()); }
 
             setResult = await OofService.SetOutOfOfficeAsync(
                 setEmail.Trim(), oofState,

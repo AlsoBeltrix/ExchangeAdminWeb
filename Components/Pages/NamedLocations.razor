@@ -321,6 +321,9 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
+                var deniedAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
+                var deniedTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, deniedAction, "NamedLocations", deniedTarget, false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", deniedAction); }
                 return;
             }
 
@@ -404,6 +407,7 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations_Delete auth denial"); }
                 return;
             }
 

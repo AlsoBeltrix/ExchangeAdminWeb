@@ -192,10 +192,14 @@
         try
         {
             var ticket = ticketNumber.Trim();
+            var dns = newDnsName.Trim();
+            var ip = newIpAddress.Trim();
+
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize ticket validation"); }
                 return;
             }
 
@@ -204,11 +208,10 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "Authorization denied." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Authorize", "DhcpAuthorization", $"{dns} ({ip})", false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP authorize auth denial"); }
                 return;
             }
 
-            var dns = newDnsName.Trim();
-            var ip = newIpAddress.Trim();
             operationResult = await DhcpService.AuthorizeServerAsync(dns, ip);
 
             try
@@ -263,6 +266,7 @@
             if (string.IsNullOrWhiteSpace(ticket))
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "A ticket number is required for deauthorization. Enter one in the Authorize form." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, "", "Ticket number not provided"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize missing ticket"); }
                 return;
             }
 
@@ -270,6 +274,7 @@
             if (!ticketValidation.IsValid)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize ticket validation"); }
                 return;
             }
 
@@ -278,6 +283,7 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new DhcpOperationResult { Success = false, Message = "Authorization denied." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "DHCP_Deauthorize", "DhcpAuthorization", $"{server.DnsName} ({server.IpAddress})", false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for DHCP deauthorize auth denial"); }
                 return;
             }
 

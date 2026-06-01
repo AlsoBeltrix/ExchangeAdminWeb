@@ -143,6 +143,19 @@ public class ConferenceRoomService : ExchangeServiceBase
             var placeResults = Invoke(ps, tracker);
             var place = placeResults.FirstOrDefault();
 
+            // Retrieve current timezone from regional configuration (best-effort)
+            string timezone = "";
+            try
+            {
+                ps.AddCommand("Get-MailboxRegionalConfiguration")
+                  .AddParameter("Identity", roomEmail)
+                  .AddParameter("ErrorAction", "SilentlyContinue");
+                var regionalResults = InvokeOptional(ps, tracker);
+                var regional = regionalResults.FirstOrDefault();
+                timezone = regional?.Properties["TimeZone"]?.Value?.ToString() ?? "";
+            }
+            catch { /* best-effort; do not fail the lookup */ }
+
             return new RoomInfo
             {
                 Email = mbx.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? roomEmail,
@@ -150,7 +163,8 @@ public class ConferenceRoomService : ExchangeServiceBase
                 City = place?.Properties["City"]?.Value?.ToString() ?? "",
                 Building = place?.Properties["Building"]?.Value?.ToString() ?? "",
                 Capacity = int.TryParse(place?.Properties["Capacity"]?.Value?.ToString(), out var cap) ? cap : 0,
-                Floor = place?.Properties["Floor"]?.Value?.ToString() ?? ""
+                Floor = place?.Properties["Floor"]?.Value?.ToString() ?? "",
+                TimeZone = timezone
             };
         });
     }
@@ -164,4 +178,5 @@ public class RoomInfo
     public string Building { get; set; } = "";
     public int Capacity { get; set; }
     public string Floor { get; set; } = "";
+    public string TimeZone { get; set; } = "";
 }

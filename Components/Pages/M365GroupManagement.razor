@@ -419,6 +419,9 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new M365GroupResult { Success = false, Message = "Authorization denied." };
+                var deniedAction = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
+                var deniedTarget = editingGroup != null ? $"{formDisplayName.Trim()} ({editingGroup.Id})" : formDisplayName.Trim();
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, deniedAction, "M365GroupManagement", deniedTarget, false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", deniedAction); }
                 return;
             }
 
@@ -481,6 +484,7 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new M365GroupResult { Success = false, Message = "Authorization denied." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365GroupManagement_Delete auth denial"); }
                 return;
             }
 
