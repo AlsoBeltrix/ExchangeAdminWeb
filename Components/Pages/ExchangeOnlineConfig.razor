@@ -41,6 +41,13 @@
         </div>
     }
 
+    @if (configCorrupt)
+    {
+        <div class="alert alert-danger">
+            <strong>Configuration file is corrupt.</strong> The module-config.json file cannot be parsed. Fix or delete the file to restore EXO configuration. Values shown below are NOT active — the runtime will refuse EXO connections until the config file is repaired.
+        </div>
+    }
+
     <!-- Module Status -->
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -131,6 +138,7 @@
     private bool statusIsError;
 
     private bool moduleEnabled;
+    private bool configCorrupt;
     private string exoAppId = "";
     private string exoOrganization = "";
     private string exoCertSubject = "";
@@ -161,12 +169,22 @@
     {
         try
         {
-            exoAppId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey)
-                ?? Config["ExchangeOnline:AppId"] ?? "";
-            exoOrganization = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey)
-                ?? Config["ExchangeOnline:Organization"] ?? "";
-            exoCertSubject = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey)
-                ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+            var appId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey);
+            var org = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey);
+            var cert = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey);
+
+            if (ModuleConfigSvc.HasConfigFile && ModuleConfigSvc.IsCorrupt)
+            {
+                configCorrupt = true;
+                exoAppId = "";
+                exoOrganization = "";
+                exoCertSubject = "";
+                return;
+            }
+
+            exoAppId = appId ?? Config["ExchangeOnline:AppId"] ?? "";
+            exoOrganization = org ?? Config["ExchangeOnline:Organization"] ?? "";
+            exoCertSubject = cert ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
         }
         catch (Exception ex)
         {

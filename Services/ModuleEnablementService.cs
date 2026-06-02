@@ -68,6 +68,7 @@ public class ModuleEnablementService
 
     public Dictionary<string, bool> GetAllEnablement()
     {
+        RunUpgradeMigration();
 
         var state = ReadState();
         var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -133,14 +134,19 @@ public class ModuleEnablementService
         if (_migrationChecked) return;
         _migrationChecked = true;
 
-        if (!File.Exists(_configFilePath))
-            return;
-
         try
         {
-            var json = File.ReadAllText(_configFilePath);
-            var state = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
-            if (state == null || state.ContainsKey("ExchangeOnline"))
+            Dictionary<string, bool>? state = null;
+
+            if (File.Exists(_configFilePath))
+            {
+                var json = File.ReadAllText(_configFilePath);
+                state = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+            }
+
+            state ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+            if (state.ContainsKey("ExchangeOnline"))
                 return;
 
             var hasExoConfig = !string.IsNullOrWhiteSpace(_moduleConfig.GetValue("ExchangeOnline", "AppId"))
@@ -148,9 +154,15 @@ public class ModuleEnablementService
 
             lock (_writeLock)
             {
-                var reRead = File.ReadAllText(_configFilePath);
-                var reState = JsonSerializer.Deserialize<Dictionary<string, bool>>(reRead);
-                if (reState == null || reState.ContainsKey("ExchangeOnline")) return;
+                Dictionary<string, bool>? reState = null;
+                if (File.Exists(_configFilePath))
+                {
+                    var reJson = File.ReadAllText(_configFilePath);
+                    reState = JsonSerializer.Deserialize<Dictionary<string, bool>>(reJson);
+                }
+                reState ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+                if (reState.ContainsKey("ExchangeOnline")) return;
 
                 reState["ExchangeOnline"] = hasExoConfig;
                 var updated = JsonSerializer.Serialize(reState, new JsonSerializerOptions { WriteIndented = true });
