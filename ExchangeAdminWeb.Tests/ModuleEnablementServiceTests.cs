@@ -2,6 +2,7 @@ using System.Text.Json;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -15,6 +16,8 @@ public class ModuleEnablementServiceTests : IDisposable
     private readonly ModuleCatalog _catalog;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ModuleEnablementService> _logger;
+    private readonly ModuleConfigService _moduleConfig;
+    private readonly IConfiguration _config;
 
     public ModuleEnablementServiceTests()
     {
@@ -29,6 +32,10 @@ public class ModuleEnablementServiceTests : IDisposable
         _env.ContentRootPath.Returns(_tempDir);
 
         _logger = Substitute.For<ILogger<ModuleEnablementService>>();
+
+        var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
+        _moduleConfig = new ModuleConfigService(_catalog, _env, moduleConfigLogger);
+        _config = new ConfigurationBuilder().Build();
     }
 
     public void Dispose()
@@ -39,7 +46,7 @@ public class ModuleEnablementServiceTests : IDisposable
 
     private ModuleEnablementService CreateService()
     {
-        return new ModuleEnablementService(_catalog, _env, _logger);
+        return new ModuleEnablementService(_catalog, _env, _moduleConfig, _config, _logger);
     }
 
     private void WriteEnablementFile(Dictionary<string, bool> state)
@@ -64,12 +71,22 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     [Fact]
-    public void IsModuleEnabled_NoFileExists_ReturnsEnabledByDefault()
+    public void IsModuleRawEnabled_NoFileExists_ReturnsEnabledByDefault()
     {
         var service = CreateService();
 
         // MailboxPermissions has EnabledByDefault = true
-        Assert.True(service.IsModuleEnabled("MailboxPermissions"));
+        Assert.True(service.IsModuleRawEnabled("MailboxPermissions"));
+    }
+
+    [Fact]
+    public void IsModuleEnabled_NoFileExists_ChildDisabledWhenParentDisabled()
+    {
+        var service = CreateService();
+
+        // MailboxPermissions has EnabledByDefault = true but DependsOn = ExchangeOnline
+        // ExchangeOnline has EnabledByDefault = false, so effective = false
+        Assert.False(service.IsModuleEnabled("MailboxPermissions"));
     }
 
     [Fact]
@@ -77,6 +94,7 @@ public class ModuleEnablementServiceTests : IDisposable
     {
         var state = new Dictionary<string, bool>
         {
+            ["ExchangeOnline"] = true,
             ["MailboxPermissions"] = false,
             ["Migration"] = true
         };
@@ -231,5 +249,135 @@ public class ModuleEnablementServiceTests : IDisposable
         // Create a new service instance to read from file (no caching)
         var service2 = CreateService();
         Assert.False(service2.IsModuleEnabled("MailboxPermissions"));
+    }
+
+    // --- Parent/child cascade tests ---
+
+    [Fact]
+    public void IsModuleEnabled_ParentOffChildRawOn_EffectiveFalse()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = false,
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+
+        Assert.True(service.IsModuleRawEnabled("MailboxPermissions"));
+        Assert.False(service.IsModuleEnabled("MailboxPermissions"));
+    }
+
+    [Fact]
+    public void IsModuleEnabled_ParentOnChildRawOn_EffectiveTrue()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = true,
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+
+        Assert.True(service.IsModuleRawEnabled("MailboxPermissions"));
+        Assert.True(service.IsModuleEnabled("MailboxPermissions"));
+    }
+
+    [Fact]
+    public void IsModuleEnabled_ParentOnChildRawOff_EffectiveFalse()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = true,
+            ["MailboxPermissions"] = false
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+
+        Assert.False(service.IsModuleRawEnabled("MailboxPermissions"));
+        Assert.False(service.IsModuleEnabled("MailboxPermissions"));
+    }
+
+    [Fact]
+    public void RawChildState_SurvivesParentDisableEnableCycle()
+    {
+        // Start with both enabled
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = true,
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+        Assert.True(service.IsModuleEnabled("MailboxPermissions"));
+
+        // Disable parent
+        state["ExchangeOnline"] = false;
+        WriteEnablementFile(state);
+
+        var service2 = CreateService();
+        Assert.False(service2.IsModuleEnabled("MailboxPermissions"));
+        Assert.True(service2.IsModuleRawEnabled("MailboxPermissions")); // raw state preserved
+
+        // Re-enable parent
+        state["ExchangeOnline"] = true;
+        WriteEnablementFile(state);
+
+        var service3 = CreateService();
+        Assert.True(service3.IsModuleEnabled("MailboxPermissions")); // child reactivated
+    }
+
+    [Fact]
+    public void IsModuleEnabled_IndependentModule_NotAffectedByExchangeOnline()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = false,
+            ["MfaReset"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+
+        // MfaReset has no DependsOn, so it should be enabled regardless of ExchangeOnline
+        Assert.True(service.IsModuleEnabled("MfaReset"));
+    }
+
+    [Fact]
+    public void UpgradeMigration_NoExoConfig_SetsExchangeOnlineFalse()
+    {
+        // Write enablement file without ExchangeOnline key
+        var state = new Dictionary<string, bool>
+        {
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+        var result = service.GetAllEnablement();
+
+        // Migration should have set ExchangeOnline = false (no config exists)
+        Assert.False(result["ExchangeOnline"]);
+    }
+
+    [Fact]
+    public void UpgradeMigration_ExistingKey_NotOverwritten()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["ExchangeOnline"] = true,
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+
+        var service = CreateService();
+        var result = service.GetAllEnablement();
+
+        // Existing key should not be overwritten by migration
+        Assert.True(result["ExchangeOnline"]);
     }
 }

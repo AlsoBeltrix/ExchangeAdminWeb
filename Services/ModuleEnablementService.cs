@@ -8,19 +8,50 @@ public class ModuleEnablementService
 {
     private readonly string _configFilePath;
     private readonly ModuleCatalog _catalog;
+    private readonly ModuleConfigService _moduleConfig;
+    private readonly IConfiguration _config;
     private readonly ILogger<ModuleEnablementService> _logger;
     private readonly object _writeLock = new();
+    private bool _migrationChecked;
 
-    public ModuleEnablementService(ModuleCatalog catalog, IWebHostEnvironment env, ILogger<ModuleEnablementService> logger)
+    public ModuleEnablementService(
+        ModuleCatalog catalog,
+        IWebHostEnvironment env,
+        ModuleConfigService moduleConfig,
+        IConfiguration config,
+        ILogger<ModuleEnablementService> logger)
     {
         _catalog = catalog;
+        _moduleConfig = moduleConfig;
+        _config = config;
         _logger = logger;
         var configDir = Path.Combine(env.ContentRootPath, "config");
         _configFilePath = Path.Combine(configDir, "modules-enabled.json");
         Directory.CreateDirectory(configDir);
     }
 
+    /// <summary>
+    /// Returns effective enabled state: checks parent cascade via DependsOn.
+    /// If the parent module is not effectively enabled, the child is effectively disabled.
+    /// </summary>
     public bool IsModuleEnabled(string moduleId)
+    {
+        var module = _catalog.GetById(moduleId);
+        if (module == null) return false;
+        if (module.IsSystemModule) return true;
+
+        // Check parent cascade
+        if (module.DependsOn != null && !IsModuleEnabled(module.DependsOn))
+            return false;
+
+        return IsModuleRawEnabled(moduleId);
+    }
+
+    /// <summary>
+    /// Returns the raw toggle state without checking parent dependencies.
+    /// Used by the Admin Settings UI to display and save toggle states independently.
+    /// </summary>
+    public bool IsModuleRawEnabled(string moduleId)
     {
         var module = _catalog.GetById(moduleId);
         if (module == null) return false;
@@ -35,6 +66,8 @@ public class ModuleEnablementService
 
     public Dictionary<string, bool> GetAllEnablement()
     {
+        RunUpgradeMigration();
+
         var state = ReadState();
         var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
@@ -92,6 +125,36 @@ public class ModuleEnablementService
                     try { File.Delete(tempPath); } catch { }
             }
         }
+    }
+
+    private void RunUpgradeMigration()
+    {
+        if (_migrationChecked) return;
+        _migrationChecked = true;
+
+        var state = ReadState();
+        if (state.ContainsKey("ExchangeOnline")) return;
+
+        // Check if EXO config exists in module-config.json or appsettings.json
+        var hasExoConfig = !string.IsNullOrWhiteSpace(_moduleConfig.GetValue("ExchangeOnline", "AppId"))
+                        || !string.IsNullOrWhiteSpace(_config["ExchangeOnline:AppId"]);
+
+        lock (_writeLock)
+        {
+            // Re-read inside lock to avoid race
+            state = ReadState();
+            if (state.ContainsKey("ExchangeOnline")) return;
+
+            state["ExchangeOnline"] = hasExoConfig;
+
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_configFilePath, json);
+        }
+
+        if (hasExoConfig)
+            _logger.LogInformation("Auto-enabled ExchangeOnline: existing EXO config detected");
+        else
+            _logger.LogInformation("ExchangeOnline disabled: no EXO config found (fresh install)");
     }
 
     private Dictionary<string, bool> ReadState()

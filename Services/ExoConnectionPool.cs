@@ -32,6 +32,7 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly SemaphoreSlim _slots;
     private readonly ILogger<ExoConnectionPool> _logger;
     private readonly OperationTraceService _operationTrace;
+    private readonly ModuleEnablementService _enablement;
     private readonly ModuleConfigService _moduleConfig;
     private readonly IConfiguration _config;
     private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(20);
@@ -39,10 +40,11 @@ public sealed class ExoConnectionPool : IDisposable
     private long _configGeneration;
     private bool _disposed;
 
-    public ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
+    public ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ModuleEnablementService enablement, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
     {
         _logger = logger;
         _operationTrace = operationTrace;
+        _enablement = enablement;
         _moduleConfig = moduleConfig;
         _config = config;
         _slots = new SemaphoreSlim(5, 5);
@@ -53,6 +55,8 @@ public sealed class ExoConnectionPool : IDisposable
     {
         get
         {
+            if (!_enablement.IsModuleEnabled("ExchangeOnline"))
+                return false;
             var (appId, org, _) = GetExoConfig();
             return !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(org);
         }
@@ -79,9 +83,12 @@ public sealed class ExoConnectionPool : IDisposable
 
     public async Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
     {
+        if (!_enablement.IsModuleEnabled("ExchangeOnline"))
+            throw new InvalidOperationException("Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.");
+
         var (appId, org, _) = GetExoConfig();
         if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(org))
-            throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization in Admin Settings under Exchange Online Configuration.");
+            throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization on the Exchange Online config page.");
 
         _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = org });
         if (!await _slots.WaitAsync(TimeSpan.FromMinutes(2), ct))

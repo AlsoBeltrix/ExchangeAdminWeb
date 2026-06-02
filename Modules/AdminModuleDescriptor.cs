@@ -13,6 +13,8 @@ public sealed record AdminModuleDescriptor
     public required bool IsSystemModule { get; init; }
     public string Version { get; init; } = "1.0.0";
     public required ModulePermission MainPermission { get; init; }
+    public string? DependsOn { get; init; }
+    public bool IsConfigOnly { get; init; }
     public IReadOnlyList<ModulePermission> GranularPermissions { get; init; } = [];
     public IReadOnlyList<ModuleConfigField> ConfigFields { get; init; } = [];
 }

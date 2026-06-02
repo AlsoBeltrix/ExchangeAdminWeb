@@ -68,7 +68,7 @@
                             @foreach (var cfgModule in configModulesForGlobalAdmin)
                             {
                                 <div class="nav-item nav-tree-child">
-                                    <NavLink class="nav-link" href="@($"module-config/{cfgModule.Id}")">
+                                    <NavLink class="nav-link" href="@(cfgModule.IsConfigOnly ? cfgModule.Route : $"module-config/{cfgModule.Id}")">
                                         @cfgModule.DisplayName
                                     </NavLink>
                                 </div>
@@ -163,7 +163,7 @@
     private IEnumerable<IGrouping<string, AdminModuleDescriptor>> GetPrimaryModuleGroups()
     {
         return Catalog.GetOrdered()
-            .Where(m => !m.IsSystemModule && m.SortOrder < 900 && Enablement.IsModuleEnabled(m.Id))
+            .Where(m => !m.IsSystemModule && !m.IsConfigOnly && m.SortOrder < 900 && Enablement.IsModuleEnabled(m.Id))
             .OrderBy(m => GetCategorySortOrder(m.Category))
             .ThenBy(m => m.SortOrder)
             .GroupBy(m => m.Category);

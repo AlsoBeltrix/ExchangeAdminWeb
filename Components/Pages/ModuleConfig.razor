@@ -70,6 +70,16 @@
                         @(moduleEnabled ? "Enabled" : "Disabled")
                     </label>
                 </div>
+                @{
+                    var effectiveEnabled = Enablement.IsModuleEnabled(module.Id);
+                    var parentModule = module.DependsOn != null ? Catalog.GetById(module.DependsOn) : null;
+                }
+                @if (moduleEnabled && !effectiveEnabled && parentModule != null)
+                {
+                    <div class="alert alert-warning py-2 mb-2">
+                        <small>Enabled but inactive -- @parentModule.DisplayName is disabled.</small>
+                    </div>
+                }
                 <small class="text-muted">
                     Disabled modules are hidden from the sidebar and denied by authorization, even when section access and configuration are set.
                     @if (!isGlobalAdmin)
@@ -360,6 +370,13 @@
             return;
         }
 
+        // Config-only modules have their own dedicated page
+        if (module.IsConfigOnly)
+        {
+            Navigation.NavigateTo(module.Route, replace: true);
+            return;
+        }
+
         var adminResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
         isGlobalAdmin = adminResult.Succeeded;
 
@@ -378,7 +395,7 @@
         if (module == null) return;
 
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
-        moduleEnabled = Enablement.IsModuleEnabled(module.Id);
+        moduleEnabled = Enablement.IsModuleRawEnabled(module.Id);
         moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
 
         policyAliases = new List<string> { module.MainPermission.PolicyAlias };

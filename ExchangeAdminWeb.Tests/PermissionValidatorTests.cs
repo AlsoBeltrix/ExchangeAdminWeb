@@ -54,8 +54,11 @@ public class PermissionValidatorTests
         var protectedPrincipalLogger = Substitute.For<ILogger<ProtectedPrincipalService>>();
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
 
+        var enablementLogger = Substitute.For<ILogger<ModuleEnablementService>>();
+        var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, config, enablementLogger);
+
         var exoPoolLogger = Substitute.For<ILogger<ExoConnectionPool>>();
-        var exoPool = new ExoConnectionPool(config, moduleConfig, exoPoolLogger, operationTrace);
+        var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, exoPoolLogger, operationTrace);
 
         return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, logger, scopeFactory);
     }

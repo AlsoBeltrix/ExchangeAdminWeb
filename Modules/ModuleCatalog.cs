@@ -37,7 +37,7 @@ public sealed class ModuleCatalog
     public IReadOnlyList<string> GetConfigurablePolicyAliases()
     {
         var result = new List<string>();
-        foreach (var m in _modules.Where(m => !m.IsSystemModule).OrderBy(m => m.SortOrder))
+        foreach (var m in _modules.Where(m => !m.IsSystemModule && !m.IsConfigOnly).OrderBy(m => m.SortOrder))
         {
             result.Add(m.MainPermission.PolicyAlias);
             foreach (var gp in m.GranularPermissions)
@@ -96,6 +96,25 @@ public sealed class ModuleCatalog
     [
         new()
         {
+            Id = "ExchangeOnline",
+            DisplayName = "Exchange Online",
+            Description = "Exchange Online PowerShell connection. Required by all Exchange-dependent modules.",
+            Route = "exchange-online-config",
+            IconCss = "bi bi-cloud-fill-nav-menu",
+            Category = "Exchange",
+            SortOrder = 50,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            IsConfigOnly = true,
+            MainPermission = new("Access", "ExchangeOnline"),
+            ConfigFields = [
+                new("AppId", "App Registration ID (GUID)", "Azure AD app registration for EXO PowerShell"),
+                new("Organization", "Organization", "e.g. contoso.onmicrosoft.com"),
+                new("CertificateSubject", "Certificate Subject", "e.g. CN=EXO-Automation", DefaultValue: "CN=EXO-Automation")
+            ]
+        },
+        new()
+        {
             Id = "MailboxPermissions",
             DisplayName = "Mailbox Permissions",
             Description = "Grant or revoke Full Access and Send As permissions on Exchange Online mailboxes.",
@@ -105,6 +124,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions"),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -123,6 +143,7 @@ public sealed class ModuleCatalog
             SortOrder = 200,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "CalendarPermissions"),
             GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -140,6 +161,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck"),
             GranularPermissions = [new("Create", "MigrationCreate"), new("Manage", "MigrationManage")],
             ConfigFields = [
@@ -163,6 +185,7 @@ public sealed class ModuleCatalog
             SortOrder = 400,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "DelegationReport")
         },
         new()
@@ -176,6 +199,7 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MessageTrace", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by message tracking", Required: false)
@@ -192,6 +216,7 @@ public sealed class ModuleCatalog
             SortOrder = 600,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "RecipientLookup"),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by recipient lookup", Required: false)
@@ -208,6 +233,7 @@ public sealed class ModuleCatalog
             SortOrder = 700,
             EnabledByDefault = true,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "OutOfOffice")
         },
         new()
@@ -221,6 +247,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -288,6 +315,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
+            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = []
         },
@@ -418,6 +446,7 @@ public sealed class ModuleCatalog
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var routes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var policyAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var byId = new Dictionary<string, AdminModuleDescriptor>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var m in modules)
         {
@@ -433,6 +462,30 @@ public sealed class ModuleCatalog
             {
                 if (!policyAliases.Add(gp.PolicyAlias))
                     throw new InvalidOperationException($"Duplicate policy alias: '{gp.PolicyAlias}' in module '{m.Id}'");
+            }
+
+            byId[m.Id] = m;
+        }
+
+        // Validate dependency references
+        foreach (var m in modules)
+        {
+            if (m.DependsOn == null) continue;
+
+            if (string.Equals(m.DependsOn, m.Id, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Module '{m.Id}' has a self-dependency.");
+
+            if (!byId.ContainsKey(m.DependsOn))
+                throw new InvalidOperationException($"Module '{m.Id}' depends on unknown module '{m.DependsOn}'.");
+
+            // Detect cycles: walk the DependsOn chain
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { m.Id };
+            var current = m.DependsOn;
+            while (current != null)
+            {
+                if (!visited.Add(current))
+                    throw new InvalidOperationException($"Dependency cycle detected involving module '{m.Id}'.");
+                current = byId.TryGetValue(current, out var parent) ? parent.DependsOn : null;
             }
         }
     }

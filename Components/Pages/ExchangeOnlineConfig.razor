@@ -1,0 +1,300 @@
+@page "/exchange-online-config"
+@using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Modules
+@attribute [Authorize(Policy = "AdminSettings")]
+@rendermode InteractiveServer
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<ExchangeOnlineConfig> Logger
+@inject ModuleCatalog Catalog
+@inject ModuleEnablementService Enablement
+@inject ModuleConfigService ModuleConfigSvc
+@inject ExoConnectionPool ExoPool
+@inject IConfiguration Config
+
+<PageTitle>Exchange Online Configuration</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Exchange Online <small class="text-muted fs-6">Connection Configuration</small></h1>
+    <p class="text-muted mb-4">Certificate-based authentication for Exchange Online PowerShell. Required by all Exchange-dependent modules.</p>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="alert @(statusIsError ? "alert-danger" : "alert-success") alert-dismissible fade show">
+            @statusMessage
+            <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+        </div>
+    }
+
+    <!-- Module Status -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Module Status</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveModuleStatus" disabled="@saving">Save Status</button>
+        </div>
+        <div class="card-body">
+            <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="exo-enabled"
+                       checked="@moduleEnabled"
+                       disabled="@saving"
+                       @onchange="(e) => moduleEnabled = (bool)(e.Value ?? false)" />
+                <label class="form-check-label fw-semibold" for="exo-enabled">
+                    @(moduleEnabled ? "Enabled" : "Disabled")
+                </label>
+            </div>
+            <small class="text-muted">
+                When disabled, all Exchange-dependent modules become inactive regardless of their individual toggle state.
+            </small>
+        </div>
+    </div>
+
+    <!-- Connection Configuration -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Exchange Online Connection</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@saving">Save Connection</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3"><small>The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">App Registration ID (GUID)</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoAppId" @bind:event="oninput" placeholder="00000000-0000-0000-0000-000000000000" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Organization</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoOrganization" @bind:event="oninput" placeholder="contoso.onmicrosoft.com" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Certificate Subject</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoCertSubject" @bind:event="oninput" placeholder="CN=EXO-Automation" />
+                    <small class="text-muted">DN of the certificate in the local machine store.</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dependent Modules -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <strong>Dependent Modules</strong>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3"><small>Modules that require this Exchange Online connection. Their effective status depends on both their own toggle and this parent module.</small></p>
+            <div class="row g-2">
+                @foreach (var dep in dependentModules)
+                {
+                    var rawEnabled = Enablement.IsModuleRawEnabled(dep.Id);
+                    var effectiveEnabled = Enablement.IsModuleEnabled(dep.Id);
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center">
+                            <span class="badge @(effectiveEnabled ? "bg-success" : "bg-secondary") me-2" style="width: 70px; text-align: center;">
+                                @(effectiveEnabled ? "Active" : "Inactive")
+                            </span>
+                            <span>@dep.DisplayName</span>
+                            @if (rawEnabled && !effectiveEnabled)
+                            {
+                                <small class="text-muted ms-2">(enabled but parent disabled)</small>
+                            }
+                            else if (!rawEnabled)
+                            {
+                                <small class="text-muted ms-2">(disabled)</small>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = string.Empty;
+    private bool authChecked;
+    private bool saving;
+    private string? statusMessage;
+    private bool statusIsError;
+
+    private bool moduleEnabled;
+    private string exoAppId = "";
+    private string exoOrganization = "";
+    private string exoCertSubject = "";
+    private List<AdminModuleDescriptor> dependentModules = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "AdminSettings");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        moduleEnabled = Enablement.IsModuleRawEnabled("ExchangeOnline");
+        LoadExoConfig();
+        dependentModules = Catalog.GetOrdered()
+            .Where(m => string.Equals(m.DependsOn, "ExchangeOnline", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        authChecked = true;
+    }
+
+    private void LoadExoConfig()
+    {
+        try
+        {
+            exoAppId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey)
+                ?? Config["ExchangeOnline:AppId"] ?? "";
+            exoOrganization = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey)
+                ?? Config["ExchangeOnline:Organization"] ?? "";
+            exoCertSubject = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey)
+                ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load EXO config");
+        }
+    }
+
+    private async Task SaveModuleStatus()
+    {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+
+            var enablement = Enablement.GetAllEnablement();
+            var previous = enablement.GetValueOrDefault("ExchangeOnline", false);
+            enablement["ExchangeOnline"] = moduleEnabled;
+            Enablement.SaveEnablement(enablement);
+
+            if (previous != moduleEnabled)
+            {
+                try
+                {
+                    var ip = ClientInfo.GetIpForUser(currentUser);
+                    Audit.LogSettingsChange(currentUser, ip, "Module:ExchangeOnline",
+                        previous ? new[] { "Enabled" } : Array.Empty<string>(),
+                        moduleEnabled ? new[] { "Enabled" } : Array.Empty<string>());
+                }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ExchangeOnline status change"); }
+            }
+
+            statusMessage = moduleEnabled
+                ? "Exchange Online module enabled. Dependent modules with their own toggles on are now active."
+                : "Exchange Online module disabled. All dependent modules are now inactive.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally { saving = false; }
+    }
+
+    private async Task SaveExoConfig()
+    {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+
+            var trimmedAppId = exoAppId.Trim();
+            var trimmedOrg = exoOrganization.Trim();
+            var trimmedCert = exoCertSubject.Trim();
+
+            bool allEmpty = string.IsNullOrWhiteSpace(trimmedAppId)
+                         && string.IsNullOrWhiteSpace(trimmedOrg)
+                         && string.IsNullOrWhiteSpace(trimmedCert);
+
+            if (!allEmpty)
+            {
+                bool anyEmpty = string.IsNullOrWhiteSpace(trimmedAppId)
+                             || string.IsNullOrWhiteSpace(trimmedOrg)
+                             || string.IsNullOrWhiteSpace(trimmedCert);
+                if (anyEmpty)
+                {
+                    statusMessage = "All three fields (App ID, Organization, Certificate Subject) must be filled, or all three must be empty to disable EXO.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!Guid.TryParse(trimmedAppId, out _))
+                {
+                    statusMessage = "App Registration ID must be a valid GUID (e.g. 00000000-0000-0000-0000-000000000000) or empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!trimmedOrg.Contains('.'))
+                {
+                    statusMessage = "Organization must contain a dot (e.g. contoso.onmicrosoft.com) or be empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!trimmedCert.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
+                {
+                    statusMessage = "Certificate Subject must start with \"CN=\" (e.g. CN=EXO-Automation) or be empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+            }
+
+            var current = ModuleConfigSvc.GetModuleConfig(ExoConnectionPool.ConfigModuleKey);
+            current[ExoConnectionPool.ConfigAppIdKey] = trimmedAppId;
+            current[ExoConnectionPool.ConfigOrganizationKey] = trimmedOrg;
+            current[ExoConnectionPool.ConfigCertSubjectKey] = trimmedCert;
+            ModuleConfigSvc.SaveModuleConfig(ExoConnectionPool.ConfigModuleKey, current);
+
+            ExoPool.DrainPool();
+
+            try
+            {
+                var ip = ClientInfo.GetIpForUser(currentUser);
+                Audit.LogSettingsChange(currentUser, ip, "ExchangeOnlineConfig", Array.Empty<string>(), new[] { $"AppId={trimmedAppId}", $"Org={trimmedOrg}", $"Cert={trimmedCert}" });
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for EXO config change"); }
+
+            statusMessage = allEmpty
+                ? "Exchange Online configuration cleared. EXO features are disabled until reconfigured."
+                : "Exchange Online configuration saved. Existing pooled connections have been drained; new connections will use the updated config.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally { saving = false; }
+    }
+}

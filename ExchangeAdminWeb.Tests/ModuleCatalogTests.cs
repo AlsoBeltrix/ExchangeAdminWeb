@@ -11,7 +11,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(19, _catalog.GetAll().Count); // 19 modules
+        Assert.Equal(20, _catalog.GetAll().Count); // 20 modules (19 operational + 1 config-only)
     }
 
     [Fact]
@@ -93,6 +93,7 @@ public class ModuleCatalogTests
         Assert.Contains("DhcpAuthorization", aliases);
         Assert.Contains("EventLog", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
+        Assert.DoesNotContain("ExchangeOnline", aliases); // config-only modules excluded
         Assert.Equal(26, aliases.Count);
     }
 
@@ -154,7 +155,10 @@ public class ModuleCatalogTests
             var route = "/" + module.Route.Trim('/');
             Assert.Contains(route, pageRoutes);
             Assert.True(pagePolicies.TryGetValue(route, out var policy), $"Missing authorize policy for {route}");
-            Assert.Equal(module.MainPermission.PolicyAlias, policy);
+
+            // Config-only modules use AdminSettings policy, not their own MainPermission
+            var expectedPolicy = module.IsConfigOnly ? "AdminSettings" : module.MainPermission.PolicyAlias;
+            Assert.Equal(expectedPolicy, policy);
         }
     }
 
@@ -210,6 +214,107 @@ public class ModuleCatalogTests
         }
 
         return policies;
+    }
+
+    [Fact]
+    public void Catalog_ConfigOnlyModules_UseAdminSettingsPolicy()
+    {
+        var pageRoutes = ReadPageRoutes();
+        var pagePolicies = ReadPagePolicies();
+
+        foreach (var module in _catalog.GetAll().Where(m => m.IsConfigOnly))
+        {
+            var route = "/" + module.Route.Trim('/');
+            Assert.Contains(route, pageRoutes);
+            Assert.True(pagePolicies.TryGetValue(route, out var policy),
+                $"Config-only module '{module.Id}' at {route} must have an [Authorize] policy");
+            Assert.Equal("AdminSettings", policy);
+        }
+    }
+
+    [Fact]
+    public void Catalog_ConfigOnlyModules_HaveRoute()
+    {
+        foreach (var module in _catalog.GetAll().Where(m => m.IsConfigOnly))
+        {
+            Assert.False(string.IsNullOrWhiteSpace(module.Route),
+                $"Config-only module '{module.Id}' must have a route");
+        }
+    }
+
+    [Fact]
+    public void Catalog_ExchangeOnlineModule_IsConfigOnly()
+    {
+        var module = _catalog.GetById("ExchangeOnline");
+        Assert.NotNull(module);
+        Assert.True(module.IsConfigOnly);
+        Assert.Equal("exchange-online-config", module.Route);
+        Assert.Equal("Exchange", module.Category);
+    }
+
+    [Fact]
+    public void Catalog_ExchangeDependentModules_DependOnExchangeOnline()
+    {
+        var expectedDependents = new[]
+        {
+            "MailboxPermissions", "CalendarPermissions", "Migration",
+            "DelegationReport", "MessageTrace", "RecipientLookup",
+            "OutOfOffice", "ConferenceRooms", "GroupManagement"
+        };
+
+        foreach (var id in expectedDependents)
+        {
+            var module = _catalog.GetById(id);
+            Assert.NotNull(module);
+            Assert.Equal("ExchangeOnline", module.DependsOn);
+        }
+    }
+
+    [Fact]
+    public void Catalog_IndependentModules_HaveNoDependsOn()
+    {
+        var independentModuleIds = new[]
+        {
+            "M365GroupManagement", "ADAttributeEditor", "LicensingUpdates",
+            "EmergencyDisable", "MfaReset", "NamedLocations",
+            "DhcpAuthorization", "Comms10k", "AdminSettings", "AdminEventLog"
+        };
+
+        foreach (var id in independentModuleIds)
+        {
+            var module = _catalog.GetById(id);
+            Assert.NotNull(module);
+            Assert.Null(module.DependsOn);
+        }
+    }
+
+    [Fact]
+    public void Catalog_DependsOn_ReferencesExistingModules()
+    {
+        foreach (var module in _catalog.GetAll().Where(m => m.DependsOn != null))
+        {
+            var parent = _catalog.GetById(module.DependsOn!);
+            Assert.NotNull(parent);
+        }
+    }
+
+    [Fact]
+    public void Catalog_NoCyclicDependencies()
+    {
+        // If there were cycles, ModuleCatalog constructor would have thrown.
+        // This test verifies the catalog constructs successfully and
+        // walking DependsOn chains terminates.
+        foreach (var module in _catalog.GetAll().Where(m => m.DependsOn != null))
+        {
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { module.Id };
+            var current = module.DependsOn;
+            while (current != null)
+            {
+                Assert.True(visited.Add(current), $"Cycle detected at module '{current}' in chain from '{module.Id}'");
+                var parent = _catalog.GetById(current);
+                current = parent?.DependsOn;
+            }
+        }
     }
 
     private static string GetPagesDirectory()
