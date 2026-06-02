@@ -408,7 +408,17 @@
 
             if (!allEmpty)
             {
-                if (!string.IsNullOrWhiteSpace(trimmedAppId) && !Guid.TryParse(trimmedAppId, out _))
+                bool anyEmpty = string.IsNullOrWhiteSpace(trimmedAppId)
+                             || string.IsNullOrWhiteSpace(trimmedOrg)
+                             || string.IsNullOrWhiteSpace(trimmedCert);
+                if (anyEmpty)
+                {
+                    statusMessage = "All three fields (App ID, Organization, Certificate Subject) must be filled, or all three must be empty to disable EXO.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!Guid.TryParse(trimmedAppId, out _))
                 {
                     statusMessage = "App Registration ID must be a valid GUID (e.g. 00000000-0000-0000-0000-000000000000) or empty to clear.";
                     statusIsError = true;

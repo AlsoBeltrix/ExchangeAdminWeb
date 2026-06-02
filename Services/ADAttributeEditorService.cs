@@ -674,9 +674,12 @@ public class ADAttributeEditorService
             if (!string.IsNullOrEmpty(attr.Pattern) && !Regex.IsMatch(value, attr.Pattern, RegexOptions.None, RegexTimeout))
                 return $"Attribute '{attr.Label}' does not match the required pattern.";
 
-            if (attr.Type == "Choice" && attr.Choices != null &&
-                !attr.Choices.Contains(value, StringComparer.OrdinalIgnoreCase))
-                return $"Attribute '{attr.Label}' must be one of: {string.Join(", ", attr.Choices)}.";
+            if (attr.Type == "Choice")
+            {
+                var effective = GetEffectiveChoices(attr);
+                if (effective.Length > 0 && !effective.Contains(value, StringComparer.OrdinalIgnoreCase))
+                    return $"Attribute '{attr.Label}' must be one of the configured values.";
+            }
         }
 
         return null;

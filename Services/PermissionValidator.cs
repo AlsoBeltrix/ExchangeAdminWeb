@@ -346,6 +346,15 @@ public class PermissionValidator
             try
             {
                 recipients = ps.Invoke();
+                if (ps.HadErrors)
+                {
+                    var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Unknown EXO error";
+                    ps.Streams.Error.Clear();
+                    ps.Commands.Clear();
+                    _logger.LogWarning("Get-Recipient error for '{Identity}': {Error}", identity, errMsg);
+                    _exoPool.Return(pooled);
+                    return members;
+                }
                 ps.Commands.Clear();
             }
             catch (Exception ex) when (ex.Message.Contains("couldn't be found"))
@@ -375,6 +384,15 @@ public class PermissionValidator
                   .AddParameter("ErrorAction", "Stop");
 
                 var groupMembers = ps.Invoke();
+                if (ps.HadErrors)
+                {
+                    var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Unknown EXO error";
+                    ps.Streams.Error.Clear();
+                    ps.Commands.Clear();
+                    _logger.LogWarning("Get-DistributionGroupMember error for '{Identity}': {Error}", identity, errMsg);
+                    _exoPool.Return(pooled);
+                    return members;
+                }
                 ps.Commands.Clear();
 
                 foreach (var member in groupMembers)
