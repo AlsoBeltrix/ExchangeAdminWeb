@@ -351,9 +351,8 @@ public class PermissionValidator
                     var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Unknown EXO error";
                     ps.Streams.Error.Clear();
                     ps.Commands.Clear();
-                    _logger.LogWarning("Get-Recipient error for '{Identity}': {Error}", identity, errMsg);
                     _exoPool.Return(pooled);
-                    return members;
+                    throw new InvalidOperationException($"EXO error resolving '{identity}': {errMsg}");
                 }
                 ps.Commands.Clear();
             }
@@ -389,9 +388,8 @@ public class PermissionValidator
                     var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Unknown EXO error";
                     ps.Streams.Error.Clear();
                     ps.Commands.Clear();
-                    _logger.LogWarning("Get-DistributionGroupMember error for '{Identity}': {Error}", identity, errMsg);
                     _exoPool.Return(pooled);
-                    return members;
+                    throw new InvalidOperationException($"EXO error expanding group '{identity}': {errMsg}");
                 }
                 ps.Commands.Clear();
 
