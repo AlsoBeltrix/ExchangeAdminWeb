@@ -10,12 +10,14 @@ public sealed class PooledRunspace
     public PowerShell PowerShell { get; }
     public Runspace Runspace { get; }
     public DateTime LastUsed { get; set; }
+    public long ConfigGeneration { get; }
 
-    public PooledRunspace(Runspace runspace, PowerShell ps)
+    public PooledRunspace(Runspace runspace, PowerShell ps, long configGeneration = 0)
     {
         Runspace = runspace;
         PowerShell = ps;
         LastUsed = DateTime.UtcNow;
+        ConfigGeneration = configGeneration;
     }
 }
 
@@ -34,6 +36,7 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly IConfiguration _config;
     private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(20);
     private readonly Timer _cleanupTimer;
+    private long _configGeneration;
     private bool _disposed;
 
     public ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
@@ -57,23 +60,19 @@ public sealed class ExoConnectionPool : IDisposable
 
     private (string appId, string organization, string certSubject) GetExoConfig()
     {
-        // Fail-closed: if the config file exists but is corrupt, do not
-        // silently fall back to appsettings — return empty strings so that
-        // IsConfigured returns false and BorrowAsync throws a clear error.
+        var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);
+        var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey);
+        var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey);
+
         if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
         {
-            _logger.LogError("Module config file is corrupt — refusing to fall back to appsettings for EXO config");
+            _logger.LogError("Module config file is corrupt - refusing to fall back to appsettings for EXO config");
             return ("", "", "");
         }
 
-        var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey)
-            ?? _config["ExchangeOnline:AppId"]
-            ?? "";
-        var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey)
-            ?? _config["ExchangeOnline:Organization"]
-            ?? "";
-        var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey)
-            ?? _config["ExchangeOnline:CertificateSubject"]
+        appId ??= _config["ExchangeOnline:AppId"] ?? "";
+        organization ??= _config["ExchangeOnline:Organization"] ?? "";
+        certSubject ??= _config["ExchangeOnline:CertificateSubject"]
             ?? "CN=EXO-Automation";
         return (appId, organization, certSubject);
     }
@@ -95,9 +94,10 @@ public sealed class ExoConnectionPool : IDisposable
 
         try
         {
+            var currentGen = Interlocked.Read(ref _configGeneration);
             if (_available.TryTake(out var pooled))
             {
-                if (DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
+                if (pooled.ConfigGeneration == currentGen && DateTime.UtcNow - pooled.LastUsed < _idleTimeout)
                 {
                     pooled.LastUsed = DateTime.UtcNow;
                     pooled.PowerShell.Commands.Clear();
@@ -106,7 +106,7 @@ public sealed class ExoConnectionPool : IDisposable
                     return pooled;
                 }
 
-                _operationTrace.Step("ExoConnectionExpired", backend: "ExchangeOnline");
+                _operationTrace.Step(pooled.ConfigGeneration != currentGen ? "ExoConnectionStaleConfig" : "ExoConnectionExpired", backend: "ExchangeOnline");
                 DestroyRunspace(pooled);
             }
 
@@ -122,6 +122,14 @@ public sealed class ExoConnectionPool : IDisposable
 
     public void Return(PooledRunspace runspace)
     {
+        if (runspace.ConfigGeneration != Interlocked.Read(ref _configGeneration))
+        {
+            DestroyRunspace(runspace);
+            _operationTrace.Step("ExoConnectionDiscardedStaleConfig", backend: "ExchangeOnline");
+            _slots.Release();
+            return;
+        }
+
         runspace.LastUsed = DateTime.UtcNow;
         runspace.PowerShell.Commands.Clear();
         runspace.PowerShell.Streams.ClearStreams();
@@ -143,6 +151,7 @@ public sealed class ExoConnectionPool : IDisposable
     /// </summary>
     public void DrainPool()
     {
+        Interlocked.Increment(ref _configGeneration);
         var drained = 0;
         while (_available.TryTake(out var item))
         {
@@ -198,7 +207,7 @@ public sealed class ExoConnectionPool : IDisposable
 
             _logger.LogInformation("EXO pool: created new connection (Org={Org})", organization);
             _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
-            return new PooledRunspace(runspace, ps);
+            return new PooledRunspace(runspace, ps, Interlocked.Read(ref _configGeneration));
         }
         catch (Exception ex)
         {

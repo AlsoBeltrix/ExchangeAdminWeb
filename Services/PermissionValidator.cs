@@ -329,7 +329,7 @@ public class PermissionValidator
 
         if (!_exoPool.IsConfigured)
         {
-            _logger.LogWarning("Exchange Online not configured, cannot expand groups");
+            _logger.LogWarning("Exchange Online not configured - group '{Identity}' kept as literal match only; group members are not individually protected", identity);
             return members;
         }
 
