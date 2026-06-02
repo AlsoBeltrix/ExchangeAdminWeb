@@ -54,7 +54,10 @@ public class PermissionValidatorTests
         var protectedPrincipalLogger = Substitute.For<ILogger<ProtectedPrincipalService>>();
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
 
-        return new PermissionValidator(config, moduleConfig, protectedPrincipalService, logger, scopeFactory);
+        var exoPoolLogger = Substitute.For<ILogger<ExoConnectionPool>>();
+        var exoPool = new ExoConnectionPool(config, moduleConfig, exoPoolLogger, operationTrace);
+
+        return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, logger, scopeFactory);
     }
 
     // --- Self-grant validation ---
@@ -115,21 +118,19 @@ public class PermissionValidatorTests
     // --- Fail-closed init state machine ---
 
     [Fact]
-    public async Task ValidateTargetMailbox_NoExclusions_NoExchangeConfig_BlocksAllOperations()
+    public async Task ValidateTargetMailbox_ExclusionConfigured_NoExchangeConfig_KeepsLiteralMatch()
     {
-        // With exclusions configured but no Exchange connection available,
-        // group expansion will fail and _initFailed should be true.
-        // The validator should block all operations.
+        // With exclusions configured but EXO not configured, group expansion
+        // is skipped (returns empty) and the identity is kept as a literal
+        // match. An unrelated target is allowed; the literal entry is blocked.
         var validator = CreateValidator(excludedUsers: new[] { "SomeGroupThatNeedsExpansion" });
 
-        var result = await validator.ValidateTargetMailboxAsync("anyone@company.com");
+        var resultUnrelated = await validator.ValidateTargetMailboxAsync("anyone@company.com");
+        Assert.Null(resultUnrelated);
 
-        // Should either block (init failed) or allow (if the group wasn't expandable but the identity was added as-is).
-        // The key behavior: it should NOT silently allow when init fails.
-        // Since Exchange isn't configured, ConnectToExchange returns false,
-        // and TryExpandGroupAsync throws, so _initFailed = true.
-        Assert.NotNull(result);
-        Assert.Contains("unavailable", result, StringComparison.OrdinalIgnoreCase);
+        var resultProtected = await validator.ValidateTargetMailboxAsync("SomeGroupThatNeedsExpansion");
+        Assert.NotNull(resultProtected);
+        Assert.Contains("protected", resultProtected, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -157,17 +158,18 @@ public class PermissionValidatorTests
     // --- Retry after init failure ---
 
     [Fact]
-    public async Task ValidateTargetMailbox_RetriableAfterFailure()
+    public async Task ValidateTargetMailbox_InitSucceeds_WhenExoNotConfigured()
     {
-        // First call fails init (group expansion fails without Exchange).
-        // _initialized stays false so subsequent calls retry.
+        // When EXO is not configured, group expansion is skipped gracefully
+        // and the literal entries are still present. Init succeeds and
+        // unrelated targets are allowed.
         var validator = CreateValidator(excludedUsers: new[] { "SomeGroup" });
 
         var firstResult = await validator.ValidateTargetMailboxAsync("user@company.com");
-        Assert.NotNull(firstResult);
+        Assert.Null(firstResult);
 
-        // Second call should also attempt init (not cached as success)
+        // Second call should return the same (init cached as success)
         var secondResult = await validator.ValidateTargetMailboxAsync("user@company.com");
-        Assert.NotNull(secondResult);
+        Assert.Null(secondResult);
     }
 }

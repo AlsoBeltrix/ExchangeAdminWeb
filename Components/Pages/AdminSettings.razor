@@ -14,6 +14,7 @@
 @inject ModuleEnablementService Enablement
 @inject ProtectedPrincipalService ProtectedPrincipalService
 @inject ModuleConfigService ModuleConfigSvc
+@inject ExoConnectionPool ExoPool
 @inject IConfiguration Config
 
 <PageTitle>Admin Settings</PageTitle>
@@ -396,20 +397,58 @@
             var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
             if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
 
+            var trimmedAppId = exoAppId.Trim();
+            var trimmedOrg = exoOrganization.Trim();
+            var trimmedCert = exoCertSubject.Trim();
+
+            // Allow saving all-empty (clears config / disables EXO)
+            bool allEmpty = string.IsNullOrWhiteSpace(trimmedAppId)
+                         && string.IsNullOrWhiteSpace(trimmedOrg)
+                         && string.IsNullOrWhiteSpace(trimmedCert);
+
+            if (!allEmpty)
+            {
+                if (!string.IsNullOrWhiteSpace(trimmedAppId) && !Guid.TryParse(trimmedAppId, out _))
+                {
+                    statusMessage = "App Registration ID must be a valid GUID (e.g. 00000000-0000-0000-0000-000000000000) or empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(trimmedOrg) && !trimmedOrg.Contains('.'))
+                {
+                    statusMessage = "Organization must contain a dot (e.g. contoso.onmicrosoft.com) or be empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+
+                if (!string.IsNullOrWhiteSpace(trimmedCert) && !trimmedCert.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
+                {
+                    statusMessage = "Certificate Subject must start with \"CN=\" (e.g. CN=EXO-Automation) or be empty to clear.";
+                    statusIsError = true;
+                    return;
+                }
+            }
+
             var current = ModuleConfigSvc.GetModuleConfig(ExoConnectionPool.ConfigModuleKey);
-            current[ExoConnectionPool.ConfigAppIdKey] = exoAppId.Trim();
-            current[ExoConnectionPool.ConfigOrganizationKey] = exoOrganization.Trim();
-            current[ExoConnectionPool.ConfigCertSubjectKey] = exoCertSubject.Trim();
+            current[ExoConnectionPool.ConfigAppIdKey] = trimmedAppId;
+            current[ExoConnectionPool.ConfigOrganizationKey] = trimmedOrg;
+            current[ExoConnectionPool.ConfigCertSubjectKey] = trimmedCert;
             ModuleConfigSvc.SaveModuleConfig(ExoConnectionPool.ConfigModuleKey, current);
+
+            // Drain pooled connections so new borrows use the updated config
+            ExoPool.DrainPool();
 
             try
             {
                 var ip = ClientInfo.GetIpForUser(currentUser);
-                Audit.LogSettingsChange(currentUser, ip, "ExchangeOnlineConfig", Array.Empty<string>(), new[] { $"AppId={exoAppId.Trim()}", $"Org={exoOrganization.Trim()}", $"Cert={exoCertSubject.Trim()}" });
+                Audit.LogSettingsChange(currentUser, ip, "ExchangeOnlineConfig", Array.Empty<string>(), new[] { $"AppId={trimmedAppId}", $"Org={trimmedOrg}", $"Cert={trimmedCert}" });
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for EXO config change"); }
 
-            statusMessage = "Exchange Online configuration saved. Changes take effect on next EXO connection (existing pooled connections will use the previous config until they expire).";
+            statusMessage = allEmpty
+                ? "Exchange Online configuration cleared. EXO features are disabled until reconfigured."
+                : "Exchange Online configuration saved. Existing pooled connections have been drained; new connections will use the updated config.";
             statusIsError = false;
         }
         catch (Exception ex)

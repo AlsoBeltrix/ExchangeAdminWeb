@@ -57,6 +57,15 @@ public sealed class ExoConnectionPool : IDisposable
 
     private (string appId, string organization, string certSubject) GetExoConfig()
     {
+        // Fail-closed: if the config file exists but is corrupt, do not
+        // silently fall back to appsettings — return empty strings so that
+        // IsConfigured returns false and BorrowAsync throws a clear error.
+        if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
+        {
+            _logger.LogError("Module config file is corrupt — refusing to fall back to appsettings for EXO config");
+            return ("", "", "");
+        }
+
         var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey)
             ?? _config["ExchangeOnline:AppId"]
             ?? "";
@@ -126,6 +135,26 @@ public sealed class ExoConnectionPool : IDisposable
         DestroyRunspace(runspace);
         _operationTrace.Step("ExoConnectionDiscarded", backend: "ExchangeOnline");
         _slots.Release();
+    }
+
+    /// <summary>
+    /// Destroys all pooled connections so that subsequent borrows create new
+    /// connections using the current config. Call after EXO config changes.
+    /// </summary>
+    public void DrainPool()
+    {
+        var drained = 0;
+        while (_available.TryTake(out var item))
+        {
+            DestroyRunspace(item);
+            drained++;
+        }
+
+        if (drained > 0)
+            _logger.LogInformation("EXO pool: drained {Count} pooled connection(s) after config change", drained);
+
+        _operationTrace.Step("ExoPoolDrained", backend: "ExchangeOnline",
+            details: new Dictionary<string, object?> { ["connectionsDestroyed"] = drained });
     }
 
     private PooledRunspace CreateConnected()

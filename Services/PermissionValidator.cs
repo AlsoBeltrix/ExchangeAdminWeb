@@ -1,8 +1,6 @@
 using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Management.Automation;
-using System.Management.Automation.Runspaces;
-using System.Security.Cryptography.X509Certificates;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -13,6 +11,7 @@ public class PermissionValidator
     private readonly ILogger<PermissionValidator> _logger;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly ExoConnectionPool _exoPool;
     private readonly ProtectedPrincipalService _protectedPrincipalService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _initLock = new(1, 1);
@@ -21,11 +20,12 @@ public class PermissionValidator
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
 
-    public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ProtectedPrincipalService protectedPrincipalService, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
+    public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ExoConnectionPool exoPool, ProtectedPrincipalService protectedPrincipalService, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
         _config = config;
         _moduleConfig = moduleConfig;
+        _exoPool = exoPool;
         _protectedPrincipalService = protectedPrincipalService;
         _scopeFactory = scopeFactory;
 
@@ -327,151 +327,80 @@ public class PermissionValidator
     {
         var members = new List<string>();
 
-        await Task.Run(() =>
+        if (!_exoPool.IsConfigured)
         {
-            var iss = InitialSessionState.CreateDefault();
-            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-            using var runspace = RunspaceFactory.CreateRunspace(iss);
-            runspace.Open();
-            using var ps = PowerShell.Create();
-            ps.Runspace = runspace;
+            _logger.LogWarning("Exchange Online not configured, cannot expand groups");
+            return members;
+        }
 
-            if (!ConnectToExchange(ps))
-                throw new InvalidOperationException($"Cannot connect to Exchange Online to expand group '{identity}'");
-
-            try
-            {
-                ps.AddCommand("Get-Recipient")
-                  .AddParameter("Identity", identity)
-                  .AddParameter("ErrorAction", "Stop");
-
-                Collection<PSObject> recipients;
-                try
-                {
-                    recipients = Invoke(ps);
-                }
-                catch (Exception ex) when (ex.Message.Contains("couldn't be found"))
-                {
-                    _logger.LogInformation("Excluded entry '{Identity}' not found in EXO — kept as literal match", identity);
-                    return;
-                }
-
-                if (recipients.Count == 0)
-                    return;
-
-                var recipient = recipients[0];
-                var recipientType = recipient.Properties["RecipientTypeDetails"]?.Value?.ToString();
-
-                if (recipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    _logger.LogInformation("Expanding group: {Group} (type: {Type})", identity, recipientType);
-
-                    ps.AddCommand("Get-DistributionGroupMember")
-                      .AddParameter("Identity", identity)
-                      .AddParameter("ResultSize", "Unlimited")
-                      .AddParameter("ErrorAction", "Stop");
-
-                    var groupMembers = Invoke(ps);
-
-                    foreach (var member in groupMembers)
-                    {
-                        var email = member.Properties["PrimarySmtpAddress"]?.Value?.ToString();
-                        var upn = member.Properties["UserPrincipalName"]?.Value?.ToString();
-                        var sam = member.Properties["SamAccountName"]?.Value?.ToString();
-
-                        if (!string.IsNullOrWhiteSpace(email)) members.Add(email);
-                        if (!string.IsNullOrWhiteSpace(upn) && upn != email) members.Add(upn);
-                        if (!string.IsNullOrWhiteSpace(sam)) members.Add(sam);
-                    }
-
-                    _logger.LogInformation("Expanded group {Group} to {Count} members", identity, members.Count);
-                }
-            }
-            finally
-            {
-                try
-                {
-                    ps.Commands.Clear();
-                    ps.AddCommand("Disconnect-ExchangeOnline").AddParameter("Confirm", false);
-                    ps.Invoke();
-                }
-                catch { /* best effort */ }
-            }
-        });
-
-        return members;
-    }
-
-    private bool ConnectToExchange(PowerShell ps)
-    {
+        var pooled = await _exoPool.BorrowAsync();
         try
         {
-            var appId = _config["ExchangeOnline:AppId"];
-            var org = _config["ExchangeOnline:Organization"];
-            var certSubject = _config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+            var ps = pooled.PowerShell;
 
-            if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(org))
+            ps.AddCommand("Get-Recipient")
+              .AddParameter("Identity", identity)
+              .AddParameter("ErrorAction", "Stop");
+
+            Collection<PSObject> recipients;
+            try
             {
-                _logger.LogWarning("Exchange Online not configured, cannot expand groups");
-                return false;
+                recipients = ps.Invoke();
+                ps.Commands.Clear();
+            }
+            catch (Exception ex) when (ex.Message.Contains("couldn't be found"))
+            {
+                ps.Commands.Clear();
+                _logger.LogInformation("Excluded entry '{Identity}' not found in EXO — kept as literal match", identity);
+                _exoPool.Return(pooled);
+                return members;
             }
 
-            var cert = FindCertificate(certSubject);
-            if (cert is null)
+            if (recipients.Count == 0)
             {
-                _logger.LogWarning("Certificate {Subject} not found, cannot expand groups", certSubject);
-                return false;
+                _exoPool.Return(pooled);
+                return members;
             }
 
-            ps.AddCommand("Import-Module")
-              .AddParameter("Name", "ExchangeOnlineManagement")
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            var recipient = recipients[0];
+            var recipientType = recipient.Properties["RecipientTypeDetails"]?.Value?.ToString();
 
-            ps.AddCommand("Connect-ExchangeOnline")
-              .AddParameter("AppId", appId)
-              .AddParameter("CertificateThumbprint", cert.Thumbprint)
-              .AddParameter("Organization", org)
-              .AddParameter("ShowBanner", false)
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps);
+            if (recipientType?.Contains("Group", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                _logger.LogInformation("Expanding group: {Group} (type: {Type})", identity, recipientType);
 
-            return true;
+                ps.AddCommand("Get-DistributionGroupMember")
+                  .AddParameter("Identity", identity)
+                  .AddParameter("ResultSize", "Unlimited")
+                  .AddParameter("ErrorAction", "Stop");
+
+                var groupMembers = ps.Invoke();
+                ps.Commands.Clear();
+
+                foreach (var member in groupMembers)
+                {
+                    var email = member.Properties["PrimarySmtpAddress"]?.Value?.ToString();
+                    var upn = member.Properties["UserPrincipalName"]?.Value?.ToString();
+                    var sam = member.Properties["SamAccountName"]?.Value?.ToString();
+
+                    if (!string.IsNullOrWhiteSpace(email)) members.Add(email);
+                    if (!string.IsNullOrWhiteSpace(upn) && upn != email) members.Add(upn);
+                    if (!string.IsNullOrWhiteSpace(sam)) members.Add(sam);
+                }
+
+                _logger.LogInformation("Expanded group {Group} to {Count} members", identity, members.Count);
+            }
+
+            _exoPool.Return(pooled);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to connect to Exchange Online for group expansion");
-            return false;
-        }
-    }
-
-    private X509Certificate2? FindCertificate(string certSubject)
-    {
-        var locations = new[] { StoreLocation.LocalMachine, StoreLocation.CurrentUser };
-
-        foreach (var location in locations)
-        {
-            using var store = new X509Store(StoreName.My, location);
-            store.Open(OpenFlags.ReadOnly);
-
-            var cert = store.Certificates
-                .Find(X509FindType.FindBySubjectDistinguishedName, certSubject, validOnly: false)
-                .OfType<X509Certificate2>()
-                .Where(c => c.HasPrivateKey)
-                .OrderByDescending(c => c.NotBefore)
-                .FirstOrDefault();
-
-            if (cert is not null) return cert;
+            _exoPool.Discard(pooled);
+            _logger.LogWarning(ex, "Failed to expand group '{Identity}' via EXO pool", identity);
+            throw;
         }
 
-        return null;
-    }
-
-    private static Collection<PSObject> Invoke(PowerShell ps)
-    {
-        var result = ps.Invoke();
-        ps.Commands.Clear();
-        return result;
+        return members;
     }
 
     private static string ExtractUsername(string identity)
