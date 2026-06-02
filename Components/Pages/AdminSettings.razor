@@ -13,6 +13,8 @@
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ModuleConfigService ModuleConfigSvc
+@inject IConfiguration Config
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -67,6 +69,32 @@
                         </div>
                     </div>
                 }
+            </div>
+        </div>
+    </div>
+
+    <!-- Exchange Online Configuration -->
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Exchange Online Connection</strong>
+            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@saving">Save EXO Config</button>
+        </div>
+        <div class="card-body">
+            <p class="text-muted mb-3"><small>Certificate-based authentication for Exchange Online PowerShell. The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">App Registration ID (GUID)</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoAppId" @bind:event="oninput" placeholder="00000000-0000-0000-0000-000000000000" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Organization</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoOrganization" @bind:event="oninput" placeholder="contoso.onmicrosoft.com" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Certificate Subject</label>
+                    <input type="text" class="form-control form-control-sm" @bind="exoCertSubject" @bind:event="oninput" placeholder="CN=EXO-Automation" />
+                    <small class="text-muted">DN of the certificate in the local machine store.</small>
+                </div>
             </div>
         </div>
     </div>
@@ -223,6 +251,9 @@
 
     private Dictionary<string, bool> moduleEnablement = new();
     private string selectedLogLevel = "None";
+    private string exoAppId = "";
+    private string exoOrganization = "";
+    private string exoCertSubject = "";
 
     private List<string> ppUsers = new();
     private List<string> ppGroups = new();
@@ -247,6 +278,7 @@
 
         moduleEnablement = Enablement.GetAllEnablement();
         selectedLogLevel = ExtendedLog.CurrentLevel;
+        LoadExoConfig();
         LoadProtectedPrincipals();
         authChecked = true;
     }
@@ -340,6 +372,52 @@
         {
             saving = false;
         }
+    }
+
+    private void LoadExoConfig()
+    {
+        exoAppId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey)
+            ?? Config["ExchangeOnline:AppId"] ?? "";
+        exoOrganization = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey)
+            ?? Config["ExchangeOnline:Organization"] ?? "";
+        exoCertSubject = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey)
+            ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+    }
+
+    private async Task SaveExoConfig()
+    {
+        saving = true;
+        statusMessage = null;
+        await Task.Yield();
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
+            if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+
+            var current = ModuleConfigSvc.GetModuleConfig(ExoConnectionPool.ConfigModuleKey);
+            current[ExoConnectionPool.ConfigAppIdKey] = exoAppId.Trim();
+            current[ExoConnectionPool.ConfigOrganizationKey] = exoOrganization.Trim();
+            current[ExoConnectionPool.ConfigCertSubjectKey] = exoCertSubject.Trim();
+            ModuleConfigSvc.SaveModuleConfig(ExoConnectionPool.ConfigModuleKey, current);
+
+            try
+            {
+                var ip = ClientInfo.GetIpForUser(currentUser);
+                Audit.LogSettingsChange(currentUser, ip, "ExchangeOnlineConfig", Array.Empty<string>(), new[] { $"AppId={exoAppId.Trim()}", $"Org={exoOrganization.Trim()}", $"Cert={exoCertSubject.Trim()}" });
+            }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for EXO config change"); }
+
+            statusMessage = "Exchange Online configuration saved. Changes take effect on next EXO connection (existing pooled connections will use the previous config until they expire).";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to save: {ex.Message}";
+            statusIsError = true;
+        }
+        finally { saving = false; }
     }
 
     private void LoadProtectedPrincipals()

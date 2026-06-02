@@ -21,31 +21,61 @@ public sealed class PooledRunspace
 
 public sealed class ExoConnectionPool : IDisposable
 {
+    public const string ConfigModuleKey = "ExchangeOnline";
+    public const string ConfigAppIdKey = "AppId";
+    public const string ConfigOrganizationKey = "Organization";
+    public const string ConfigCertSubjectKey = "CertificateSubject";
+
     private readonly ConcurrentBag<PooledRunspace> _available = new();
     private readonly SemaphoreSlim _slots;
     private readonly ILogger<ExoConnectionPool> _logger;
     private readonly OperationTraceService _operationTrace;
-    private readonly string _appId;
-    private readonly string _organization;
-    private readonly string _certSubject;
+    private readonly ModuleConfigService _moduleConfig;
+    private readonly IConfiguration _config;
     private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(20);
     private readonly Timer _cleanupTimer;
     private bool _disposed;
 
-    public ExoConnectionPool(IConfiguration config, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
+    public ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
     {
         _logger = logger;
         _operationTrace = operationTrace;
-        _appId = config["ExchangeOnline:AppId"] ?? "";
-        _organization = config["ExchangeOnline:Organization"] ?? "";
-        _certSubject = config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+        _moduleConfig = moduleConfig;
+        _config = config;
         _slots = new SemaphoreSlim(5, 5);
         _cleanupTimer = new Timer(CleanupIdle, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
 
+    public bool IsConfigured
+    {
+        get
+        {
+            var (appId, org, _) = GetExoConfig();
+            return !string.IsNullOrWhiteSpace(appId) && !string.IsNullOrWhiteSpace(org);
+        }
+    }
+
+    private (string appId, string organization, string certSubject) GetExoConfig()
+    {
+        var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey)
+            ?? _config["ExchangeOnline:AppId"]
+            ?? "";
+        var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey)
+            ?? _config["ExchangeOnline:Organization"]
+            ?? "";
+        var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey)
+            ?? _config["ExchangeOnline:CertificateSubject"]
+            ?? "CN=EXO-Automation";
+        return (appId, organization, certSubject);
+    }
+
     public async Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
     {
-        _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
+        var (appId, org, _) = GetExoConfig();
+        if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(org))
+            throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization in Admin Settings under Exchange Online Configuration.");
+
+        _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = org });
         if (!await _slots.WaitAsync(TimeSpan.FromMinutes(2), ct))
         {
             _operationTrace.Step("ExoPoolSlotRequested", "Failed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["reason"] = "Pool busy" });
@@ -100,6 +130,8 @@ public sealed class ExoConnectionPool : IDisposable
 
     private PooledRunspace CreateConnected()
     {
+        var (appId, organization, certSubject) = GetExoConfig();
+
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
         var runspace = RunspaceFactory.CreateRunspace(iss);
@@ -109,7 +141,7 @@ public sealed class ExoConnectionPool : IDisposable
 
         try
         {
-            _operationTrace.Step("ExoConnectionCreating", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
+            _operationTrace.Step("ExoConnectionCreating", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
 
             ps.AddCommand("Import-Module")
               .AddParameter("Name", "ExchangeOnlineManagement")
@@ -117,11 +149,11 @@ public sealed class ExoConnectionPool : IDisposable
             ps.Invoke();
             ps.Commands.Clear();
 
-            var cert = FindCertificate();
+            var cert = FindCertificate(certSubject);
             ps.AddCommand("Connect-ExchangeOnline")
-              .AddParameter("AppId", _appId)
+              .AddParameter("AppId", appId)
               .AddParameter("CertificateThumbprint", cert.Thumbprint)
-              .AddParameter("Organization", _organization)
+              .AddParameter("Organization", organization)
               .AddParameter("ShowBanner", false)
               .AddParameter("ErrorAction", "Stop");
             ps.Invoke();
@@ -135,8 +167,8 @@ public sealed class ExoConnectionPool : IDisposable
             ps.Commands.Clear();
             ps.Streams.ClearStreams();
 
-            _logger.LogInformation("EXO pool: created new connection (Org={Org})", _organization);
-            _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = _organization });
+            _logger.LogInformation("EXO pool: created new connection (Org={Org})", organization);
+            _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
             return new PooledRunspace(runspace, ps);
         }
         catch (Exception ex)
@@ -185,12 +217,12 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
-    private X509Certificate2 FindCertificate()
+    private static X509Certificate2 FindCertificate(string certSubject)
     {
         using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
         store.Open(OpenFlags.ReadOnly);
         var cert = store.Certificates
-            .Find(X509FindType.FindBySubjectDistinguishedName, _certSubject, false)
+            .Find(X509FindType.FindBySubjectDistinguishedName, certSubject, false)
             .OfType<X509Certificate2>()
             .Where(c => c.HasPrivateKey)
             .OrderByDescending(c => c.NotBefore)
@@ -201,13 +233,13 @@ public sealed class ExoConnectionPool : IDisposable
         using var userStore = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         userStore.Open(OpenFlags.ReadOnly);
         cert = userStore.Certificates
-            .Find(X509FindType.FindBySubjectDistinguishedName, _certSubject, false)
+            .Find(X509FindType.FindBySubjectDistinguishedName, certSubject, false)
             .OfType<X509Certificate2>()
             .Where(c => c.HasPrivateKey)
             .OrderByDescending(c => c.NotBefore)
             .FirstOrDefault();
 
-        return cert ?? throw new InvalidOperationException($"Certificate '{_certSubject}' not found");
+        return cert ?? throw new InvalidOperationException($"Certificate '{certSubject}' not found in LocalMachine or CurrentUser certificate stores.");
     }
 
     public void Dispose()
