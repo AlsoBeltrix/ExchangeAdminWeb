@@ -119,9 +119,12 @@
                                         {
                                             var isChanged = HasChanged(attr.Name);
                                             <tr class="@(isChanged ? "table-warning" : "")">
-                                                <td>
+                                                <td title="@attr.Name">
                                                     @attr.Label
-                                                    <br /><small class="text-muted">@attr.Name</small>
+                                                    @if (!string.Equals(attr.Label, attr.Name, StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        <br /><small class="text-muted">@attr.Name</small>
+                                                    }
                                                 </td>
                                                 <td><small>@GetDisplayValue(attr, currentValues.GetValueOrDefault(attr.Name))</small></td>
                                                 <td>
