@@ -53,6 +53,8 @@ public class ModuleEnablementService
     /// </summary>
     public bool IsModuleRawEnabled(string moduleId)
     {
+        RunUpgradeMigration();
+
         var module = _catalog.GetById(moduleId);
         if (module == null) return false;
         if (module.IsSystemModule) return true;
@@ -66,7 +68,6 @@ public class ModuleEnablementService
 
     public Dictionary<string, bool> GetAllEnablement()
     {
-        RunUpgradeMigration();
 
         var state = ReadState();
         var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -132,29 +133,39 @@ public class ModuleEnablementService
         if (_migrationChecked) return;
         _migrationChecked = true;
 
-        var state = ReadState();
-        if (state.ContainsKey("ExchangeOnline")) return;
+        if (!File.Exists(_configFilePath))
+            return;
 
-        // Check if EXO config exists in module-config.json or appsettings.json
-        var hasExoConfig = !string.IsNullOrWhiteSpace(_moduleConfig.GetValue("ExchangeOnline", "AppId"))
-                        || !string.IsNullOrWhiteSpace(_config["ExchangeOnline:AppId"]);
-
-        lock (_writeLock)
+        try
         {
-            // Re-read inside lock to avoid race
-            state = ReadState();
-            if (state.ContainsKey("ExchangeOnline")) return;
+            var json = File.ReadAllText(_configFilePath);
+            var state = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+            if (state == null || state.ContainsKey("ExchangeOnline"))
+                return;
 
-            state["ExchangeOnline"] = hasExoConfig;
+            var hasExoConfig = !string.IsNullOrWhiteSpace(_moduleConfig.GetValue("ExchangeOnline", "AppId"))
+                            || !string.IsNullOrWhiteSpace(_config["ExchangeOnline:AppId"]);
 
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(_configFilePath, json);
+            lock (_writeLock)
+            {
+                var reRead = File.ReadAllText(_configFilePath);
+                var reState = JsonSerializer.Deserialize<Dictionary<string, bool>>(reRead);
+                if (reState == null || reState.ContainsKey("ExchangeOnline")) return;
+
+                reState["ExchangeOnline"] = hasExoConfig;
+                var updated = JsonSerializer.Serialize(reState, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_configFilePath, updated);
+            }
+
+            if (hasExoConfig)
+                _logger.LogInformation("Auto-enabled ExchangeOnline: existing EXO config detected");
+            else
+                _logger.LogInformation("ExchangeOnline disabled: no EXO config found (fresh install)");
         }
-
-        if (hasExoConfig)
-            _logger.LogInformation("Auto-enabled ExchangeOnline: existing EXO config detected");
-        else
-            _logger.LogInformation("ExchangeOnline disabled: no EXO config found (fresh install)");
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Skipping ExchangeOnline upgrade migration - enablement file may be corrupt");
+        }
     }
 
     private Dictionary<string, bool> ReadState()

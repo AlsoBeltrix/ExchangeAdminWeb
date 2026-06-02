@@ -43,7 +43,7 @@
     </div>
 
     <div class="row g-4">
-        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && Enablement.IsModuleEnabled(m.Id)))
+        @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && !m.IsConfigOnly && Enablement.IsModuleEnabled(m.Id)))
         {
             <AuthorizeView Policy="@module.MainPermission.PolicyAlias">
                 <Authorized>
