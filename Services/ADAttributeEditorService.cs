@@ -268,6 +268,28 @@ public class ADAttributeEditorService
         }
     }
 
+    public string[] GetEffectiveChoices(EditableAttribute attr)
+    {
+        var legend = GetLegend();
+        if (legend.TryGetValue(attr.Name, out var attrLegend) && attrLegend.Count > 0)
+        {
+            var legendKeys = attrLegend.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (attr.Choices != null)
+            {
+                foreach (var c in attr.Choices)
+                    legendKeys.Add(c);
+            }
+
+            return legendKeys
+                .Select(k => (key: k, sortVal: long.TryParse(k, out var n) ? n : long.MaxValue))
+                .OrderBy(x => x.sortVal)
+                .Select(x => x.key)
+                .ToArray();
+        }
+
+        return attr.Choices ?? [];
+    }
+
     public string GetChoiceDisplayText(string attributeName, string value)
     {
         var legend = GetLegend();

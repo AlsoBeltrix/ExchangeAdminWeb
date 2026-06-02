@@ -125,7 +125,8 @@
                                                 </td>
                                                 <td><small>@GetDisplayValue(attr, currentValues.GetValueOrDefault(attr.Name))</small></td>
                                                 <td>
-                                                    @if (attr.Type == "Choice" && attr.Choices != null)
+                                                    @{ var effectiveChoices = attr.Type == "Choice" ? EditorService.GetEffectiveChoices(attr) : null; }
+                                                    @if (effectiveChoices != null && effectiveChoices.Length > 0)
                                                     {
                                                         <select class="form-select form-select-sm"
                                                                 value="@GetEditValue(attr.Name)"
@@ -135,7 +136,7 @@
                                                             {
                                                                 <option value="">— clear —</option>
                                                             }
-                                                            @foreach (var choice in attr.Choices)
+                                                            @foreach (var choice in effectiveChoices)
                                                             {
                                                                 <option value="@choice">@EditorService.GetChoiceDisplayText(attr.Name, choice)</option>
                                                             }
