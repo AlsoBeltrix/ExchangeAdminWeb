@@ -29,7 +29,8 @@ public class M365GroupManagementService
 
     private async Task<GraphTokenClient> GetGraphClientAsync()
     {
-        var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "DelineaSecretId");
+        var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "GraphDelineaSecretId")
+                       ?? _moduleConfig.GetValue("M365GroupManagement", "DelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
             throw new InvalidOperationException("M365 Group Management module is not configured. Set DelineaSecretId in Module Config.");
 
@@ -51,7 +52,8 @@ public class M365GroupManagementService
     {
         get
         {
-            var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "DelineaSecretId");
+            var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "GraphDelineaSecretId")
+                       ?? _moduleConfig.GetValue("M365GroupManagement", "DelineaSecretId");
             return int.TryParse(secretIdStr, out var id) && id > 0;
         }
     }
