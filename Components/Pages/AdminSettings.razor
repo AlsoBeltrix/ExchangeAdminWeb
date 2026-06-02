@@ -74,31 +74,34 @@
         </div>
     </div>
 
-    <!-- Exchange Online Configuration -->
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Exchange Online Connection</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@saving">Save EXO Config</button>
-        </div>
-        <div class="card-body">
-            <p class="text-muted mb-3"><small>Certificate-based authentication for Exchange Online PowerShell. The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <label class="form-label fw-semibold">App Registration ID (GUID)</label>
-                    <input type="text" class="form-control form-control-sm" @bind="exoAppId" @bind:event="oninput" placeholder="00000000-0000-0000-0000-000000000000" />
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-semibold">Organization</label>
-                    <input type="text" class="form-control form-control-sm" @bind="exoOrganization" @bind:event="oninput" placeholder="contoso.onmicrosoft.com" />
-                </div>
-                <div class="col-md-4">
-                    <label class="form-label fw-semibold">Certificate Subject</label>
-                    <input type="text" class="form-control form-control-sm" @bind="exoCertSubject" @bind:event="oninput" placeholder="CN=EXO-Automation" />
-                    <small class="text-muted">DN of the certificate in the local machine store.</small>
+    @if (HasAnyExchangeModulesEnabled())
+    {
+        <!-- Exchange Online Configuration -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <strong>Exchange Online Connection</strong>
+                <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@saving">Save EXO Config</button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3"><small>Certificate-based authentication for Exchange Online PowerShell. The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">App Registration ID (GUID)</label>
+                        <input type="text" class="form-control form-control-sm" @bind="exoAppId" @bind:event="oninput" placeholder="00000000-0000-0000-0000-000000000000" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Organization</label>
+                        <input type="text" class="form-control form-control-sm" @bind="exoOrganization" @bind:event="oninput" placeholder="contoso.onmicrosoft.com" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Certificate Subject</label>
+                        <input type="text" class="form-control form-control-sm" @bind="exoCertSubject" @bind:event="oninput" placeholder="CN=EXO-Automation" />
+                        <small class="text-muted">DN of the certificate in the local machine store.</small>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    }
 
     <!-- Protected Principals -->
     <div class="card mb-4">
@@ -375,14 +378,27 @@
         }
     }
 
+    private bool HasAnyExchangeModulesEnabled()
+    {
+        var exchangeModuleIds = new[] { "MailboxPermissions", "CalendarPermissions", "Migration", "DelegationReport", "MessageTrace", "RecipientLookup", "OutOfOffice", "ConferenceRooms" };
+        return exchangeModuleIds.Any(id => Enablement.IsModuleEnabled(id));
+    }
+
     private void LoadExoConfig()
     {
-        exoAppId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey)
-            ?? Config["ExchangeOnline:AppId"] ?? "";
-        exoOrganization = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey)
-            ?? Config["ExchangeOnline:Organization"] ?? "";
-        exoCertSubject = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey)
-            ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+        try
+        {
+            exoAppId = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigAppIdKey)
+                ?? Config["ExchangeOnline:AppId"] ?? "";
+            exoOrganization = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey)
+                ?? Config["ExchangeOnline:Organization"] ?? "";
+            exoCertSubject = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey)
+                ?? Config["ExchangeOnline:CertificateSubject"] ?? "CN=EXO-Automation";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load EXO config");
+        }
     }
 
     private async Task SaveExoConfig()
