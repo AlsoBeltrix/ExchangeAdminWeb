@@ -166,7 +166,21 @@ public class ModuleEnablementService
 
                 reState["ExchangeOnline"] = hasExoConfig;
                 var updated = JsonSerializer.Serialize(reState, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_configFilePath, updated);
+                var configDir = Path.GetDirectoryName(_configFilePath)!;
+                var tempPath = Path.Combine(configDir, $"modules-enabled.{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    File.WriteAllText(tempPath, updated);
+                    if (File.Exists(_configFilePath))
+                        File.Replace(tempPath, _configFilePath, null);
+                    else
+                        File.Move(tempPath, _configFilePath);
+                }
+                finally
+                {
+                    if (File.Exists(tempPath))
+                        try { File.Delete(tempPath); } catch { }
+                }
             }
 
             if (hasExoConfig)

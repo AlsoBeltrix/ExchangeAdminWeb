@@ -74,7 +74,7 @@
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Exchange Online Connection</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@saving">Save Connection</button>
+            <button class="btn btn-primary btn-sm" @onclick="SaveExoConfig" disabled="@(saving || configCorrupt)">Save Connection</button>
         </div>
         <div class="card-body">
             <p class="text-muted mb-3"><small>The certificate must be installed in the server's LocalMachine certificate store with the private key accessible to the app pool identity. <a href="https://learn.microsoft.com/en-us/powershell/exchange/app-only-auth-powershell-v2" target="_blank">Setup guide</a></small></p>
