@@ -1,0 +1,49 @@
+<select class="form-select"
+        value="@Value"
+        @onchange="OnChanged"
+        disabled="@Disabled">
+    @if (AllowEmpty)
+    {
+        <option value="">-- Select timezone --</option>
+    }
+    @foreach (var tz in _timezones)
+    {
+        <option value="@tz.Id">@tz.Display</option>
+    }
+</select>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool AllowEmpty { get; set; } = true;
+
+    private List<TimezoneEntry> _timezones = [];
+
+    protected override void OnInitialized()
+    {
+        _timezones = TimeZoneInfo.GetSystemTimeZones()
+            .OrderBy(tz => tz.BaseUtcOffset)
+            .ThenBy(tz => tz.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .Select(tz => new TimezoneEntry(
+                tz.Id,
+                FormatOffset(tz.BaseUtcOffset) + " " + tz.DisplayName))
+            .ToList();
+    }
+
+    private async Task OnChanged(ChangeEventArgs e)
+    {
+        var newValue = e.Value?.ToString() ?? "";
+        Value = newValue;
+        await ValueChanged.InvokeAsync(newValue);
+    }
+
+    private static string FormatOffset(TimeSpan offset)
+    {
+        var sign = offset < TimeSpan.Zero ? "-" : "+";
+        var abs = offset.Duration();
+        return $"(UTC{sign}{abs.Hours:D2}:{abs.Minutes:D2})";
+    }
+
+    private sealed record TimezoneEntry(string Id, string Display);
+}

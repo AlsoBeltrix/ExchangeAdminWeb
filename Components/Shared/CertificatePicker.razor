@@ -1,0 +1,115 @@
+@using System.Security.Cryptography.X509Certificates
+
+<div class="position-relative">
+    <div class="input-group">
+        <input type="text"
+               class="form-control"
+               value="@Value"
+               @oninput="OnManualInput"
+               placeholder="CN=..."
+               disabled="@Disabled" />
+
+        @if (_certificates.Count > 0)
+        {
+            <button class="btn btn-outline-secondary dropdown-toggle"
+                    type="button"
+                    @onclick="ToggleDropdown"
+                    disabled="@Disabled">
+            </button>
+        }
+    </div>
+
+    @if (_showDropdown && _certificates.Count > 0)
+    {
+        <ul class="list-group position-absolute w-100 shadow-sm"
+            style="z-index: 1050; max-height: 300px; overflow-y: auto; top: 100%;">
+            @foreach (var cert in _certificates)
+            {
+                <li class="list-group-item list-group-item-action py-1 px-2"
+                    style="cursor: pointer; font-size: 0.9rem;"
+                    @onmousedown="() => SelectCertificate(cert)"
+                    @onmousedown:preventDefault>
+                    <div>
+                        <span class="fw-semibold">@cert.Subject</span>
+                    </div>
+                    <div class="text-muted" style="font-size: 0.8rem;">
+                        Thumbprint: ...@cert.ThumbprintSuffix | Expires: @cert.Expires.ToString("yyyy-MM-dd")
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+
+    @if (!string.IsNullOrEmpty(_loadError))
+    {
+        <div class="text-warning mt-1" style="font-size: 0.8rem;">
+            @_loadError
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private List<CertEntry> _certificates = [];
+    private bool _showDropdown;
+    private string? _loadError;
+
+    protected override void OnInitialized()
+    {
+        LoadCertificates();
+    }
+
+    private void LoadCertificates()
+    {
+        try
+        {
+            using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
+            store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+
+            var now = DateTime.Now;
+            _certificates = store.Certificates
+                .Cast<X509Certificate2>()
+                .Where(c => c.HasPrivateKey
+                         && c.NotBefore <= now
+                         && c.NotAfter > now
+                         && c.Subject.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(c => c.Subject, StringComparer.OrdinalIgnoreCase)
+                .Select(c => new CertEntry(
+                    c.Subject,
+                    c.Thumbprint.Length >= 8 ? c.Thumbprint[^8..] : c.Thumbprint,
+                    c.NotAfter))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _loadError = "Could not read local machine certificate store. Manual entry is available.";
+            _certificates = [];
+            // Log the exception details for diagnostics
+            System.Diagnostics.Debug.WriteLine($"CertificatePicker: Failed to load certificates: {ex.Message}");
+        }
+    }
+
+    private async Task OnManualInput(ChangeEventArgs e)
+    {
+        var newValue = e.Value?.ToString() ?? "";
+        Value = newValue;
+        await ValueChanged.InvokeAsync(newValue);
+    }
+
+    private async Task SelectCertificate(CertEntry cert)
+    {
+        Value = cert.Subject;
+        _showDropdown = false;
+        await ValueChanged.InvokeAsync(cert.Subject);
+    }
+
+    private void ToggleDropdown()
+    {
+        _showDropdown = !_showDropdown;
+    }
+
+    private sealed record CertEntry(string Subject, string ThumbprintSuffix, DateTime Expires);
+}
