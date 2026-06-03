@@ -526,9 +526,10 @@ Required construction pattern:
 ```csharp
 private async Task<GraphTokenClient> GetGraphClientAsync()
 {
-    var secretIdValue = _moduleConfig.GetValue("MyModule", "DelineaSecretId");
+    var secretIdValue = _moduleConfig.GetValue("MyModule", "GraphDelineaSecretId")
+                     ?? _moduleConfig.GetValue("MyModule", "DelineaSecretId");
     if (!int.TryParse(secretIdValue, out var secretId) || secretId <= 0)
-        throw new InvalidOperationException("MyModule is not configured. Set DelineaSecretId in Module Config.");
+        throw new InvalidOperationException("MyModule is not configured. Set Graph App Delinea Secret ID in Module Config.");
 
     var fields = await _delineaService.GetSecretFieldsAsync(secretId);
     if (fields is null)

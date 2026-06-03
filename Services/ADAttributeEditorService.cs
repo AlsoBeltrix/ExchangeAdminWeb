@@ -431,28 +431,58 @@ public class ADAttributeEditorService
         ps.Commands.Clear();
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        var searchBase = _moduleConfig.GetValue("ADAttributeEditor", "DefaultSearchBase");
+        var searchBaseConfig = _moduleConfig.GetValue("ADAttributeEditor", "DefaultSearchBase");
+        var searchBases = string.IsNullOrWhiteSpace(searchBaseConfig)
+            ? Array.Empty<string>()
+            : searchBaseConfig.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var escaped = ProtectedPrincipalService.EscapeLdapFilter(identity);
         var filter = $"(|(userPrincipalName={escaped})(mail={escaped})(sAMAccountName={escaped})(employeeID={escaped}))";
+        var properties = GetPropertiesToLoad(allowlist);
 
-        ps.AddCommand("Get-ADUser")
-          .AddParameter("LDAPFilter", filter)
-          .AddParameter("Properties", GetPropertiesToLoad(allowlist))
-          .AddParameter("Credential", credential)
-          .AddParameter("ErrorAction", "Stop");
+        var allUsers = new List<PSObject>();
 
-        if (!string.IsNullOrWhiteSpace(searchBase))
-            ps.AddParameter("SearchBase", searchBase);
-
-        var users = ps.Invoke();
-        ps.Commands.Clear();
+        if (searchBases.Length == 0)
+        {
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("LDAPFilter", filter)
+              .AddParameter("Properties", properties)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            allUsers.AddRange(ps.Invoke());
+            ps.Commands.Clear();
+        }
+        else
+        {
+            foreach (var sb in searchBases)
+            {
+                ps.AddCommand("Get-ADUser")
+                  .AddParameter("LDAPFilter", filter)
+                  .AddParameter("SearchBase", sb)
+                  .AddParameter("Properties", properties)
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "SilentlyContinue");
+                try
+                {
+                    allUsers.AddRange(ps.Invoke());
+                }
+                catch { }
+                ps.Streams.Error.Clear();
+                ps.Commands.Clear();
+            }
+        }
 
         if (ps.HadErrors)
         {
             var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "AD query failed.";
+            ps.Streams.Error.Clear();
             return new(false, errMsg, null, null, false, null, null);
         }
+
+        var users = allUsers
+            .GroupBy(u => u.Properties["ObjectGUID"]?.Value?.ToString(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
 
         if (users.Count == 0)
             return new(false, $"User '{identity}' not found.", null, null, false, null, null);
@@ -463,11 +493,12 @@ public class ADAttributeEditorService
         var adUser = users[0];
         var dn = adUser.Properties["DistinguishedName"]?.Value?.ToString();
 
-        if (!string.IsNullOrWhiteSpace(searchBase) && dn != null &&
-            !dn.EndsWith("," + searchBase, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(dn, searchBase, StringComparison.OrdinalIgnoreCase))
+        if (searchBases.Length > 0 && dn != null &&
+            !searchBases.Any(sb =>
+                dn.EndsWith("," + sb, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(dn, sb, StringComparison.OrdinalIgnoreCase)))
         {
-            return new(false, "User is outside the configured search base boundary.", null, null, true, "Outside allowed OU scope.", null);
+            return new(false, "User is outside the configured search base boundaries.", null, null, true, "Outside allowed OU scope.", null);
         }
 
         var principal = new ResolvedDirectoryPrincipal(

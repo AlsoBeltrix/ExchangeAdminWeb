@@ -39,7 +39,7 @@
 }
 
 <div class="container-fluid">
-    <h1 class="mb-4">@module.DisplayName <small class="text-muted fs-6">v@module.Version</small></h1>
+    <h1 class="mb-4">@module.DisplayName <small class="text-muted fs-6">v@(module.Version)</small></h1>
     <p class="text-muted mb-4">@module.Description</p>
 
     @if (!string.IsNullOrEmpty(statusMessage))

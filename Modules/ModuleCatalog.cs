@@ -410,7 +410,7 @@ public sealed class ModuleCatalog
             ],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by attribute read/write operations"),
-                new("DefaultSearchBase", "Default Search Base", "Optional OU DN that limits which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com)", Required: false)
+                new("DefaultSearchBase", "Allowed Search Bases", "Optional semicolon-separated OU DNs that limit which users can be edited (e.g. OU=Users,DC=ad,DC=contoso,DC=com;OU=Contractors,DC=ad,DC=contoso,DC=com)", Required: false)
             ]
         },
         new()
