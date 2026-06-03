@@ -432,10 +432,7 @@ public class ADAttributeEditorService
         ps.Commands.Clear();
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
-        var searchBaseConfig = _moduleConfig.GetValue("ADAttributeEditor", "DefaultSearchBase");
-        var searchBases = string.IsNullOrWhiteSpace(searchBaseConfig)
-            ? Array.Empty<string>()
-            : searchBaseConfig.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var searchBases = GetConfiguredSearchBases();
 
         var escaped = ProtectedPrincipalService.EscapeLdapFilter(identity);
         var filter = $"(|(userPrincipalName={escaped})(mail={escaped})(sAMAccountName={escaped})(employeeID={escaped}))";
@@ -494,10 +491,7 @@ public class ADAttributeEditorService
         var adUser = users[0];
         var dn = adUser.Properties["DistinguishedName"]?.Value?.ToString();
 
-        if (searchBases.Length > 0 && dn != null &&
-            !searchBases.Any(sb =>
-                dn.EndsWith("," + sb, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(dn, sb, StringComparison.OrdinalIgnoreCase)))
+        if (!IsWithinSearchBases(dn, searchBases))
         {
             return new(false, "User is outside the configured search base boundaries.", null, null, true, "Outside allowed OU scope.", null);
         }
@@ -573,6 +567,10 @@ public class ADAttributeEditorService
         var reReadGuid = reReadUser.Properties["ObjectGUID"]?.Value?.ToString();
         if (!string.IsNullOrEmpty(target.ObjectGuid) && !string.Equals(reReadGuid, target.ObjectGuid, StringComparison.OrdinalIgnoreCase))
             return new(false, "Bound-object mismatch: the resolved object no longer matches the lookup snapshot.", null);
+
+        var reReadDn = reReadUser.Properties["DistinguishedName"]?.Value?.ToString();
+        if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
+            return new(false, "Target is outside the configured search base boundaries. The account may have been moved since lookup.", null);
 
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
@@ -730,6 +728,23 @@ public class ADAttributeEditorService
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
         _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail);
+    }
+
+    private string[] GetConfiguredSearchBases()
+    {
+        var config = _moduleConfig.GetValue("ADAttributeEditor", "DefaultSearchBase");
+        if (string.IsNullOrWhiteSpace(config))
+            return [];
+        return config.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static bool IsWithinSearchBases(string? dn, string[] searchBases)
+    {
+        if (searchBases.Length == 0 || string.IsNullOrEmpty(dn))
+            return true;
+        return searchBases.Any(sb =>
+            dn.EndsWith("," + sb, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(dn, sb, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string[] GetPropertiesToLoad(List<EditableAttribute> allowlist)
