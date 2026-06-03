@@ -136,10 +136,7 @@
                                 </td>
                                 <td>
                                     <div class="input-group input-group-sm">
-                                        <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
-                                               value="@accessInputs[capturedAlias]"
-                                               @oninput="(e) => accessInputs[capturedAlias] = e.Value?.ToString() ?? string.Empty"
-                                               @onkeydown="(e) => HandleAccessKeyDown(e, capturedAlias)" />
+                                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="accessInputs[capturedAlias]" Placeholder="Search AD groups..." />
                                         <button class="btn btn-outline-success" type="button"
                                                 @onclick="() => AddAccessGroup(capturedAlias)">Add</button>
                                     </div>
@@ -397,9 +394,7 @@
                 }
 
                 <div class="input-group" style="max-width: 400px;">
-                    <input type="text" class="form-control" placeholder="DOMAIN\GroupName"
-                           @bind="newAdminGroup" @bind:event="oninput"
-                           @onkeydown="HandleAdminKeyDown" />
+                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="newAdminGroup" Placeholder="Search AD groups..." />
                     <button class="btn btn-outline-success" type="button" @onclick="AddModuleAdmin">Add</button>
                 </div>
             </div>

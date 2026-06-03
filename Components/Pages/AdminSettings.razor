@@ -111,7 +111,7 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" @bind="ppNewUser" @bind:event="oninput" @onkeydown="OnPpUserKey" placeholder="user@contoso.com" />
+                        <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN" @bind-Value="ppNewUser" Placeholder="user@contoso.com" />
                         <button class="btn btn-outline-success" @onclick="AddPpUser" disabled="@string.IsNullOrWhiteSpace(ppNewUser)">Add</button>
                     </div>
                 </div>
@@ -133,7 +133,7 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" @bind="ppNewGroup" @bind:event="oninput" @onkeydown="OnPpGroupKey" placeholder="DOMAIN\Domain Admins" />
+                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="DN" @bind-Value="ppNewGroup" Placeholder="Search AD groups..." />
                         <button class="btn btn-outline-success" @onclick="AddPpGroup" disabled="@string.IsNullOrWhiteSpace(ppNewGroup)">Add</button>
                     </div>
                 </div>

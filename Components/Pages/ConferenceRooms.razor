@@ -72,7 +72,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Time Zone</label>
-                            <input type="text" class="form-control" @bind="timezone" placeholder="e.g. Eastern Standard Time" disabled="@isLoading" />
+                            <TimezonePicker @bind-Value="timezone" Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
@@ -163,7 +163,7 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Time Zone</label>
-                            <input type="text" class="form-control" @bind="typeTimezone" placeholder="e.g. Eastern Standard Time" disabled="@isLoading" />
+                            <TimezonePicker @bind-Value="typeTimezone" Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>

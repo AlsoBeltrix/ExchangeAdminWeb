@@ -89,7 +89,7 @@
                 </div>
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Certificate Subject</label>
-                    <input type="text" class="form-control form-control-sm" @bind="exoCertSubject" @bind:event="oninput" placeholder="CN=EXO-Automation" />
+                    <CertificatePicker @bind-Value="exoCertSubject" />
                     <small class="text-muted">DN of the certificate in the local machine store.</small>
                 </div>
             </div>
