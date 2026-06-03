@@ -281,8 +281,9 @@ public class ADAttributeEditorService
             }
 
             return legendKeys
-                .Select(k => (key: k, sortVal: long.TryParse(k, out var n) ? n : long.MaxValue))
-                .OrderBy(x => x.sortVal)
+                .Select(k => (key: k, numVal: long.TryParse(k, out var n) ? n : long.MaxValue))
+                .OrderBy(x => x.numVal < 0 ? 1 : 0)
+                .ThenBy(x => Math.Abs(x.numVal))
                 .Select(x => x.key)
                 .ToArray();
         }
