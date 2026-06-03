@@ -643,6 +643,10 @@ public class ADAttributeEditorService
 
             if (result.Count == 0) return null;
 
+            var reReadDn = result[0].Properties["DistinguishedName"]?.Value?.ToString();
+            if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
+                return null;
+
             var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
             foreach (var attr in allowlist)
                 values[attr.Name] = result[0].Properties[attr.Name]?.Value?.ToString();
