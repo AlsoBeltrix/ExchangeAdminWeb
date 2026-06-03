@@ -14,6 +14,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ADAttributeEditorService AttrEditorService
+@inject ADOrganizationalUnitService OUService
 @inject ILogger<ModuleConfig> Logger
 
 <PageTitle>Module Config — @(module?.DisplayName ?? ModuleId)</PageTitle>
@@ -181,14 +182,92 @@
                                 @field.Label
                                 @if (field.Required) { <span class="text-danger">*</span> }
                             </label>
-                            <input type="text"
-                                   class="form-control"
-                                   placeholder="@field.Description"
-                                   value="@GetConfigValue(field.Key, field.DefaultValue)"
-                                   @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
-                            @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                            @if (capturedKey == "DefaultSearchBase" && module.Id == "ADAttributeEditor")
                             {
-                                <div class="form-text">@field.Description</div>
+                                <div class="input-group">
+                                    <input type="text"
+                                           class="form-control"
+                                           placeholder="@field.Description"
+                                           value="@GetConfigValue(field.Key, field.DefaultValue)"
+                                           @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
+                                    @if (ouBrowseAvailable)
+                                    {
+                                        <button class="btn btn-outline-secondary" type="button"
+                                                @onclick="ToggleOUBrowser" disabled="@ouLoading">
+                                            @if (ouLoading)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                                            }
+                                            @(showOUBrowser ? "Close" : "Browse OUs")
+                                        </button>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                                {
+                                    <div class="form-text">@field.Description</div>
+                                }
+
+                                @if (showOUBrowser)
+                                {
+                                    <div class="card mt-2 border-secondary">
+                                        <div class="card-header py-2 d-flex justify-content-between align-items-center">
+                                            <small class="fw-semibold">Select Organizational Units</small>
+                                            <div>
+                                                <button class="btn btn-sm btn-outline-secondary me-1" @onclick="RefreshOUs" disabled="@ouLoading">
+                                                    Refresh
+                                                </button>
+                                                <button class="btn btn-sm btn-primary" @onclick="ApplySelectedOUs">
+                                                    Apply Selected
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="card-body p-2">
+                                            @if (ouFilteredEntries.Count == 0)
+                                            {
+                                                <p class="text-muted fst-italic mb-0">No organizational units found.</p>
+                                            }
+                                            else
+                                            {
+                                                <div class="mb-2">
+                                                    <input type="text" class="form-control form-control-sm"
+                                                           placeholder="Filter OUs..."
+                                                           value="@ouFilterText"
+                                                           @oninput="OnOUFilterChanged" />
+                                                </div>
+                                                <div style="max-height: 350px; overflow-y: auto; font-size: 0.875em;">
+                                                    @foreach (var ou in ouFilteredEntries)
+                                                    {
+                                                        var capturedDn = ou.DistinguishedName;
+                                                        var isChecked = ouSelectedDNs.Contains(capturedDn);
+                                                        var indent = Math.Max(0, ou.Depth - ouMinDepth);
+                                                        <div class="form-check py-0" style="padding-left: @(1.5 + indent * 1.25)rem;">
+                                                            <input class="form-check-input" type="checkbox" id="ou-@capturedDn.GetHashCode()"
+                                                                   checked="@isChecked"
+                                                                   @onchange="(e) => ToggleOU(capturedDn, (bool)(e.Value ?? false))" />
+                                                            <label class="form-check-label" for="ou-@capturedDn.GetHashCode()"
+                                                                   title="@capturedDn">
+                                                                @ou.Name
+                                                                <small class="text-muted ms-1">@capturedDn</small>
+                                                            </label>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <input type="text"
+                                       class="form-control"
+                                       placeholder="@field.Description"
+                                       value="@GetConfigValue(field.Key, field.DefaultValue)"
+                                       @oninput="(e) => SetConfigValue(capturedKey, e.Value?.ToString() ?? string.Empty)" />
+                                @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                                {
+                                    <div class="form-text">@field.Description</div>
+                                }
                             }
                         </div>
                     }
@@ -411,7 +490,10 @@
         }
 
         if (module.Id == "ADAttributeEditor")
+        {
             LoadAllowlist();
+            InitOUBrowser();
+        }
     }
 
     private string GetConfigValue(string key, string defaultValue) =>
@@ -780,5 +862,139 @@
         public int? MaxLength { get; set; }
         public string? Pattern { get; set; }
         public int Level { get; set; } = 1;
+    }
+
+    // --- OU Browser/Picker ---
+
+    private bool ouBrowseAvailable;
+    private bool showOUBrowser;
+    private bool ouLoading;
+    private List<OUEntry> ouAllEntries = new();
+    private List<OUEntry> ouFilteredEntries = new();
+    private HashSet<string> ouSelectedDNs = new(StringComparer.OrdinalIgnoreCase);
+    private string ouFilterText = string.Empty;
+    private int ouMinDepth;
+
+    private void InitOUBrowser()
+    {
+        // Probe availability without blocking — just check the cached flag.
+        // The actual enumeration happens when the user clicks "Browse OUs".
+        ouBrowseAvailable = true;
+        showOUBrowser = false;
+        ouLoading = false;
+        ouFilterText = string.Empty;
+        ouAllEntries = new();
+        ouFilteredEntries = new();
+        ouSelectedDNs = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task ToggleOUBrowser()
+    {
+        if (showOUBrowser)
+        {
+            showOUBrowser = false;
+            return;
+        }
+
+        // Load OUs when opening the browser for the first time
+        if (ouAllEntries.Count == 0)
+        {
+            await LoadOUsAsync();
+            if (!ouBrowseAvailable) return;
+        }
+
+        // Pre-select OUs already in the config value
+        SyncSelectedFromConfig();
+        showOUBrowser = true;
+    }
+
+    private async Task LoadOUsAsync()
+    {
+        ouLoading = true;
+        await Task.Yield();
+
+        try
+        {
+            ouAllEntries = await Task.Run(() => OUService.GetOrganizationalUnits());
+            ouBrowseAvailable = OUService.IsAvailable;
+
+            if (!ouBrowseAvailable)
+            {
+                ouAllEntries = new();
+                ouFilteredEntries = new();
+                return;
+            }
+
+            ouMinDepth = ouAllEntries.Count > 0 ? ouAllEntries.Min(e => e.Depth) : 0;
+            ApplyOUFilter();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "OU browser load failed");
+            ouBrowseAvailable = false;
+        }
+        finally
+        {
+            ouLoading = false;
+        }
+    }
+
+    private async Task RefreshOUs()
+    {
+        OUService.InvalidateCache();
+        ouAllEntries = new();
+        await LoadOUsAsync();
+        if (ouBrowseAvailable)
+        {
+            SyncSelectedFromConfig();
+        }
+    }
+
+    private void SyncSelectedFromConfig()
+    {
+        ouSelectedDNs.Clear();
+        var currentValue = GetConfigValue("DefaultSearchBase", "");
+        if (!string.IsNullOrWhiteSpace(currentValue))
+        {
+            var dns = currentValue.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var dn in dns)
+                ouSelectedDNs.Add(dn);
+        }
+    }
+
+    private void ToggleOU(string dn, bool isChecked)
+    {
+        if (isChecked)
+            ouSelectedDNs.Add(dn);
+        else
+            ouSelectedDNs.Remove(dn);
+    }
+
+    private void ApplySelectedOUs()
+    {
+        var value = string.Join(";", ouSelectedDNs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase));
+        SetConfigValue("DefaultSearchBase", value);
+        showOUBrowser = false;
+    }
+
+    private void OnOUFilterChanged(ChangeEventArgs e)
+    {
+        ouFilterText = e.Value?.ToString() ?? string.Empty;
+        ApplyOUFilter();
+    }
+
+    private void ApplyOUFilter()
+    {
+        if (string.IsNullOrWhiteSpace(ouFilterText))
+        {
+            ouFilteredEntries = ouAllEntries;
+        }
+        else
+        {
+            ouFilteredEntries = ouAllEntries
+                .Where(ou => ou.Name.Contains(ouFilterText, StringComparison.OrdinalIgnoreCase)
+                          || ou.DistinguishedName.Contains(ouFilterText, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
     }
 }

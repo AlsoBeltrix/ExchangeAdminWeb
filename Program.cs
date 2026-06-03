@@ -78,6 +78,7 @@ try
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
     builder.Services.AddScoped<ADAttributeEditorService>();
+    builder.Services.AddSingleton<ADOrganizationalUnitService>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
     builder.Services.AddScoped<DelegationReportService>();
