@@ -54,6 +54,15 @@ public class JsonlLogService
         yield return activePath;
     }
 
+    public IEnumerable<string> GetTraceLogPaths(DateTime date)
+    {
+        var activePath = Path.Combine(_logFolder, GetLogFilename(date, LogStream.Trace));
+        for (var i = _maxFilesPerPeriod - 1; i >= 1; i--)
+            yield return GetRotatedLogPath(activePath, i);
+
+        yield return activePath;
+    }
+
     private void WriteToFile(Dictionary<string, object?> evt, LogStream stream)
     {
         var filtered = evt.Where(kv => kv.Value != null).ToDictionary(kv => kv.Key, kv => kv.Value);

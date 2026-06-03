@@ -79,6 +79,12 @@
             </select>
         </div>
         <div class="col-auto pt-4">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="showDiagnosticsToggle" @bind="showDiagnostics" @bind:after="LoadEvents" />
+                <label class="form-check-label small" for="showDiagnosticsToggle">Show diagnostics</label>
+            </div>
+        </div>
+        <div class="col-auto pt-4">
             <span class="badge bg-secondary">@filteredEvents.Count events</span>
             <button class="btn btn-outline-secondary btn-sm ms-2" @onclick="DownloadCsv" disabled="@(filteredEvents.Count == 0)">Download CSV</button>
         </div>
@@ -120,17 +126,41 @@
                     @foreach (var evt in GetPage())
                     {
                         var evtId = evt.Index;
-                        <tr @onclick="() => ToggleExpand(evtId)" style="cursor: pointer;">
-                            <td><small>@evt.Time</small></td>
-                            <td>@evt.User</td>
+                        var rowClass = evt.Source is "Trace" or "Diagnostic" ? "text-muted" : "";
+                        var rowStyle = evt.Source is "Trace" or "Diagnostic" ? "cursor: pointer; font-size: 0.85em;" : "cursor: pointer;";
+                        <tr @onclick="() => ToggleExpand(evtId)" class="@rowClass" style="@rowStyle">
+                            <td>
+                                <small>@evt.Time</small>
+                            </td>
+                            <td>
+                                @{
+                                    var badgeClass = evt.Source switch
+                                    {
+                                        "Trace" => "bg-info text-dark",
+                                        "Diagnostic" => "bg-secondary",
+                                        _ => "bg-primary"
+                                    };
+                                    var badgeLabel = evt.Source switch
+                                    {
+                                        "Trace" => "TRACE",
+                                        "Diagnostic" => "DIAG",
+                                        _ => "AUDIT"
+                                    };
+                                }
+                                <span class="badge @badgeClass me-1" style="font-size: 0.65em; vertical-align: middle;">@badgeLabel</span>
+                                @evt.User
+                            </td>
                             <td><small>@evt.Ip</small></td>
                             <td>@evt.Action</td>
                             <td>@evt.Category</td>
                             <td style="max-width: 28rem;"><small class="d-inline-block text-truncate align-bottom" style="max-width: 100%;" title="@evt.FullTarget">@evt.Target</small></td>
                             <td>
-                                <span class="badge @(evt.Result == "Success" ? "bg-success" : evt.Result == "Failed" ? "bg-danger" : "bg-warning text-dark")">
-                                    @evt.Result
-                                </span>
+                                @if (!string.IsNullOrEmpty(evt.Result))
+                                {
+                                    <span class="badge @(evt.Result == "Success" ? "bg-success" : evt.Result == "Failed" ? "bg-danger" : "bg-warning text-dark")">
+                                        @evt.Result
+                                    </span>
+                                }
                             </td>
                             <td>@(expandedRow == evtId ? "▲" : "▼")</td>
                         </tr>
@@ -183,65 +213,11 @@
             </nav>
         }
     }
-
-    @if (ExtendedLog.HasExtendedLogs(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue)))
-    {
-        <div class="mt-4">
-            <button class="btn btn-outline-info btn-sm" @onclick="ToggleExtendedLogs">
-                @(showExtendedLogs ? "Hide" : "Show") Extended Logs
-            </button>
-            @if (showExtendedLogs)
-            {
-                <div class="card mt-2">
-                    <div class="card-header"><strong>Extended Diagnostic Logs</strong> <small class="text-muted">(@startDate - @endDate)</small></div>
-                    <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
-                        <table class="table table-sm table-dark table-hover mb-0 align-middle">
-                            <thead class="sticky-top">
-                                <tr>
-                                    <th style="width: 150px;">Time</th>
-                                    <th style="width: 90px;">Level</th>
-                                    <th style="width: 130px;">Category</th>
-                                    <th>Event</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var entry in extendedLogEvents)
-                                {
-                                    <tr>
-                                        <td class="text-nowrap small">@entry.Time</td>
-                                        <td><span class="badge @GetExtendedLevelBadge(entry.Level)">@entry.Level</span></td>
-                                        <td class="small">@entry.Category</td>
-                                        <td>
-                                            <div>@entry.Message</div>
-                                            @if (entry.DetailFields.Count > 0)
-                                            {
-                                                <div class="small text-muted mt-1 d-flex flex-wrap gap-2">
-                                                    @foreach (var field in entry.DetailFields)
-                                                    {
-                                                        <span><strong>@field.Key:</strong> @field.Value</span>
-                                                    }
-                                                </div>
-                                            }
-                                            else if (!string.IsNullOrWhiteSpace(entry.Detail))
-                                            {
-                                                <div class="small text-muted mt-1">@entry.Detail</div>
-                                            }
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            }
-        </div>
-    }
 </div>
 
 @code {
     private bool authChecked;
-    private bool showExtendedLogs;
-    private List<ExtendedLogEvent> extendedLogEvents = new();
+    private bool showDiagnostics;
     private DateOnly startDate = DateOnly.FromDateTime(DateTime.Today);
     private DateOnly endDate = DateOnly.FromDateTime(DateTime.Today);
     private string selectedCategory = "";
@@ -256,8 +232,8 @@
     private const int PageSize = 50;
     private const int MaxTotalEvents = 2000;
 
-    private List<AuditEvent> allEvents = new();
-    private List<AuditEvent> filteredEvents = new();
+    private List<MergedLogEntry> allEvents = new();
+    private List<MergedLogEntry> filteredEvents = new();
     private int totalPages => Math.Max(1, (int)Math.Ceiling(filteredEvents.Count / (double)PageSize));
 
     protected override async Task OnInitializedAsync()
@@ -281,16 +257,15 @@
         loadError = null;
         loadWarning = null;
         emptyResultMessage = null;
-        allEvents = new List<AuditEvent>();
+        allEvents = new List<MergedLogEntry>();
         expandedRow = -1;
         currentPage = 1;
 
-        // Ensure startDate <= endDate
         var effectiveStart = startDate <= endDate ? startDate : endDate;
         var effectiveEnd = startDate <= endDate ? endDate : startDate;
 
         var filesLoaded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var buffer = new Queue<AuditEvent>(MaxTotalEvents + 1);
+        var buffer = new Queue<MergedLogEntry>(MaxTotalEvents + 1);
         var filesNotFound = 0;
         var filesFound = 0;
         var rangeStartUtc = effectiveStart.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
@@ -300,15 +275,14 @@
         for (var d = effectiveStart; d <= effectiveEnd; d = d.AddDays(1))
         {
             var date = d.ToDateTime(TimeOnly.MinValue);
-            var pathsForDate = JsonlLog.GetAuditLogPaths(date).ToList();
-            var foundFileForDate = false;
-            foreach (var filePath in pathsForDate)
-            {
-                if (!filesLoaded.Add(filePath))
-                    continue;
 
-                if (!File.Exists(filePath))
-                    continue;
+            // --- Audit files ---
+            var auditPaths = JsonlLog.GetAuditLogPaths(date).ToList();
+            var foundFileForDate = false;
+            foreach (var filePath in auditPaths)
+            {
+                if (!filesLoaded.Add(filePath)) continue;
+                if (!File.Exists(filePath)) continue;
 
                 foundFileForDate = true;
                 filesFound++;
@@ -317,47 +291,65 @@
                     foreach (var line in ReadLinesShared(filePath))
                     {
                         if (string.IsNullOrWhiteSpace(line)) continue;
-                        try
-                        {
-                            using var doc = JsonDocument.Parse(line);
-                            var root = doc.RootElement;
+                        var entry = ParseAuditLine(line, rangeStartUtc, rangeEndUtc);
+                        if (entry == null) continue;
 
-                            var tsStr = TryGetString(root, "ts");
-                            if (tsStr != null && DateTimeOffset.TryParse(tsStr, out var eventTime))
-                            {
-                                if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
-                                    continue;
-                            }
-
-                            var eventType = TryGetString(root, "eventType") ?? "audit";
-                            if (!eventType.Equals("audit", StringComparison.OrdinalIgnoreCase))
-                                continue;
-
-                            var rawTarget = GetAuditTarget(root);
-                            totalParsed++;
-                            buffer.Enqueue(new AuditEvent
-                            {
-                                Index = 0,
-                                Time = tsStr != null ? FormatTimestamp(tsStr) : "",
-                                User = TryGetString(root, "user") ?? "",
-                                Ip = TryGetString(root, "ip") ?? "",
-                                Action = FormatAction(root, eventType),
-                                Category = FormatCategory(root, eventType),
-                                Target = FormatTargetSummary(rawTarget),
-                                FullTarget = rawTarget ?? "",
-                                Result = TryGetString(root, "result") ?? "",
-                                Details = ExtractAuditDetails(root, eventType, rawTarget)
-                            });
-                            if (buffer.Count > MaxTotalEvents)
-                                buffer.Dequeue();
-                        }
-                        catch { }
+                        totalParsed++;
+                        buffer.Enqueue(entry);
+                        if (buffer.Count > MaxTotalEvents)
+                            buffer.Dequeue();
                     }
                 }
                 catch (Exception ex)
                 {
                     loadError = $"Error reading log: {ex.Message}";
                     Logger.LogError(ex, "Failed to read audit log file {Path}", filePath);
+                }
+            }
+
+            // --- Trace files (only when diagnostics enabled) ---
+            if (showDiagnostics)
+            {
+                var tracePaths = JsonlLog.GetTraceLogPaths(date).ToList();
+                foreach (var filePath in tracePaths)
+                {
+                    if (!filesLoaded.Add(filePath)) continue;
+                    if (!File.Exists(filePath)) continue;
+
+                    foundFileForDate = true;
+                    filesFound++;
+                    try
+                    {
+                        foreach (var line in ReadLinesShared(filePath))
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) continue;
+                            var entry = ParseTraceLine(line, rangeStartUtc, rangeEndUtc);
+                            if (entry == null) continue;
+
+                            totalParsed++;
+                            buffer.Enqueue(entry);
+                            if (buffer.Count > MaxTotalEvents)
+                                buffer.Dequeue();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Failed to read trace log file {Path}", filePath);
+                    }
+                }
+
+                // --- Extended diagnostic files ---
+                var extEntries = ExtendedLog.GetEntries(date, date, MaxTotalEvents);
+                foreach (var line in extEntries)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    var entry = ParseExtendedLine(line, rangeStartUtc, rangeEndUtc);
+                    if (entry == null) continue;
+
+                    totalParsed++;
+                    buffer.Enqueue(entry);
+                    if (buffer.Count > MaxTotalEvents)
+                        buffer.Dequeue();
                 }
             }
 
@@ -380,13 +372,174 @@
         if (totalParsed > MaxTotalEvents)
             loadWarning = $"Showing last {MaxTotalEvents} of {totalParsed} events in range.";
 
-        allEvents = buffer.Reverse().ToList();
+        // Sort merged entries by parsed timestamp (descending: newest first)
+        allEvents = buffer.OrderByDescending(e => e.Timestamp).ToList();
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 
         ApplyFilters();
-        if (showExtendedLogs)
-            LoadExtendedLogs();
+    }
+
+    private MergedLogEntry? ParseAuditLine(string line, DateTime rangeStartUtc, DateTime rangeEndUtc)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+
+            var tsStr = TryGetString(root, "ts");
+            DateTimeOffset eventTime = default;
+            if (tsStr != null && DateTimeOffset.TryParse(tsStr, out eventTime))
+            {
+                if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                    return null;
+            }
+
+            var eventType = TryGetString(root, "eventType") ?? "audit";
+            if (!eventType.Equals("audit", StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            var rawTarget = GetAuditTarget(root);
+
+            return new MergedLogEntry
+            {
+                Timestamp = eventTime,
+                Source = "Audit",
+                Time = tsStr != null ? FormatTimestamp(tsStr) : "",
+                User = TryGetString(root, "user") ?? "",
+                Ip = TryGetString(root, "ip") ?? "",
+                Action = FormatAction(root, eventType),
+                Category = FormatCategory(root, eventType),
+                Target = FormatTargetSummary(rawTarget),
+                FullTarget = rawTarget ?? "",
+                Result = TryGetString(root, "result") ?? "",
+                Level = "",
+                Message = "",
+                OperationId = TryGetString(root, "operationId") ?? "",
+                Details = ExtractAuditDetails(root, eventType, rawTarget)
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private MergedLogEntry? ParseTraceLine(string line, DateTime rangeStartUtc, DateTime rangeEndUtc)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+
+            var tsStr = TryGetString(root, "ts");
+            DateTimeOffset eventTime = default;
+            if (tsStr != null && DateTimeOffset.TryParse(tsStr, out eventTime))
+            {
+                if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                    return null;
+            }
+
+            var stage = TryGetString(root, "stage") ?? TryGetString(root, "action") ?? "";
+            var module = TryGetString(root, "module") ?? "";
+
+            var details = new List<DetailField>();
+            foreach (var property in root.EnumerateObject())
+            {
+                if (property.Name is "ts" or "eventType" or "stage" or "module" or "action" or "user" or "ip" or "operationId")
+                    continue;
+
+                if (property.Value.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var sub in property.Value.EnumerateObject())
+                        AddDetail(details, HumanizePropertyName(sub.Name), FormatJsonValue(sub.Value));
+                }
+                else
+                {
+                    AddDetail(details, HumanizePropertyName(property.Name), FormatJsonValue(property.Value));
+                }
+            }
+
+            return new MergedLogEntry
+            {
+                Timestamp = eventTime,
+                Source = "Trace",
+                Time = tsStr != null ? FormatTimestamp(tsStr) : "",
+                User = TryGetString(root, "user") ?? "",
+                Ip = TryGetString(root, "ip") ?? "",
+                Action = stage,
+                Category = module,
+                Target = "",
+                FullTarget = "",
+                Result = TryGetString(root, "result") ?? "",
+                Level = "",
+                Message = "",
+                OperationId = TryGetString(root, "operationId") ?? "",
+                Details = details
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private MergedLogEntry? ParseExtendedLine(string line, DateTime rangeStartUtc, DateTime rangeEndUtc)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+
+            var tsStr = TryGetString(root, "ts");
+            DateTimeOffset eventTime = default;
+            if (tsStr != null && DateTimeOffset.TryParse(tsStr, out eventTime))
+            {
+                if (eventTime.UtcDateTime < rangeStartUtc || eventTime.UtcDateTime >= rangeEndUtc)
+                    return null;
+            }
+
+            var level = TryGetString(root, "level") ?? "Info";
+            var message = TryGetString(root, "message") ?? "";
+            var category = TryGetString(root, "category") ?? "";
+            var detail = TryGetString(root, "detail") ?? "";
+
+            var details = new List<DetailField>();
+            if (!string.IsNullOrWhiteSpace(detail))
+            {
+                var parsedFields = ParseExtendedDetail(detail);
+                if (parsedFields.Count > 0)
+                {
+                    details.AddRange(parsedFields);
+                }
+                else
+                {
+                    AddDetail(details, "Detail", detail);
+                }
+            }
+
+            return new MergedLogEntry
+            {
+                Timestamp = eventTime,
+                Source = "Diagnostic",
+                Time = tsStr != null ? FormatTimestamp(tsStr) : "",
+                User = "",
+                Ip = "",
+                Action = message,
+                Category = category,
+                Target = "",
+                FullTarget = "",
+                Result = level,
+                Level = level,
+                Message = message,
+                OperationId = "",
+                Details = details
+            };
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void ApplyFilters()
@@ -401,12 +554,12 @@
         ).ToList();
     }
 
-    private bool CategoryMatches(AuditEvent evt) =>
+    private bool CategoryMatches(MergedLogEntry evt) =>
         string.IsNullOrEmpty(selectedCategory)
         || evt.Category.Equals(selectedCategory, StringComparison.OrdinalIgnoreCase)
         || (selectedCategory == "OperationTrace" && evt.Category.StartsWith("OperationTrace", StringComparison.OrdinalIgnoreCase));
 
-    private List<AuditEvent> GetPage() =>
+    private List<MergedLogEntry> GetPage() =>
         filteredEvents.Skip((currentPage - 1) * PageSize).Take(PageSize).ToList();
 
     private void SetPage(int page)
@@ -567,10 +720,18 @@
     {
         if (filteredEvents.Count == 0) return;
 
+        // Exclude trace/diagnostic entries from CSV unless diagnostics are on
+        var csvEntries = showDiagnostics
+            ? filteredEvents
+            : filteredEvents.Where(e => e.Source == "Audit").ToList();
+
+        if (csvEntries.Count == 0) return;
+
         using var writer = new System.IO.StringWriter();
         using var csv = new CsvWriter(writer, CultureInfo.InvariantCulture);
 
         csv.WriteField("Time");
+        csv.WriteField("Source");
         csv.WriteField("User");
         csv.WriteField("IP");
         csv.WriteField("Action");
@@ -579,9 +740,10 @@
         csv.WriteField("Result");
         await csv.NextRecordAsync();
 
-        foreach (var evt in filteredEvents)
+        foreach (var evt in csvEntries)
         {
             csv.WriteField(evt.Time);
+            csv.WriteField(evt.Source);
             csv.WriteField(evt.User);
             csv.WriteField(evt.Ip);
             csv.WriteField(evt.Action);
@@ -596,58 +758,6 @@
         var base64 = Convert.ToBase64String(bytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         await JS.InvokeVoidAsync("downloadFile", $"event_log_{timestamp}.csv", "text/csv", base64);
-    }
-
-    private void ToggleExtendedLogs()
-    {
-        showExtendedLogs = !showExtendedLogs;
-        if (showExtendedLogs)
-            LoadExtendedLogs();
-    }
-
-    private void LoadExtendedLogs()
-    {
-        extendedLogEvents = ExtendedLog.GetEntries(startDate.ToDateTime(TimeOnly.MinValue), endDate.ToDateTime(TimeOnly.MaxValue))
-            .Select(ParseExtendedLogEntry)
-            .ToList();
-    }
-
-    private static IEnumerable<string> ReadLinesShared(string path)
-    {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var reader = new StreamReader(stream);
-        while (reader.ReadLine() is { } line)
-            yield return line;
-    }
-
-    private static ExtendedLogEvent ParseExtendedLogEntry(string line)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-            var ts = TryGetString(root, "ts") ?? "";
-            var detail = TryGetString(root, "detail") ?? "";
-
-            return new ExtendedLogEvent
-            {
-                Time = string.IsNullOrWhiteSpace(ts) ? "" : FormatTimestamp(ts),
-                Level = TryGetString(root, "level") ?? "Info",
-                Category = TryGetString(root, "category") ?? "",
-                Message = TryGetString(root, "message") ?? "",
-                Detail = detail,
-                DetailFields = ParseExtendedDetail(detail)
-            };
-        }
-        catch
-        {
-            return new ExtendedLogEvent
-            {
-                Level = "Raw",
-                Message = "Unparsed log line",
-                Detail = line
-            };
-        }
     }
 
     private static List<DetailField> ParseExtendedDetail(string detail)
@@ -668,30 +778,21 @@
         return fields;
     }
 
-    private static string GetExtendedLevelBadge(string level) => level.ToLowerInvariant() switch
+    private static IEnumerable<string> ReadLinesShared(string path)
     {
-        "error" or "fatal" => "text-bg-danger",
-        "warning" or "warn" => "text-bg-warning",
-        "debug" or "verbose" => "text-bg-secondary",
-        "raw" => "text-bg-light",
-        _ => "text-bg-info"
-    };
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        while (reader.ReadLine() is { } line)
+            yield return line;
+    }
 
     private sealed record DetailField(string Key, string Value);
 
-    private class ExtendedLogEvent
-    {
-        public string Time { get; set; } = "";
-        public string Level { get; set; } = "";
-        public string Category { get; set; } = "";
-        public string Message { get; set; } = "";
-        public string Detail { get; set; } = "";
-        public List<DetailField> DetailFields { get; set; } = new();
-    }
-
-    private class AuditEvent
+    private sealed record MergedLogEntry
     {
         public int Index { get; set; }
+        public DateTimeOffset Timestamp { get; set; }
+        public string Source { get; set; } = "Audit";
         public string Time { get; set; } = "";
         public string User { get; set; } = "";
         public string Ip { get; set; } = "";
@@ -700,6 +801,9 @@
         public string Target { get; set; } = "";
         public string FullTarget { get; set; } = "";
         public string Result { get; set; } = "";
+        public string Level { get; set; } = "";
+        public string Message { get; set; } = "";
+        public string OperationId { get; set; } = "";
         public List<DetailField> Details { get; set; } = new();
     }
 }
