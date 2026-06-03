@@ -1,3 +1,4 @@
+@implements IDisposable
 @inject ExchangeAdminWeb.Services.ExoConnectionPool ExoPool
 
 <div class="position-relative">
@@ -103,6 +104,7 @@
             var pooled = await ExoPool.BorrowAsync();
             try
             {
+                var tracker = new ExchangeAdminWeb.Services.ExchangeServiceBase.ConnectionErrorTracker();
                 _results = await Task.Run(() =>
                 {
                     var ps = pooled.PowerShell;
@@ -114,6 +116,19 @@
                       .AddParameter("ErrorAction", "Stop");
 
                     var output = ps.Invoke();
+
+                    if (ps.HadErrors)
+                    {
+                        var err = ps.Streams.Error.FirstOrDefault();
+                        if (err?.Exception != null &&
+                            (err.Exception.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+                             err.Exception.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
+                             err.Exception.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase)))
+                            tracker.HasConnectionError = true;
+                        ps.Streams.Error.Clear();
+                    }
+
+                    ps.Commands.Clear();
                     var list = new List<RecipientSearchResult>();
 
                     foreach (var item in output)
@@ -130,7 +145,11 @@
                 });
 
                 _showDropdown = _results.Count > 0;
-                ExoPool.Return(pooled);
+
+                if (tracker.HasConnectionError)
+                    ExoPool.Discard(pooled);
+                else
+                    ExoPool.Return(pooled);
             }
             catch
             {

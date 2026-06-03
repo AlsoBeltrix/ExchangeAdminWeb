@@ -11,7 +11,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(20, _catalog.GetAll().Count); // 20 modules (19 operational + 1 config-only)
+        Assert.Equal(21, _catalog.GetAll().Count); // 21 modules (20 operational + 1 config-only)
     }
 
     [Fact]
@@ -90,11 +90,12 @@ public class ModuleCatalogTests
         Assert.Contains("ADAttributeEditorLevel2", aliases);
         Assert.Contains("ADAttributeEditorLevel3", aliases);
         Assert.Contains("EmergencyDisable", aliases);
+        Assert.Contains("TestAccountPool", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
         Assert.Contains("EventLog", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
         Assert.DoesNotContain("ExchangeOnline", aliases); // config-only modules excluded
-        Assert.Equal(26, aliases.Count);
+        Assert.Equal(27, aliases.Count);
     }
 
     [Fact]
@@ -277,7 +278,7 @@ public class ModuleCatalogTests
         {
             "M365GroupManagement", "ADAttributeEditor", "LicensingUpdates",
             "EmergencyDisable", "MfaReset", "NamedLocations",
-            "DhcpAuthorization", "Comms10k", "AdminSettings", "AdminEventLog"
+            "TestAccountPool", "DhcpAuthorization", "Comms10k", "AdminSettings", "AdminEventLog"
         };
 
         foreach (var id in independentModuleIds)

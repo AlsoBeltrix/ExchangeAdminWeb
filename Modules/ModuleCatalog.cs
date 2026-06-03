@@ -357,6 +357,29 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "TestAccountPool",
+            DisplayName = "Test Account Pool",
+            Description = "Check out managed test accounts from on-premises AD and Entra ID test pools.",
+            Route = "test-account-pool",
+            IconCss = "bi bi-person-fill-nav-menu",
+            Category = "Identity & Access",
+            SortOrder = 745,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            MainPermission = new("Access", "TestAccountPool", FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("OnPremPoolGroup", "On-Prem Test Account Group", "AD group containing managed on-premises or synced test accounts. Disabled accounts are available; enabled accounts are checked out.", Required: false),
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to enable, disable, expire, and reset test account passwords", Required: false),
+                new("EntraPoolGroupId", "Entra Test Account Group ID", "Entra group object ID containing cloud-only test accounts. Cloud-only accounts are inventory-only until a durable lease strategy is selected.", Required: false),
+                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields for Entra pool inventory", Required: false),
+                new("DefaultCheckoutHours", "Default Checkout Hours", "Default checkout duration for AD-backed accounts", Required: false, DefaultValue: "24"),
+                new("MaxCheckoutHours", "Maximum Checkout Hours", "Maximum allowed checkout duration for AD-backed accounts", Required: false, DefaultValue: "168")
+            ]
+        },
+        new()
+        {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
             Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Enterprise Admin credentials via Secret Server.",

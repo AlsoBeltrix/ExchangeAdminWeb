@@ -1,0 +1,387 @@
+@page "/test-account-pool"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "TestAccountPool")]
+@rendermode InteractiveServer
+@inject TestAccountPoolService PoolService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<TestAccountPool> Logger
+
+<PageTitle>Test Account Pool</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Managed test accounts are read from configured AD and Entra groups. Disabled AD accounts are available for checkout; checkout enables the account, resets the password, sets an expiry, and emails the password to the admin.</small>
+    </div>
+
+    <h1 class="mb-4">Test Account Pool</h1>
+
+    @if (operationResult != null)
+    {
+        <div class="alert @(operationResult.Value.success ? "alert-success" : "alert-danger") alert-dismissible">
+            @operationResult.Value.message
+            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+        </div>
+    }
+
+    @if (!PoolService.HasAnyPoolConfigured)
+    {
+        <div class="alert alert-warning">
+            Test Account Pool is enabled but no pool is configured. Set On-Prem Test Account Group and AD Delinea Secret ID in Module Config.
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-lg-8">
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>Managed Test Accounts</strong>
+                    <div class="d-flex gap-2 align-items-center">
+                        @if (accounts.Count > 0)
+                        {
+                            <small class="text-muted">
+                                @accounts.Count account(s),
+                                @accounts.Count(a => a.Status == "Available") available,
+                                @accounts.Count(a => a.Status == "CheckedOut") checked out,
+                                @accounts.Count(a => a.Status == "Expired") expired
+                            </small>
+                        }
+                        <button class="btn btn-outline-primary btn-sm" @onclick="LoadPool" disabled="@isLoading">
+                            @if (isLoading && !isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    @if (loadError != null)
+                    {
+                        <div class="alert alert-danger m-3">@loadError</div>
+                    }
+                    else if (isLoading && accounts.Count == 0)
+                    {
+                        <div class="p-4 text-center">
+                            <div class="spinner-border text-primary" role="status"></div>
+                        </div>
+                    }
+                    else if (accounts.Count == 0)
+                    {
+                        <p class="text-muted p-3 mb-0">No test accounts found in the configured pool groups.</p>
+                    }
+                    else
+                    {
+                        <div style="max-height: calc(100vh - 310px); overflow-y: auto;">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Account</th>
+                                        <th>Source</th>
+                                        <th>Profile</th>
+                                        <th>Status</th>
+                                        <th>Expires</th>
+                                        <th style="width: 90px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var account in accounts)
+                                    {
+                                        <tr class="@(selectedAccount?.Key == account.Key ? "table-active" : GetRowClass(account))">
+                                            <td>
+                                                <strong>@account.DisplayName</strong><br />
+                                                <small class="text-muted">@account.UserPrincipalName</small>
+                                            </td>
+                                            <td><small>@account.Source</small></td>
+                                            <td><small>@account.Profile</small></td>
+                                            <td>
+                                                <span class="badge @GetStatusBadge(account.Status)">@account.Status</span>
+                                                @if (!string.IsNullOrWhiteSpace(account.StatusDetail))
+                                                {
+                                                    <br /><small class="text-muted">@account.StatusDetail</small>
+                                                }
+                                            </td>
+                                            <td><small>@FormatDate(account.ExpiresUtc)</small></td>
+                                            <td>
+                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => SelectAccount(account)" disabled="@isOperating">Select</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card" style="position: sticky; top: 1rem;">
+                <div class="card-header"><strong>Checkout / Check-In</strong></div>
+                <div class="card-body">
+                    @if (selectedAccount == null)
+                    {
+                        <p class="text-muted mb-0">Select a test account to view available actions.</p>
+                    }
+                    else
+                    {
+                        <dl class="row small mb-3">
+                            <dt class="col-4">Account</dt>
+                            <dd class="col-8">@selectedAccount.UserPrincipalName</dd>
+                            <dt class="col-4">Status</dt>
+                            <dd class="col-8">@selectedAccount.Status</dd>
+                            <dt class="col-4">Source</dt>
+                            <dd class="col-8">@selectedAccount.Source</dd>
+                            <dt class="col-4">sAM</dt>
+                            <dd class="col-8">@(selectedAccount.SamAccountName ?? "—")</dd>
+                        </dl>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket / Reason</label>
+                            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ or reason" disabled="@isOperating" />
+                        </div>
+
+                        @if (selectedAccount.Status == "Available" && selectedAccount.SupportsCheckout)
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Checkout Hours</label>
+                                <input type="number" class="form-control" min="1" max="@PoolService.MaxCheckoutHours" @bind="checkoutHours" disabled="@isOperating" />
+                                <small class="text-muted">Default @PoolService.DefaultCheckoutHours hours, max @PoolService.MaxCheckoutHours hours.</small>
+                            </div>
+                            <p class="text-muted small">The password is generated once, emailed to your directory email address, and not stored.</p>
+                            <button class="btn btn-primary w-100" @onclick="CheckoutSelected"
+                                    disabled="@(isOperating || string.IsNullOrWhiteSpace(ticketNumber))">
+                                @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Check Out Account
+                            </button>
+                        }
+                        else if ((selectedAccount.Status == "CheckedOut" || selectedAccount.Status == "Expired") && selectedAccount.SupportsCheckout)
+                        {
+                            <p class="text-muted small">Check-in disables the account, resets the password, and clears the checkout expiry.</p>
+                            <button class="btn btn-warning w-100" @onclick="CheckinSelected"
+                                    disabled="@(isOperating || string.IsNullOrWhiteSpace(ticketNumber))">
+                                @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Check In / Reset Account
+                            </button>
+                        }
+                        else
+                        {
+                            <div class="alert alert-secondary mb-0">
+                                This account is inventory-only in this version. AD-backed disabled accounts can be checked out.
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="card-footer">
+                    <button class="btn btn-outline-warning btn-sm w-100" @onclick="CleanupExpired" disabled="@(isOperating || !accounts.Any(a => a.Status == "Expired"))">
+                        Clean Up Expired AD Checkouts
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+    private bool isLoading;
+    private bool isOperating;
+    private string? loadError;
+    private List<TestAccountPoolEntry> accounts = new();
+    private TestAccountPoolEntry? selectedAccount;
+    private int checkoutHours;
+    private string ticketNumber = "";
+    private (bool success, string message)? operationResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "TestAccountPool");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        checkoutHours = PoolService.DefaultCheckoutHours;
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+
+        await LoadPool();
+    }
+
+    private async Task LoadPool()
+    {
+        isLoading = true;
+        loadError = null;
+        await Task.Yield();
+
+        try
+        {
+            accounts = await PoolService.GetPoolAsync();
+
+            var expired = accounts.Where(a => a.Status == "Expired" && a.Source == "OnPremAD").ToList();
+            if (expired.Count > 0)
+            {
+                try { await PoolService.CleanupExpiredAsync(currentUser, clientIpAddress); }
+                catch (Exception cleanupEx) { Logger.LogWarning(cleanupEx, "Auto-cleanup of {Count} expired accounts failed", expired.Count); }
+                accounts = await PoolService.GetPoolAsync();
+            }
+
+            if (selectedAccount != null)
+                selectedAccount = accounts.FirstOrDefault(a => a.Key == selectedAccount.Key);
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+            Logger.LogError(ex, "Failed to load test account pool");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SelectAccount(TestAccountPoolEntry account)
+    {
+        selectedAccount = account;
+        checkoutHours = PoolService.DefaultCheckoutHours;
+        operationResult = null;
+    }
+
+    private async Task CheckoutSelected()
+    {
+        if (selectedAccount == null)
+            return;
+
+        isOperating = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            if (!await RecheckAuthorization())
+            {
+                operationResult = new(false, "Authorization denied.");
+                return;
+            }
+
+            var result = await PoolService.CheckoutAsync(
+                selectedAccount,
+                checkoutHours,
+                currentUser,
+                clientIpAddress,
+                ticketNumber.Trim());
+
+            operationResult = new(result.Success, result.Message);
+            if (result.Success)
+            {
+                ticketNumber = "";
+                await LoadPool();
+            }
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task CheckinSelected()
+    {
+        if (selectedAccount == null)
+            return;
+
+        isOperating = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            if (!await RecheckAuthorization())
+            {
+                operationResult = new(false, "Authorization denied.");
+                return;
+            }
+
+            var result = await PoolService.CheckinAsync(selectedAccount, currentUser, clientIpAddress, ticketNumber.Trim());
+            operationResult = new(result.Success, result.Message);
+            if (result.Success)
+            {
+                ticketNumber = "";
+                await LoadPool();
+            }
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task CleanupExpired()
+    {
+        isOperating = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            if (!await RecheckAuthorization())
+            {
+                operationResult = new(false, "Authorization denied.");
+                return;
+            }
+
+            var result = await PoolService.CleanupExpiredAsync(currentUser, clientIpAddress);
+            operationResult = new(result.Success, result.Message);
+            await LoadPool();
+        }
+        finally
+        {
+            isOperating = false;
+        }
+    }
+
+    private async Task<bool> RecheckAuthorization()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "TestAccountPool");
+        return authCheck.Succeeded;
+    }
+
+    private static string GetRowClass(TestAccountPoolEntry account) => account.Status switch
+    {
+        "Expired" => "table-warning",
+        "Error" => "table-danger",
+        _ => ""
+    };
+
+    private static string GetStatusBadge(string status) => status switch
+    {
+        "Available" => "bg-success",
+        "CheckedOut" => "bg-primary",
+        "Expired" => "bg-warning text-dark",
+        "Error" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    private static string FormatDate(DateTime? value) =>
+        value.HasValue ? value.Value.ToLocalTime().ToString("MMM d, yyyy HH:mm") : "—";
+}
