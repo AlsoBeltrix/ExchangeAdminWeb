@@ -37,8 +37,9 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-5">
                         <label class="form-label">Email Address</label>
-                        <input type="email" class="form-control" @bind="checkEmail" placeholder="user@example.com"
-                               disabled="@isChecking" @onkeydown="HandleCheckKeyDown" />
+                        <RecipientAutocomplete @bind-Value="checkEmail"
+                                               Placeholder="user@example.com"
+                                               Disabled="@isChecking" />
                     </div>
                     <div class="col-md-2 d-flex align-items-end">
                         <button class="btn btn-primary" @onclick="CheckStatus"
@@ -99,7 +100,9 @@
                 <div class="row g-3 mb-3">
                     <div class="col-md-4">
                         <label class="form-label">Email Address</label>
-                        <input type="email" class="form-control" @bind="setEmail" placeholder="user@example.com" disabled="@isSetting" />
+                        <RecipientAutocomplete @bind-Value="setEmail"
+                                               Placeholder="user@example.com"
+                                               Disabled="@isSetting" />
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">Ticket Number</label>

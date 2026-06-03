@@ -54,18 +54,16 @@
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label fw-semibold" for="targetMailbox">Target Mailbox</label>
-                            <input id="targetMailbox" class="form-control" type="text"
-                                   placeholder="mailbox@domain.com or SamAccountName"
-                                   @bind="targetMailbox" @bind:event="oninput" />
+                            <label class="form-label fw-semibold">Target Mailbox</label>
+                            <RecipientAutocomplete @bind-Value="targetMailbox"
+                                                   Placeholder="mailbox@domain.com or SamAccountName" />
                             <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label fw-semibold" for="affectedUser">User</label>
-                            <input id="affectedUser" class="form-control" type="text"
-                                   placeholder="user@domain.com or SamAccountName"
-                                   @bind="affectedUser" @bind:event="oninput" />
+                            <label class="form-label fw-semibold">User</label>
+                            <RecipientAutocomplete @bind-Value="affectedUser"
+                                                   Placeholder="user@domain.com or SamAccountName" />
                             <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
                         </div>
 

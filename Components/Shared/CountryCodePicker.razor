@@ -1,0 +1,293 @@
+<div class="position-relative">
+    <div class="border rounded p-2" style="max-height: 300px; overflow-y: auto;">
+        <div class="mb-2">
+            <input type="text" class="form-control form-control-sm" placeholder="Filter countries..."
+                   @oninput="OnFilterInput" disabled="@Disabled" />
+        </div>
+
+        @foreach (var country in FilteredCountries)
+        {
+            var code = country.Code;
+            <div class="form-check py-0">
+                <input class="form-check-input" type="checkbox" id="@($"cc_{code}")"
+                       checked="@_selectedCodes.Contains(code)"
+                       @onchange="(e) => ToggleCode(code, (bool)(e.Value ?? false))"
+                       disabled="@Disabled" />
+                <label class="form-check-label small" for="@($"cc_{code}")">
+                    @(code) - @country.Name
+                </label>
+            </div>
+        }
+
+        @if (!FilteredCountries.Any())
+        {
+            <p class="text-muted small mb-0">No matching countries.</p>
+        }
+    </div>
+
+    @if (_selectedCodes.Count > 0)
+    {
+        <div class="mt-2">
+            <small class="text-muted">@_selectedCodes.Count selected</small>
+            <button class="btn btn-primary btn-sm ms-2" @onclick="Apply" disabled="@Disabled">Apply</button>
+            <button class="btn btn-outline-secondary btn-sm ms-1" @onclick="ClearAll" disabled="@Disabled">Clear</button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private HashSet<string> _selectedCodes = new(StringComparer.OrdinalIgnoreCase);
+    private string _filter = "";
+    private bool _initialized;
+
+    protected override void OnParametersSet()
+    {
+        if (!_initialized && !string.IsNullOrEmpty(Value))
+        {
+            _selectedCodes = Value
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            _initialized = true;
+        }
+    }
+
+    private IEnumerable<CountryEntry> FilteredCountries =>
+        string.IsNullOrWhiteSpace(_filter)
+            ? AllCountries
+            : AllCountries.Where(c =>
+                c.Code.Contains(_filter, StringComparison.OrdinalIgnoreCase) ||
+                c.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+
+    private void OnFilterInput(ChangeEventArgs e)
+    {
+        _filter = e.Value?.ToString() ?? "";
+    }
+
+    private void ToggleCode(string code, bool isChecked)
+    {
+        if (isChecked)
+            _selectedCodes.Add(code);
+        else
+            _selectedCodes.Remove(code);
+    }
+
+    private async Task Apply()
+    {
+        var sorted = _selectedCodes.OrderBy(c => c).ToList();
+        var value = string.Join("\n", sorted);
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+
+    private async Task ClearAll()
+    {
+        _selectedCodes.Clear();
+        Value = "";
+        await ValueChanged.InvokeAsync("");
+    }
+
+    private record CountryEntry(string Code, string Name);
+
+    private static readonly CountryEntry[] AllCountries =
+    [
+        // Top 50 most common first
+        new("US", "United States"),
+        new("GB", "United Kingdom"),
+        new("CA", "Canada"),
+        new("AU", "Australia"),
+        new("DE", "Germany"),
+        new("FR", "France"),
+        new("JP", "Japan"),
+        new("CN", "China"),
+        new("IN", "India"),
+        new("BR", "Brazil"),
+        new("MX", "Mexico"),
+        new("KR", "South Korea"),
+        new("IT", "Italy"),
+        new("ES", "Spain"),
+        new("NL", "Netherlands"),
+        new("SE", "Sweden"),
+        new("NO", "Norway"),
+        new("DK", "Denmark"),
+        new("FI", "Finland"),
+        new("CH", "Switzerland"),
+        new("AT", "Austria"),
+        new("BE", "Belgium"),
+        new("IE", "Ireland"),
+        new("NZ", "New Zealand"),
+        new("SG", "Singapore"),
+        new("HK", "Hong Kong"),
+        new("TW", "Taiwan"),
+        new("IL", "Israel"),
+        new("ZA", "South Africa"),
+        new("AE", "United Arab Emirates"),
+        new("SA", "Saudi Arabia"),
+        new("PL", "Poland"),
+        new("CZ", "Czech Republic"),
+        new("PT", "Portugal"),
+        new("RO", "Romania"),
+        new("HU", "Hungary"),
+        new("GR", "Greece"),
+        new("TR", "Turkey"),
+        new("TH", "Thailand"),
+        new("MY", "Malaysia"),
+        new("ID", "Indonesia"),
+        new("PH", "Philippines"),
+        new("VN", "Vietnam"),
+        new("CL", "Chile"),
+        new("CO", "Colombia"),
+        new("AR", "Argentina"),
+        new("PE", "Peru"),
+        new("EG", "Egypt"),
+        new("NG", "Nigeria"),
+        new("KE", "Kenya"),
+        // Remaining alphabetically
+        new("AD", "Andorra"),
+        new("AF", "Afghanistan"),
+        new("AG", "Antigua and Barbuda"),
+        new("AL", "Albania"),
+        new("AM", "Armenia"),
+        new("AO", "Angola"),
+        new("AZ", "Azerbaijan"),
+        new("BA", "Bosnia and Herzegovina"),
+        new("BB", "Barbados"),
+        new("BD", "Bangladesh"),
+        new("BF", "Burkina Faso"),
+        new("BG", "Bulgaria"),
+        new("BH", "Bahrain"),
+        new("BI", "Burundi"),
+        new("BJ", "Benin"),
+        new("BN", "Brunei"),
+        new("BO", "Bolivia"),
+        new("BS", "Bahamas"),
+        new("BT", "Bhutan"),
+        new("BW", "Botswana"),
+        new("BY", "Belarus"),
+        new("BZ", "Belize"),
+        new("CD", "Congo (DRC)"),
+        new("CF", "Central African Republic"),
+        new("CG", "Congo"),
+        new("CI", "Cote d'Ivoire"),
+        new("CM", "Cameroon"),
+        new("CR", "Costa Rica"),
+        new("CU", "Cuba"),
+        new("CV", "Cape Verde"),
+        new("CY", "Cyprus"),
+        new("DJ", "Djibouti"),
+        new("DM", "Dominica"),
+        new("DO", "Dominican Republic"),
+        new("DZ", "Algeria"),
+        new("EC", "Ecuador"),
+        new("EE", "Estonia"),
+        new("ER", "Eritrea"),
+        new("ET", "Ethiopia"),
+        new("FJ", "Fiji"),
+        new("GA", "Gabon"),
+        new("GD", "Grenada"),
+        new("GE", "Georgia"),
+        new("GH", "Ghana"),
+        new("GM", "Gambia"),
+        new("GN", "Guinea"),
+        new("GQ", "Equatorial Guinea"),
+        new("GT", "Guatemala"),
+        new("GW", "Guinea-Bissau"),
+        new("GY", "Guyana"),
+        new("HN", "Honduras"),
+        new("HR", "Croatia"),
+        new("HT", "Haiti"),
+        new("IQ", "Iraq"),
+        new("IR", "Iran"),
+        new("IS", "Iceland"),
+        new("JM", "Jamaica"),
+        new("JO", "Jordan"),
+        new("KG", "Kyrgyzstan"),
+        new("KH", "Cambodia"),
+        new("KI", "Kiribati"),
+        new("KM", "Comoros"),
+        new("KN", "Saint Kitts and Nevis"),
+        new("KP", "North Korea"),
+        new("KW", "Kuwait"),
+        new("KZ", "Kazakhstan"),
+        new("LA", "Laos"),
+        new("LB", "Lebanon"),
+        new("LC", "Saint Lucia"),
+        new("LI", "Liechtenstein"),
+        new("LK", "Sri Lanka"),
+        new("LR", "Liberia"),
+        new("LS", "Lesotho"),
+        new("LT", "Lithuania"),
+        new("LU", "Luxembourg"),
+        new("LV", "Latvia"),
+        new("LY", "Libya"),
+        new("MA", "Morocco"),
+        new("MC", "Monaco"),
+        new("MD", "Moldova"),
+        new("ME", "Montenegro"),
+        new("MG", "Madagascar"),
+        new("MK", "North Macedonia"),
+        new("ML", "Mali"),
+        new("MM", "Myanmar"),
+        new("MN", "Mongolia"),
+        new("MR", "Mauritania"),
+        new("MT", "Malta"),
+        new("MU", "Mauritius"),
+        new("MV", "Maldives"),
+        new("MW", "Malawi"),
+        new("MZ", "Mozambique"),
+        new("NA", "Namibia"),
+        new("NE", "Niger"),
+        new("NI", "Nicaragua"),
+        new("NP", "Nepal"),
+        new("OM", "Oman"),
+        new("PA", "Panama"),
+        new("PG", "Papua New Guinea"),
+        new("PK", "Pakistan"),
+        new("PY", "Paraguay"),
+        new("QA", "Qatar"),
+        new("RS", "Serbia"),
+        new("RU", "Russia"),
+        new("RW", "Rwanda"),
+        new("SB", "Solomon Islands"),
+        new("SC", "Seychelles"),
+        new("SD", "Sudan"),
+        new("SI", "Slovenia"),
+        new("SK", "Slovakia"),
+        new("SL", "Sierra Leone"),
+        new("SM", "San Marino"),
+        new("SN", "Senegal"),
+        new("SO", "Somalia"),
+        new("SR", "Suriname"),
+        new("SS", "South Sudan"),
+        new("ST", "Sao Tome and Principe"),
+        new("SV", "El Salvador"),
+        new("SY", "Syria"),
+        new("SZ", "Eswatini"),
+        new("TD", "Chad"),
+        new("TG", "Togo"),
+        new("TJ", "Tajikistan"),
+        new("TL", "Timor-Leste"),
+        new("TM", "Turkmenistan"),
+        new("TN", "Tunisia"),
+        new("TO", "Tonga"),
+        new("TT", "Trinidad and Tobago"),
+        new("TV", "Tuvalu"),
+        new("TZ", "Tanzania"),
+        new("UA", "Ukraine"),
+        new("UG", "Uganda"),
+        new("UY", "Uruguay"),
+        new("UZ", "Uzbekistan"),
+        new("VA", "Vatican City"),
+        new("VC", "Saint Vincent and the Grenadines"),
+        new("VE", "Venezuela"),
+        new("VU", "Vanuatu"),
+        new("WS", "Samoa"),
+        new("YE", "Yemen"),
+        new("ZM", "Zambia"),
+        new("ZW", "Zimbabwe")
+    ];
+}

@@ -166,8 +166,8 @@
                         else
                         {
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Country Codes (ISO 3166-1 alpha-2, one per line)</label>
-                                <textarea class="form-control" rows="5" @bind="formCountryCodes" placeholder="US&#10;GB&#10;CA" disabled="@isOperating"></textarea>
+                                <label class="form-label fw-semibold">Country Codes (ISO 3166-1 alpha-2)</label>
+                                <CountryCodePicker @bind-Value="formCountryCodes" Disabled="@isOperating" />
                             </div>
                             <div class="mb-3 form-check">
                                 <input type="checkbox" class="form-check-input" id="chkUnknown" @bind="formIncludeUnknown" disabled="@isOperating" />

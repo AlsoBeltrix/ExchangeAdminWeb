@@ -50,7 +50,9 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <input type="email" class="form-control" @bind="roomEmail" placeholder="room@company.com" disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="roomEmail"
+                                                   Placeholder="room@company.com"
+                                                   Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">City</label>
@@ -150,7 +152,9 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <input type="email" class="form-control" @bind="typeRoomEmail" placeholder="room@company.com" disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="typeRoomEmail"
+                                                   Placeholder="room@company.com"
+                                                   Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Type</label>
