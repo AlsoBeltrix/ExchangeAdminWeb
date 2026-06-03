@@ -32,7 +32,7 @@ public class M365GroupManagementService
         var secretIdStr = _moduleConfig.GetValue("M365GroupManagement", "GraphDelineaSecretId")
                        ?? _moduleConfig.GetValue("M365GroupManagement", "DelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
-            throw new InvalidOperationException("M365 Group Management module is not configured. Set DelineaSecretId in Module Config.");
+            throw new InvalidOperationException("M365 Group Management module is not configured. Set Graph App Delinea Secret ID in Module Config.");
 
         var fields = await _delineaService.GetSecretFieldsAsync(secretId);
         if (fields == null)
