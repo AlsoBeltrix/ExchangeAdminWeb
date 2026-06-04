@@ -513,17 +513,23 @@ public sealed class TestAccountPoolService
             var failed = new List<string>();
             foreach (var row in rows)
             {
+                string? createdAdGuid = null;
+                string? createdEntraId = null;
+
                 try
                 {
                     if (request.CreateOnPremAd)
                     {
-                        var dn = await CreateOnPremAccountAsync(row, request, adCreds!.Value);
+                        var (dn, guid) = await CreateOnPremAccountAsync(row, request, adCreds!.Value);
+                        createdAdGuid = guid;
                         if (request.OnPremMailbox)
                             await EnableOnPremMailboxAsync(dn, row.UserPrincipalName, exchangeCreds!.Value);
                     }
 
                     if (request.CreateEntra)
-                        await CreateEntraAccountAsync(row, request, graph!);
+                    {
+                        createdEntraId = await CreateEntraAccountAsync(row, request, graph!);
+                    }
 
                     created.Add(row.UserPrincipalName);
                     LogAudit(performedBy, ip, "TestAccountPool_Create", ToAuditEntry(row), true, request.Ticket, null, new Dictionary<string, object?>
@@ -535,14 +541,14 @@ public sealed class TestAccountPoolService
                 catch (Exception rowEx)
                 {
                     failed.Add($"{row.UserPrincipalName}: {rowEx.Message}");
-                    _logger.LogError(rowEx, "Test account creation failed for {Account}, attempting cleanup", row.UserPrincipalName);
+                    _logger.LogError(rowEx, "Test account creation failed for {Account}, attempting cleanup of this-operation objects only", row.UserPrincipalName);
 
                     try
                     {
-                        if (request.CreateOnPremAd && adCreds != null)
-                            await TryDeleteAdAccountAsync(row.SamAccountName, adCreds.Value);
-                        if (request.CreateEntra && graph != null)
-                            await TryDeleteEntraAccountAsync(row.UserPrincipalName, graph);
+                        if (createdAdGuid != null && adCreds != null)
+                            await TryDeleteAdAccountByGuidAsync(createdAdGuid, adCreds.Value);
+                        if (createdEntraId != null && graph != null)
+                            await TryDeleteEntraAccountByIdAsync(createdEntraId, graph);
                     }
                     catch (Exception cleanupEx)
                     {
@@ -683,7 +689,7 @@ public sealed class TestAccountPoolService
         return services.Count == 0 ? "None" : string.Join(", ", services);
     }
 
-    private async Task<string> CreateOnPremAccountAsync(
+    private async Task<(string dn, string guid)> CreateOnPremAccountAsync(
         TestAccountCreatePreviewRow row,
         TestAccountCreateRequest request,
         (string username, string password, string domain) creds)
@@ -723,6 +729,7 @@ public sealed class TestAccountPoolService
                 ?? throw new InvalidOperationException($"Created AD account could not be read: {row.SamAccountName}");
             var dn = user.Properties["DistinguishedName"]?.Value?.ToString()
                 ?? throw new InvalidOperationException($"Created AD account has no distinguishedName: {row.SamAccountName}");
+            var guid = user.Properties["ObjectGUID"]?.Value?.ToString() ?? "";
 
             AddAdGroupMember(ps, poolGroup, dn, credential);
             if (!string.IsNullOrWhiteSpace(exoGroup))
@@ -730,15 +737,16 @@ public sealed class TestAccountPoolService
             if (!string.IsNullOrWhiteSpace(teamsGroup))
                 AddAdGroupMember(ps, teamsGroup, dn, credential);
 
-            return new(true, dn);
+            return new(true, $"{dn}|{guid}");
         });
 
         if (!mutation.Success)
             throw new InvalidOperationException(mutation.Message);
-        return mutation.Message;
+        var parts = mutation.Message.Split('|', 2);
+        return (parts[0], parts.Length > 1 ? parts[1] : "");
     }
 
-    private async Task CreateEntraAccountAsync(
+    private async Task<string> CreateEntraAccountAsync(
         TestAccountCreatePreviewRow row,
         TestAccountCreateRequest request,
         GraphTokenClient graph)
@@ -772,6 +780,8 @@ public sealed class TestAccountPoolService
             await AddGraphGroupMemberAsync(graph, GetConfig("EntraExchangeOnlineGroupId")!, id, row.UserPrincipalName, "Exchange Online provisioning");
         if (request.Teams)
             await AddGraphGroupMemberAsync(graph, GetConfig("EntraTeamsGroupId")!, id, row.UserPrincipalName, "Teams provisioning");
+
+        return id;
     }
 
     private async Task AddGraphGroupMemberAsync(GraphTokenClient graph, string groupId, string userId, string upn, string groupPurpose)
@@ -832,16 +842,23 @@ public sealed class TestAccountPoolService
         }
     }
 
-    private async Task TryDeleteAdAccountAsync(string samAccountName, (string username, string password, string domain) creds)
+    private async Task TryDeleteAdAccountByGuidAsync(string objectGuid, (string username, string password, string domain) creds)
     {
         await ExecuteAdMutationAsync(creds, ps =>
         {
             var credential = CreateCredential(creds.username, creds.password, creds.domain);
-            var user = ReadAdUserBySam(ps, samAccountName, credential);
-            if (user == null) return new(true, "Account not found — nothing to clean up.");
+
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("Identity", objectGuid)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            var result = ps.Invoke();
+            ps.Commands.Clear();
+            if (result.Count == 0)
+                return new(true, "Account not found by GUID — nothing to clean up.");
 
             ps.AddCommand("Remove-ADUser")
-              .AddParameter("Identity", user.Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Identity", objectGuid)
               .AddParameter("Credential", credential)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
@@ -849,21 +866,15 @@ public sealed class TestAccountPoolService
             ThrowIfHadErrors(ps, "Remove-ADUser failed during cleanup.");
             ps.Commands.Clear();
 
-            _logger.LogInformation("Cleaned up partially-created AD account {Sam}", samAccountName);
+            _logger.LogInformation("Cleaned up partially-created AD account {Guid}", objectGuid);
             return new(true, "Cleaned up.");
         });
     }
 
-    private async Task TryDeleteEntraAccountAsync(string upn, GraphTokenClient graph)
+    private async Task TryDeleteEntraAccountByIdAsync(string entraId, GraphTokenClient graph)
     {
-        using var user = await graph.GetAsync($"/users/{Uri.EscapeDataString(upn)}?$select=id");
-        if (user == null) return;
-
-        var id = user.RootElement.GetProperty("id").GetString();
-        if (id == null) return;
-
-        await graph.DeleteAsync($"/users/{id}");
-        _logger.LogInformation("Cleaned up partially-created Entra account {Upn}", upn);
+        await graph.DeleteAsync($"/users/{entraId}");
+        _logger.LogInformation("Cleaned up partially-created Entra account {Id}", entraId);
     }
 
     private TestAccountPoolOperationResult FailCreate(
