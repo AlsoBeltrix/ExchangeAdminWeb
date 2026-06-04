@@ -1292,7 +1292,7 @@ public sealed class TestAccountPoolService
     {
         ps.AddCommand("Get-ADUser")
           .AddParameter("Identity", objectGuid)
-          .AddParameter("Properties", new[] { "Enabled", "ObjectGUID", "UserPrincipalName" })
+          .AddParameter("Properties", new[] { "Enabled", "ObjectGUID", "UserPrincipalName", "SamAccountName", "DistinguishedName", "mail" })
           .AddParameter("Credential", CreateCredential(creds.username, creds.password, creds.domain))
           .AddParameter("ErrorAction", "Stop");
         var users = ps.Invoke();
