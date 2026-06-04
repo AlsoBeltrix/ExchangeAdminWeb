@@ -415,3 +415,149 @@ html.dark .dropdown-item {
 html.dark .dropdown-item:hover {
     background-color: #343a40;
 }
+
+/* ========================================================
+   COLOR THEMES
+   Each theme sets CSS variables consumed by sidebar,
+   alerts, inputs, accents, and table styling.
+   ======================================================== */
+
+/* --- DARK THEMES --- */
+
+html.dark.theme-default-dark {
+    --sidebar-bg: #1a1d2e;
+    --sidebar-accent: #5b9cf5;
+}
+
+html.dark.theme-midnight {
+    --sidebar-bg: #0d1117;
+    --sidebar-accent: #58a6ff;
+    --bs-body-bg: #010409;
+}
+
+html.dark.theme-slate {
+    --sidebar-bg: #1e293b;
+    --sidebar-accent: #94a3b8;
+    --bs-body-bg: #0f172a;
+}
+
+html.dark.theme-nord-dark {
+    --sidebar-bg: #2e3440;
+    --sidebar-accent: #88c0d0;
+    --bs-body-bg: #242933;
+}
+
+html.dark.theme-monokai {
+    --sidebar-bg: #1e1f1c;
+    --sidebar-accent: #a6e22e;
+    --bs-body-bg: #272822;
+}
+
+/* --- LIGHT THEMES --- */
+
+html:not(.dark).theme-default-light {
+    --sidebar-bg: #1e2235;
+    --sidebar-accent: #4f7cca;
+}
+
+html:not(.dark).theme-clean {
+    --sidebar-bg: #ffffff;
+    --sidebar-accent: #2563eb;
+    --sidebar-border: #e5e7eb;
+}
+
+html:not(.dark).theme-clean .nav-item ::deep .nav-link { color: #374151; }
+html:not(.dark).theme-clean .nav-category { color: #6b7280; }
+html:not(.dark).theme-clean .top-row { background-color: #ffffff; border-bottom-color: #e5e7eb; }
+
+html:not(.dark).theme-warm {
+    --sidebar-bg: #292524;
+    --sidebar-accent: #f59e0b;
+}
+
+html:not(.dark).theme-nord-light {
+    --sidebar-bg: #3b4252;
+    --sidebar-accent: #5e81ac;
+}
+
+html:not(.dark).theme-paper {
+    --sidebar-bg: #2d3748;
+    --sidebar-accent: #667eea;
+}
+
+/* Theme picker styling */
+.theme-select {
+    background-color: transparent;
+    border-color: rgba(255,255,255,0.2);
+    color: inherit;
+}
+
+html.dark .theme-select {
+    color: #d1d5db;
+}
+
+html:not(.dark) .theme-select {
+    border-color: #d1d5db;
+    color: #374151;
+}
+
+/* --- UI polish: sidebar, alerts, tables, inputs --- */
+
+/* Sidebar: flat dark, no gradient */
+:root {
+    --sidebar-bg: #1a1d2e;
+    --sidebar-border: rgba(255,255,255,0.06);
+    --sidebar-accent: #5b9cf5;
+    --sidebar-active: rgba(255,255,255,0.1);
+    --sidebar-hover: rgba(255,255,255,0.05);
+}
+
+/* Light mode sidebar */
+html:not(.dark) {
+    --sidebar-bg: #1e2235;
+}
+
+/* Dark mode: tone down info alerts */
+html.dark .alert-info {
+    background-color: rgba(13, 110, 253, 0.08);
+    border-color: rgba(13, 110, 253, 0.15);
+    color: #8bb9f0;
+}
+
+/* Dark mode: better input borders */
+html.dark .form-control,
+html.dark .form-select {
+    border-color: #3a3f4a;
+}
+
+html.dark .form-control:focus,
+html.dark .form-select:focus {
+    border-color: #5b9cf5;
+    box-shadow: 0 0 0 0.15rem rgba(91, 156, 245, 0.2);
+}
+
+/* Table row separation */
+html.dark .table > tbody > tr {
+    border-bottom-color: rgba(255,255,255,0.06);
+}
+
+html.dark .table-sm > tbody > tr > td {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
+
+/* Card headers: subtle separator */
+html.dark .card-header {
+    border-bottom-color: rgba(255,255,255,0.08);
+}
+
+/* Tabs: cleaner dark mode */
+html.dark .nav-tabs .nav-link {
+    color: #9ca3af;
+}
+
+html.dark .nav-tabs .nav-link.active {
+    color: #e0e0e0;
+    background-color: transparent;
+    border-bottom: 2px solid #5b9cf5;
+}

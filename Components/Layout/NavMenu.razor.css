@@ -130,12 +130,14 @@
     line-height: 1.2rem;
 }
 .nav-item ::deep a.active {
-    background-color: rgba(255,255,255,0.37);
+    background-color: rgba(255,255,255,0.1);
     color: white;
+    border-left: 3px solid var(--sidebar-accent, #5b9cf5);
+    padding-left: calc(0.75rem - 3px);
 }
 
 .nav-item ::deep .nav-link:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: rgba(255,255,255,0.05);
     color: white;
 }
 

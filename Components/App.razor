@@ -21,8 +21,9 @@
                 }
             }
             applyTheme();
-            document.addEventListener('blazor:enhancedload', applyTheme);
-            document.addEventListener('pageshow', applyTheme);
+            if (typeof applyColorTheme === 'function') applyColorTheme();
+            document.addEventListener('blazor:enhancedload', function() { applyTheme(); if (typeof applyColorTheme === 'function') applyColorTheme(); });
+            document.addEventListener('pageshow', function() { applyTheme(); if (typeof applyColorTheme === 'function') applyColorTheme(); });
             // Re-apply after Blazor patches the DOM on circuit start
             new MutationObserver(function(mutations) {
                 for (var m of mutations) {
@@ -42,13 +43,46 @@
 <body>
     <Routes />
     <script>
+        var _colorThemes = {
+            dark: ['default-dark', 'midnight', 'slate', 'nord-dark', 'monokai'],
+            light: ['default-light', 'clean', 'warm', 'nord-light', 'paper']
+        };
+
         function toggleTheme() {
             var isDark = document.documentElement.classList.toggle('dark');
             localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            applyColorTheme();
             return isDark;
         }
         function getTheme() {
             return document.documentElement.classList.contains('dark');
+        }
+        function getColorTheme() {
+            return localStorage.getItem('colorTheme') || '';
+        }
+        function setColorTheme(name) {
+            localStorage.setItem('colorTheme', name);
+            applyColorTheme();
+            return name;
+        }
+        function getColorThemeList() {
+            var isDark = document.documentElement.classList.contains('dark');
+            return JSON.stringify(isDark ? _colorThemes.dark : _colorThemes.light);
+        }
+        function applyColorTheme() {
+            var el = document.documentElement;
+            var isDark = el.classList.contains('dark');
+            var themes = isDark ? _colorThemes.dark : _colorThemes.light;
+            // Remove all theme classes
+            themes.concat(isDark ? _colorThemes.light : _colorThemes.dark).forEach(function(t) {
+                el.classList.remove('theme-' + t);
+            });
+            var chosen = localStorage.getItem('colorTheme') || '';
+            if (!chosen || themes.indexOf(chosen) === -1) {
+                chosen = themes[Math.floor(Math.random() * themes.length)];
+                localStorage.setItem('colorTheme', chosen);
+            }
+            el.classList.add('theme-' + chosen);
         }
     </script>
     <script>

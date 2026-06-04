@@ -1,18 +1,30 @@
 @rendermode InteractiveServer
 @inject IJSRuntime JS
 
-<button class="btn btn-sm btn-outline-secondary me-3 theme-toggle" @onclick="Toggle" title="Toggle dark mode">
-    @(isDark ? "☀️" : "🌙")
-</button>
+<div class="d-flex align-items-center gap-2 me-3">
+    <button class="btn btn-sm btn-outline-secondary theme-toggle" @onclick="Toggle" title="Toggle dark/light mode">
+        @(isDark ? "☀️" : "🌙")
+    </button>
+    <select class="form-select form-select-sm theme-select" style="width: auto; font-size: 0.75rem;" @onchange="OnColorThemeChange" value="@currentColorTheme">
+        @foreach (var t in availableThemes)
+        {
+            <option value="@t">@FormatName(t)</option>
+        }
+    </select>
+</div>
 
 @code {
     private bool isDark;
+    private string currentColorTheme = "";
+    private List<string> availableThemes = new();
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             isDark = await JS.InvokeAsync<bool>("getTheme");
+            currentColorTheme = await JS.InvokeAsync<string>("getColorTheme");
+            await LoadThemeList();
             StateHasChanged();
         }
     }
@@ -20,5 +32,22 @@
     private async Task Toggle()
     {
         isDark = await JS.InvokeAsync<bool>("toggleTheme");
+        currentColorTheme = await JS.InvokeAsync<string>("getColorTheme");
+        await LoadThemeList();
     }
+
+    private async Task OnColorThemeChange(ChangeEventArgs e)
+    {
+        var theme = e.Value?.ToString() ?? "";
+        currentColorTheme = await JS.InvokeAsync<string>("setColorTheme", theme);
+    }
+
+    private async Task LoadThemeList()
+    {
+        var json = await JS.InvokeAsync<string>("getColorThemeList");
+        availableThemes = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new();
+    }
+
+    private static string FormatName(string theme) =>
+        theme.Replace("-", " ").Replace("default ", "Default ");
 }
