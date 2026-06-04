@@ -1,56 +1,81 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using ExchangeAdminWeb.Modules;
 
 namespace ExchangeAdminWeb.Services;
 
 public class ModuleConfigService
 {
-    private readonly string _configFilePath;
+    private readonly string _configDir;
+    private readonly string _legacyFilePath;
     private readonly ModuleCatalog _catalog;
     private readonly ILogger<ModuleConfigService> _logger;
     private readonly object _writeLock = new();
+    private bool _legacyMigrated;
 
     public ModuleConfigService(ModuleCatalog catalog, IWebHostEnvironment env, ILogger<ModuleConfigService> logger)
     {
         _catalog = catalog;
         _logger = logger;
-        var configDir = Path.Combine(env.ContentRootPath, "config");
-        _configFilePath = Path.Combine(configDir, "module-config.json");
-        Directory.CreateDirectory(configDir);
+        _configDir = Path.Combine(env.ContentRootPath, "config");
+        _legacyFilePath = Path.Combine(_configDir, "module-config.json");
+        Directory.CreateDirectory(_configDir);
     }
 
     public event Action<string>? ConfigSaved;
 
-    public bool HasConfigFile => File.Exists(_configFilePath);
-    public bool IsCorrupt { get; private set; }
+    public bool HasConfigFile => HasModuleConfigFile(null);
+    public bool IsCorrupt => IsModuleCorrupt(null);
+
+    public bool HasModuleConfigFile(string? moduleId)
+    {
+        if (moduleId != null)
+            return File.Exists(GetModuleConfigPath(moduleId));
+
+        foreach (var m in _catalog.GetAll())
+        {
+            if (File.Exists(GetModuleConfigPath(m.Id)))
+                return true;
+        }
+        return File.Exists(_legacyFilePath);
+    }
+
+    public bool IsModuleCorrupt(string? moduleId)
+    {
+        if (moduleId != null)
+        {
+            var path = GetModuleConfigPath(moduleId);
+            if (!File.Exists(path)) return false;
+            try
+            {
+                JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path));
+                return false;
+            }
+            catch { return true; }
+        }
+
+        foreach (var m in _catalog.GetAll())
+        {
+            if (IsModuleCorrupt(m.Id)) return true;
+        }
+        return false;
+    }
 
     public string? GetValue(string moduleId, string key)
     {
-        var config = ReadConfig();
-        if (config == null) return null;
-        if (config.TryGetValue(moduleId, out var moduleConfig))
-        {
-            if (moduleConfig.TryGetValue(key, out var value))
-                return value;
-        }
-        return null;
+        EnsureLegacyMigrated();
+        var config = ReadModuleConfig(moduleId);
+        return config.TryGetValue(key, out var value) ? value : null;
     }
 
     public Dictionary<string, string> GetModuleConfig(string moduleId)
     {
-        var config = ReadConfig();
-        if (config == null) return new(StringComparer.OrdinalIgnoreCase);
-        return config.TryGetValue(moduleId, out var moduleConfig)
-            ? new Dictionary<string, string>(moduleConfig, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        EnsureLegacyMigrated();
+        return ReadModuleConfig(moduleId);
     }
 
     public bool IsModuleConfigured(string moduleId)
     {
-        if (IsCorrupt) return false;
-
         var module = _catalog.GetById(moduleId);
         if (module == null || module.ConfigFields.Count == 0) return true;
 
@@ -64,11 +89,8 @@ public class ModuleConfigService
     {
         lock (_writeLock)
         {
-            var config = ReadConfig() ?? new(StringComparer.OrdinalIgnoreCase);
-            config[moduleId] = new Dictionary<string, string>(values, StringComparer.OrdinalIgnoreCase);
-
-            var configDir = Path.GetDirectoryName(_configFilePath)!;
-            var tempPath = Path.Combine(configDir, $"module-config.{Guid.NewGuid():N}.tmp");
+            var path = GetModuleConfigPath(moduleId);
+            var tempPath = Path.Combine(_configDir, $"module-config-{moduleId}.{Guid.NewGuid():N}.tmp");
 
             try
             {
@@ -77,16 +99,15 @@ public class ModuleConfigService
                     WriteIndented = true,
                     Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 };
-                var json = JsonSerializer.Serialize(config, options);
+                var json = JsonSerializer.Serialize(values, options);
                 File.WriteAllText(tempPath, json);
 
-                if (File.Exists(_configFilePath))
-                    File.Replace(tempPath, _configFilePath, null);
+                if (File.Exists(path))
+                    File.Replace(tempPath, path, null);
                 else
-                    File.Move(tempPath, _configFilePath);
+                    File.Move(tempPath, path);
 
-                IsCorrupt = false;
-                _logger.LogInformation("Module config for {Module} saved", moduleId);
+                _logger.LogInformation("Module config for {Module} saved to {Path}", moduleId, Path.GetFileName(path));
             }
             finally
             {
@@ -98,27 +119,75 @@ public class ModuleConfigService
         ConfigSaved?.Invoke(moduleId);
     }
 
-    private Dictionary<string, Dictionary<string, string>>? ReadConfig()
+    private string GetModuleConfigPath(string moduleId) =>
+        Path.Combine(_configDir, $"module-config-{moduleId}.json");
+
+    private Dictionary<string, string> ReadModuleConfig(string moduleId)
     {
-        if (!File.Exists(_configFilePath))
-        {
-            IsCorrupt = false;
+        var path = GetModuleConfigPath(moduleId);
+        if (!File.Exists(path))
             return new(StringComparer.OrdinalIgnoreCase);
-        }
 
         try
         {
-            var json = File.ReadAllText(_configFilePath);
-            var result = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json)
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<Dictionary<string, string>>(json)
                 ?? new(StringComparer.OrdinalIgnoreCase);
-            IsCorrupt = false;
-            return result;
         }
         catch (Exception ex)
         {
-            IsCorrupt = true;
-            _logger.LogError(ex, "Module config file corrupt - modules will appear unconfigured until file is fixed or re-saved");
-            return null;
+            _logger.LogError(ex, "Module config file corrupt for {Module}: {Path}", moduleId, Path.GetFileName(path));
+            return new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void EnsureLegacyMigrated()
+    {
+        if (_legacyMigrated || !File.Exists(_legacyFilePath))
+        {
+            _legacyMigrated = true;
+            return;
+        }
+
+        lock (_writeLock)
+        {
+            if (_legacyMigrated) return;
+
+            try
+            {
+                var json = File.ReadAllText(_legacyFilePath);
+                var legacy = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, string>>>(json);
+                if (legacy == null)
+                {
+                    _legacyMigrated = true;
+                    return;
+                }
+
+                foreach (var (moduleId, values) in legacy)
+                {
+                    var perModulePath = GetModuleConfigPath(moduleId);
+                    if (File.Exists(perModulePath))
+                        continue;
+
+                    var options = new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    };
+                    File.WriteAllText(perModulePath, JsonSerializer.Serialize(values, options));
+                    _logger.LogInformation("Migrated config for {Module} from legacy module-config.json to {File}", moduleId, Path.GetFileName(perModulePath));
+                }
+
+                var backupPath = Path.Combine(_configDir, $"module-config.pre-migration.{DateTime.UtcNow:yyyyMMddHHmmss}.json");
+                File.Move(_legacyFilePath, backupPath);
+                _logger.LogInformation("Legacy module-config.json backed up to {Backup}", Path.GetFileName(backupPath));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to migrate legacy module-config.json — per-module files will be created on next save");
+            }
+
+            _legacyMigrated = true;
         }
     }
 }

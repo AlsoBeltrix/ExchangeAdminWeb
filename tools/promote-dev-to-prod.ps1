@@ -365,12 +365,21 @@ try {
     if (-not $SkipConfigFragments) {
         $jsonConfigFiles = @(
             'sectionaccess.json',
-            'module-config.json',
             'modules-enabled.json',
             'protected-principals.json',
             'ad-editable-attributes.json',
             'ad-editable-attributes-legend.json'
         )
+
+        # Merge per-module config files (module-config-*.json)
+        $devConfigDir = Join-Path $dev "config"
+        $prodConfigDir = Join-Path $prod "config"
+        foreach ($moduleFile in Get-ChildItem -Path $devConfigDir -Filter "module-config-*.json" -ErrorAction SilentlyContinue) {
+            Merge-JsonConfig `
+                -DevFile $moduleFile.FullName `
+                -ProdFile (Join-Path $prodConfigDir $moduleFile.Name) `
+                -Name $moduleFile.Name
+        }
 
         foreach ($name in $jsonConfigFiles) {
             Merge-JsonConfig `
