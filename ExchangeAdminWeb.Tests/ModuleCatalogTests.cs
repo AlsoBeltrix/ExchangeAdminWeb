@@ -93,9 +93,10 @@ public class ModuleCatalogTests
         Assert.Contains("TestAccountPool", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
         Assert.Contains("EventLog", aliases);
+        Assert.Contains("UndoAuditedActions", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
         Assert.DoesNotContain("ExchangeOnline", aliases); // config-only modules excluded
-        Assert.Equal(27, aliases.Count);
+        Assert.Equal(28, aliases.Count);
     }
 
     [Fact]

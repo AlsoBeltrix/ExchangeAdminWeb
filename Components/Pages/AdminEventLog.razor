@@ -13,6 +13,8 @@
 @inject ILogger<AdminEventLog> Logger
 @inject ExtendedLogService ExtendedLog
 @inject JsonlLogService JsonlLog
+@inject UndoRegistry UndoRegistry
+@inject ClientInfoService ClientInfo
 
 <PageTitle>Event Log</PageTitle>
 
@@ -119,6 +121,10 @@
                         <th>Category</th>
                         <th>Target</th>
                         <th>Result</th>
+                        @if (hasUndoPermission)
+                        {
+                            <th style="width: 80px;"></th>
+                        }
                         <th style="width: 30px;"></th>
                     </tr>
                 </thead>
@@ -161,13 +167,31 @@
                                         @evt.Result
                                     </span>
                                 }
+                                @if (IsReversed(evt))
+                                {
+                                    <span class="badge bg-secondary ms-1">Reversed</span>
+                                }
                             </td>
+                            @if (hasUndoPermission)
+                            {
+                                <td>
+                                    @if (evt.Source == "Audit" && !IsReversed(evt) && evt.IsUndoable)
+                                    {
+                                        <button class="btn btn-outline-warning btn-sm py-0 px-1"
+                                                @onclick="() => ShowUndoPreview(evt)"
+                                                @onclick:stopPropagation="true"
+                                                title="Undo this action">
+                                            Undo
+                                        </button>
+                                    }
+                                </td>
+                            }
                             <td>@(expandedRow == evtId ? "▲" : "▼")</td>
                         </tr>
                         @if (expandedRow == evtId)
                         {
                             <tr>
-                                <td colspan="8" class="bg-body-tertiary">
+                                <td colspan="@(hasUndoPermission ? 9 : 8)" class="bg-body-tertiary">
                                     @if (evt.Details.Count == 0)
                                     {
                                         <div class="small text-muted p-2">No additional details.</div>
@@ -215,6 +239,110 @@
     }
 </div>
 
+@if (undoPreview != null)
+{
+    <div class="position-fixed top-0 end-0 bottom-0 bg-dark bg-opacity-50" style="left: 0; z-index: 1040;" @onclick="CloseUndoPanel"></div>
+    <div class="position-fixed top-0 end-0 bottom-0 bg-body shadow-lg d-flex flex-column" style="width: min(500px, 90vw); z-index: 1050;">
+        <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Undo Preview</h5>
+            <button type="button" class="btn-close" @onclick="CloseUndoPanel"></button>
+        </div>
+        <div class="p-3 flex-grow-1 overflow-auto">
+            @if (undoLoading)
+            {
+                <div class="text-center py-4">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading preview...</span>
+                    </div>
+                </div>
+            }
+            else if (undoPreview.Error != null && !undoPreview.CanUndo)
+            {
+                <div class="alert alert-danger">@undoPreview.Error</div>
+            }
+            else
+            {
+                <div class="mb-3">
+                    <div class="text-muted small">Module</div>
+                    <div>@undoPreview.Module</div>
+                </div>
+                <div class="mb-3">
+                    <div class="text-muted small">Action</div>
+                    <div>@undoPreview.Action</div>
+                </div>
+                <div class="mb-3">
+                    <div class="text-muted small">Target</div>
+                    <div>@undoPreview.Target</div>
+                </div>
+
+                @if (undoPreview.HasConflict)
+                {
+                    <div class="alert alert-warning">
+                        <strong>Conflict detected.</strong> @undoPreview.ConflictDetail
+                    </div>
+                }
+
+                @if (undoPreview.Changes != null)
+                {
+                    <table class="table table-sm table-bordered">
+                        <thead>
+                            <tr>
+                                <th>Attribute</th>
+                                <th>Current</th>
+                                <th>Expected</th>
+                                <th>Revert To</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var change in undoPreview.Changes)
+                            {
+                                <tr class="@(change.IsConflict ? "table-warning" : "")">
+                                    <td class="fw-semibold">@change.Field</td>
+                                    <td class="small text-break">@(change.CurrentValue ?? "(empty)")</td>
+                                    <td class="small text-break">@(change.ExpectedValue ?? "(empty)")</td>
+                                    <td class="small text-break">@(change.RevertToValue ?? "(empty)")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+
+                @if (undoPreview.CanUndo)
+                {
+                    <div class="mb-3">
+                        <label class="form-label">Ticket Number <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control form-control-sm" @bind="undoTicket" placeholder="Required" />
+                    </div>
+                }
+            }
+
+            @if (undoError != null)
+            {
+                <div class="alert alert-danger mt-2">@undoError</div>
+            }
+            @if (undoSuccess != null)
+            {
+                <div class="alert alert-success mt-2">@undoSuccess</div>
+            }
+        </div>
+        <div class="p-3 border-top d-flex gap-2 justify-content-end">
+            <button class="btn btn-secondary btn-sm" @onclick="CloseUndoPanel">
+                @(undoSuccess != null ? "Close" : "Cancel")
+            </button>
+            @if (undoPreview.CanUndo && undoSuccess == null)
+            {
+                <button class="btn btn-warning btn-sm" @onclick="ExecuteUndo" disabled="@(undoExecuting || string.IsNullOrWhiteSpace(undoTicket))">
+                    @if (undoExecuting)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1"></span>
+                    }
+                    Confirm Undo
+                </button>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private bool authChecked;
     private bool showDiagnostics;
@@ -236,6 +364,17 @@
     private List<MergedLogEntry> filteredEvents = new();
     private int totalPages => Math.Max(1, (int)Math.Ceiling(filteredEvents.Count / (double)PageSize));
 
+    // Undo state
+    private bool hasUndoPermission;
+    private UndoPreview? undoPreview;
+    private bool undoLoading;
+    private bool undoExecuting;
+    private string undoTicket = "";
+    private string? undoError;
+    private string? undoSuccess;
+    private MergedLogEntry? undoTargetEvent;
+    private HashSet<string> reversedOperationIds = new(StringComparer.OrdinalIgnoreCase);
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -247,6 +386,8 @@
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
+
+        hasUndoPermission = (await AuthorizationService.AuthorizeAsync(user, "UndoAuditedActions")).Succeeded;
 
         authChecked = true;
         LoadEvents();
@@ -377,6 +518,14 @@
         for (int i = 0; i < allEvents.Count; i++)
             allEvents[i].Index = i;
 
+        // Build the set of operation IDs that have been reversed (referenced by a later undo event)
+        reversedOperationIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var evt in allEvents)
+        {
+            if (!string.IsNullOrEmpty(evt.OriginalOperationId))
+                reversedOperationIds.Add(evt.OriginalOperationId);
+        }
+
         ApplyFilters();
     }
 
@@ -401,6 +550,21 @@
 
             var rawTarget = GetAuditTarget(root);
 
+            // Build raw fields dictionary for undo support
+            var rawFields = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in root.EnumerateObject())
+            {
+                rawFields[property.Name] = property.Value.Clone();
+            }
+
+            // Check if this event is undoable
+            var isUndoable = false;
+            if (hasUndoPermission)
+            {
+                try { isUndoable = UndoRegistry.FindHandler(rawFields) != null; }
+                catch { }
+            }
+
             return new MergedLogEntry
             {
                 Timestamp = eventTime,
@@ -416,6 +580,9 @@
                 Level = "",
                 Message = "",
                 OperationId = TryGetString(root, "operationId") ?? "",
+                OriginalOperationId = TryGetString(root, "originalOperationId"),
+                IsUndoable = isUndoable,
+                RawFields = rawFields,
                 Details = ExtractAuditDetails(root, eventType, rawTarget)
             };
         }
@@ -573,6 +740,102 @@
 
     private void ToggleExpand(int index) =>
         expandedRow = expandedRow == index ? -1 : index;
+
+    private bool IsReversed(MergedLogEntry evt) =>
+        !string.IsNullOrEmpty(evt.OperationId) && reversedOperationIds.Contains(evt.OperationId);
+
+    private async Task ShowUndoPreview(MergedLogEntry evt)
+    {
+        undoTargetEvent = evt;
+        undoLoading = true;
+        undoError = null;
+        undoSuccess = null;
+        undoTicket = "";
+        undoPreview = new UndoPreview(false, null, "", "", "", null, null, false, null); // placeholder while loading
+        StateHasChanged();
+
+        try
+        {
+            var handler = UndoRegistry.FindHandler(evt.RawFields);
+            if (handler == null)
+            {
+                undoPreview = new UndoPreview(false, "No undo handler available for this event.", "", "", "", null, null, false, null);
+                return;
+            }
+
+            undoPreview = await handler.PreviewUndoAsync(evt.RawFields);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load undo preview for operation {OperationId}", evt.OperationId);
+            undoPreview = new UndoPreview(false, $"Failed to load undo preview: {ex.Message}", "", "", "", null, null, false, null);
+        }
+        finally
+        {
+            undoLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseUndoPanel()
+    {
+        undoPreview = null;
+        undoTargetEvent = null;
+        undoError = null;
+        undoSuccess = null;
+        undoTicket = "";
+    }
+
+    private async Task ExecuteUndo()
+    {
+        if (undoTargetEvent == null || undoPreview == null || string.IsNullOrWhiteSpace(undoTicket))
+            return;
+
+        undoExecuting = true;
+        undoError = null;
+        StateHasChanged();
+
+        try
+        {
+            var handler = UndoRegistry.FindHandler(undoTargetEvent.RawFields);
+            if (handler == null)
+            {
+                undoError = "No undo handler available for this event.";
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var userName = authState.User.Identity?.Name ?? "unknown";
+            var clientIp = ClientInfo.IpAddress;
+
+            var result = await handler.ExecuteUndoAsync(
+                undoTargetEvent.RawFields,
+                userName,
+                clientIp,
+                undoTicket.Trim());
+
+            if (result.Success)
+            {
+                undoSuccess = $"Undo completed successfully. Reversal operation ID: {result.ReversalOperationId ?? "N/A"}";
+                // Refresh the event log to show the new reversal event and Reversed badge
+                LoadEvents();
+            }
+            else
+            {
+                undoError = result.Error ?? "Undo failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to execute undo for operation {OperationId}", undoTargetEvent.OperationId);
+            undoError = $"Unexpected error: {ex.Message}";
+        }
+        finally
+        {
+            undoExecuting = false;
+            StateHasChanged();
+        }
+    }
 
     private static string? TryGetString(JsonElement root, string prop) =>
         root.TryGetProperty(prop, out var val) && val.ValueKind == JsonValueKind.String ? val.GetString() : null;
@@ -804,6 +1067,9 @@
         public string Level { get; set; } = "";
         public string Message { get; set; } = "";
         public string OperationId { get; set; } = "";
+        public string? OriginalOperationId { get; set; }
+        public bool IsUndoable { get; set; }
+        public Dictionary<string, object?> RawFields { get; set; } = new();
         public List<DetailField> Details { get; set; } = new();
     }
 }

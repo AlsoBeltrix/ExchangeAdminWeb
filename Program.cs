@@ -106,6 +106,9 @@ try
     builder.Services.AddScoped<IIdentityResolver, ExchangeIdentityResolver>();
     builder.Services.AddScoped<ClientInfoService>();
 
+    builder.Services.AddScoped<IUndoableModule, ADAttributeEditorUndoService>();
+    builder.Services.AddScoped<UndoRegistry>();
+
     var app = builder.Build();
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');
