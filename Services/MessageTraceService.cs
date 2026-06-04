@@ -163,7 +163,7 @@ public class MessageTraceService : ExchangeServiceBase
                                     || ex.Message.Contains("is not recognized", StringComparison.OrdinalIgnoreCase)
                                     || ex.Message.Contains("CommandNotFoundException", StringComparison.OrdinalIgnoreCase))
             {
-                response.Error = "Get-MessageTraceV2 requires ExchangeOnlineManagement 3.x or later. Please update the module.";
+                response.Error = "Get-MessageTraceV2 requires ExchangeOnlineManagement 3.7.0 or later. Please update the module.";
                 _logger.LogError(ex, "Get-MessageTraceV2 not available — ExchangeOnlineManagement module may be outdated");
             }
             catch (Exception ex)

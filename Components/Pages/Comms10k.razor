@@ -302,10 +302,13 @@
                 try
                 {
                     var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(email);
-                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                     {
-                        result = new Comms10kUpdateResult { Success = false, Message = $"Protection check unavailable for {email}. Cannot verify if this user is protected." };
-                        try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection resolver unavailable for {email}"); } catch { }
+                        var reason = resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                            ? $"Identity '{email}' is ambiguous — matches multiple AD users."
+                            : $"Protection check unavailable for {email}.";
+                        result = new Comms10kUpdateResult { Success = false, Message = reason };
+                        try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, reason); } catch { }
                         return;
                     }
                     if (resolved != null)

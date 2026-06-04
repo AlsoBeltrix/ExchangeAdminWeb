@@ -176,7 +176,7 @@ public class ProtectedPrincipalService
         return (config, GetLegacyExclusions(), null);
     }
 
-    public enum ResolutionStatus { Resolved, NotFound, Unavailable }
+    public enum ResolutionStatus { Resolved, NotFound, Ambiguous, Unavailable }
 
     /// <summary>
     /// Resolves an identity to a full ResolvedDirectoryPrincipal with explicit status.
@@ -223,6 +223,11 @@ public class ProtectedPrincipalService
             {
                 _adThrottle.Release();
             }
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(ex, "Ambiguous resolution for {Identity} — blocking", identity);
+            return (null, ResolutionStatus.Ambiguous);
         }
         catch (Exception ex)
         {
@@ -272,7 +277,7 @@ public class ProtectedPrincipalService
         if (users.Count > 1)
         {
             _logger.LogWarning("Ambiguous identity resolution for '{Identity}': matched {Count} AD users — failing closed", identity, users.Count);
-            return null;
+            throw new InvalidOperationException($"Ambiguous: '{identity}' matches {users.Count} AD users.");
         }
 
         var adUser = users[0];

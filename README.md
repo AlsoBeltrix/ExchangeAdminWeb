@@ -202,7 +202,7 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - **Windows Server** 2016+ (IIS with Windows Authentication)
 - **.NET 10 SDK** and **ASP.NET Core 10 Runtime (Windows Hosting Bundle)**
 - **PowerShell 7.4+**
-- **ExchangeOnlineManagement PowerShell Module** (v3.0+)
+- **ExchangeOnlineManagement PowerShell Module** (v3.7.0+ required for Get-MessageTraceV2)
 
 ### Exchange Online Prerequisites
 - **Azure App Registration** with:

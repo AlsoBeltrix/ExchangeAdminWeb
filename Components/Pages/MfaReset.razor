@@ -241,11 +241,14 @@
             try
             {
                 var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(upn);
-                if (resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
-                    result = new MfaResetResult { Success = false, Message = "Protection check unavailable. Cannot verify if this user is protected." };
+                    var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                        ? "Identity is ambiguous — matches multiple AD users."
+                        : "Protection check unavailable.";
+                    result = new MfaResetResult { Success = false, Message = reason };
                     Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                        errorDetail: "Protection resolver unavailable — blocked",
+                        errorDetail: $"{reason} — blocked",
                         methodTypes: methodTypesBeforeReset);
                     return;
                 }

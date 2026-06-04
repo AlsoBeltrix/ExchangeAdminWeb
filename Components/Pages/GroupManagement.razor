@@ -271,9 +271,11 @@
                 try
                 {
                     var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(memberIdentity);
-                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                     {
-                        opResult = PermissionResult.Fail("Protection check unavailable. Cannot verify if this member is protected.");
+                        opResult = PermissionResult.Fail(resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                            ? "Identity is ambiguous — matches multiple AD users."
+                            : "Protection check unavailable. Cannot verify if this member is protected.");
                         return;
                     }
                     if (resolved != null)
@@ -352,9 +354,11 @@
                 try
                 {
                     var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(member);
-                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                     {
-                        opResult = PermissionResult.Fail("Protection check unavailable. Cannot verify if this member is protected.");
+                        opResult = PermissionResult.Fail(resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                            ? "Identity is ambiguous — matches multiple AD users."
+                            : "Protection check unavailable. Cannot verify if this member is protected.");
                         return;
                     }
                     if (resolved != null)
