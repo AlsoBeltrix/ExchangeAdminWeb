@@ -233,6 +233,44 @@ public sealed class TestAccountPoolService
             .ToList();
     }
 
+    private async Task<TestAccountPoolOperationResult?> RecheckProtectionFromAdAsync(string objectGuid, (string username, string password, string domain) creds)
+    {
+        var freshEntry = await ExecuteAdMutationAsync(creds, ps =>
+        {
+            var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            var user = ReadAdUserByGuid(ps, objectGuid, creds);
+            if (user == null)
+                return new(false, "Account no longer exists.");
+
+            var upn = user.Properties["UserPrincipalName"]?.Value?.ToString() ?? "";
+            var sam = user.Properties["SamAccountName"]?.Value?.ToString();
+            var dn = user.Properties["DistinguishedName"]?.Value?.ToString();
+            var mail = user.Properties["mail"]?.Value?.ToString();
+            return new(true, $"{upn}|{sam}|{dn}|{mail}");
+        });
+
+        if (!freshEntry.Success)
+            return new(false, freshEntry.Message);
+
+        var fields = freshEntry.Message.Split('|', 4);
+        var principal = new ResolvedDirectoryPrincipal(
+            Source: "OnPremAD",
+            DisplayName: fields[0],
+            UserPrincipalName: fields[0],
+            SamAccountName: fields.Length > 1 ? fields[1] : null,
+            PrimarySmtpAddress: fields.Length > 3 ? fields[3] : null,
+            DistinguishedName: fields.Length > 2 ? fields[2] : null,
+            ObjectGuid: objectGuid,
+            EntraObjectId: null);
+
+        var result = await _protectedPrincipalService.CheckAsync(principal);
+        if (result.CheckFailed)
+            return new(false, $"Protection check failed: {result.Reason}");
+        if (result.IsProtected)
+            return new(false, $"Account is a protected principal and cannot be modified.");
+        return null;
+    }
+
     private async Task<TestAccountPoolOperationResult?> CheckProtectedPrincipalAsync(TestAccountPoolEntry account)
     {
         var principal = new ResolvedDirectoryPrincipal(
@@ -290,6 +328,9 @@ public sealed class TestAccountPoolService
             var notifyEmail = await ResolveAdminEmailAsync(performedBy, creds.Value);
             if (string.IsNullOrWhiteSpace(notifyEmail))
                 return Fail(op, account, performedBy, ip, ticket, "Checkout", "Could not resolve your email address from Active Directory. Checkout was not started.");
+
+            var freshProtection = await RecheckProtectionFromAdAsync(account.ObjectGuid, creds.Value);
+            if (freshProtection != null) return Fail(op, account, performedBy, ip, ticket, "Checkout", freshProtection.Message);
 
             var password = GeneratePassword(28);
             var result = await ExecuteAdMutationAsync(creds.Value, ps =>
@@ -369,6 +410,9 @@ public sealed class TestAccountPoolService
             var creds = await _moduleCredentials.GetCredentialsAsync(ModuleId, "test account check-in");
             if (creds == null)
                 return Fail(op, account, performedBy, ip, ticket, "CheckIn", "AD credentials unavailable.");
+
+            var freshProtection = await RecheckProtectionFromAdAsync(account.ObjectGuid, creds.Value);
+            if (freshProtection != null) return Fail(op, account, performedBy, ip, ticket, "CheckIn", freshProtection.Message);
 
             var result = await DisableAndResetAsync(account.ObjectGuid, creds.Value);
             if (!result.Success)
@@ -783,7 +827,7 @@ public sealed class TestAccountPoolService
         var exoGroup = request.ExchangeOnline ? GetConfig("OnPremExchangeOnlineGroup") : null;
         var teamsGroup = request.Teams ? GetConfig("OnPremTeamsGroup") : null;
 
-        await ExecuteAdMutationAsync(creds, ps =>
+        var result = await ExecuteAdMutationAsync(creds, ps =>
         {
             var credential = CreateCredential(creds.username, creds.password, creds.domain);
             AddAdGroupMember(ps, poolGroup, dn, credential);
@@ -793,6 +837,9 @@ public sealed class TestAccountPoolService
                 AddAdGroupMember(ps, teamsGroup, dn, credential);
             return new(true, "Groups provisioned.");
         });
+
+        if (!result.Success)
+            throw new InvalidOperationException($"Group provisioning failed: {result.Message}");
     }
 
     private async Task<string> CreateEntraUserAsync(
