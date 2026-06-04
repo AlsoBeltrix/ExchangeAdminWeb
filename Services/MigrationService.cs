@@ -214,12 +214,11 @@ public class MigrationService : ExchangeServiceBase
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
-        string? targetDatabase = null;
+        string[]? targetDatabases = null;
         if (direction == MigrationDirection.ToOnPrem)
         {
-            var configuredDatabases = MigrationTargetDatabaseSelector.Resolve(_moduleConfig, _config);
-            targetDatabase = MigrationTargetDatabaseSelector.PickRandom(configuredDatabases);
-            if (string.IsNullOrWhiteSpace(targetDatabase))
+            targetDatabases = MigrationTargetDatabaseSelector.Resolve(_moduleConfig, _config);
+            if (targetDatabases.Length == 0)
                 return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
@@ -245,7 +244,7 @@ public class MigrationService : ExchangeServiceBase
                   .AddParameter("Name", batchName)
                   .AddParameter("TargetEndpoint", _hybridEndpoint)
                   .AddParameter("TargetDeliveryDomain", _onPremTargetDomain)
-                  .AddParameter("TargetDatabases", new[] { targetDatabase! })
+                  .AddParameter("TargetDatabases", targetDatabases!)
                   .AddParameter("CSVData", csvBytes)
                   .AddParameter("NotificationEmails", _adminNotificationEmails)
                   .AddParameter("ErrorAction", "Stop");
@@ -296,7 +295,7 @@ public class MigrationService : ExchangeServiceBase
 
             var details = $@"Batch Name: {batchName}
 Direction: {direction}
-On-Prem Target Database: {(string.IsNullOrWhiteSpace(targetDatabase) ? "N/A" : targetDatabase)}
+On-Prem Target Databases: {(targetDatabases == null || targetDatabases.Length == 0 ? "N/A" : string.Join(", ", targetDatabases))}
 Users: {userList}
 Count: {eligibleEmails.Count}
 Auto-Start: {autoStart}
