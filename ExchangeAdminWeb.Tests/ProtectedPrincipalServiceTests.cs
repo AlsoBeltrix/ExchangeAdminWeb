@@ -505,4 +505,27 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         Assert.True(result.IsProtected);
     }
+
+    // --- Resolution status enum contract ---
+
+    [Fact]
+    public void ResolutionStatus_HasAmbiguousValue()
+    {
+        var values = Enum.GetValues<ProtectedPrincipalService.ResolutionStatus>();
+        Assert.Contains(ProtectedPrincipalService.ResolutionStatus.Ambiguous, values);
+        Assert.Contains(ProtectedPrincipalService.ResolutionStatus.NotFound, values);
+        Assert.Contains(ProtectedPrincipalService.ResolutionStatus.Unavailable, values);
+        Assert.Contains(ProtectedPrincipalService.ResolutionStatus.Resolved, values);
+    }
+
+    [Fact]
+    public async Task ResolveWithStatus_NoCredentialConfig_ReturnsUnavailable()
+    {
+        var service = CreateService();
+
+        var (principal, status) = await service.ResolveWithStatusAsync("anyone@contoso.com");
+
+        Assert.Null(principal);
+        Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Unavailable, status);
+    }
 }
