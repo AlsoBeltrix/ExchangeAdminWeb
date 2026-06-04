@@ -107,6 +107,27 @@ public class MigrationService : ExchangeServiceBase
                         r.Status = MigrationStatus.Ineligible;
                         r.IneligibilityReasons.Add("Not a cloud mailbox (must be in Exchange Online to migrate back to on-premises)");
                     }
+                    else
+                    {
+                        var mbxObj = cloudMbx.FirstOrDefault();
+                        var mailboxLocationsRaw = mbxObj?.Properties["MailboxLocations"]?.Value;
+                        var hasAuxArchive = false;
+                        if (mailboxLocationsRaw is System.Collections.IEnumerable locations and not string)
+                        {
+                            foreach (var loc in locations)
+                                if (loc?.ToString()?.Contains("AuxArchive", StringComparison.OrdinalIgnoreCase) == true)
+                                { hasAuxArchive = true; break; }
+                        }
+                        else if (mailboxLocationsRaw?.ToString()?.Contains("AuxArchive", StringComparison.OrdinalIgnoreCase) == true)
+                        {
+                            hasAuxArchive = true;
+                        }
+                        if (hasAuxArchive)
+                        {
+                            r.Status = MigrationStatus.Ineligible;
+                            r.IneligibilityReasons.Add("Mailbox has AuxArchive locations and cannot be moved back to on-premises");
+                        }
+                    }
                 }
             }
             catch (Exception ex)
