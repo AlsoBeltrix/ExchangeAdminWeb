@@ -157,11 +157,13 @@ public class TestAccountPoolServiceTests : IDisposable
         var credentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
         var audit = new AuditService(jsonl, trace);
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
         return new TestAccountPoolService(
             moduleConfig,
             credentials,
             delinea,
+            protectedPrincipalService,
             httpFactory,
             audit,
             email,

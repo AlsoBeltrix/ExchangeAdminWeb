@@ -122,6 +122,7 @@ public sealed class TestAccountPoolService
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly DelineaService _delineaService;
+    private readonly ProtectedPrincipalService _protectedPrincipalService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -132,6 +133,7 @@ public sealed class TestAccountPoolService
         ModuleConfigService moduleConfig,
         ModuleCredentialService moduleCredentials,
         DelineaService delineaService,
+        ProtectedPrincipalService protectedPrincipalService,
         IHttpClientFactory httpClientFactory,
         AuditService audit,
         EmailService email,
@@ -141,6 +143,7 @@ public sealed class TestAccountPoolService
         _moduleConfig = moduleConfig;
         _moduleCredentials = moduleCredentials;
         _delineaService = delineaService;
+        _protectedPrincipalService = protectedPrincipalService;
         _httpClientFactory = httpClientFactory;
         _audit = audit;
         _email = email;
@@ -230,6 +233,26 @@ public sealed class TestAccountPoolService
             .ToList();
     }
 
+    private async Task<TestAccountPoolOperationResult?> CheckProtectedPrincipalAsync(TestAccountPoolEntry account)
+    {
+        var principal = new ResolvedDirectoryPrincipal(
+            Source: account.Source,
+            DisplayName: account.DisplayName,
+            UserPrincipalName: account.UserPrincipalName,
+            SamAccountName: account.SamAccountName,
+            PrimarySmtpAddress: account.Mail,
+            DistinguishedName: account.DistinguishedName,
+            ObjectGuid: account.ObjectGuid,
+            EntraObjectId: account.EntraObjectId);
+
+        var result = await _protectedPrincipalService.CheckAsync(principal);
+        if (result.CheckFailed)
+            return new(false, $"Protection check failed: {result.Reason}");
+        if (result.IsProtected)
+            return new(false, $"Account {account.UserPrincipalName} is a protected principal and cannot be modified through the test account pool.");
+        return null;
+    }
+
     public async Task<TestAccountPoolOperationResult> CheckoutAsync(
         TestAccountPoolEntry account,
         int requestedHours,
@@ -242,6 +265,9 @@ public sealed class TestAccountPoolService
 
         if (string.IsNullOrWhiteSpace(ticket))
             return new(false, "Ticket number or reason is required.");
+
+        var protectionCheck = await CheckProtectedPrincipalAsync(account);
+        if (protectionCheck != null) return protectionCheck;
 
         var hours = ClampCheckoutHours(requestedHours);
         var expiresUtc = DateTime.UtcNow.AddHours(hours);
@@ -333,6 +359,9 @@ public sealed class TestAccountPoolService
         if (string.IsNullOrWhiteSpace(ticket))
             return new(false, "Ticket number or reason is required.");
 
+        var protectionCheck = await CheckProtectedPrincipalAsync(account);
+        if (protectionCheck != null) return protectionCheck;
+
         using var op = _operationTrace.BeginOperation(ModuleId, "CheckIn", performedBy, ip, account.UserPrincipalName, ticket);
 
         try
@@ -380,6 +409,15 @@ public sealed class TestAccountPoolService
         {
             if (string.IsNullOrWhiteSpace(account.ObjectGuid))
                 continue;
+
+            var protectionCheck = await CheckProtectedPrincipalAsync(account);
+            if (protectionCheck != null)
+            {
+                failed++;
+                _logger.LogWarning("Skipping cleanup of protected account {Account}", account.UserPrincipalName);
+                LogAudit(performedBy, ip, "TestAccountPool_ExpireCleanup", account, false, "", $"Protected principal: {protectionCheck.Message}");
+                continue;
+            }
 
             var result = await DisableAndResetAsync(account.ObjectGuid, creds.Value);
             if (!result.Success)
@@ -520,15 +558,17 @@ public sealed class TestAccountPoolService
                 {
                     if (request.CreateOnPremAd)
                     {
-                        var (dn, guid) = await CreateOnPremAccountAsync(row, request, adCreds!.Value);
+                        var (dn, guid) = await CreateOnPremAdUserAsync(row, request, adCreds!.Value);
                         createdAdGuid = guid;
+                        await ProvisionOnPremGroupsAsync(dn, request, adCreds!.Value);
                         if (request.OnPremMailbox)
                             await EnableOnPremMailboxAsync(dn, row.UserPrincipalName, exchangeCreds!.Value);
                     }
 
                     if (request.CreateEntra)
                     {
-                        createdEntraId = await CreateEntraAccountAsync(row, request, graph!);
+                        createdEntraId = await CreateEntraUserAsync(row, request, graph!);
+                        await ProvisionEntraGroupsAsync(createdEntraId, row.UserPrincipalName, request, graph!);
                     }
 
                     created.Add(row.UserPrincipalName);
@@ -689,16 +729,13 @@ public sealed class TestAccountPoolService
         return services.Count == 0 ? "None" : string.Join(", ", services);
     }
 
-    private async Task<(string dn, string guid)> CreateOnPremAccountAsync(
+    private async Task<(string dn, string guid)> CreateOnPremAdUserAsync(
         TestAccountCreatePreviewRow row,
         TestAccountCreateRequest request,
         (string username, string password, string domain) creds)
     {
         var password = GeneratePassword(28);
         var ou = GetConfig("OnPremCreateOU")!;
-        var poolGroup = GetConfig("OnPremPoolGroup")!;
-        var exoGroup = request.ExchangeOnline ? GetConfig("OnPremExchangeOnlineGroup") : null;
-        var teamsGroup = request.Teams ? GetConfig("OnPremTeamsGroup") : null;
 
         var mutation = await ExecuteAdMutationAsync(creds, ps =>
         {
@@ -731,12 +768,6 @@ public sealed class TestAccountPoolService
                 ?? throw new InvalidOperationException($"Created AD account has no distinguishedName: {row.SamAccountName}");
             var guid = user.Properties["ObjectGUID"]?.Value?.ToString() ?? "";
 
-            AddAdGroupMember(ps, poolGroup, dn, credential);
-            if (!string.IsNullOrWhiteSpace(exoGroup))
-                AddAdGroupMember(ps, exoGroup, dn, credential);
-            if (!string.IsNullOrWhiteSpace(teamsGroup))
-                AddAdGroupMember(ps, teamsGroup, dn, credential);
-
             return new(true, $"{dn}|{guid}");
         });
 
@@ -746,7 +777,25 @@ public sealed class TestAccountPoolService
         return (parts[0], parts.Length > 1 ? parts[1] : "");
     }
 
-    private async Task<string> CreateEntraAccountAsync(
+    private async Task ProvisionOnPremGroupsAsync(string dn, TestAccountCreateRequest request, (string username, string password, string domain) creds)
+    {
+        var poolGroup = GetConfig("OnPremPoolGroup")!;
+        var exoGroup = request.ExchangeOnline ? GetConfig("OnPremExchangeOnlineGroup") : null;
+        var teamsGroup = request.Teams ? GetConfig("OnPremTeamsGroup") : null;
+
+        await ExecuteAdMutationAsync(creds, ps =>
+        {
+            var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            AddAdGroupMember(ps, poolGroup, dn, credential);
+            if (!string.IsNullOrWhiteSpace(exoGroup))
+                AddAdGroupMember(ps, exoGroup, dn, credential);
+            if (!string.IsNullOrWhiteSpace(teamsGroup))
+                AddAdGroupMember(ps, teamsGroup, dn, credential);
+            return new(true, "Groups provisioned.");
+        });
+    }
+
+    private async Task<string> CreateEntraUserAsync(
         TestAccountCreatePreviewRow row,
         TestAccountCreateRequest request,
         GraphTokenClient graph)
@@ -775,13 +824,16 @@ public sealed class TestAccountPoolService
         var id = created.RootElement.GetProperty("id").GetString()
             ?? throw new InvalidOperationException($"Created Entra account has no id: {row.UserPrincipalName}");
 
-        await AddGraphGroupMemberAsync(graph, GetConfig("EntraPoolGroupId")!, id, row.UserPrincipalName, "Entra pool");
-        if (request.ExchangeOnline)
-            await AddGraphGroupMemberAsync(graph, GetConfig("EntraExchangeOnlineGroupId")!, id, row.UserPrincipalName, "Exchange Online provisioning");
-        if (request.Teams)
-            await AddGraphGroupMemberAsync(graph, GetConfig("EntraTeamsGroupId")!, id, row.UserPrincipalName, "Teams provisioning");
-
         return id;
+    }
+
+    private async Task ProvisionEntraGroupsAsync(string entraId, string upn, TestAccountCreateRequest request, GraphTokenClient graph)
+    {
+        await AddGraphGroupMemberAsync(graph, GetConfig("EntraPoolGroupId")!, entraId, upn, "Entra pool");
+        if (request.ExchangeOnline)
+            await AddGraphGroupMemberAsync(graph, GetConfig("EntraExchangeOnlineGroupId")!, entraId, upn, "Exchange Online provisioning");
+        if (request.Teams)
+            await AddGraphGroupMemberAsync(graph, GetConfig("EntraTeamsGroupId")!, entraId, upn, "Teams provisioning");
     }
 
     private async Task AddGraphGroupMemberAsync(GraphTokenClient graph, string groupId, string userId, string upn, string groupPurpose)

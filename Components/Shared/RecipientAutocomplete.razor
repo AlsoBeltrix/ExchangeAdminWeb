@@ -188,11 +188,16 @@
     private void OnBlur()
     {
         // Delay hiding to allow click events on dropdown items to fire
-        _ = Task.Delay(200).ContinueWith(_ => InvokeAsync(() =>
+        _ = Task.Delay(200).ContinueWith(_ =>
         {
-            _showDropdown = false;
-            StateHasChanged();
-        }));
+            if (_disposed) return;
+            InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _showDropdown = false;
+                StateHasChanged();
+            });
+        });
     }
 
     private async Task OnKeyDown(KeyboardEventArgs e)
@@ -219,8 +224,11 @@
         }
     }
 
+    private bool _disposed;
+
     public void Dispose()
     {
+        _disposed = true;
         _debounceTimer?.Dispose();
     }
 
