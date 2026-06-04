@@ -221,10 +221,10 @@
                         <table class="table table-sm table-striped">
                             <thead>
                                 <tr>
-                                    <th>Email Address</th>
-                                    <th>Status</th>
+                                    <th style="width: 280px;">Email Address</th>
+                                    <th style="width: 90px;">Status</th>
                                     <th>Reasons / Notes</th>
-                                    <th>Size (GB)</th>
+                                    <th style="width: 120px; text-align: right;">Size (GB)</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -248,17 +248,17 @@
                                                 <span class="text-success">✓ Ready to migrate</span>
                                             }
                                         </td>
-                                        <td>
+                                        <td style="text-align: right;">
                                             @if (item.ExceedsQuota)
                                             {
-                                                <span class="text-warning">@item.TotalSizeGB.ToString("F2") GB (exceeds quota)</span>
+                                                <span class="text-warning">@item.TotalSizeGB.ToString("F2") (exceeds quota)</span>
                                             }
                                             else if (item.MailboxSizeGB > 0)
                                             {
-                                                <span>@item.MailboxSizeGB.ToString("F2") GB</span>
+                                                <span>@item.MailboxSizeGB.ToString("F2")</span>
                                                 @if (item.ArchiveSizeGB > 0)
                                                 {
-                                                    <text> + @item.ArchiveSizeGB.ToString("F2") GB archive</text>
+                                                    <text> + @item.ArchiveSizeGB.ToString("F2") archive</text>
                                                 }
                                             }
                                         </td>
@@ -483,6 +483,27 @@
                                                 <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                         @onclick="() => CompleteBatch(batch.BatchName)">
                                                     Complete
+                                                </button>
+                                            }
+                                            @if (canManage && (batch.Status.Equals("Syncing", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Starting", StringComparison.OrdinalIgnoreCase)))
+                                            {
+                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                        @onclick="() => StopBatch(batch.BatchName)">
+                                                    Stop
+                                                </button>
+                                            }
+                                            @if (canManage && batch.Status.Equals("Stopped", StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                <button class="btn btn-sm btn-outline-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                        @onclick="() => ResumeBatch(batch.BatchName)">
+                                                    Resume
+                                                </button>
+                                            }
+                                            @if (canManage && (batch.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Corrupted", StringComparison.OrdinalIgnoreCase)))
+                                            {
+                                                <button class="btn btn-sm btn-outline-danger me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                        @onclick="() => DeleteBatch(batch.BatchName)">
+                                                    Delete
                                                 </button>
                                             }
                                             <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleBatchDetails(batch.BatchName)">
@@ -1028,6 +1049,9 @@
     }
 
     private void CompleteBatch(string name) => StageBatchAction("Complete Batch", name, t => ExecuteBatchAction(() => MigrationSvc.CompleteMigrationBatchAsync(name), "CompleteMigrationBatch", name, t));
+    private void StopBatch(string name) => StageBatchAction("Stop Batch", name, t => ExecuteBatchAction(() => MigrationSvc.StopMigrationBatchAsync(name), "StopMigrationBatch", name, t));
+    private void ResumeBatch(string name) => StageBatchAction("Resume Batch", name, t => ExecuteBatchAction(() => MigrationSvc.StartMigrationBatchAsync(name), "StartMigrationBatch", name, t));
+    private void DeleteBatch(string name) => StageBatchAction("Delete Batch", name, t => ExecuteBatchAction(() => MigrationSvc.RemoveMigrationBatchAsync(name), "RemoveMigrationBatch", name, t));
     private void CompleteUser(string email) => StageUserAction("Complete User", email, t => ExecuteUserAction(() => MigrationSvc.CompleteMigrationUserAsync(email), "CompleteMigrationUser", email, t));
     private void ApproveUser(string email) => StageUserAction("Approve User", email, t => ExecuteUserAction(() => MigrationSvc.ApproveMigrationUserAsync(email), "ApproveMigrationUser", email, t));
     private void PauseUser(string email) => StageUserAction("Pause User", email, t => ExecuteUserAction(() => MigrationSvc.StopMigrationUserAsync(email), "StopMigrationUser", email, t));

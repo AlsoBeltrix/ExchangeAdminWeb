@@ -132,41 +132,51 @@ public class MigrationService : ExchangeServiceBase
             }
         }
 
-        if (direction == MigrationDirection.ToCloud && result.Status == MigrationStatus.Eligible)
+        if (result.Status == MigrationStatus.Eligible)
         {
             try
             {
-                var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
-
-                if (sizeResult is not null)
+                if (direction == MigrationDirection.ToCloud)
                 {
-                    var (mailboxGB, archiveGB) = sizeResult.Value;
-                    var totalGB = mailboxGB + archiveGB;
-                    result.MailboxSizeGB = mailboxGB;
-                    result.ArchiveSizeGB = archiveGB;
-                    result.CloudQuotaGB = _cloudQuotaGB;
+                    var sizeResult = await GetOnPremMailboxSizeAsync(emailAddress);
+                    if (sizeResult is not null)
+                    {
+                        var (mailboxGB, archiveGB) = sizeResult.Value;
+                        var totalGB = mailboxGB + archiveGB;
+                        result.MailboxSizeGB = mailboxGB;
+                        result.ArchiveSizeGB = archiveGB;
+                        result.CloudQuotaGB = _cloudQuotaGB;
 
-                    _logger.LogInformation("On-prem sizes for {Email}: Mailbox={MailboxGB:F2} GB, Archive={ArchiveGB:F2} GB, Total={TotalGB:F2} GB, Quota={QuotaGB} GB",
-                        emailAddress, mailboxGB, archiveGB, totalGB, _cloudQuotaGB);
-
-                    if (totalGB > _cloudQuotaGB)
+                        if (totalGB > _cloudQuotaGB)
+                        {
+                            result.Status = MigrationStatus.Ineligible;
+                            result.IneligibilityReasons.Add($"Mailbox + archive size ({totalGB:F2} GB) exceeds cloud quota ({_cloudQuotaGB} GB)");
+                        }
+                    }
+                    else
                     {
                         result.Status = MigrationStatus.Ineligible;
-                        result.IneligibilityReasons.Add($"Mailbox + archive size ({totalGB:F2} GB) exceeds cloud quota ({_cloudQuotaGB} GB)");
+                        result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
                     }
                 }
                 else
                 {
-                    result.Status = MigrationStatus.Ineligible;
-                    _logger.LogWarning("Could not retrieve on-prem mailbox size for {Email} - marking ineligible", emailAddress);
-                    result.IneligibilityReasons.Add("Could not verify on-prem mailbox size (on-prem connection unavailable)");
+                    var cloudSize = await GetCloudMailboxSizeAsync(emailAddress);
+                    if (cloudSize is not null)
+                    {
+                        result.MailboxSizeGB = cloudSize.Value.mailboxGB;
+                        result.ArchiveSizeGB = cloudSize.Value.archiveGB;
+                    }
                 }
             }
             catch (Exception sizeEx)
             {
-                result.Status = MigrationStatus.Ineligible;
-                _logger.LogError(sizeEx, "Error checking on-prem mailbox size for {Email}", emailAddress);
-                result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+                _logger.LogWarning(sizeEx, "Could not retrieve mailbox size for {Email}", emailAddress);
+                if (direction == MigrationDirection.ToCloud)
+                {
+                    result.Status = MigrationStatus.Ineligible;
+                    result.IneligibilityReasons.Add($"Could not verify on-prem mailbox size ({sizeEx.Message})");
+                }
             }
         }
 
@@ -542,6 +552,63 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
         }, () => ($"Migration batch '{batchName}' removed.", (string?)null));
+    }
+
+    public Task<PermissionResult> StopMigrationBatchAsync(string batchName)
+    {
+        return RunAsync((ps, tracker) =>
+        {
+            ps.AddCommand("Stop-MigrationBatch")
+              .AddParameter("Identity", batchName)
+              .AddParameter("Confirm", false)
+              .AddParameter("ErrorAction", "Stop");
+            Invoke(ps, tracker);
+        }, () => ($"Migration batch '{batchName}' stopped.", (string?)null));
+    }
+
+    public Task<PermissionResult> StartMigrationBatchAsync(string batchName)
+    {
+        return RunAsync((ps, tracker) =>
+        {
+            ps.AddCommand("Start-MigrationBatch")
+              .AddParameter("Identity", batchName)
+              .AddParameter("Confirm", false)
+              .AddParameter("ErrorAction", "Stop");
+            Invoke(ps, tracker);
+        }, () => ($"Migration batch '{batchName}' started.", (string?)null));
+    }
+
+    private async Task<(double mailboxGB, double archiveGB)?> GetCloudMailboxSizeAsync(string emailAddress)
+    {
+        return await RunPooledQueryAsync((ps, tracker) =>
+        {
+            ps.AddCommand("Get-MailboxStatistics")
+              .AddParameter("Identity", emailAddress)
+              .AddParameter("ErrorAction", "Stop");
+            var stats = Invoke(ps, tracker);
+            var mbxStat = stats.FirstOrDefault();
+            var totalItemSize = mbxStat?.Properties["TotalItemSize"]?.Value?.ToString();
+            var mailboxGB = ParseSizeToGB(totalItemSize) ?? 0;
+
+            double archiveGB = 0;
+            try
+            {
+                ps.AddCommand("Get-MailboxStatistics")
+                  .AddParameter("Identity", emailAddress)
+                  .AddParameter("Archive")
+                  .AddParameter("ErrorAction", "Stop");
+                var archiveStats = Invoke(ps, tracker);
+                var archiveStat = archiveStats.FirstOrDefault();
+                var archiveSize = archiveStat?.Properties["TotalItemSize"]?.Value?.ToString();
+                archiveGB = ParseSizeToGB(archiveSize) ?? 0;
+            }
+            catch
+            {
+                // No archive mailbox
+            }
+
+            return ((double mailboxGB, double archiveGB)?)(mailboxGB, archiveGB);
+        });
     }
 
     public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
