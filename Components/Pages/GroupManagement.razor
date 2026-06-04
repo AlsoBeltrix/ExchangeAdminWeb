@@ -50,7 +50,7 @@
         <div class="row mb-3">
             <div class="col-md-8">
                 <table class="table table-sm table-hover">
-                    <thead><tr><th>Name</th><th>Email</th><th>Type</th><th>Source</th><th></th></tr></thead>
+                    <thead><tr><th>Name</th><th>Email</th><th>Type</th><th></th></tr></thead>
                     <tbody>
                         @foreach (var group in searchResults)
                         {
@@ -59,10 +59,6 @@
                                 <td>@g.Name</td>
                                 <td><small>@g.Email</small></td>
                                 <td><span class="badge bg-light text-dark border">@g.GroupType</span></td>
-                                <td>
-                                    @if (g.IsDirSynced) { <span class="badge bg-secondary">On-Prem</span> }
-                                    else { <span class="badge bg-info text-dark">Cloud</span> }
-                                </td>
                                 <td><button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(g)">Manage</button></td>
                             </tr>
                         }
@@ -79,15 +75,14 @@
                 <div>
                     <strong>@selectedGroup.Name</strong>
                     <small class="text-muted ms-2">@selectedGroup.Email</small>
-                    @if (selectedGroup.IsDirSynced) { <span class="badge bg-secondary ms-2">On-Prem (synced)</span> }
                 </div>
                 <button class="btn btn-outline-secondary btn-sm" @onclick="() => { selectedGroup = null; memberList = null; }">Close</button>
             </div>
             <div class="card-body">
-                @if (selectedGroup.IsDirSynced && !canManageOnPrem)
+                @if (!canManageOnPrem)
                 {
                     <div class="alert alert-warning mb-3">
-                        This is an on-premises synced group. You do not have permission to modify it. Contact the Exchange team.
+                        You do not have permission to modify on-premises AD groups. Contact the Exchange team.
                     </div>
                 }
 
@@ -106,7 +101,7 @@
                 {
                     <p class="text-muted mb-2"><small>@memberList.Members.Count member(s)</small></p>
 
-                    @if (!selectedGroup.IsDirSynced || canManageOnPrem)
+                    @if (canManageOnPrem)
                     {
                         <div class="row g-2 mb-3">
                             <div class="col-auto">
@@ -144,7 +139,7 @@
                                         <td>@member.DisplayName</td>
                                         <td><small>@member.Email</small></td>
                                         <td>
-                                            @if (!selectedGroup.IsDirSynced || canManageOnPrem)
+                                            @if (canManageOnPrem)
                                             {
                                                 <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member.Email)" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">Remove</button>
                                             }
@@ -235,7 +230,7 @@
         await Task.Yield();
         try
         {
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.SamAccountName);
         }
         catch (Exception ex)
         {
@@ -256,17 +251,16 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
                 return;
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
-            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "GroupManagementOnPrem");
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
                 return;
             }
 
@@ -283,13 +277,13 @@
                         if (protectionCheck.CheckFailed)
                         {
                             opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = memberIdentity, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection check"); }
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = memberIdentity }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection check"); }
                             return;
                         }
                         if (protectionCheck.IsProtected)
                         {
                             opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = memberIdentity, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection denial"); }
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = memberIdentity }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection denial"); }
                             return;
                         }
                     }
@@ -302,21 +296,21 @@
                 }
             }
 
-            opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
+            opResult = await GroupService.AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), selectedGroup.SamAccountName);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim(), ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim() }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
             {
                 newMember = "";
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.SamAccountName);
             }
         }
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup!.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = newMember.Trim() }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
@@ -334,17 +328,16 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
                 return;
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var policy = selectedGroup!.IsDirSynced ? "GroupManagementOnPrem" : "GroupManagement";
-            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, policy);
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "GroupManagementOnPrem");
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
                 return;
             }
 
@@ -360,13 +353,13 @@
                         if (protectionCheck.CheckFailed)
                         {
                             opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection check"); }
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection check"); }
                             return;
                         }
                         if (protectionCheck.IsProtected)
                         {
                             opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection denial"); }
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection denial"); }
                             return;
                         }
                     }
@@ -379,18 +372,18 @@
                 }
             }
 
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, selectedGroup.SamAccountName);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member, ["Backend"] = selectedGroup.Backend }, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
+                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.SamAccountName);
         }
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup!.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = member }, ex.Message); } catch { }
         }
         finally { isLoading = false; }

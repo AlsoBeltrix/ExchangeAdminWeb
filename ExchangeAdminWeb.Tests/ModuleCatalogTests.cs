@@ -261,7 +261,7 @@ public class ModuleCatalogTests
         {
             "MailboxPermissions", "CalendarPermissions", "Migration",
             "DelegationReport", "MessageTrace", "RecipientLookup",
-            "OutOfOffice", "ConferenceRooms", "GroupManagement"
+            "OutOfOffice", "ConferenceRooms"
         };
 
         foreach (var id in expectedDependents)
@@ -277,7 +277,7 @@ public class ModuleCatalogTests
     {
         var independentModuleIds = new[]
         {
-            "M365GroupManagement", "ADAttributeEditor", "LicensingUpdates",
+            "GroupManagement", "M365GroupManagement", "ADAttributeEditor", "LicensingUpdates",
             "EmergencyDisable", "MfaReset", "NamedLocations",
             "TestAccountPool", "DhcpAuthorization", "Comms10k", "AdminSettings", "AdminEventLog"
         };

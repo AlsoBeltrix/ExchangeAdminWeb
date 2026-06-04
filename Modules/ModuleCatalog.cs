@@ -241,19 +241,17 @@ public sealed class ModuleCatalog
         {
             Id = "GroupManagement",
             DisplayName = "AD Group Management",
-            Description = "Search, view membership, and manage on-premises distribution lists and security groups.",
+            Description = "Search, view membership, and manage on-premises Active Directory groups.",
             Route = "group-management",
             IconCss = "bi bi-people-fill-nav-menu",
             Category = "Directory & Groups",
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
-                new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used by synced group membership operations", Required: false),
-                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields", Required: false)
+                new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used by group membership operations", Required: false)
             ]
         },
         new()

@@ -1,209 +1,86 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
-using System.Text.Json;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
 
-public class GroupManagementService : ExchangeServiceBase
+public class GroupManagementService
 {
     private readonly ModuleConfigService _moduleConfig;
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IConfiguration _config;
+    private readonly ModuleCredentialService _moduleCredentials;
+    private readonly ILogger<GroupManagementService> _logger;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
     public GroupManagementService(
-        ExoConnectionPool exoPool,
-        DelineaService delineaService,
         ModuleConfigService moduleConfig,
-        IHttpClientFactory httpClientFactory,
-        IConfiguration config,
-        ILogger<GroupManagementService> logger,
-        ModuleCredentialService moduleCredentials)
-        : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "GroupManagement")
+        ModuleCredentialService moduleCredentials,
+        ILogger<GroupManagementService> logger)
     {
         _moduleConfig = moduleConfig;
-        _httpClientFactory = httpClientFactory;
-        _config = config;
-    }
-
-    private async Task<GraphTokenClient?> GetGraphClientAsync()
-    {
-        var secretIdStr = _moduleConfig.GetValue("GroupManagement", "GraphDelineaSecretId");
-        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
-            return null;
-
-        var fields = await _delineaService.GetSecretFieldsAsync(secretId);
-        if (fields == null) return null;
-
-        var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
-        var clientId = fields.GetValueOrDefault("Application ID") ?? "";
-        var clientSecret = fields.GetValueOrDefault("Client Secret") ?? "";
-
-        if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
-            return null;
-
-        return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        _moduleCredentials = moduleCredentials;
+        _logger = logger;
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
     {
-        var results = new List<GroupInfo>();
+        var creds = await GetCredentialsAsync("on-prem AD group search");
+        if (creds is null)
+            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for GroupManagement.");
 
-        // Search EXO distribution groups and mail-enabled security groups
-        var exoResults = await RunPooledQueryAsync((ps, tracker) =>
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
-            ps.AddCommand("Get-DistributionGroup")
-              .AddParameter("Filter", $"Name -like '*{searchTerm.Replace("'", "''")}*' -or PrimarySmtpAddress -like '*{searchTerm.Replace("'", "''")}*'")
-              .AddParameter("ResultSize", 25)
+            var results = new List<GroupInfo>();
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            var escaped = searchTerm.Replace("'", "''");
+
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
+              .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ResultSetSize", 25)
               .AddParameter("ErrorAction", "Stop");
-            return Invoke(ps, tracker);
-        });
+            var groups = ps.Invoke();
+            ps.Commands.Clear();
 
-        foreach (var group in exoResults)
-        {
-            var isDirSynced = group.Properties["IsDirSynced"]?.Value as bool? ?? false;
-            var typeDetails = group.Properties["RecipientTypeDetails"]?.Value?.ToString() ?? "";
-
-            results.Add(new GroupInfo
+            foreach (var group in groups)
             {
-                Name = group.Properties["DisplayName"]?.Value?.ToString() ?? "",
-                Email = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
-                Identity = group.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
-                SamAccountName = group.Properties["Alias"]?.Value?.ToString() ?? "",
-                GroupType = typeDetails.Contains("Security") ? "MailEnabledSecurity" : "Distribution",
-                IsDirSynced = isDirSynced,
-                Backend = isDirSynced ? "OnPremAD" : "ExchangeOnline"
-            });
-        }
+                var category = group.Properties["GroupCategory"]?.Value?.ToString() ?? "";
+                var scope = group.Properties["GroupScope"]?.Value?.ToString() ?? "";
+                var groupType = category == "Security" ? $"Security ({scope})" : $"Distribution ({scope})";
 
-        // Search Microsoft 365 Groups via Graph API
-        var graphClient = await GetGraphClientAsync();
-        if (graphClient != null && graphClient.IsConfigured)
-        {
-            try
-            {
-                var odataEscaped = searchTerm.Replace("'", "''");
-                var filterQuery = Uri.EscapeDataString($"groupTypes/any(g:g eq 'Unified') and (startsWith(displayName,'{odataEscaped}') or startsWith(mail,'{odataEscaped}'))");
-                using var graphResult = await graphClient.GetAsync($"/groups?$filter={filterQuery}&$top=25&$select=id,displayName,mail,groupTypes");
-                if (graphResult != null)
+                results.Add(new GroupInfo
                 {
-                    foreach (var g in graphResult.RootElement.GetProperty("value").EnumerateArray())
-                    {
-                        results.Add(new GroupInfo
-                        {
-                            Name = g.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "",
-                            Email = g.TryGetProperty("mail", out var mail) ? mail.GetString() ?? "" : "",
-                            GroupType = "Microsoft365",
-                            IsDirSynced = false,
-                            Backend = "Graph",
-                            GraphId = g.TryGetProperty("id", out var id) ? id.GetString() ?? "" : ""
-                        });
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Graph group search failed — M365 groups not included in results");
-            }
-        }
-
-        return results;
-    }
-
-    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string backend, string? graphId = null, string? samAccountName = null)
-    {
-        if (backend == "ExchangeOnline")
-            return await GetExoMembersAsync(groupIdentity);
-        if (backend == "OnPremAD")
-            return await GetOnPremMembersAsync(samAccountName, groupIdentity);
-        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
-            return await GetGraphMembersAsync(graphId, groupIdentity);
-        return new GroupMemberList { GroupName = groupIdentity, Error = $"Unknown backend: {backend}" };
-    }
-
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string backend, string? graphId = null, string? samAccountName = null)
-    {
-        if (backend == "ExchangeOnline")
-            return await AddExoMemberAsync(groupIdentity, member);
-        if (backend == "OnPremAD")
-            return await AddOnPremMemberAsync(samAccountName, groupIdentity, member);
-        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
-            return await AddGraphMemberAsync(graphId, groupIdentity, member);
-        return PermissionResult.Fail($"Unknown backend: {backend}");
-    }
-
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string backend, string? graphId = null, string? samAccountName = null)
-    {
-        if (backend == "ExchangeOnline")
-            return await RemoveExoMemberAsync(groupIdentity, member);
-        if (backend == "OnPremAD")
-            return await RemoveOnPremMemberAsync(samAccountName, groupIdentity, member);
-        if (backend == "Graph" && !string.IsNullOrEmpty(graphId))
-            return await RemoveGraphMemberAsync(graphId, groupIdentity, member);
-        return PermissionResult.Fail($"Unknown backend: {backend}");
-    }
-
-    // --- EXO operations ---
-
-    private async Task<GroupMemberList> GetExoMembersAsync(string groupIdentity)
-    {
-        return await RunPooledQueryAsync((ps, tracker) =>
-        {
-            var result = new GroupMemberList { GroupName = groupIdentity };
-            ps.AddCommand("Get-DistributionGroupMember")
-              .AddParameter("Identity", groupIdentity)
-              .AddParameter("ResultSize", "Unlimited")
-              .AddParameter("ErrorAction", "Stop");
-            var members = Invoke(ps, tracker);
-
-            foreach (var m in members)
-            {
-                result.Members.Add(new GroupMemberInfo
-                {
-                    DisplayName = m.Properties["DisplayName"]?.Value?.ToString() ?? "",
-                    Email = m.Properties["PrimarySmtpAddress"]?.Value?.ToString() ?? "",
-                    RecipientType = m.Properties["RecipientType"]?.Value?.ToString() ?? ""
+                    Name = group.Properties["Name"]?.Value?.ToString() ?? "",
+                    Email = group.Properties["Mail"]?.Value?.ToString() ?? "",
+                    Identity = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+                    SamAccountName = group.Properties["SamAccountName"]?.Value?.ToString() ?? "",
+                    GroupType = groupType,
+                    Backend = "OnPremAD"
                 });
             }
-            return result;
-        });
+
+            return results;
+        }));
     }
 
-    private async Task<PermissionResult> AddExoMemberAsync(string groupIdentity, string member)
+    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string? samAccountName = null)
     {
-        return await RunAsync((ps, tracker) =>
-        {
-            ps.AddCommand("Add-DistributionGroupMember")
-              .AddParameter("Identity", groupIdentity)
-              .AddParameter("Member", member)
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
-        }, () => ($"{member} added to {groupIdentity}.", null));
-    }
-
-    private async Task<PermissionResult> RemoveExoMemberAsync(string groupIdentity, string member)
-    {
-        return await RunAsync((ps, tracker) =>
-        {
-            ps.AddCommand("Remove-DistributionGroupMember")
-              .AddParameter("Identity", groupIdentity)
-              .AddParameter("Member", member)
-              .AddParameter("Confirm", false)
-              .AddParameter("ErrorAction", "Stop");
-            Invoke(ps, tracker);
-        }, () => ($"{member} removed from {groupIdentity}.", null));
-    }
-
-    // --- On-prem AD operations ---
-
-    private async Task<GroupMemberList> GetOnPremMembersAsync(string? samAccountName, string groupIdentity)
-    {
-        var creds = await GetModuleCredentialsAsync("on-prem AD group membership lookup");
+        var creds = await GetCredentialsAsync("on-prem AD group membership lookup");
         if (creds is null)
             return new GroupMemberList { GroupName = groupIdentity, Error = "AD credentials unavailable." };
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var result = new GroupMemberList { GroupName = groupIdentity };
             var iss = InitialSessionState.CreateDefault();
@@ -248,16 +125,16 @@ public class GroupManagementService : ExchangeServiceBase
             }
 
             return result;
-        }), _adThrottle);
+        }));
     }
 
-    private async Task<PermissionResult> AddOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string? samAccountName = null)
     {
-        var creds = await GetModuleCredentialsAsync("on-prem AD group membership add");
+        var creds = await GetCredentialsAsync("on-prem AD group membership add");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -294,16 +171,16 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).");
-        }), _adThrottle);
+        }));
     }
 
-    private async Task<PermissionResult> RemoveOnPremMemberAsync(string? samAccountName, string groupIdentity, string member)
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string? samAccountName = null)
     {
-        var creds = await GetModuleCredentialsAsync("on-prem AD group membership remove");
+        var creds = await GetCredentialsAsync("on-prem AD group membership remove");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 
-        return await ThrottledAsync(async () => await Task.Run(() =>
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
             iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -341,67 +218,22 @@ public class GroupManagementService : ExchangeServiceBase
             ps.Commands.Clear();
 
             return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).");
-        }), _adThrottle);
+        }));
     }
 
-    // --- Graph API operations (M365 Groups) ---
+    // --- Helpers ---
 
-    private async Task<GroupMemberList> GetGraphMembersAsync(string groupId, string displayName)
+    private async Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
     {
-        var result = new GroupMemberList { GroupName = displayName };
-        var client = await GetGraphClientAsync();
-        if (client == null) { result.Error = "Graph API not configured for Group Management."; return result; }
-
-        using var doc = await client.GetAsync($"/groups/{groupId}/members?$select=displayName,mail,userPrincipalName&$top=999");
-        if (doc == null) { result.Error = "Failed to retrieve M365 group members."; return result; }
-
-        foreach (var m in doc.RootElement.GetProperty("value").EnumerateArray())
-        {
-            result.Members.Add(new GroupMemberInfo
-            {
-                DisplayName = m.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "",
-                Email = m.TryGetProperty("mail", out var mail) ? mail.GetString() ?? ""
-                    : m.TryGetProperty("userPrincipalName", out var upn) ? upn.GetString() ?? "" : "",
-                RecipientType = "M365Member"
-            });
-        }
-        return result;
+        return await _moduleCredentials.GetCredentialsAsync("GroupManagement", purpose);
     }
 
-    private async Task<PermissionResult> AddGraphMemberAsync(string groupId, string displayName, string member)
+    private async Task<T> ThrottledAdAsync<T>(Func<Task<T>> operation)
     {
-        var client = await GetGraphClientAsync();
-        if (client == null) return PermissionResult.Fail("Graph API not configured for Group Management.");
-
-        using var userDoc = await client.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
-        if (userDoc == null) return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
-
-        var userId = userDoc.RootElement.GetProperty("id").GetString();
-        var body = new Dictionary<string, string>
-        {
-            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
-        };
-        var success = await client.PostNoContentAsync($"/groups/{groupId}/members/$ref", body);
-
-        return success
-            ? new PermissionResult { Success = true, Message = $"{member} added to {displayName} (M365 Group)." }
-            : PermissionResult.Fail($"Failed to add {member} to {displayName}. Check Graph API permissions.");
-    }
-
-    private async Task<PermissionResult> RemoveGraphMemberAsync(string groupId, string displayName, string member)
-    {
-        var client = await GetGraphClientAsync();
-        if (client == null) return PermissionResult.Fail("Graph API not configured for Group Management.");
-
-        using var userDoc = await client.GetAsync($"/users/{Uri.EscapeDataString(member)}?$select=id");
-        if (userDoc == null) return PermissionResult.Fail($"User '{member}' not found in Entra ID.");
-
-        var userId = userDoc.RootElement.GetProperty("id").GetString();
-        var success = await client.DeleteAsync($"/groups/{groupId}/members/{userId}/$ref");
-
-        return success
-            ? new PermissionResult { Success = true, Message = $"{member} removed from {displayName} (M365 Group)." }
-            : PermissionResult.Fail($"Failed to remove {member} from {displayName}.");
+        if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
+            throw new InvalidOperationException("AD group service is busy. Please try again shortly.");
+        try { return await operation(); }
+        finally { _adThrottle.Release(); }
     }
 
     private static string ResolveAdGroupIdentity(PowerShell ps, string? alias, string email, PSCredential credential)
@@ -446,9 +278,7 @@ public class GroupInfo
     public string Identity { get; set; } = "";
     public string SamAccountName { get; set; } = "";
     public string GroupType { get; set; } = "";
-    public bool IsDirSynced { get; set; }
-    public string Backend { get; set; } = "";
-    public string GraphId { get; set; } = "";
+    public string Backend { get; set; } = "OnPremAD";
 }
 
 public class GroupMemberList
