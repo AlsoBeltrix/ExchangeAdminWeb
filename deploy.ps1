@@ -31,19 +31,6 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$BuiltInOnPremTargetDatabases = @(
-    "dbg3-2019-east01", "dbg8-2019-west02", "dbg7-2019-west01", "dbg4-2019-east01",
-    "dbg2-2019-east01", "dbg6-2019-east01", "dbg2-2019-east02", "dbg5-2019-west01",
-    "dbg1-2019-west01", "dbg8-2019-east02", "dbg6-2019-west02", "dbg2-2019-west02",
-    "dbg5-2019-east01", "dbg4-2019-west01", "dbg4-2019-east02", "dbg5-2019-east02",
-    "dbg2-2019-west01", "dbg3-2019-east02", "dbg3-2019-west02", "dbg6-2019-east02",
-    "dbg6-2019-west01", "dbg1-2019-west02", "dbg7-2019-east01", "dbg4-2019-west02",
-    "dbg7-2019-east02", "dbg1-2019-east01", "dbg7-2019-west02", "dbg5-2019-west02",
-    "dbg1-2019-east02", "dbg8-2019-east01", "dbg10-2019-east01", "dbg9-2019-east01",
-    "dbg9-2019-east02", "dbg10-2019-east02", "dbg8-2019-west01", "dbg10-2019-west02",
-    "dbg10-2019-west01", "dbg3-2019-west01", "dbg9-2019-west02", "dbg9-2019-west01"
-)
-
 # --- Helpers ---
 
 function Write-Step    { param($m) Write-Host ">>> $m" -ForegroundColor Cyan }
@@ -390,13 +377,7 @@ if ($isUpgrade) {
             $hasTargetDatabases = (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
                                   $config.Migration.OnPremTargetDatabases -and $config.Migration.OnPremTargetDatabases.Count -gt 0
             if (-not $hasTargetDatabases) {
-                if (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) {
-                    $config.Migration.OnPremTargetDatabases = @($BuiltInOnPremTargetDatabases)
-                } else {
-                    $config.Migration | Add-Member -NotePropertyName "OnPremTargetDatabases" -NotePropertyValue @($BuiltInOnPremTargetDatabases)
-                }
-                $configChanged = $true
-                Write-Success "Seeded Migration:OnPremTargetDatabases from built-in move-back database list"
+                Write-Warn "Migration:OnPremTargetDatabases is not configured. Move-back batches will fail until target databases are set in Module Config."
             }
             $config.Migration.PSObject.Properties.Remove("OnPremTargetDAG")
             $configChanged = $true

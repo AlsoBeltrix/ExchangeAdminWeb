@@ -20,14 +20,14 @@ public class MigrationTargetDatabaseSelectorTests : IDisposable
     }
 
     [Fact]
-    public void Resolve_ReturnsDefaultDatabasesWhenNoConfigExists()
+    public void Resolve_ReturnsEmptyWhenNothingConfigured()
     {
         var moduleConfig = CreateModuleConfig();
         var config = new ConfigurationBuilder().Build();
 
         var resolved = MigrationTargetDatabaseSelector.Resolve(moduleConfig, config);
 
-        Assert.Equal(MigrationTargetDatabaseSelector.DefaultDatabases, resolved);
+        Assert.Empty(resolved);
     }
 
     [Fact]
@@ -56,12 +56,6 @@ public class MigrationTargetDatabaseSelectorTests : IDisposable
         var resolved = MigrationTargetDatabaseSelector.Resolve(moduleConfig, config);
 
         Assert.Empty(resolved);
-    }
-
-    [Fact]
-    public void PickRandom_ReturnsNullForEmptyList()
-    {
-        Assert.Null(MigrationTargetDatabaseSelector.PickRandom(Array.Empty<string>()));
     }
 
     private ModuleConfigService CreateModuleConfig()
