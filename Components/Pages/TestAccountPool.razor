@@ -191,6 +191,118 @@
             </div>
         </div>
     </div>
+
+    <div class="card mt-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Create Test Accounts</strong>
+            <button class="btn btn-outline-primary btn-sm" @onclick="PreviewCreate" disabled="@isOperating">Preview</button>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-lg-4">
+                    <label class="form-label fw-semibold">Template</label>
+                    <select class="form-select" @bind="createTemplateId" @bind:after="ApplyTemplate" disabled="@isOperating">
+                        @foreach (var template in createTemplates)
+                        {
+                            <option value="@template.Id">@template.DisplayName</option>
+                        }
+                    </select>
+                    @{
+                        var selectedTemplate = createTemplates.FirstOrDefault(t => t.Id == createTemplateId);
+                    }
+                    @if (selectedTemplate != null)
+                    {
+                        <div class="form-text">@selectedTemplate.Description</div>
+                    }
+                </div>
+                <div class="col-lg-2">
+                    <label class="form-label fw-semibold">Quantity</label>
+                    <input type="number" class="form-control" min="1" max="25" @bind="createQuantity" disabled="@isOperating" />
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label fw-semibold">Account Name Prefix</label>
+                    <input type="text" class="form-control" @bind="createNamePrefix" @bind:event="oninput" placeholder="test-netops" disabled="@isOperating" />
+                    <div class="form-text">Generated accounts use this prefix, with numeric suffixes when quantity is greater than 1.</div>
+                </div>
+                <div class="col-lg-3">
+                    <label class="form-label fw-semibold">Display Name Prefix</label>
+                    <input type="text" class="form-control" @bind="createDisplayPrefix" @bind:event="oninput" placeholder="Network Test Account" disabled="@isOperating" />
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label fw-semibold">Ticket / Reason</label>
+                    <input type="text" class="form-control" @bind="createTicket" @bind:event="oninput" placeholder="INC/REQ or reason" disabled="@isOperating" />
+                </div>
+                <div class="col-lg-8">
+                    <label class="form-label fw-semibold">Provisioning Options</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="create-ad" @bind="createOnPremAd" disabled="@(isOperating || createTemplateId != "custom")" />
+                            <label class="form-check-label" for="create-ad">On-prem AD</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="create-entra" @bind="createEntra" disabled="@(isOperating || createTemplateId != "custom")" />
+                            <label class="form-check-label" for="create-entra">Entra ID</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="create-exo" @bind="createExchangeOnline" disabled="@(isOperating || createTemplateId != "custom")" />
+                            <label class="form-check-label" for="create-exo">Exchange Online</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="create-teams" @bind="createTeams" disabled="@(isOperating || createTemplateId != "custom")" />
+                            <label class="form-check-label" for="create-teams">Teams</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="create-onprem-mbx" @bind="createOnPremMailbox" disabled="@(isOperating || createTemplateId != "custom")" />
+                            <label class="form-check-label" for="create-onprem-mbx">On-prem Exchange mailbox</label>
+                        </div>
+                    </div>
+                    <div class="form-text">EXO and Teams options add the account to configured provisioning groups. On-prem mailbox creation runs Enable-Mailbox with this module's Exchange credential.</div>
+                </div>
+            </div>
+
+            @if (createPreview != null)
+            {
+                <div class="mt-3">
+                    @if (!createPreview.Success)
+                    {
+                        <div class="alert alert-danger py-2">@createPreview.Message</div>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-2">
+                                <thead>
+                                    <tr>
+                                        <th>sAMAccountName</th>
+                                        <th>UPN</th>
+                                        <th>Display Name</th>
+                                        <th>Source</th>
+                                        <th>Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var row in createPreview.Rows)
+                                    {
+                                        <tr>
+                                            <td>@row.SamAccountName</td>
+                                            <td>@row.UserPrincipalName</td>
+                                            <td>@row.DisplayName</td>
+                                            <td>@row.Source</td>
+                                            <td>@row.Services</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <button class="btn btn-success" @onclick="CreateAccounts" disabled="@(isOperating || string.IsNullOrWhiteSpace(createTicket))">
+                            @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Create Disabled Account(s)
+                        </button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
 </div>
 
 @code {
@@ -205,6 +317,18 @@
     private int checkoutHours;
     private string ticketNumber = "";
     private (bool success, string message)? operationResult;
+    private readonly TestAccountTemplate[] createTemplates = TestAccountPoolService.Templates;
+    private string createTemplateId = "basic-ad";
+    private string createNamePrefix = "";
+    private string createDisplayPrefix = "";
+    private int createQuantity = 1;
+    private string createTicket = "";
+    private bool createOnPremAd = true;
+    private bool createEntra;
+    private bool createExchangeOnline;
+    private bool createTeams;
+    private bool createOnPremMailbox;
+    private TestAccountCreatePreview? createPreview;
 
     protected override async Task OnInitializedAsync()
     {
@@ -265,6 +389,84 @@
         selectedAccount = account;
         checkoutHours = PoolService.DefaultCheckoutHours;
         operationResult = null;
+    }
+
+    private void ApplyTemplate()
+    {
+        var request = BuildCreateRequest();
+        createOnPremAd = request.CreateOnPremAd;
+        createEntra = request.CreateEntra;
+        createExchangeOnline = request.ExchangeOnline;
+        createTeams = request.Teams;
+        createOnPremMailbox = request.OnPremMailbox;
+        createPreview = null;
+    }
+
+    private TestAccountCreateRequest BuildCreateRequest()
+    {
+        if (createTemplateId == "custom")
+        {
+            return new TestAccountCreateRequest(
+                "custom",
+                createNamePrefix,
+                createDisplayPrefix,
+                createQuantity,
+                createTicket.Trim(),
+                createOnPremAd,
+                createEntra,
+                createExchangeOnline,
+                createTeams,
+                createOnPremMailbox);
+        }
+
+        return TestAccountPoolService.BuildTemplateRequest(
+            createTemplateId,
+            createNamePrefix,
+            createDisplayPrefix,
+            createQuantity,
+            createTicket.Trim());
+    }
+
+    private void PreviewCreate()
+    {
+        createPreview = PoolService.PreviewCreate(BuildCreateRequest());
+    }
+
+    private async Task CreateAccounts()
+    {
+        isOperating = true;
+        operationResult = null;
+        await Task.Yield();
+
+        try
+        {
+            if (!await RecheckAuthorization())
+            {
+                operationResult = new(false, "Authorization denied.");
+                return;
+            }
+
+            var request = BuildCreateRequest();
+            createPreview = PoolService.PreviewCreate(request);
+            if (!createPreview.Success)
+            {
+                operationResult = new(false, createPreview.Message);
+                return;
+            }
+
+            var result = await PoolService.CreateAccountsAsync(request, currentUser, clientIpAddress);
+            operationResult = new(result.Success, result.Message);
+            if (result.Success)
+            {
+                createTicket = "";
+                createPreview = null;
+                await LoadPool();
+            }
+        }
+        finally
+        {
+            isOperating = false;
+        }
     }
 
     private async Task CheckoutSelected()

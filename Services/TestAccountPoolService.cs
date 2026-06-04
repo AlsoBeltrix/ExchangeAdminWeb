@@ -1,6 +1,7 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 
 namespace ExchangeAdminWeb.Services;
@@ -28,10 +29,95 @@ public sealed record TestAccountPoolOperationResult(
     string? Password = null,
     DateTime? ExpiresUtc = null);
 
+public sealed record TestAccountTemplate(
+    string Id,
+    string DisplayName,
+    string Description,
+    bool CreateOnPremAd,
+    bool CreateEntra,
+    bool ExchangeOnline,
+    bool Teams,
+    bool OnPremMailbox);
+
+public sealed record TestAccountCreateRequest(
+    string TemplateId,
+    string NamePrefix,
+    string DisplayNamePrefix,
+    int Quantity,
+    string Ticket,
+    bool CreateOnPremAd,
+    bool CreateEntra,
+    bool ExchangeOnline,
+    bool Teams,
+    bool OnPremMailbox);
+
+public sealed record TestAccountCreatePreview(
+    bool Success,
+    string Message,
+    List<TestAccountCreatePreviewRow> Rows);
+
+public sealed record TestAccountCreatePreviewRow(
+    string SamAccountName,
+    string UserPrincipalName,
+    string DisplayName,
+    string Source,
+    string Services);
+
 public sealed class TestAccountPoolService
 {
     private const string ModuleId = "TestAccountPool";
+    private const int MaxCreateQuantity = 25;
     private static readonly SemaphoreSlim AdThrottle = new(2, 2);
+    private static readonly Regex SafeNameRegex = new(@"^[A-Za-z0-9][A-Za-z0-9._-]{1,17}$", RegexOptions.Compiled);
+
+    public static readonly TestAccountTemplate[] Templates =
+    [
+        new(
+            "entra-exol-teams",
+            "Entra + EXO + Teams",
+            "Cloud-only Entra account, added to the Entra pool plus configured Exchange Online and Teams provisioning groups.",
+            CreateOnPremAd: false,
+            CreateEntra: true,
+            ExchangeOnline: true,
+            Teams: true,
+            OnPremMailbox: false),
+        new(
+            "ad-exol-teams",
+            "AD + EXO + Teams",
+            "On-prem AD account, added to the AD pool plus configured synced Exchange Online and Teams provisioning groups.",
+            CreateOnPremAd: true,
+            CreateEntra: false,
+            ExchangeOnline: true,
+            Teams: true,
+            OnPremMailbox: false),
+        new(
+            "ad-onprem-mailbox-teams",
+            "AD + On-Prem Mailbox + Teams",
+            "On-prem AD account, enabled for an on-prem Exchange mailbox, added to the AD pool and configured Teams group.",
+            CreateOnPremAd: true,
+            CreateEntra: false,
+            ExchangeOnline: false,
+            Teams: true,
+            OnPremMailbox: true),
+        new(
+            "basic-ad",
+            "Basic AD Account",
+            "On-prem AD account only, added to the AD test account pool and left disabled until checkout.",
+            CreateOnPremAd: true,
+            CreateEntra: false,
+            ExchangeOnline: false,
+            Teams: false,
+            OnPremMailbox: false),
+        new(
+            "custom",
+            "Custom",
+            "Choose account authority and provisioning options manually.",
+            CreateOnPremAd: true,
+            CreateEntra: false,
+            ExchangeOnline: false,
+            Teams: false,
+            OnPremMailbox: false)
+    ];
 
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
@@ -338,6 +424,489 @@ public sealed class TestAccountPoolService
         });
     }
 
+    public static TestAccountCreateRequest BuildTemplateRequest(string templateId, string namePrefix, string displayNamePrefix, int quantity, string ticket)
+    {
+        var template = Templates.FirstOrDefault(t => t.Id.Equals(templateId, StringComparison.OrdinalIgnoreCase))
+            ?? Templates.First(t => t.Id == "basic-ad");
+
+        return new TestAccountCreateRequest(
+            template.Id,
+            namePrefix,
+            displayNamePrefix,
+            quantity,
+            ticket,
+            template.CreateOnPremAd,
+            template.CreateEntra,
+            template.ExchangeOnline,
+            template.Teams,
+            template.OnPremMailbox);
+    }
+
+    public TestAccountCreatePreview PreviewCreate(TestAccountCreateRequest request)
+    {
+        var validation = ValidateCreateRequest(request);
+        if (!validation.Success)
+            return new(false, validation.Message, []);
+
+        return new(true, "Preview ready.", BuildCreateRows(request));
+    }
+
+    public async Task<TestAccountPoolOperationResult> CreateAccountsAsync(
+        TestAccountCreateRequest request,
+        string performedBy,
+        string ip)
+    {
+        var validation = ValidateCreateRequest(request);
+        if (!validation.Success)
+            return new(false, validation.Message);
+
+        var rows = BuildCreateRows(request);
+        using var op = _operationTrace.BeginOperation(
+            ModuleId,
+            "CreateAccounts",
+            performedBy,
+            ip,
+            string.Join(", ", rows.Select(r => r.UserPrincipalName)),
+            request.Ticket,
+            new Dictionary<string, object?>
+            {
+                ["template"] = request.TemplateId,
+                ["quantity"] = request.Quantity,
+                ["createOnPremAd"] = request.CreateOnPremAd,
+                ["createEntra"] = request.CreateEntra,
+                ["exchangeOnline"] = request.ExchangeOnline,
+                ["teams"] = request.Teams,
+                ["onPremMailbox"] = request.OnPremMailbox
+            });
+
+        try
+        {
+            (string username, string password, string domain)? adCreds = null;
+            GraphTokenClient? graph = null;
+            (string username, string password, string domain)? exchangeCreds = null;
+
+            if (request.CreateOnPremAd)
+            {
+                adCreds = await _moduleCredentials.GetCredentialsAsync(ModuleId, "test account creation");
+                if (adCreds == null)
+                    return FailCreate(op, rows, performedBy, ip, request.Ticket, "AD credentials unavailable.");
+            }
+
+            if (request.CreateEntra)
+            {
+                graph = await GetGraphClientAsync();
+                if (graph == null)
+                    return FailCreate(op, rows, performedBy, ip, request.Ticket, "Graph credentials unavailable.");
+            }
+
+            if (request.OnPremMailbox)
+            {
+                exchangeCreds = await GetOnPremExchangeCredentialsAsync();
+                if (exchangeCreds == null)
+                    return FailCreate(op, rows, performedBy, ip, request.Ticket, "On-prem Exchange credentials unavailable.");
+
+                if (string.IsNullOrWhiteSpace(GetConfig("OnPremExchangeServerUri")))
+                    return FailCreate(op, rows, performedBy, ip, request.Ticket, "On-prem Exchange server URI is not configured.");
+            }
+
+            var created = new List<string>();
+            var failed = new List<string>();
+            foreach (var row in rows)
+            {
+                try
+                {
+                    if (request.CreateOnPremAd)
+                    {
+                        var dn = await CreateOnPremAccountAsync(row, request, adCreds!.Value);
+                        if (request.OnPremMailbox)
+                            await EnableOnPremMailboxAsync(dn, row.UserPrincipalName, exchangeCreds!.Value);
+                    }
+
+                    if (request.CreateEntra)
+                        await CreateEntraAccountAsync(row, request, graph!);
+
+                    created.Add(row.UserPrincipalName);
+                    LogAudit(performedBy, ip, "TestAccountPool_Create", ToAuditEntry(row), true, request.Ticket, null, new Dictionary<string, object?>
+                    {
+                        ["template"] = request.TemplateId,
+                        ["services"] = row.Services
+                    });
+                }
+                catch (Exception rowEx)
+                {
+                    failed.Add($"{row.UserPrincipalName}: {rowEx.Message}");
+                    _logger.LogError(rowEx, "Test account creation failed for {Account}, attempting cleanup", row.UserPrincipalName);
+
+                    try
+                    {
+                        if (request.CreateOnPremAd && adCreds != null)
+                            await TryDeleteAdAccountAsync(row.SamAccountName, adCreds.Value);
+                        if (request.CreateEntra && graph != null)
+                            await TryDeleteEntraAccountAsync(row.UserPrincipalName, graph);
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        _logger.LogWarning(cleanupEx, "Cleanup of partially-created account {Account} failed", row.UserPrincipalName);
+                    }
+
+                    LogAudit(performedBy, ip, "TestAccountPool_Create", ToAuditEntry(row), false, request.Ticket, rowEx.Message, new Dictionary<string, object?>
+                    {
+                        ["template"] = request.TemplateId,
+                        ["services"] = row.Services
+                    });
+                }
+            }
+
+            var success = failed.Count == 0;
+            var message = success
+                ? $"Created {created.Count} disabled test account(s): {string.Join(", ", created)}. Refresh the pool to check them out."
+                : $"Created {created.Count} account(s); {failed.Count} failed. {string.Join(" | ", failed)}";
+            op.Complete(success, message);
+            return new(success, message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Test account creation failed for prefix {Prefix}", request.NamePrefix);
+            _operationTrace.Step("CreateAccounts", "Failed", backend: "ActiveDirectory/Graph", exception: ex);
+            return FailCreate(op, rows, performedBy, ip, request.Ticket, ex.Message);
+        }
+    }
+
+    private TestAccountPoolOperationResult ValidateCreateRequest(TestAccountCreateRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Ticket))
+            return new(false, "Ticket number or reason is required.");
+
+        if (request.Quantity is < 1 or > MaxCreateQuantity)
+            return new(false, $"Quantity must be between 1 and {MaxCreateQuantity}.");
+
+        var prefix = request.NamePrefix.Trim();
+        if (!SafeNameRegex.IsMatch(prefix))
+            return new(false, "Account name prefix must be 2-18 characters and contain only letters, numbers, dot, underscore, or hyphen.");
+
+        var maxSuffix = request.Quantity.ToString("D2").Length;
+        if (prefix.Length + maxSuffix > 20)
+            return new(false, "Generated sAMAccountName would exceed 20 characters. Use a shorter account name prefix.");
+
+        if (!request.CreateOnPremAd && !request.CreateEntra)
+            return new(false, "Choose at least one account authority: on-prem AD or Entra ID.");
+
+        if (request.CreateOnPremAd)
+        {
+            if (string.IsNullOrWhiteSpace(GetConfig("OnPremCreateOU")))
+                return new(false, "On-Prem Create OU is required for AD account creation.");
+            if (string.IsNullOrWhiteSpace(GetConfig("OnPremUPNSuffix")))
+                return new(false, "On-Prem UPN Suffix is required for AD account creation.");
+            if (string.IsNullOrWhiteSpace(GetConfig("OnPremPoolGroup")))
+                return new(false, "On-Prem Test Account Group is required so created AD accounts can be retrieved.");
+            if (string.IsNullOrWhiteSpace(GetConfig("DelineaSecretId")))
+                return new(false, "AD Delinea Secret ID is required for AD account creation.");
+        }
+
+        if (request.CreateEntra)
+        {
+            if (string.IsNullOrWhiteSpace(GetConfig("EntraDomain")))
+                return new(false, "Entra Domain is required for Entra account creation.");
+            if (string.IsNullOrWhiteSpace(GetConfig("EntraPoolGroupId")))
+                return new(false, "Entra Test Account Group ID is required so created cloud accounts can be retrieved.");
+            if (string.IsNullOrWhiteSpace(GetConfig("GraphDelineaSecretId")))
+                return new(false, "Graph Delinea Secret ID is required for Entra account creation.");
+        }
+
+        if (request.ExchangeOnline)
+        {
+            if (request.CreateOnPremAd && string.IsNullOrWhiteSpace(GetConfig("OnPremExchangeOnlineGroup")))
+                return new(false, "On-Prem Exchange Online Provisioning Group is required for AD-backed EXO test accounts.");
+            if (request.CreateEntra && string.IsNullOrWhiteSpace(GetConfig("EntraExchangeOnlineGroupId")))
+                return new(false, "Entra Exchange Online Group ID is required for cloud-only EXO test accounts.");
+        }
+
+        if (request.Teams)
+        {
+            if (request.CreateOnPremAd && string.IsNullOrWhiteSpace(GetConfig("OnPremTeamsGroup")))
+                return new(false, "On-Prem Teams Provisioning Group is required for AD-backed Teams test accounts.");
+            if (request.CreateEntra && string.IsNullOrWhiteSpace(GetConfig("EntraTeamsGroupId")))
+                return new(false, "Entra Teams Group ID is required for cloud-only Teams test accounts.");
+        }
+
+        if (request.OnPremMailbox)
+        {
+            if (!request.CreateOnPremAd)
+                return new(false, "On-prem mailbox creation requires an on-prem AD account.");
+            if (string.IsNullOrWhiteSpace(GetConfig("OnPremExchangeDelineaSecretId")))
+                return new(false, "On-Prem Exchange Delinea Secret ID is required for on-prem mailbox creation.");
+            if (string.IsNullOrWhiteSpace(GetConfig("OnPremExchangeServerUri")))
+                return new(false, "On-Prem Exchange Server URI is required for on-prem mailbox creation.");
+        }
+
+        return new(true, "Valid.");
+    }
+
+    private List<TestAccountCreatePreviewRow> BuildCreateRows(TestAccountCreateRequest request)
+    {
+        var prefix = Slug(request.NamePrefix);
+        var displayPrefix = string.IsNullOrWhiteSpace(request.DisplayNamePrefix)
+            ? "Test Account"
+            : request.DisplayNamePrefix.Trim();
+        var suffix = request.CreateEntra && !request.CreateOnPremAd
+            ? GetConfig("EntraDomain")
+            : GetConfig("OnPremUPNSuffix");
+
+        var source = request.CreateOnPremAd && request.CreateEntra ? "AD + Entra"
+            : request.CreateOnPremAd ? "OnPremAD"
+            : "EntraID";
+        var services = DescribeServices(request);
+
+        var rows = new List<TestAccountCreatePreviewRow>();
+        for (var i = 1; i <= request.Quantity; i++)
+        {
+            var accountName = request.Quantity == 1
+                ? prefix
+                : $"{prefix}{i:D2}";
+            rows.Add(new TestAccountCreatePreviewRow(
+                SamAccountName: accountName,
+                UserPrincipalName: string.IsNullOrWhiteSpace(suffix) ? accountName : $"{accountName}@{suffix}",
+                DisplayName: request.Quantity == 1 ? displayPrefix : $"{displayPrefix} {i:D2}",
+                Source: source,
+                Services: services));
+        }
+
+        return rows;
+    }
+
+    private static string DescribeServices(TestAccountCreateRequest request)
+    {
+        var services = new List<string>();
+        if (request.ExchangeOnline) services.Add("Exchange Online");
+        if (request.OnPremMailbox) services.Add("On-prem mailbox");
+        if (request.Teams) services.Add("Teams");
+        return services.Count == 0 ? "None" : string.Join(", ", services);
+    }
+
+    private async Task<string> CreateOnPremAccountAsync(
+        TestAccountCreatePreviewRow row,
+        TestAccountCreateRequest request,
+        (string username, string password, string domain) creds)
+    {
+        var password = GeneratePassword(28);
+        var ou = GetConfig("OnPremCreateOU")!;
+        var poolGroup = GetConfig("OnPremPoolGroup")!;
+        var exoGroup = request.ExchangeOnline ? GetConfig("OnPremExchangeOnlineGroup") : null;
+        var teamsGroup = request.Teams ? GetConfig("OnPremTeamsGroup") : null;
+
+        var mutation = await ExecuteAdMutationAsync(creds, ps =>
+        {
+            var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            if (AdUserExists(ps, row.SamAccountName, row.UserPrincipalName, credential))
+                throw new InvalidOperationException($"AD account already exists: {row.UserPrincipalName}");
+
+            var secure = new System.Security.SecureString();
+            foreach (var c in password)
+                secure.AppendChar(c);
+
+            ps.AddCommand("New-ADUser")
+              .AddParameter("Name", row.DisplayName)
+              .AddParameter("DisplayName", row.DisplayName)
+              .AddParameter("SamAccountName", row.SamAccountName)
+              .AddParameter("UserPrincipalName", row.UserPrincipalName)
+              .AddParameter("Path", ou)
+              .AddParameter("AccountPassword", secure)
+              .AddParameter("Enabled", false)
+              .AddParameter("OtherAttributes", new Dictionary<string, object> { ["extensionAttribute15"] = "TESTACCOUNT" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ThrowIfHadErrors(ps, "New-ADUser failed.");
+            ps.Commands.Clear();
+
+            var user = ReadAdUserBySam(ps, row.SamAccountName, credential)
+                ?? throw new InvalidOperationException($"Created AD account could not be read: {row.SamAccountName}");
+            var dn = user.Properties["DistinguishedName"]?.Value?.ToString()
+                ?? throw new InvalidOperationException($"Created AD account has no distinguishedName: {row.SamAccountName}");
+
+            AddAdGroupMember(ps, poolGroup, dn, credential);
+            if (!string.IsNullOrWhiteSpace(exoGroup))
+                AddAdGroupMember(ps, exoGroup, dn, credential);
+            if (!string.IsNullOrWhiteSpace(teamsGroup))
+                AddAdGroupMember(ps, teamsGroup, dn, credential);
+
+            return new(true, dn);
+        });
+
+        if (!mutation.Success)
+            throw new InvalidOperationException(mutation.Message);
+        return mutation.Message;
+    }
+
+    private async Task CreateEntraAccountAsync(
+        TestAccountCreatePreviewRow row,
+        TestAccountCreateRequest request,
+        GraphTokenClient graph)
+    {
+        var password = GeneratePassword(28);
+        var usageLocation = GetConfig("EntraUsageLocation");
+        var body = new Dictionary<string, object?>
+        {
+            ["accountEnabled"] = false,
+            ["displayName"] = row.DisplayName,
+            ["mailNickname"] = row.SamAccountName.Replace(".", "", StringComparison.Ordinal).Replace("-", "", StringComparison.Ordinal).Replace("_", "", StringComparison.Ordinal),
+            ["userPrincipalName"] = row.UserPrincipalName,
+            ["passwordProfile"] = new Dictionary<string, object?>
+            {
+                ["forceChangePasswordNextSignIn"] = true,
+                ["password"] = password
+            }
+        };
+        if (!string.IsNullOrWhiteSpace(usageLocation))
+            body["usageLocation"] = usageLocation;
+
+        using var created = await graph.PostAsync("/users", body);
+        if (created == null)
+            throw new InvalidOperationException($"Failed to create Entra account {row.UserPrincipalName}. Check Graph permissions and uniqueness.");
+
+        var id = created.RootElement.GetProperty("id").GetString()
+            ?? throw new InvalidOperationException($"Created Entra account has no id: {row.UserPrincipalName}");
+
+        await AddGraphGroupMemberAsync(graph, GetConfig("EntraPoolGroupId")!, id, row.UserPrincipalName, "Entra pool");
+        if (request.ExchangeOnline)
+            await AddGraphGroupMemberAsync(graph, GetConfig("EntraExchangeOnlineGroupId")!, id, row.UserPrincipalName, "Exchange Online provisioning");
+        if (request.Teams)
+            await AddGraphGroupMemberAsync(graph, GetConfig("EntraTeamsGroupId")!, id, row.UserPrincipalName, "Teams provisioning");
+    }
+
+    private async Task AddGraphGroupMemberAsync(GraphTokenClient graph, string groupId, string userId, string upn, string groupPurpose)
+    {
+        var body = new Dictionary<string, string>
+        {
+            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{userId}"
+        };
+        var success = await graph.PostNoContentAsync($"/groups/{Uri.EscapeDataString(groupId)}/members/$ref", body);
+        if (!success)
+            throw new InvalidOperationException($"Created {upn}, but failed to add it to the {groupPurpose} group.");
+    }
+
+    private async Task<(string username, string password, string domain)?> GetOnPremExchangeCredentialsAsync()
+    {
+        var secretIdStr = GetConfig("OnPremExchangeDelineaSecretId");
+        if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
+            return null;
+
+        return await _delineaService.GetCredentialsBySecretIdAsync(secretId);
+    }
+
+    private async Task EnableOnPremMailboxAsync(
+        string distinguishedName,
+        string upn,
+        (string username, string password, string domain) creds)
+    {
+        var serverUri = GetConfig("OnPremExchangeServerUri")!;
+        var database = GetConfig("OnPremMailboxDatabase");
+
+        if (!await AdThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
+            throw new TimeoutException("AD/Exchange service is busy.");
+
+        try
+        {
+            await Task.Run(() =>
+            {
+                using var session = CreateAdPowerShell();
+                var ps = session.PowerShell;
+                ConnectOnPremExchange(ps, serverUri, creds);
+                var remote = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+
+                ps.AddCommand("Invoke-Command")
+                  .AddParameter("Session", remote)
+                  .AddParameter("ScriptBlock", ScriptBlock.Create("param($Identity, $Database) if ([string]::IsNullOrWhiteSpace($Database)) { Enable-Mailbox -Identity $Identity -ErrorAction Stop } else { Enable-Mailbox -Identity $Identity -Database $Database -ErrorAction Stop }"))
+                  .AddParameter("ArgumentList", new object?[] { distinguishedName, database ?? "" })
+                  .AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                ThrowIfHadErrors(ps, $"Enable-Mailbox failed for {upn}.");
+                ps.Commands.Clear();
+
+                RemoveOnPremExchangeSession(ps);
+            });
+        }
+        finally
+        {
+            AdThrottle.Release();
+        }
+    }
+
+    private async Task TryDeleteAdAccountAsync(string samAccountName, (string username, string password, string domain) creds)
+    {
+        await ExecuteAdMutationAsync(creds, ps =>
+        {
+            var credential = CreateCredential(creds.username, creds.password, creds.domain);
+            var user = ReadAdUserBySam(ps, samAccountName, credential);
+            if (user == null) return new(true, "Account not found — nothing to clean up.");
+
+            ps.AddCommand("Remove-ADUser")
+              .AddParameter("Identity", user.Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Credential", credential)
+              .AddParameter("Confirm", false)
+              .AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ThrowIfHadErrors(ps, "Remove-ADUser failed during cleanup.");
+            ps.Commands.Clear();
+
+            _logger.LogInformation("Cleaned up partially-created AD account {Sam}", samAccountName);
+            return new(true, "Cleaned up.");
+        });
+    }
+
+    private async Task TryDeleteEntraAccountAsync(string upn, GraphTokenClient graph)
+    {
+        using var user = await graph.GetAsync($"/users/{Uri.EscapeDataString(upn)}?$select=id");
+        if (user == null) return;
+
+        var id = user.RootElement.GetProperty("id").GetString();
+        if (id == null) return;
+
+        await graph.DeleteAsync($"/users/{id}");
+        _logger.LogInformation("Cleaned up partially-created Entra account {Upn}", upn);
+    }
+
+    private TestAccountPoolOperationResult FailCreate(
+        OperationTraceService.OperationScope op,
+        List<TestAccountCreatePreviewRow> rows,
+        string performedBy,
+        string ip,
+        string ticket,
+        string message)
+    {
+        foreach (var row in rows)
+            LogAudit(performedBy, ip, "TestAccountPool_Create", ToAuditEntry(row), false, ticket, message);
+        op.Complete(false, message);
+        return new(false, message);
+    }
+
+    private static TestAccountPoolEntry ToAuditEntry(TestAccountCreatePreviewRow row) =>
+        new(
+            Key: row.UserPrincipalName,
+            Source: row.Source,
+            DisplayName: row.DisplayName,
+            UserPrincipalName: row.UserPrincipalName,
+            SamAccountName: row.SamAccountName,
+            Mail: null,
+            DistinguishedName: null,
+            ObjectGuid: null,
+            EntraObjectId: null,
+            Enabled: false,
+            ExpiresUtc: null,
+            Status: "Created",
+            Profile: row.Services,
+            SupportsCheckout: row.Source != "EntraID",
+            StatusDetail: null);
+
+    private static string Slug(string value)
+    {
+        var chars = value.Trim()
+            .Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or '-')
+            .Select(c => char.ToLowerInvariant(c))
+            .ToArray();
+        return new string(chars);
+    }
+
     private async Task<IReadOnlyList<TestAccountPoolEntry>> GetOnPremPoolAsync()
     {
         var group = GetConfig("OnPremPoolGroup");
@@ -622,6 +1191,45 @@ public sealed class TestAccountPoolService
         return users.Count == 0 ? null : users[0];
     }
 
+    private static PSObject? ReadAdUserBySam(PowerShell ps, string samAccountName, PSCredential credential)
+    {
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", samAccountName)
+          .AddParameter("Properties", new[] { "DistinguishedName", "ObjectGUID", "UserPrincipalName" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var users = ps.Invoke();
+        ThrowIfHadErrors(ps, "Get-ADUser failed.");
+        ps.Commands.Clear();
+        return users.Count == 0 ? null : users[0];
+    }
+
+    private static bool AdUserExists(PowerShell ps, string samAccountName, string userPrincipalName, PSCredential credential)
+    {
+        var escapedSam = samAccountName.Replace("'", "''");
+        var escapedUpn = userPrincipalName.Replace("'", "''");
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Filter", $"SamAccountName -eq '{escapedSam}' -or UserPrincipalName -eq '{escapedUpn}'")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var users = ps.Invoke();
+        ThrowIfHadErrors(ps, "Get-ADUser failed.");
+        ps.Commands.Clear();
+        return users.Count > 0;
+    }
+
+    private static void AddAdGroupMember(PowerShell ps, string groupIdentity, string memberDn, PSCredential credential)
+    {
+        ps.AddCommand("Add-ADGroupMember")
+          .AddParameter("Identity", groupIdentity)
+          .AddParameter("Members", memberDn)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ThrowIfHadErrors(ps, $"Add-ADGroupMember failed for {groupIdentity}.");
+        ps.Commands.Clear();
+    }
+
     private bool IsCurrentPoolMember(PowerShell ps, string objectGuid, (string username, string password, string domain) creds)
     {
         var group = GetConfig("OnPremPoolGroup");
@@ -640,6 +1248,53 @@ public sealed class TestAccountPoolService
         return members.Any(m =>
             string.Equals(m.Properties["objectGUID"]?.Value?.ToString(), objectGuid, StringComparison.OrdinalIgnoreCase)
             || string.Equals(m.Properties["ObjectGUID"]?.Value?.ToString(), objectGuid, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void ConnectOnPremExchange(PowerShell ps, string serverUri, (string username, string password, string domain) creds)
+    {
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        ps.AddScript("New-PSSessionOption -OperationTimeout 15000 -OpenTimeout 10000");
+        var optResult = ps.Invoke();
+        ThrowIfHadErrors(ps, "New-PSSessionOption failed.");
+        ps.Commands.Clear();
+        var sessionOpt = optResult.FirstOrDefault()?.BaseObject;
+
+        ps.AddCommand("New-PSSession")
+          .AddParameter("ConfigurationName", "Microsoft.Exchange")
+          .AddParameter("ConnectionUri", serverUri)
+          .AddParameter("Authentication", "Kerberos")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        if (sessionOpt != null)
+            ps.AddParameter("SessionOption", sessionOpt);
+        var sessions = ps.Invoke();
+        ThrowIfHadErrors(ps, "New-PSSession failed.");
+        ps.Commands.Clear();
+
+        var session = sessions.FirstOrDefault()
+            ?? throw new InvalidOperationException("New-PSSession returned no session object.");
+        ps.Runspace.SessionStateProxy.SetVariable("onpremSession", session.BaseObject);
+    }
+
+    private static void RemoveOnPremExchangeSession(PowerShell ps)
+    {
+        try
+        {
+            var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+            if (session == null)
+                return;
+
+            ps.Commands.Clear();
+            ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
+            ps.Invoke();
+            ps.Commands.Clear();
+        }
+        catch
+        {
+        }
     }
 
     private static void ResetPassword(PowerShell ps, string objectGuid, string password, (string username, string password, string domain) creds)
