@@ -206,24 +206,32 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 proposedValues[attr] = oldValue;
             }
 
-            // Execute the reversal via ADAttributeEditorService.SaveAsync
+            var maxLevel = 0;
+            if (auditEvent.TryGetValue("_undoMaxLevel", out var lvlObj))
+            {
+                if (lvlObj is int lvlInt) maxLevel = lvlInt;
+                else if (lvlObj is long lvlLong) maxLevel = (int)lvlLong;
+                else int.TryParse(lvlObj?.ToString(), out maxLevel);
+            }
+
             var saveResult = await _editorService.SaveAsync(
                 lookupResult.Principal,
                 proposedValues,
                 performedBy,
                 ip,
-                ticket);
+                ticket,
+                maxLevel);
 
             if (!saveResult.Success)
             {
                 // The SaveAsync already audits failure internally, but we also need the undo-specific audit
-                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, false, saveResult.Error);
+                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error);
                 scope.Complete(false, saveResult.Error);
                 return new UndoResult(false, saveResult.Error, null);
             }
 
             // Log the undo-specific audit event (the SaveAsync already logged a standard ADAttributeEditor_Update)
-            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, true, null);
+            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null);
 
             var reversalOperationId = _operationTrace.CurrentOperationId;
             scope.Complete(true);
@@ -249,10 +257,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
         string[] changedAttributes,
         Dictionary<string, object?> originalEvent,
         string? originalOperationId,
+        string ticket,
         bool success,
         string? errorDetail)
     {
-        // Build old/new for the undo event (reversed from original)
         var extra = new Dictionary<string, object?>
         {
             ["originalOperationId"] = originalOperationId,
@@ -261,7 +269,6 @@ public class ADAttributeEditorUndoService : IUndoableModule
 
         foreach (var attr in changedAttributes)
         {
-            // In the undo event, old = original new, new = original old (the reversal)
             extra[$"old_{attr}"] = GetString(originalEvent, $"new_{attr}");
             extra[$"new_{attr}"] = GetString(originalEvent, $"old_{attr}");
         }
@@ -273,7 +280,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
             category: "ADAttributeEditor",
             target: target,
             success: success,
-            ticketNumber: "",
+            ticketNumber: ticket,
             errorDetail: errorDetail,
             extra: extra);
     }

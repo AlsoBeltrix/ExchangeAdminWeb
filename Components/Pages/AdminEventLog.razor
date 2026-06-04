@@ -808,8 +808,20 @@
             var userName = authState.User.Identity?.Name ?? "unknown";
             var clientIp = ClientInfo.IpAddress;
 
+            var fields = new Dictionary<string, object?>(undoTargetEvent.RawFields, StringComparer.OrdinalIgnoreCase);
+            if (handler.ModuleId == "ADAttributeEditor")
+            {
+                var maxLevel = 0;
+                for (var lvl = 3; lvl >= 1; lvl--)
+                {
+                    var levelCheck = await AuthorizationService.AuthorizeAsync(authState.User, $"ADAttributeEditorLevel{lvl}");
+                    if (levelCheck.Succeeded) { maxLevel = lvl; break; }
+                }
+                fields["_undoMaxLevel"] = maxLevel;
+            }
+
             var result = await handler.ExecuteUndoAsync(
-                undoTargetEvent.RawFields,
+                fields,
                 userName,
                 clientIp,
                 undoTicket.Trim());
@@ -817,7 +829,8 @@
             if (result.Success)
             {
                 undoSuccess = $"Undo completed successfully. Reversal operation ID: {result.ReversalOperationId ?? "N/A"}";
-                // Refresh the event log to show the new reversal event and Reversed badge
+                if (!string.IsNullOrEmpty(undoPreview?.OriginalOperationId))
+                    reversedOperationIds.Add(undoPreview.OriginalOperationId);
                 LoadEvents();
             }
             else
