@@ -4,7 +4,7 @@ public static class MigrationTargetDatabaseSelector
 {
     public static string[] Resolve(ModuleConfigService moduleConfig, IConfiguration config)
     {
-        if (moduleConfig.IsCorrupt)
+        if (moduleConfig.IsModuleCorrupt("Migration"))
             return Array.Empty<string>();
 
         var configured = moduleConfig.GetValue("Migration", "OnPremTargetDatabases");
@@ -12,7 +12,7 @@ public static class MigrationTargetDatabaseSelector
         if (moduleValues.Length > 0)
             return moduleValues;
 
-        if (!moduleConfig.HasConfigFile)
+        if (!moduleConfig.HasModuleConfigFile("Migration"))
         {
             var arrayValues = config.GetSection("Migration:OnPremTargetDatabases").Get<string[]>() ?? Array.Empty<string>();
             var cleanedArrayValues = Clean(arrayValues);

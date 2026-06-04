@@ -18,9 +18,9 @@ public class ModuleCredentialService
 
     public async Task<(string username, string password, string domain)?> GetCredentialsAsync(string moduleId, string purpose)
     {
-        if (_moduleConfig.IsCorrupt)
+        if (_moduleConfig.IsModuleCorrupt(moduleId))
         {
-            _logger.LogError("Cannot retrieve credentials for {Module}: module-config.json is corrupt", moduleId);
+            _logger.LogError("Cannot retrieve credentials for {Module}: module config is corrupt", moduleId);
             return null;
         }
 

@@ -346,7 +346,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -366,7 +366,7 @@ public sealed class ModuleCatalog
             SortOrder = 745,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             MainPermission = new("Access", "TestAccountPool", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -401,7 +401,7 @@ public sealed class ModuleCatalog
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.1",
+            Version = "1.2.2",
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
@@ -436,7 +436,7 @@ public sealed class ModuleCatalog
             SortOrder = 170,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.0",
+            Version = "1.3.1",
             MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
             GranularPermissions = [
                 new("Level1", "ADAttributeEditorLevel1", FailClosed: true),

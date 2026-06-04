@@ -16,9 +16,9 @@ public class MigrationService : ExchangeServiceBase
     private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
     {
         var val = _moduleConfig.GetValue("Migration", key);
-        if (_moduleConfig.IsCorrupt) return "";
+        if (_moduleConfig.IsModuleCorrupt("Migration")) return "";
         if (val != null) return val;
-        if (!_moduleConfig.HasConfigFile)
+        if (!_moduleConfig.HasModuleConfigFile("Migration"))
             return _config[fallbackConfigKey] ?? defaultValue;
         return defaultValue;
     }
@@ -34,7 +34,7 @@ public class MigrationService : ExchangeServiceBase
             var val = _moduleConfig.GetValue("Migration", "ExcludedADGroups");
             if (!string.IsNullOrEmpty(val))
                 return val.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (!_moduleConfig.HasConfigFile)
+            if (!_moduleConfig.HasModuleConfigFile("Migration"))
                 return _config.GetSection("Migration:ExcludedADGroups").Get<string[]>() ?? Array.Empty<string>();
             return Array.Empty<string>();
         }

@@ -173,7 +173,7 @@
             var org = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigOrganizationKey);
             var cert = ModuleConfigSvc.GetValue(ExoConnectionPool.ConfigModuleKey, ExoConnectionPool.ConfigCertSubjectKey);
 
-            if (ModuleConfigSvc.HasConfigFile && ModuleConfigSvc.IsCorrupt)
+            if (ModuleConfigSvc.HasModuleConfigFile(ExoConnectionPool.ConfigModuleKey) && ModuleConfigSvc.IsModuleCorrupt(ExoConnectionPool.ConfigModuleKey))
             {
                 configCorrupt = true;
                 exoAppId = "";

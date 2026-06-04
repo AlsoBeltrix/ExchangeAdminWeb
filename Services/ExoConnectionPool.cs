@@ -68,9 +68,9 @@ public sealed class ExoConnectionPool : IDisposable
         var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey);
         var certSubject = _moduleConfig.GetValue(ConfigModuleKey, ConfigCertSubjectKey);
 
-        if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
+        if (_moduleConfig.HasModuleConfigFile(ConfigModuleKey) && _moduleConfig.IsModuleCorrupt(ConfigModuleKey))
         {
-            _logger.LogError("Module config file is corrupt - refusing to fall back to appsettings for EXO config");
+            _logger.LogError("ExchangeOnline module config is corrupt - refusing to fall back to appsettings");
             return ("", "", "");
         }
 

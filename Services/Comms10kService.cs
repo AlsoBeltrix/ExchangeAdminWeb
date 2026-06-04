@@ -23,7 +23,7 @@ public class Comms10kService
         get
         {
             var val = _moduleConfig.GetValue("Comms10k", "TargetGroupName");
-            if (_moduleConfig.IsCorrupt) return null;
+            if (_moduleConfig.IsModuleCorrupt("Comms10k")) return null;
             return val;
         }
     }

@@ -248,7 +248,7 @@ public class PermissionValidator
         {
             if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
 
-            if (_moduleConfig.HasConfigFile && _moduleConfig.IsCorrupt)
+            if (_moduleConfig.HasModuleConfigFile("MailboxPermissions") && _moduleConfig.IsModuleCorrupt("MailboxPermissions"))
             {
                 _excludedUsers = ImmutableHashSet<string>.Empty.WithComparer(StringComparer.OrdinalIgnoreCase);
                 _excludedObjectIds = ImmutableDictionary<string, string>.Empty.WithComparers(StringComparer.OrdinalIgnoreCase);
