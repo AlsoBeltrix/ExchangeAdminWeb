@@ -433,13 +433,14 @@ Fail-closed permissions deny access when no explicit group is configured.
 
 ## Module Configuration
 
-Simple module configuration is stored in:
+Simple module configuration is stored in per-module files:
 
 ```text
-config/module-config.json
+config/module-config-{ModuleId}.json
 ```
 
-Access it through `ModuleConfigService`:
+Each module has its own configuration file, keyed by module ID (for example,
+`config/module-config-Migration.json`). Access it through `ModuleConfigService`:
 
 ```csharp
 public string? GetValue(string moduleId, string key);
@@ -488,7 +489,9 @@ if (creds is null)
 
 Credential rules:
 
-- Declare `DelineaSecretId` in the module descriptor.
+- Declare the credential config field in the module descriptor. Use
+  `GraphDelineaSecretId` for modules that consume Graph API credentials and
+  `DelineaSecretId` for modules that consume AD or Exchange credentials.
 - Never use a global Delinea secret for module work.
 - Never borrow another module's secret.
 - Never fall back to app pool identity for privileged operations.
@@ -970,7 +973,7 @@ Runtime changes that do not require restart:
 Deployment scripts preserve these config files:
 
 - `config/sectionaccess.json`
-- `config/module-config.json`
+- `config/module-config-{ModuleId}.json` (one file per module)
 - `config/modules-enabled.json`
 - `config/protected-principals.json`
 - `config/ad-editable-attributes.json`
@@ -1032,7 +1035,9 @@ Before a module is accepted, review these points:
 - Using another module's Delinea secret.
 - Adding a global credential config.
 - Falling back to app pool identity for privileged operations.
-- Adding ServiceNow validation when it is out of scope.
+- Adding ServiceNow validation when it is not required. ServiceNow integration
+  is a planned feature, gated by ServiceNow API access and dormant when
+  `ServiceNow:Enabled=false`.
 - Logging raw token failures, raw API payloads, passwords, or secrets.
 - Re-resolving a free-form identity string at write time instead of writing to a
   bound object.

@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, named locations, and Active Directory tasks through a self-service web interface. Provides 15 modules covering EXO, Graph API, and on-prem AD operations.
+ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, named locations, and Active Directory tasks through a self-service web interface. Provides 21 modules (20 operational + 1 config-only) covering EXO, Graph API, and on-prem AD operations.
 
 ## Features
 
@@ -23,7 +23,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 
 - Validates current mailbox location before eligibility decisions
 - Checks on-prem mailbox and archive size before cloud migrations
-- Move-back batches pick one random target database from `OnPremTargetDatabases` in the Migration module config
+- Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
@@ -61,7 +61,7 @@ Each module has its own config page (linked in the sidebar) with:
 - **Configuration** — module-specific settings (config fields)
 - **Module Admins** — AD groups that can configure this module without global admin
 
-Changes are persisted to `config/modules-enabled.json`, `config/sectionaccess.json`, and `config/module-config.json` and take effect immediately.
+Changes are persisted to `config/modules-enabled.json`, `config/sectionaccess.json`, and `config/module-config-{ModuleId}.json` and take effect immediately.
 Global admins see all module config links; module admins see only their delegated modules.
 
 ### Admin Event Log Page (`/admin-event-log`)
@@ -94,6 +94,14 @@ Search and manage distribution lists, mail-enabled security groups, and Microsof
 - **Requires:** `GroupManagementOnPrem` section access for on-premises group modifications
 - Section access key: `GroupManagement`
 
+### M365 Group Management (`/m365-group-management`)
+
+Create, modify, and delete Microsoft 365 groups via Graph API.
+
+- Full lifecycle management for M365 (Unified) groups
+- **Requires:** Graph app registration with `Group.ReadWrite.All` permission
+- Section access key: `M365GroupManagement`
+
 ### Comms-10k (`/comms-10k`)
 
 Dedicated bulk member replacement for broadcast distribution lists.
@@ -104,6 +112,25 @@ Dedicated bulk member replacement for broadcast distribution lists.
 - Atomic replacement via `Set-ADGroup -Replace` (full member swap in one AD operation)
 - Uses Delinea credentials for Active Directory operations
 - Section access key: `Comms10k`
+
+### AD Attribute Editor (`/ad-attribute-editor`)
+
+View and edit allowlisted Active Directory attributes for on-premises user accounts.
+
+- Tiered access control with three granular permission levels (Level1, Level2, Level3)
+- Configurable attribute allowlist via `config/ad-editable-attributes.json`
+- Optional search base boundary restrictions
+- Uses Delinea credentials for Active Directory operations
+- Section access keys: `ADAttributeEditor`, `ADAttributeEditorLevel1`, `ADAttributeEditorLevel2`, `ADAttributeEditorLevel3`
+
+### Licensing Updates (`/licensing-updates`)
+
+Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.
+
+- CSV upload with validation against allowed license types
+- Configurable allowed license values (default: E5, EOP2+SOP2, F3, F3+EOP1)
+- Uses Delinea credentials for Active Directory operations
+- Section access key: `LicensingUpdates`
 
 ### Conference Rooms (`/conference-rooms`)
 
@@ -117,6 +144,26 @@ Room mailbox metadata configuration and booking policy management.
 - CSV bulk upload for multi-room setup
 - Room list management (add/remove rooms from room lists)
 - Section access key: `ConferenceRooms`
+
+### Emergency Disable (`/emergency-disable`)
+
+Rapidly disable a compromised user account across on-prem AD and Entra ID with session revocation.
+
+- Disables the AD account and revokes Entra ID sessions in a single workflow
+- Security team notification on every disable action
+- **Requires:** AD Delinea secret for account disable and Graph Delinea secret for session revocation
+- Section access key: `EmergencyDisable`
+
+### Test Account Pool (`/test-account-pool`)
+
+Check out managed test accounts from on-premises AD and Entra ID test pools.
+
+- Time-limited account checkout with automatic expiration and cleanup
+- On-prem AD accounts and Entra cloud-only accounts
+- Configurable checkout duration and maximum limits
+- Background worker automatically disables and resets expired checkouts
+- Optional Exchange Online and Teams provisioning group assignments
+- Section access key: `TestAccountPool`
 
 ### DHCP Authorization (`/dhcp-authorization`)
 

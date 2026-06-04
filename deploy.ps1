@@ -381,7 +381,7 @@ if ($isUpgrade) {
             }
             $config.Migration.PSObject.Properties.Remove("OnPremTargetDAG")
             $configChanged = $true
-            Write-Warn "Removed obsolete Migration:OnPremTargetDAG. Move-back batches now pick a random database from Migration:OnPremTargetDatabases or the Migration module configuration."
+            Write-Warn "Removed obsolete Migration:OnPremTargetDAG. Move-back batches now pass all configured databases from Migration:OnPremTargetDatabases to Exchange for distribution."
         }
 
         if ($config.Delinea -and (Get-Member -InputObject $config.Delinea -Name "ExchangeSecretId" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {

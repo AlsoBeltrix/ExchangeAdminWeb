@@ -106,6 +106,7 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             IsConfigOnly = true,
+            Version = "1.0.0",
             MainPermission = new("Access", "ExchangeOnline"),
             ConfigFields = [
                 new("AppId", "App Registration ID (GUID)", "Azure AD app registration for EXO PowerShell"),
@@ -124,6 +125,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions"),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
@@ -143,6 +145,7 @@ public sealed class ModuleCatalog
             SortOrder = 200,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "CalendarPermissions"),
             GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
@@ -186,6 +189,7 @@ public sealed class ModuleCatalog
             SortOrder = 400,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "DelegationReport")
         },
@@ -200,6 +204,7 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.1.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MessageTrace", FailClosed: true),
             ConfigFields = [
@@ -217,6 +222,7 @@ public sealed class ModuleCatalog
             SortOrder = 600,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "RecipientLookup"),
             ConfigFields = [
@@ -234,6 +240,7 @@ public sealed class ModuleCatalog
             SortOrder = 700,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "OutOfOffice")
         },
@@ -248,6 +255,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "2.0.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -265,6 +273,7 @@ public sealed class ModuleCatalog
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
@@ -281,6 +290,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage"),
@@ -298,6 +308,7 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
@@ -314,6 +325,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = []
@@ -329,6 +341,7 @@ public sealed class ModuleCatalog
             SortOrder = 790,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (requires Policy.ReadWrite.ConditionalAccess)")
@@ -417,6 +430,7 @@ public sealed class ModuleCatalog
             SortOrder = 450,
             EnabledByDefault = false,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -458,6 +472,7 @@ public sealed class ModuleCatalog
             SortOrder = 900,
             EnabledByDefault = true,
             IsSystemModule = true,
+            Version = "1.0.0",
             MainPermission = new("Access", "AdminSettings")
         },
         new()
@@ -471,6 +486,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
+            Version = "1.0.0",
             MainPermission = new("Access", "EventLog", FailClosed: true),
             GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
         }
