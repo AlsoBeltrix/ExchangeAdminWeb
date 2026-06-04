@@ -15,7 +15,7 @@ public class MatchMigrationUserTests
             ("ann@co.com", "batch-1"),
             ("joann@co.com", "batch-2"));
 
-        var result = ExchangeService.MatchMigrationUser("ann@co.com", users);
+        var result = MigrationService.MatchMigrationUser("ann@co.com", users);
 
         Assert.Equal("batch-1", result.BatchId);
         Assert.Equal("ann@co.com", result.Email);
@@ -27,7 +27,7 @@ public class MatchMigrationUserTests
     {
         var users = Users(("User@Co.Com", "batch-1"));
 
-        var result = ExchangeService.MatchMigrationUser("user@co.com", users);
+        var result = MigrationService.MatchMigrationUser("user@co.com", users);
 
         Assert.Equal("batch-1", result.BatchId);
         Assert.Equal("User@Co.Com", result.Email);
@@ -40,7 +40,7 @@ public class MatchMigrationUserTests
             ("carolann@co.com", "batch-2"),
             ("carol@co.com", "batch-1"));
 
-        var result = ExchangeService.MatchMigrationUser("carol@co.com", users);
+        var result = MigrationService.MatchMigrationUser("carol@co.com", users);
 
         Assert.Equal("batch-1", result.BatchId);
         Assert.Equal("carol@co.com", result.Email);
@@ -53,7 +53,7 @@ public class MatchMigrationUserTests
             ("carolann.solivan@co.com", "batch-1"),
             ("john.doe@co.com", "batch-2"));
 
-        var result = ExchangeService.MatchMigrationUser("carol", users);
+        var result = MigrationService.MatchMigrationUser("carol", users);
 
         Assert.Equal("batch-1", result.BatchId);
         Assert.Equal("carolann.solivan@co.com", result.Email);
@@ -67,7 +67,7 @@ public class MatchMigrationUserTests
             ("carolann@co.com", "batch-1"),
             ("carol.jones@co.com", "batch-2"));
 
-        var result = ExchangeService.MatchMigrationUser("carol", users);
+        var result = MigrationService.MatchMigrationUser("carol", users);
 
         Assert.Null(result.BatchId);
         Assert.Null(result.Email);
@@ -79,7 +79,7 @@ public class MatchMigrationUserTests
     {
         var users = Users(("john@co.com", "batch-1"));
 
-        var result = ExchangeService.MatchMigrationUser("carol", users);
+        var result = MigrationService.MatchMigrationUser("carol", users);
 
         Assert.Equal(0, result.MatchCount);
         Assert.Null(result.BatchId);
@@ -88,7 +88,7 @@ public class MatchMigrationUserTests
     [Fact]
     public void EmptyUserList_ReturnsNotFound()
     {
-        var result = ExchangeService.MatchMigrationUser("carol", new());
+        var result = MigrationService.MatchMigrationUser("carol", new());
 
         Assert.Equal(0, result.MatchCount);
     }
@@ -98,7 +98,7 @@ public class MatchMigrationUserTests
     {
         var users = Users(("carol@co.com", null));
 
-        var result = ExchangeService.MatchMigrationUser("carol@co.com", users);
+        var result = MigrationService.MatchMigrationUser("carol@co.com", users);
 
         Assert.Equal(0, result.MatchCount);
         Assert.Null(result.BatchId);
@@ -109,7 +109,7 @@ public class MatchMigrationUserTests
     {
         var users = Users(("carolann@co.com", null));
 
-        var result = ExchangeService.MatchMigrationUser("carol", users);
+        var result = MigrationService.MatchMigrationUser("carol", users);
 
         Assert.Equal(0, result.MatchCount);
         Assert.Null(result.BatchId);
@@ -120,7 +120,7 @@ public class MatchMigrationUserTests
     {
         var users = Users(("carol@co.com", "batch-1"));
 
-        var result = ExchangeService.MatchMigrationUser("  carol@co.com  ", users);
+        var result = MigrationService.MatchMigrationUser("  carol@co.com  ", users);
 
         Assert.Equal("batch-1", result.BatchId);
     }

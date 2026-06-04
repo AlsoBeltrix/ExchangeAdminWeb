@@ -110,7 +110,7 @@ public class ParseSizeToGBTests
     [InlineData("256 KB", 0.0002)]
     public void ParsesValidSizeStrings(string input, double expected)
     {
-        var result = ExchangeService.ParseSizeToGB(input);
+        var result = ExchangeServiceBase.ParseSizeToGB(input);
         Assert.NotNull(result);
         Assert.Equal(expected, result!.Value, 2);
     }
@@ -121,7 +121,7 @@ public class ParseSizeToGBTests
     [InlineData("unknown")]
     public void ReturnsNullForInvalidInput(string? input)
     {
-        Assert.Null(ExchangeService.ParseSizeToGB(input));
+        Assert.Null(ExchangeServiceBase.ParseSizeToGB(input));
     }
 
     [Theory]
@@ -134,7 +134,7 @@ public class ParseSizeToGBTests
         try
         {
             CultureInfo.CurrentCulture = new CultureInfo("pt-BR");
-            var result = ExchangeService.ParseSizeToGB(input);
+            var result = ExchangeServiceBase.ParseSizeToGB(input);
             Assert.NotNull(result);
             Assert.Equal(expected, result!.Value, 2);
         }

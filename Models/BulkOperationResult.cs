@@ -48,3 +48,19 @@ public class BulkOperationEntry
     public required string Status { get; init; }
     public required string Message { get; init; }
 }
+
+public class MailboxPermissionCsvRow
+{
+    public string Target { get; set; } = string.Empty;
+    public string User { get; set; } = string.Empty;
+    public string? FullAccess { get; set; }
+    public string? SendAs { get; set; }
+    public string? AutoMapping { get; set; }
+}
+
+public class CalendarPermissionCsvRow
+{
+    public string Target { get; set; } = string.Empty;
+    public string User { get; set; } = string.Empty;
+    public string AccessRight { get; set; } = string.Empty;
+}
