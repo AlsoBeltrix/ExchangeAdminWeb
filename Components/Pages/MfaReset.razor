@@ -10,6 +10,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<MfaReset> Logger
+@inject ProtectedPrincipalService ProtectedPrincipalService
 
 <PageTitle>MFA Reset</PageTitle>
 
@@ -233,6 +234,45 @@
                 result = new MfaResetResult { Success = false, Message = "Authorization denied." };
                 Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
                     errorDetail: "Authorization denied");
+                return;
+            }
+
+            // Protected principal check — resolve via AD, block if protected, warn-and-proceed if cloud-only
+            try
+            {
+                var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(upn);
+                if (resolved != null)
+                {
+                    var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+                    if (protectionCheck.CheckFailed)
+                    {
+                        result = new MfaResetResult { Success = false, Message = $"Protection check failed: {protectionCheck.Reason}" };
+                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                            errorDetail: $"Protection check failed: {protectionCheck.Reason}",
+                            methodTypes: methodTypesBeforeReset);
+                        return;
+                    }
+                    if (protectionCheck.IsProtected)
+                    {
+                        result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
+                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                            errorDetail: $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}",
+                            methodTypes: methodTypesBeforeReset);
+                        return;
+                    }
+                }
+                else
+                {
+                    Logger.LogWarning("Could not resolve {Upn} to an AD principal for protection check — proceeding (cloud-only user)", upn);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Protected principal check failed for {Upn} — blocking as precaution", upn);
+                result = new MfaResetResult { Success = false, Message = $"Protection check error: {ex.Message}" };
+                Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                    errorDetail: $"Protection check exception: {ex.Message}",
+                    methodTypes: methodTypesBeforeReset);
                 return;
             }
 

@@ -12,6 +12,7 @@
 @inject EmailService Email
 @inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Comms10k> Logger
+@inject ProtectedPrincipalService ProtectedPrincipalService
 @using CsvHelper
 @using CsvHelper.Configuration
 @using System.Globalization
@@ -292,7 +293,48 @@
                 return;
             }
 
-            result = await Comms10kService.ExecuteReplaceAsync(resolveResult!.ResolvedDns, currentUser);
+            // Protected principal check — verify no protected users are in the proposed member list
+            var skippedInResolve = new HashSet<string>(resolveResult!.SkippedEmails.Select(s => s.Split(' ')[0]), StringComparer.OrdinalIgnoreCase);
+            var resolvedEmails = parsedEmails.Where(e => !skippedInResolve.Contains(e)).ToList();
+            var blockedPrincipals = new List<string>();
+            foreach (var email in resolvedEmails)
+            {
+                try
+                {
+                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(email);
+                    if (resolved != null)
+                    {
+                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+                        if (protectionCheck.CheckFailed)
+                        {
+                            result = new Comms10kUpdateResult { Success = false, Message = $"Protection check failed for {email}: {protectionCheck.Reason}" };
+                            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection check failed for {email}: {protectionCheck.Reason}"); } catch { }
+                            return;
+                        }
+                        if (protectionCheck.IsProtected)
+                        {
+                            blockedPrincipals.Add($"{email} ({string.Join(", ", protectionCheck.MatchedRules)})");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Protected principal check failed for {Email} — blocking replace as precaution", email);
+                    result = new Comms10kUpdateResult { Success = false, Message = $"Protection check error for {email}: {ex.Message}" };
+                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection check exception for {email}: {ex.Message}"); } catch { }
+                    return;
+                }
+            }
+            if (blockedPrincipals.Count > 0)
+            {
+                var blockedList = string.Join("; ", blockedPrincipals.Take(5));
+                var suffix = blockedPrincipals.Count > 5 ? $" and {blockedPrincipals.Count - 5} more" : "";
+                result = new Comms10kUpdateResult { Success = false, Message = $"Replace blocked — protected principal(s) in proposed list: {blockedList}{suffix}" };
+                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protected principals: {blockedList}{suffix}"); } catch { }
+                return;
+            }
+
+            result = await Comms10kService.ExecuteReplaceAsync(resolveResult.ResolvedDns, currentUser);
 
             try
             {

@@ -11,6 +11,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<GroupManagement> Logger
+@inject ProtectedPrincipalService ProtectedPrincipalService
 
 <PageTitle>Group Management</PageTitle>
 
@@ -269,6 +270,38 @@
                 return;
             }
 
+            // Protected principal check on the member being added
+            var memberIdentity = newMember.Trim();
+            if (memberIdentity.Contains('@'))
+            {
+                try
+                {
+                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(memberIdentity);
+                    if (resolved != null)
+                    {
+                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+                        if (protectionCheck.CheckFailed)
+                        {
+                            opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = memberIdentity, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection check"); }
+                            return;
+                        }
+                        if (protectionCheck.IsProtected)
+                        {
+                            opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = memberIdentity, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection denial"); }
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", memberIdentity);
+                    opResult = PermissionResult.Fail($"Protection check error: {ex.Message}");
+                    return;
+                }
+            }
+
             opResult = await GroupService.AddMemberAsync(selectedGroup.Identity, newMember.Trim(), selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim(), ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
@@ -313,6 +346,37 @@
                 opResult = PermissionResult.Fail("Authorization denied.");
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
                 return;
+            }
+
+            // Protected principal check on the member being removed
+            if (!string.IsNullOrEmpty(member) && member.Contains('@'))
+            {
+                try
+                {
+                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(member);
+                    if (resolved != null)
+                    {
+                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+                        if (protectionCheck.CheckFailed)
+                        {
+                            opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection check"); }
+                            return;
+                        }
+                        if (protectionCheck.IsProtected)
+                        {
+                            opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = member, ["backend"] = selectedGroup.Backend }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection denial"); }
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", member);
+                    opResult = PermissionResult.Fail($"Protection check error: {ex.Message}");
+                    return;
+                }
             }
 
             opResult = await GroupService.RemoveMemberAsync(selectedGroup.Identity, member, selectedGroup.Backend, selectedGroup.GraphId, selectedGroup.SamAccountName);

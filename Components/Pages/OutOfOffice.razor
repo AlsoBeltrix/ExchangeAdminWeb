@@ -281,6 +281,23 @@
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "OutOfOffice");
+            if (!authCheck.Succeeded)
+            {
+                setResult = PermissionResult.Fail("Authorization denied.");
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress,
+                        "OutOfOffice_Denied", "OutOfOffice", setEmail.Trim(), false, ticketNumber.Trim(), "Authorization denied (re-check)");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit log for OOF auth re-check denial on {Target}", setEmail.Trim());
+                }
+                return;
+            }
+
             // Fetch current state before mutation for audit trail
             string previousState = "Unknown";
             try
