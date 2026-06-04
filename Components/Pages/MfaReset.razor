@@ -237,10 +237,18 @@
                 return;
             }
 
-            // Protected principal check — resolve via AD, block if protected, warn-and-proceed if cloud-only
+            // Protected principal check — fail closed unless AD lookup confirms no AD object (cloud-only)
             try
             {
-                var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(upn);
+                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(upn);
+                if (resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                {
+                    result = new MfaResetResult { Success = false, Message = "Protection check unavailable. Cannot verify if this user is protected." };
+                    Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                        errorDetail: "Protection resolver unavailable — blocked",
+                        methodTypes: methodTypesBeforeReset);
+                    return;
+                }
                 if (resolved != null)
                 {
                     var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
@@ -263,7 +271,7 @@
                 }
                 else
                 {
-                    Logger.LogWarning("Could not resolve {Upn} to an AD principal for protection check — proceeding (cloud-only user)", upn);
+                    Logger.LogInformation("AD lookup confirmed no AD object for {Upn} — cloud-only user, proceeding", upn);
                 }
             }
             catch (Exception ex)

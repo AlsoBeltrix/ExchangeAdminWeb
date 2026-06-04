@@ -176,23 +176,26 @@ public class ProtectedPrincipalService
         return (config, GetLegacyExclusions(), null);
     }
 
+    public enum ResolutionStatus { Resolved, NotFound, Unavailable }
+
     /// <summary>
-    /// Resolves an identity (UPN, email, sAMAccountName) to a full ResolvedDirectoryPrincipal
-    /// using the configured directory-read credential. Returns null if resolution is unavailable.
+    /// Resolves an identity to a full ResolvedDirectoryPrincipal with explicit status.
+    /// NotFound = AD lookup succeeded but found no match (safe for cloud-only fallback).
+    /// Unavailable = resolver could not run (credential missing, throttle timeout, error).
     /// </summary>
-    public async Task<ResolvedDirectoryPrincipal?> ResolveDirectoryPrincipalAsync(string identity)
+    public async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity)
     {
         if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
         {
             _logger.LogDebug("Skipping principal resolution — credential recently failed");
-            return null;
+            return (null, ResolutionStatus.Unavailable);
         }
 
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
             _logger.LogDebug("Cannot resolve principal — directory-read credential not configured");
-            return null;
+            return (null, ResolutionStatus.Unavailable);
         }
 
         var creds = await _delineaService.GetCredentialsBySecretIdAsync(secretId.Value);
@@ -200,7 +203,7 @@ public class ProtectedPrincipalService
         {
             _lastCredentialFailure = DateTime.UtcNow;
             _logger.LogWarning("Failed to retrieve directory-read credential for principal resolution");
-            return null;
+            return (null, ResolutionStatus.Unavailable);
         }
 
         try
@@ -208,12 +211,13 @@ public class ProtectedPrincipalService
             if (!await _adThrottle.WaitAsync(TimeSpan.FromSeconds(30)))
             {
                 _logger.LogWarning("AD throttle timeout during principal resolution for {Identity}", identity);
-                return null;
+                return (null, ResolutionStatus.Unavailable);
             }
 
             try
             {
-                return await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
+                var result = await Task.Run(() => ResolveViaActiveDirectory(identity, creds.Value.username, creds.Value.password, creds.Value.domain));
+                return result != null ? (result, ResolutionStatus.Resolved) : (null, ResolutionStatus.NotFound);
             }
             finally
             {
@@ -223,8 +227,18 @@ public class ProtectedPrincipalService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to resolve directory principal for {Identity}", identity);
-            return null;
+            return (null, ResolutionStatus.Unavailable);
         }
+    }
+
+    /// <summary>
+    /// Legacy wrapper — returns null for both NotFound and Unavailable.
+    /// Prefer ResolveWithStatusAsync for new code.
+    /// </summary>
+    public async Task<ResolvedDirectoryPrincipal?> ResolveDirectoryPrincipalAsync(string identity)
+    {
+        var (principal, _) = await ResolveWithStatusAsync(identity);
+        return principal;
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)

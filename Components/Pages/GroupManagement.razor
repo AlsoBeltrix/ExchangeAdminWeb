@@ -270,7 +270,12 @@
             {
                 try
                 {
-                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(memberIdentity);
+                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(memberIdentity);
+                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    {
+                        opResult = PermissionResult.Fail("Protection check unavailable. Cannot verify if this member is protected.");
+                        return;
+                    }
                     if (resolved != null)
                     {
                         var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
@@ -346,7 +351,12 @@
             {
                 try
                 {
-                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(member);
+                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(member);
+                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    {
+                        opResult = PermissionResult.Fail("Protection check unavailable. Cannot verify if this member is protected.");
+                        return;
+                    }
                     if (resolved != null)
                     {
                         var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);

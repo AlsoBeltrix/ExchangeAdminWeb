@@ -301,7 +301,13 @@
             {
                 try
                 {
-                    var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(email);
+                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(email);
+                    if (resStatus == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                    {
+                        result = new Comms10kUpdateResult { Success = false, Message = $"Protection check unavailable for {email}. Cannot verify if this user is protected." };
+                        try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection resolver unavailable for {email}"); } catch { }
+                        return;
+                    }
                     if (resolved != null)
                     {
                         var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
