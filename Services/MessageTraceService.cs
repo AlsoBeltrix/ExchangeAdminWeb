@@ -105,73 +105,66 @@ public class MessageTraceService : ExchangeServiceBase
             try
             {
                 var allResults = new List<MessageTraceResult>();
-                var page = 1;
-                const int pageSize = 200;
-                const int maxPages = 10;
                 var normalizedMessageId = NormalizeMessageId(messageId);
 
-                while (allResults.Count < MessageTraceResponse.MaxResults && page <= maxPages)
+                ps.AddCommand("Get-MessageTraceV2")
+                  .AddParameter("StartDate", startDate)
+                  .AddParameter("EndDate", endDate)
+                  .AddParameter("ResultSize", 2000)
+                  .AddParameter("ErrorAction", "Stop");
+
+                if (!string.IsNullOrWhiteSpace(sender))
+                    ps.AddParameter("SenderAddress", sender);
+                if (!string.IsNullOrWhiteSpace(recipient))
+                    ps.AddParameter("RecipientAddress", recipient);
+                if (!string.IsNullOrWhiteSpace(messageId))
+                    ps.AddParameter("MessageId", messageId.Trim());
+                if (!string.IsNullOrWhiteSpace(subjectFilter))
                 {
-                    ps.AddCommand("Get-MessageTrace")
-                      .AddParameter("StartDate", startDate)
-                      .AddParameter("EndDate", endDate)
-                      .AddParameter("PageSize", pageSize)
-                      .AddParameter("Page", page)
-                      .AddParameter("ErrorAction", "Stop");
-
-                    if (!string.IsNullOrWhiteSpace(sender))
-                        ps.AddParameter("SenderAddress", sender);
-                    if (!string.IsNullOrWhiteSpace(recipient))
-                        ps.AddParameter("RecipientAddress", recipient);
-                    if (!string.IsNullOrWhiteSpace(messageId))
-                        ps.AddParameter("MessageId", messageId.Trim());
-
-                    var results = Invoke(ps, tracker);
-                    if (!results.Any())
-                        break;
-
-                    foreach (var msg in results)
-                    {
-                        var subject = msg.Properties["Subject"]?.Value?.ToString() ?? "";
-                        var resultMessageId = msg.Properties["MessageId"]?.Value?.ToString() ?? "";
-                        if (!string.IsNullOrWhiteSpace(subjectFilter) && !subject.Contains(subjectFilter, StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        if (!MessageIdMatches(resultMessageId, normalizedMessageId))
-                            continue;
-
-                        allResults.Add(new MessageTraceResult
-                        {
-                            Received = GetPropertyDate(msg, "Received"),
-                            SenderAddress = GetPropertyString(msg, "SenderAddress"),
-                            RecipientAddress = GetPropertyString(msg, "RecipientAddress"),
-                            Subject = subject,
-                            Status = GetPropertyString(msg, "Status"),
-                            MessageId = resultMessageId,
-                            Size = GetPropertyLong(msg, "Size"),
-                            FromIP = GetPropertyString(msg, "FromIP"),
-                            ToIP = GetPropertyString(msg, "ToIP"),
-                            MessageTraceId = GetPropertyString(msg, "MessageTraceId", "MessageTraceID"),
-                            Backend = "ExchangeOnline"
-                        });
-
-                        if (allResults.Count >= MessageTraceResponse.MaxResults)
-                        {
-                            response.Truncated = true;
-                            break;
-                        }
-                    }
-
-                    if (results.Count < pageSize)
-                        break;
-
-                    page++;
+                    ps.AddParameter("Subject", subjectFilter);
+                    ps.AddParameter("SubjectFilterType", "Contains");
                 }
 
-                if (page > maxPages && allResults.Count < MessageTraceResponse.MaxResults)
-                    response.Truncated = true;
+                var results = Invoke(ps, tracker);
+
+                foreach (var msg in results)
+                {
+                    var subject = msg.Properties["Subject"]?.Value?.ToString() ?? "";
+                    var resultMessageId = msg.Properties["MessageId"]?.Value?.ToString() ?? "";
+                    if (!MessageIdMatches(resultMessageId, normalizedMessageId))
+                        continue;
+
+                    allResults.Add(new MessageTraceResult
+                    {
+                        Received = GetPropertyDate(msg, "Received"),
+                        SenderAddress = GetPropertyString(msg, "SenderAddress"),
+                        RecipientAddress = GetPropertyString(msg, "RecipientAddress"),
+                        Subject = subject,
+                        Status = GetPropertyString(msg, "Status"),
+                        MessageId = resultMessageId,
+                        Size = GetPropertyLong(msg, "Size"),
+                        FromIP = GetPropertyString(msg, "FromIP"),
+                        ToIP = GetPropertyString(msg, "ToIP"),
+                        MessageTraceId = GetPropertyString(msg, "MessageTraceId", "MessageTraceID"),
+                        Backend = "ExchangeOnline"
+                    });
+
+                    if (allResults.Count >= MessageTraceResponse.MaxResults)
+                    {
+                        response.Truncated = true;
+                        break;
+                    }
+                }
 
                 response.Results = allResults;
                 response.TotalAvailable = allResults.Count;
+            }
+            catch (Exception ex) when (ex.Message.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
+                                    || ex.Message.Contains("is not recognized", StringComparison.OrdinalIgnoreCase)
+                                    || ex.Message.Contains("CommandNotFoundException", StringComparison.OrdinalIgnoreCase))
+            {
+                response.Error = "Get-MessageTraceV2 requires ExchangeOnlineManagement 3.x or later. Please update the module.";
+                _logger.LogError(ex, "Get-MessageTraceV2 not available — ExchangeOnlineManagement module may be outdated");
             }
             catch (Exception ex)
             {
