@@ -1,30 +1,50 @@
-# Project Rules — ExchangeAdminWeb
+# ExchangeAdminWeb — agent guide
 
-## Deployment
-- **NEVER deploy.** Do not run dotnet publish, do not push to IIS, do not touch the deploy pipeline. Only Michael runs deployments via `tools/deploy-pipeline.ps1`.
-- Dev environment uses `-AppAlias ExchangeAdminWebDev -AppPoolName ExchangeAdminWebDev -PublishPath D:\apps\ExchangeAdminWebDev -PathBase /ExchangeAdminWebDev`.
+ASP.NET Core 10 Blazor Server app (`net10.0-windows`) for Exchange Online / Graph /
+on-prem AD administration. 21 modules built on a descriptor-based module architecture
+(`Modules/ModuleCatalog.cs`). Current version: `<VersionPrefix>` in ExchangeAdminWeb.csproj.
 
-## Task Modes
-- **Respect task modes.** REVIEW_ONLY and PLAN_ONLY do not authorize code changes. Do not start coding until explicitly told to implement.
-- When asked to assess or review, produce analysis only. Wait for "begin implementation" or equivalent.
+## Commands
+- Build: `dotnet build -c Release`
+- Test: `dotnet test` (xUnit v3 + NSubstitute, in `ExchangeAdminWeb.Tests/`)
+- PowerShell lint: `Invoke-ScriptAnalyzer -Path . -Recurse`
+- Dev deploy: `./deploy.ps1` (ADI-specific). Generic install: `tools/Install-ExchangeAdminWeb.ps1`.
 
-## Work Continuity
-- **Do not stop working without reason.** Keep going unless genuinely blocked on a decision only the user can make. Do not ask "should I continue?" — just continue.
+## Authoritative docs — read BEFORE touching the related area
+- `docs/AdminModuleSpec.md` — module contract. Binding for `Modules/`, `Components/Pages/`.
+  NOTE: check its version header against the csproj version; flag drift, don't silently trust it.
+- `docs/AdminModuleDeveloperGuide.md` — how to build a module.
+- `docs/*-Plan.md` — work-stream plans. Check the `Status:` header; only `Approved` or
+  `In progress` plans represent current intent. `Implemented`/`Superseded` are history.
+- `README.md` — full behavior reference. It is large; read only the relevant section.
 
-## Versioning
-- Bump the version in `NavMenu.razor` sidebar on every commit.
-- **Module version vs app version:** Only bump the base app version (`VersionPrefix` in .csproj) when base-level infrastructure changes. Module-only changes get a module version bump in `ModuleCatalog.cs`, not the app version.
-- **Use patch versions for fixes.** Bug fixes, CSS cleanup, and minor corrections are patch bumps (e.g. 2.3.0 → 2.3.1). Minor version bumps (2.3 → 2.4) are for meaningful new features or significant changes. Do not over-increment.
+## Architectural invariants
+1. `tools/Install-ExchangeAdminWeb.ps1` is environment-neutral and standalone.
+   Never couple it to `deploy.ps1` or ADI-specific configuration.
+2. Config promotion is dev-wins (`tools/promote-dev-to-prod.ps1`).
+3. Deploys never overwrite runtime config: `appsettings*.json`, `config/`, `logs/` are
+   excluded from robocopy mirroring. Preserve these exclusions in any deploy change.
+4. Every ops-script step must support `-PlanOnly` (via `Invoke-PlanOrAction` / `Write-Plan`).
+5. PowerShell error model: `$ErrorActionPreference = "Stop"`; failures go through
+   `Write-Fail` (throw). Native exe results must be converted to throws by checking
+   `$LASTEXITCODE` (robocopy: ≥8 is failure; 0–7 are success variants).
 
-## UI / Styling
-- **No gradients.** Ever. Flat solid colors only for backgrounds, sidebars, everything.
-- Light mode body should be soft off-white (#f4f5f7), not blinding white.
+## Known failure classes — check every diff against these
+1. **Side-effect ordering vs try/catch/finally** — state writes (manifests, markers) must
+   be unreachable on failure paths. Trace the actual exception flow; do not pattern-match.
+2. **Success aggregation** — loops over N items must aggregate per-item failures, never
+   report blanket success.
+3. **Stale references** — never trust remembered file contents or doc claims. Re-read
+   files before editing; verify doc statements against current code.
 
-## Security / Operations
-- Never log secret values, OAuth response bodies, bearer tokens, passwords, certificate private-key details, or raw Delinea auth responses.
-- Do not introduce cross-module credential reuse. Module credentials are per-module via Delinea Secret Server.
-- Do not sneak ServiceNow validation/writeback into a feature unless requested.
-- Per-module config corruption must affect only that module.
-
-## Communication
-- When asked a question ("why is X like this?"), answer the question first. Do not immediately make code changes. A question is not an instruction.
+## Working rules
+- Plan first: write or update a `docs/<Feature>-Plan.md`, get approval, then implement.
+  Implementation must not exceed plan scope; scope changes go back through the plan.
+- Disputes about repo behavior are settled by reading the file, not by argument. Any
+  control-flow claim must quote exact lines and name the error mechanism
+  (throw vs Write-Error vs native exit code vs swallowed catch).
+- When compacting, always preserve: the list of modified files, the active plan file
+  path, and the test commands.
+- After any compaction, re-read a file before editing it.
+- New or rewritten Services require corresponding tests in `ExchangeAdminWeb.Tests/`
+  before the work stream is "done". New `.ps1` logic requires Pester coverage in `tests/ps/`.

@@ -187,7 +187,7 @@ function Merge-JsonConfig {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        throw "Failed to merge $Name — promotion cannot continue. Error: $_"
+        throw "Failed to merge $Name - promotion cannot continue. Error: $_"
     }
 }
 
@@ -478,7 +478,7 @@ try {
             'ad-editable-attributes-legend.json'
         )
 
-        # Promote per-module config files (dev values win — this is tested config)
+        # Promote per-module config files (dev values win - this is tested config)
         $devConfigDir = Join-Path $dev "config"
         $prodConfigDir = Join-Path $prod "config"
         foreach ($moduleFile in Get-ChildItem -Path $devConfigDir -Filter "module-config-*.json" -ErrorAction SilentlyContinue) {

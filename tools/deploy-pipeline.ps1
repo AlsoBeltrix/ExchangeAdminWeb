@@ -22,7 +22,7 @@
 
 .EXAMPLE
     .\deploy-pipeline.ps1 -Prod
-    # Promote current dev to prod. Does not rebuild — uses what's already deployed in dev.
+    # Promote current dev to prod. Does not rebuild - uses what's already deployed in dev.
 #>
 
 [CmdletBinding()]
@@ -127,7 +127,7 @@ if ($Prod) {
         if (-not $AllowDirty) {
             throw "Dev was built from a dirty source tree (uncommitted changes). Commit your changes and run -Dev again, or use -AllowDirty to override."
         }
-        Write-Warn "Dev was built from a dirty source tree — proceeding because -AllowDirty was specified."
+        Write-Warn "Dev was built from a dirty source tree - proceeding because -AllowDirty was specified."
     }
 
     if ($currentDirty -and -not $manifest.gitDirty) {
