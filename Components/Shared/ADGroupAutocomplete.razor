@@ -1,0 +1,165 @@
+@implements IDisposable
+@inject ExchangeAdminWeb.Services.ADDirectorySearchService AdSearch
+
+<div class="position-relative">
+    <input type="text"
+           class="form-control"
+           value="@Value"
+           @oninput="OnInput"
+           @onfocus="OnFocus"
+           @onblur="OnBlur"
+           @onkeydown="OnKeyDown"
+           placeholder="@Placeholder"
+           disabled="@Disabled"
+           autocomplete="off" />
+
+    @if (_showDropdown && _results.Count > 0)
+    {
+        <ul class="list-group position-absolute w-100 shadow-sm"
+            style="z-index: 1050; max-height: 300px; overflow-y: auto; top: 100%;">
+            @for (int i = 0; i < _results.Count; i++)
+            {
+                var result = _results[i];
+                var index = i;
+                <li class="list-group-item list-group-item-action py-1 px-2 @(index == _highlightedIndex ? "active" : "")"
+                    style="cursor: pointer; font-size: 0.9rem;"
+                    @onmousedown="() => SelectResult(result)"
+                    @onmousedown:preventDefault>
+                    <div>
+                        <span class="fw-semibold">@result.DisplayName</span>
+                        @if (!string.IsNullOrEmpty(result.Email))
+                        {
+                            <span class="text-muted ms-1" style="font-size: 0.8rem;">@result.Email</span>
+                        }
+                        else if (!string.IsNullOrEmpty(result.SamAccountName))
+                        {
+                            <span class="text-muted ms-1" style="font-size: 0.8rem;">@result.SamAccountName</span>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+    }
+
+    @if (_isSearching)
+    {
+        <div class="position-absolute" style="right: 0.5rem; top: 0.5rem;">
+            <span class="spinner-border spinner-border-sm text-muted"></span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Search AD groups...";
+    [Parameter] public bool Disabled { get; set; }
+
+    private List<ExchangeAdminWeb.Services.ADSearchResult> _results = [];
+    private bool _showDropdown;
+    private bool _isSearching;
+    private int _highlightedIndex = -1;
+    private System.Threading.Timer? _debounceTimer;
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        var newValue = e.Value?.ToString() ?? "";
+        Value = newValue;
+        await ValueChanged.InvokeAsync(newValue);
+        _highlightedIndex = -1;
+        _debounceTimer?.Dispose();
+
+        if (newValue.Trim().Length < 3)
+        {
+            _results = [];
+            _showDropdown = false;
+            StateHasChanged();
+            return;
+        }
+
+        _debounceTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(() => PerformSearch(newValue.Trim()));
+        }, null, 300, Timeout.Infinite);
+    }
+
+    private async Task PerformSearch(string term)
+    {
+        _isSearching = true;
+        StateHasChanged();
+
+        try
+        {
+            _results = await Task.Run(() => AdSearch.SearchGroups(term, 10));
+            _showDropdown = _results.Count > 0;
+        }
+        catch
+        {
+            _results = [];
+            _showDropdown = false;
+        }
+        finally
+        {
+            _isSearching = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SelectResult(ExchangeAdminWeb.Services.ADSearchResult result)
+    {
+        Value = result.SamAccountName ?? result.DisplayName;
+        _showDropdown = false;
+        _results = [];
+        _highlightedIndex = -1;
+        await ValueChanged.InvokeAsync(Value);
+    }
+
+    private void OnFocus()
+    {
+        if (_results.Count > 0)
+            _showDropdown = true;
+    }
+
+    private void OnBlur()
+    {
+        _ = Task.Delay(200).ContinueWith(_ =>
+        {
+            if (_disposed) return;
+            InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                _showDropdown = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (!_showDropdown || _results.Count == 0) return;
+        switch (e.Key)
+        {
+            case "ArrowDown":
+                _highlightedIndex = (_highlightedIndex + 1) % _results.Count;
+                break;
+            case "ArrowUp":
+                _highlightedIndex = _highlightedIndex <= 0 ? _results.Count - 1 : _highlightedIndex - 1;
+                break;
+            case "Enter":
+                if (_highlightedIndex >= 0 && _highlightedIndex < _results.Count)
+                    await SelectResult(_results[_highlightedIndex]);
+                break;
+            case "Escape":
+                _showDropdown = false;
+                _highlightedIndex = -1;
+                break;
+        }
+    }
+
+    private bool _disposed;
+    public void Dispose()
+    {
+        _disposed = true;
+        _debounceTimer?.Dispose();
+    }
+}

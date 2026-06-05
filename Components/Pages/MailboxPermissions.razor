@@ -108,9 +108,9 @@
                         <ul class="small text-muted">
                             <li><code>Target</code> - Mailbox (SMTP, UPN, or SamAccountName)</li>
                             <li><code>User</code> - User to grant/revoke access (SMTP, UPN, or SamAccountName)</li>
-                            <li><code>FullAccess</code> - Yes/No/True/False/1/0/X</li>
-                            <li><code>SendAs</code> - Yes/No/True/False/1/0/X</li>
-                            <li><code>AutoMapping</code> - (optional) Yes/No/True/False/1/0/X (defaults to Yes)</li>
+                            <li><code>FullAccess</code> - True/False</li>
+                            <li><code>SendAs</code> - True/False</li>
+                            <li><code>AutoMapping</code> - (optional) True/False (defaults to True)</li>
                         </ul>
 
                         <div class="mb-3 btn-group" role="group">
@@ -583,7 +583,7 @@
 
     private async Task DownloadSampleCsv()
     {
-        var content = "Target,User,FullAccess,SendAs,AutoMapping\nhelpdesk@company.com,john.doe@company.com,Yes,Yes,Yes\n";
+        var content = "Target,User,FullAccess,SendAs,AutoMapping\nhelpdesk@company.com,john.doe@company.com,True,True,True\n";
         var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
         await JS.InvokeVoidAsync("downloadFile", "mailbox_permissions_sample.csv", "text/csv", base64);
     }

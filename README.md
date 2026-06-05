@@ -514,8 +514,8 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 **Add/Remove:**
 ```csv
 Target,User,FullAccess,SendAs,AutoMapping
-helpdesk@company.com,john.doe@company.com,Yes,Yes,Yes
-finance@company.com,jane.smith@company.com,Yes,No,No
+helpdesk@company.com,john.doe@company.com,True,True,True
+finance@company.com,jane.smith@company.com,True,False,False
 ```
 
 See [docs/CSV_FORMAT.md](docs/CSV_FORMAT.md) for complete documentation.

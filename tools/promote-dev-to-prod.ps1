@@ -129,7 +129,7 @@ function Invoke-RobocopyChecked {
 }
 
 function Merge-JsonConfig {
-    param([string]$DevFile, [string]$ProdFile, [string]$Name)
+    param([string]$DevFile, [string]$ProdFile, [string]$Name, [switch]$DevWins)
 
     $devExists = Test-Path -LiteralPath $DevFile -PathType Leaf
     $prodExists = Test-Path -LiteralPath $ProdFile -PathType Leaf
@@ -147,8 +147,20 @@ function Merge-JsonConfig {
         return
     }
 
+    $mergeLabel = if ($DevWins) { "dev values promoted to prod" } else { "prod values preserved, new dev keys added" }
+
     if (-not $Apply) {
-        Write-Plan "Merge $Name (dev adds new keys, prod keeps existing values)"
+        Write-Plan "Merge $Name ($mergeLabel)"
+        try {
+            $devJson = Get-Content -LiteralPath $DevFile -Raw | ConvertFrom-Json
+            $prodJson = Get-Content -LiteralPath $ProdFile -Raw | ConvertFrom-Json
+            $changes = Compare-JsonKeys -Dev $devJson -Prod $prodJson -DevWins:$DevWins
+            foreach ($change in $changes) {
+                Write-Plan "  $change"
+            }
+        } catch {
+            throw "Failed to preview merge $Name - dry run cannot verify config changes. Error: $_"
+        }
         return
     }
 
@@ -156,7 +168,11 @@ function Merge-JsonConfig {
         $devJson = Get-Content -LiteralPath $DevFile -Raw | ConvertFrom-Json
         $prodJson = Get-Content -LiteralPath $ProdFile -Raw | ConvertFrom-Json
 
-        $merged = Merge-Object -Base $prodJson -Overlay $devJson
+        $merged = if ($DevWins) {
+            Merge-Object -Base $devJson -Overlay $prodJson -OverlayWins $false
+        } else {
+            Merge-Object -Base $prodJson -Overlay $devJson -OverlayWins $false
+        }
         $prodDir = Split-Path -Parent $ProdFile
         if (-not (Test-Path -LiteralPath $prodDir -PathType Container)) {
             New-Item -ItemType Directory -Path $prodDir -Force | Out-Null
@@ -166,17 +182,17 @@ function Merge-JsonConfig {
             $merged | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $tmp -Encoding UTF8
             Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json | Out-Null
             Move-Item -LiteralPath $tmp -Destination $ProdFile -Force
-            Write-Ok "Merged $Name (prod values preserved, new dev keys added)"
+            Write-Ok "Merged $Name ($mergeLabel)"
         } finally {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
         }
     } catch {
-        Write-Warn "Failed to merge $Name - prod file left unchanged. Error: $_"
+        throw "Failed to merge $Name — promotion cannot continue. Error: $_"
     }
 }
 
 function Merge-Object {
-    param($Base, $Overlay)
+    param($Base, $Overlay, [bool]$OverlayWins = $false)
 
     if ($null -eq $Base) { return $Overlay }
     if ($null -eq $Overlay) { return $Base }
@@ -188,14 +204,105 @@ function Merge-Object {
             if ($null -eq $existing) {
                 $result | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
             } elseif ($existing.Value -is [PSCustomObject] -and $prop.Value -is [PSCustomObject]) {
-                $existing.Value = Merge-Object -Base $existing.Value -Overlay $prop.Value
+                $existing.Value = Merge-Object -Base $existing.Value -Overlay $prop.Value -OverlayWins $OverlayWins
+            } elseif ($OverlayWins) {
+                $existing.Value = $prop.Value
             }
-            # else: prod value wins, don't overwrite
         }
         return $result
     }
 
     return $Base
+}
+
+function Format-ValueForDiff {
+    param($Value)
+    if ($null -eq $Value) { return "(null)" }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @($Value)
+        if ($items.Count -eq 0) { return "[]" }
+
+        $objectLabels = @()
+        foreach ($item in $items) {
+            if ($item -isnot [PSCustomObject]) {
+                $objectLabels = @()
+                break
+            }
+
+            $label = $null
+            foreach ($propertyName in @('name', 'Name', 'id', 'Id', 'moduleId', 'ModuleId', 'policyAlias', 'PolicyAlias')) {
+                $property = $item.PSObject.Properties[$propertyName]
+                if ($property -and $property.Value) {
+                    $label = "$($property.Value)"
+                    break
+                }
+            }
+
+            if (-not $label) {
+                $objectLabels = @()
+                break
+            }
+            $objectLabels += $label
+        }
+
+        if ($objectLabels.Count -eq $items.Count -and $items.Count -gt 3) {
+            $preview = @($objectLabels | Select-Object -First 8)
+            $suffix = if ($objectLabels.Count -gt 8) { ", ..." } else { "" }
+            return "[$($items.Count) objects: $($preview -join ', ')$suffix]"
+        }
+
+        return (ConvertTo-Json -InputObject $items -Depth 8 -Compress)
+    }
+    if ($Value -is [PSCustomObject]) {
+        return (ConvertTo-Json -InputObject $Value -Depth 8 -Compress)
+    }
+    return "$Value"
+}
+
+function Get-ValueFingerprint {
+    param($Value)
+    if ($null -eq $Value) { return "(null)" }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        return (ConvertTo-Json -InputObject @($Value) -Depth 20 -Compress)
+    }
+    if ($Value -is [PSCustomObject]) {
+        return (ConvertTo-Json -InputObject $Value -Depth 20 -Compress)
+    }
+    return "$Value"
+}
+
+function Compare-JsonKeys {
+    param($Dev, $Prod, [switch]$DevWins, [string]$Prefix = "")
+
+    $changes = @()
+    if ($Dev -is [PSCustomObject] -and $Prod -is [PSCustomObject]) {
+        foreach ($prop in $Dev.PSObject.Properties) {
+            $key = if ($Prefix) { "$Prefix.$($prop.Name)" } else { $prop.Name }
+            $prodProp = $Prod.PSObject.Properties[$prop.Name]
+            if ($null -eq $prodProp) {
+                $devDisplay = Format-ValueForDiff $prop.Value
+                $changes += "+ $key = $devDisplay (new from dev)"
+            } elseif ($prop.Value -is [PSCustomObject] -and $prodProp.Value -is [PSCustomObject]) {
+                $changes += Compare-JsonKeys -Dev $prop.Value -Prod $prodProp.Value -DevWins:$DevWins -Prefix $key
+            } elseif ($DevWins) {
+                $devFingerprint = Get-ValueFingerprint $prop.Value
+                $prodFingerprint = Get-ValueFingerprint $prodProp.Value
+                $devDisplay = Format-ValueForDiff $prop.Value
+                $prodDisplay = Format-ValueForDiff $prodProp.Value
+                if ($devFingerprint -ne $prodFingerprint) {
+                    $suffix = if ($devDisplay -eq $prodDisplay) { " (content changed)" } else { "" }
+                    $changes += "~ $key : $prodDisplay -> $devDisplay$suffix"
+                }
+            }
+        }
+        foreach ($prop in $Prod.PSObject.Properties) {
+            $key = if ($Prefix) { "$Prefix.$($prop.Name)" } else { $prop.Name }
+            if ($null -eq $Dev.PSObject.Properties[$prop.Name]) {
+                $changes += "  $key (prod-only, preserved)"
+            }
+        }
+    }
+    return $changes
 }
 
 function Copy-FileChecked {
@@ -371,21 +478,24 @@ try {
             'ad-editable-attributes-legend.json'
         )
 
-        # Merge per-module config files (module-config-*.json)
+        # Promote per-module config files (dev values win — this is tested config)
         $devConfigDir = Join-Path $dev "config"
         $prodConfigDir = Join-Path $prod "config"
         foreach ($moduleFile in Get-ChildItem -Path $devConfigDir -Filter "module-config-*.json" -ErrorAction SilentlyContinue) {
             Merge-JsonConfig `
                 -DevFile $moduleFile.FullName `
                 -ProdFile (Join-Path $prodConfigDir $moduleFile.Name) `
-                -Name $moduleFile.Name
+                -Name $moduleFile.Name `
+                -DevWins
         }
 
+        # Promote operational config files (dev values win)
         foreach ($name in $jsonConfigFiles) {
             Merge-JsonConfig `
                 -DevFile (Join-Path $dev "config\$name") `
                 -ProdFile (Join-Path $prod "config\$name") `
-                -Name $name
+                -Name $name `
+                -DevWins
         }
 
         Copy-FileChecked -Source (Join-Path $dev "config\extended-log-level.txt") -Destination (Join-Path $prod "config\extended-log-level.txt")

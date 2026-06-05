@@ -87,15 +87,9 @@
         }
         else
         {
-            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
-                <div>
-                    <h4 class="mb-1">@(headerAnalysis.Headers.FileName ?? "Headers")</h4>
-                    <div class="text-muted small">@headerAnalysis.HopCount routing hop(s), @HeaderRows().Count() header value(s)</div>
-                </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-outline-primary" @onclick="() => UseHeaderTraceSuggestion(false)">Fill Trace Form</button>
-                    <button class="btn btn-primary" @onclick="() => UseHeaderTraceSuggestion(true)" disabled="@isLoading">Run Trace Now</button>
-                </div>
+            <div class="mb-3">
+                <h4 class="mb-1">@(headerAnalysis.Headers.FileName ?? "Headers")</h4>
+                <div class="text-muted small">@headerAnalysis.HopCount routing hop(s), @HeaderRows().Count() header value(s)</div>
             </div>
 
             <div class="row g-3 mb-3">

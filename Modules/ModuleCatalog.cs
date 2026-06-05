@@ -293,7 +293,7 @@ public sealed class ModuleCatalog
             Version = "1.0.0",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
-                new("TargetGroupName", "Target Group", "AD group name to manage"),
+                new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by Comms-10k operations")
             ]
         },
@@ -318,17 +318,33 @@ public sealed class ModuleCatalog
         {
             Id = "ConferenceRooms",
             DisplayName = "Conference Rooms",
-            Description = "Configure room lists, metadata, and booking policies for Exchange conference rooms.",
+            Description = "Configure room lists, metadata, booking policies, calendar permissions, and room type templates for Exchange conference rooms.",
             Route = "conference-rooms",
             IconCss = "bi bi-calendar-fill-nav-menu",
             Category = "Exchange",
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "2.0.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
-            ConfigFields = []
+            ConfigFields = [
+                new("OnPremDelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server secret for on-prem Exchange (Set-RemoteMailbox). Leave blank if cloud-only."),
+                new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. ConfSiteAdmins@analog.com)"),
+                new("ExecConfCoordinatorsGroup", "Exec Conf Coordinators Group", "Group for executive conference coordinators (e.g. ExecConfCoordinators@analog.com)"),
+                new("ConfExecAdminsGroup", "Conf Exec Admins Group", "Executive conference admins group (e.g. ConfExecAdmins@analog.com)"),
+                new("ConfExecVPsGroup", "Conf Exec VPs Group", "Executive VP booking group (e.g. ConfExecVPs@analog.com)"),
+                new("ConfAdminsGroup", "Conf Admins Group", "General conference admins group for restricted rooms (e.g. ConfAdmins@analog.com)"),
+                new("ConfCEOGroup", "CEO Room Group", "Group for CEO room booking (e.g. ConfCEO@analog.com)"),
+                new("ConfExceptionGroup", "Exception Room Group", "Group for exception room booking (e.g. ConfException@analog.com)"),
+                new("ADGTAdminsGroup", "ADGT Meeting Room Admins", "ADGT site-specific admins group (e.g. ADGTMeetingRoomAdmins@analog.com)"),
+                new("RoomListOU", "Room List OU", "Organizational unit for new room list distribution groups (e.g. ad.analog.com/Exchange/Analog/Recipients/Conference Rooms)"),
+                new("RestrictedMailTip", "Restricted Room MailTip", "Default mail tip for restricted rooms. Leave blank for built-in default."),
+                new("ExecMailTip", "Executive Room MailTip", "Mail tip for executive rooms. Leave blank for built-in default."),
+                new("RestrictedContactEmail", "Restricted Contact Email", "Contact email shown in restricted room responses (e.g. confadmins@analog.com)"),
+                new("ExecContactEmail", "Exec Contact Email", "Contact email shown in exec room responses (e.g. confexecadmins@analog.com)"),
+                new("ADGTContactEmail", "ADGT Contact Email", "Contact email for ADGT restricted rooms (e.g. adgtmeetingroomadmins@analog.com)")
+            ]
         },
         new()
         {
@@ -382,12 +398,12 @@ public sealed class ModuleCatalog
             MainPermission = new("Access", "TestAccountPool", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
-                new("OnPremPoolGroup", "On-Prem Test Account Group", "AD group containing managed on-premises or synced test accounts. Disabled accounts are available; enabled accounts are checked out.", Required: false),
+                new("OnPremPoolGroup", "On-Prem Test Account Group", "AD group containing managed on-premises or synced test accounts. Disabled accounts are available; enabled accounts are checked out.", Required: false, FieldType: ConfigFieldType.AdGroup),
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to enable, disable, expire, and reset test account passwords", Required: false),
-                new("OnPremCreateOU", "On-Prem Create OU", "Distinguished name of the OU where AD test accounts are created", Required: false),
+                new("OnPremCreateOU", "On-Prem Create OU", "Distinguished name of the OU where AD test accounts are created", Required: false, FieldType: ConfigFieldType.OU),
                 new("OnPremUPNSuffix", "On-Prem UPN Suffix", "UPN suffix for created AD test accounts, for example analog.com", Required: false),
-                new("OnPremExchangeOnlineGroup", "AD EXO Provisioning Group", "Optional AD group that grants Exchange Online licensing/provisioning for synced test accounts", Required: false),
-                new("OnPremTeamsGroup", "AD Teams Provisioning Group", "Optional AD group that grants Teams licensing/provisioning for synced test accounts", Required: false),
+                new("OnPremExchangeOnlineGroup", "AD EXO Provisioning Group", "Optional AD group that grants Exchange Online licensing/provisioning for synced test accounts", Required: false, FieldType: ConfigFieldType.AdGroup),
+                new("OnPremTeamsGroup", "AD Teams Provisioning Group", "Optional AD group that grants Teams licensing/provisioning for synced test accounts", Required: false, FieldType: ConfigFieldType.AdGroup),
                 new("OnPremExchangeDelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the Exchange credential used to enable on-prem mailboxes", Required: false),
                 new("OnPremExchangeServerUri", "On-Prem Exchange PowerShell URI", "Exchange PowerShell endpoint for on-prem mailbox creation, for example http://server/PowerShell/", Required: false),
                 new("OnPremMailboxDatabase", "On-Prem Mailbox Database", "Optional mailbox database for on-prem mailbox creation. Leave blank to let Exchange choose.", Required: false),

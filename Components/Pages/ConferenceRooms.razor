@@ -1,5 +1,6 @@
 @page "/conference-rooms"
 @using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Models
 @attribute [Authorize(Policy = "ConferenceRooms")]
 @rendermode InteractiveServer
 @inject ConferenceRoomService RoomService
@@ -9,8 +10,10 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject OperationTraceService OpTrace
 @inject IJSRuntime JS
 @inject ILogger<ConferenceRooms> Logger
+@inject ProtectedPrincipalService ProtectedPrincipalService
 @using CsvHelper
 @using CsvHelper.Configuration
 @using System.Globalization
@@ -30,18 +33,22 @@
 }
 
 <div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>All conference room operations are logged for audit purposes. CSV operations show a preview before applying changes.</small>
+    </div>
     <h1 class="mb-4">Conference Rooms</h1>
 
     <ul class="nav nav-tabs mb-3">
         <li class="nav-item">
-            <button class="nav-link @(activeTab == "setup" ? "active" : "")" @onclick='() => activeTab = "setup"'>Room Setup</button>
+            <button class="nav-link @(activeTab == "finder" ? "active" : "")" @onclick='() => activeTab = "finder"'>Room Finder</button>
         </li>
         <li class="nav-item">
             <button class="nav-link @(activeTab == "type" ? "active" : "")" @onclick='() => activeTab = "type"'>Room Type</button>
         </li>
     </ul>
 
-    @if (activeTab == "setup")
+    @* ===== TAB 1: ROOM FINDER (metadata + room list) ===== *@
+    @if (activeTab == "finder")
     {
         <div class="row">
             <div class="col-md-6">
@@ -50,26 +57,50 @@
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <RecipientAutocomplete @bind-Value="roomEmail"
-                                                   Placeholder="room@company.com"
-                                                   Disabled="@isLoading" />
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">City</label>
-                            <input type="text" class="form-control" @bind="city" placeholder="City" disabled="@isLoading" />
-                        </div>
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Building</label>
-                            <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="roomEmail" Placeholder="room@company.com" Disabled="@isLoading" />
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">City</label>
+                                <input type="text" class="form-control" @bind="city" placeholder="City" disabled="@isLoading" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Country</label>
+                                <input type="text" class="form-control" @bind="countryOrRegion" placeholder="USA" disabled="@isLoading" />
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">State</label>
+                                <input type="text" class="form-control" @bind="state" placeholder="MA" disabled="@isLoading" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Building</label>
+                                <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@isLoading" />
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
                                 <label class="form-label fw-semibold">Capacity</label>
                                 <input type="number" class="form-control" @bind="capacity" min="1" disabled="@isLoading" />
                             </div>
-                            <div class="col-md-6 mb-3">
+                            <div class="col-md-4 mb-3">
                                 <label class="form-label fw-semibold">Floor</label>
                                 <input type="text" class="form-control" @bind="floor" placeholder="Floor" disabled="@isLoading" />
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label fw-semibold">Floor Label</label>
+                                <input type="text" class="form-control" @bind="floorLabel" placeholder="Second Floor" disabled="@isLoading" />
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Display Device</label>
+                                <input type="text" class="form-control" @bind="displayDevice" placeholder="TV" disabled="@isLoading" />
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-semibold">Video Device</label>
+                                <input type="text" class="form-control" @bind="videoDevice" placeholder="Polycom" disabled="@isLoading" />
                             </div>
                         </div>
                         <div class="mb-3">
@@ -91,24 +122,26 @@
 
             <div class="col-md-6">
                 <div class="card">
-                    <div class="card-header"><strong>CSV Bulk Upload</strong></div>
+                    <div class="card-header"><strong>CSV Bulk Upload — Room Finder</strong></div>
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="csvTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                            <input type="text" class="form-control" @bind="csvFinderTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label">CSV File</label>
-                            <InputFile OnChange="HandleCsvUpload" accept=".csv" disabled="@isLoading" />
-                            <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
+                            <InputFile OnChange="HandleFinderCsvUpload" accept=".csv" disabled="@isLoading" />
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadFinderSampleCsv">Sample CSV</button>
                         </div>
-                        @if (csvRows.Count > 0)
+                        @if (finderPreview.Count > 0 && !finderApplied)
                         {
-                            <p class="text-info">@csvRows.Count room(s) parsed from CSV.</p>
-                            <button class="btn btn-primary" @onclick="ProcessCsvRooms"
-                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvTicketNumber))">
+                            <div class="alert alert-info py-2">
+                                <strong>@finderPreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
+                            </div>
+                            <button class="btn btn-success" @onclick="ApplyFinderCsv"
+                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvFinderTicket))">
                                 @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                                Process All
+                                Apply Changes
                             </button>
                         }
                     </div>
@@ -116,83 +149,315 @@
             </div>
         </div>
 
-        @if (csvResults.Count > 0)
+        @* Finder CSV Preview *@
+        @if (finderPreview.Count > 0 && !finderApplied)
         {
-            <div class="row mt-3">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header"><strong>Bulk Results</strong></div>
-                        <div class="card-body p-0">
-                            <table class="table table-sm mb-0">
-                                <thead><tr><th>Room</th><th>Status</th><th>Message</th></tr></thead>
-                                <tbody>
-                                    @foreach (var r in csvResults)
-                                    {
-                                        <tr class="@(r.Success ? "" : "table-danger")">
-                                            <td>@r.Email</td>
-                                            <td>@(r.Success ? "OK" : "FAILED")</td>
-                                            <td><small>@r.Message</small></td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+            <div class="card mt-3">
+                <div class="card-header"><strong>Preview — Room Finder</strong></div>
+                <div class="card-body p-0" style="overflow-x:auto">
+                    <table class="table table-sm table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Email</th><th>Name</th><th>City</th><th>Country</th><th>State</th>
+                                <th>Building</th><th>Capacity</th><th>Floor</th><th>Floor Label</th>
+                                <th>Display</th><th>Video</th><th>TimeZone</th><th>Room List</th><th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in finderPreview)
+                            {
+                                <tr class="@(!row.RoomResolved ? "table-danger" : row.Warnings.Count > 0 ? "table-warning" : "")">
+                                    <td>@row.RowIndex</td>
+                                    <td><small>@row.Email</small></td>
+                                    <td>@row.DisplayName</td>
+                                    <td>@row.City</td>
+                                    <td>@row.CountryOrRegion</td>
+                                    <td>@row.State</td>
+                                    <td>@row.Building</td>
+                                    <td>@row.Capacity</td>
+                                    <td>@row.Floor</td>
+                                    <td>@row.FloorLabel</td>
+                                    <td>@row.DisplayDeviceName</td>
+                                    <td>@row.VideoDeviceName</td>
+                                    <td><small>@row.TimeZone</small></td>
+                                    <td>
+                                        <small>
+                                            @row.RoomListName
+                                            @if (row.IsLegacyRoomList) { <span class="badge bg-warning text-dark">legacy</span> }
+                                            @if (!row.RoomListExists && row.RoomResolved) { <span class="badge bg-info">new</span> }
+                                        </small>
+                                    </td>
+                                    <td>
+                                        @if (!row.RoomResolved) { <span class="text-danger">@row.ResolveError</span> }
+                                        else if (row.Warnings.Count > 0)
+                                        {
+                                            @foreach (var w in row.Warnings) { <small class="text-warning d-block">@w</small> }
+                                        }
+                                        else { <span class="text-success">Ready</span> }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        @* Finder Results *@
+        @if (finderResults.Count > 0)
+        {
+            <div class="card mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>Results</strong>
+                    <small class="text-muted">@finderResults.Count(r => r.Success) / @finderResults.Count succeeded</small>
+                </div>
+                <div class="card-body p-0" style="overflow-x:auto">
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Room</th><th>Status</th><th>Steps</th><th>Message</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in finderResults)
+                            {
+                                <tr class="@(r.Success ? "" : r.AdAttributeFixRequired ? "table-warning" : "table-danger")">
+                                    <td><small>@r.Email</small></td>
+                                    <td>
+                                        @if (r.AdAttributeFixRequired)
+                                        { <span class="badge bg-warning text-dark">AD Fix Required</span> }
+                                        else if (r.Success) { <span class="text-success">OK</span> }
+                                        else { <span class="text-danger">FAILED</span> }
+                                    </td>
+                                    <td>
+                                        @foreach (var s in r.Steps)
+                                        {
+                                            <small class="d-block @(s.Success ? "text-muted" : "text-danger")">
+                                                @(s.Success ? "+" : "x") @s.Stage @(s.Error != null ? $"— {s.Error}" : "")
+                                            </small>
+                                        }
+                                    </td>
+                                    <td>
+                                        <small>@r.Message</small>
+                                        @if (r.AdAttributeFixRequired)
+                                        {
+                                            <br /><small class="text-warning">@r.AdAttributeDetail</small>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
             </div>
         }
     }
 
+    @* ===== TAB 2: ROOM TYPE ===== *@
     @if (activeTab == "type")
     {
         <div class="row">
             <div class="col-md-6">
-                <div class="card">
+                <div class="card mb-3">
                     <div class="card-header"><strong>Set Room Type</strong></div>
                     <div class="card-body">
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Email</label>
-                            <RecipientAutocomplete @bind-Value="typeRoomEmail"
-                                                   Placeholder="room@company.com"
-                                                   Disabled="@isLoading" />
+                            <RecipientAutocomplete @bind-Value="typeRoomEmail" Placeholder="room@company.com" Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Room Type</label>
                             <select class="form-select" @bind="selectedRoomType" disabled="@isLoading">
                                 <option value="">-- Select --</option>
-                                <option value="Standard">Standard (auto-accept, no conflicts)</option>
-                                <option value="Workspace">Workspace (auto-accept, allows conflicts)</option>
-                                <option value="Restricted">Restricted (auto-accept, approval required)</option>
+                                <option value="Standard">Standard — open booking, visible to all</option>
+                                <option value="Video">Video — open booking with video equipment</option>
+                                <option value="Restricted">Restricted — limited booking, requires approval</option>
+                                <option value="Exception">Exception — specific group access only</option>
+                                <option value="CEO">CEO — highest restriction, CEO admins only</option>
+                                <option value="Executive">Executive — board rooms, exec staff only</option>
                             </select>
                         </div>
+                        @if (selectedRoomType == "Restricted")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Site</label>
+                                <select class="form-select" @bind="typeSite" disabled="@isLoading">
+                                    <option value="none">Default</option>
+                                    <option value="ADGT">ADGT</option>
+                                </select>
+                            </div>
+                        }
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Time Zone</label>
                             <TimezonePicker @bind-Value="typeTimezone" Disabled="@isLoading" />
                         </div>
                         <div class="mb-3">
+                            <label class="form-label fw-semibold">Arbiter Group</label>
+                            <input type="text" class="form-control" @bind="typeArbiter" placeholder="ConfSiteAdmins (default)" disabled="@isLoading" />
+                        </div>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="removePerms" @bind="typeRemovePerms" disabled="@isLoading" />
+                            <label class="form-check-label" for="removePerms">Remove existing calendar permissions</label>
+                        </div>
+                        @if (selectedRoomType == "CEO")
+                        {
+                            <div class="alert alert-warning py-2">
+                                <small><strong>CEO type always removes all existing calendar permissions</strong> before applying new ones. This is automatic and cannot be disabled.</small>
+                            </div>
+                        }
+                        @if (typeRemovePerms && selectedRoomType != "CEO")
+                        {
+                            <div class="alert alert-danger py-2">
+                                <small><strong>Warning:</strong> All existing calendar permissions (except Default/Anonymous) will be removed before applying new ones. This is destructive and cannot be undone.</small>
+                            </div>
+                        }
+                        <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
                             <input type="text" class="form-control" @bind="typeTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
                         </div>
-                        <button class="btn btn-primary" @onclick="SetRoomType"
+                        <button class="btn btn-primary" @onclick="SetSingleRoomType"
                                 disabled="@(isLoading || string.IsNullOrWhiteSpace(typeRoomEmail) || string.IsNullOrWhiteSpace(selectedRoomType) || string.IsNullOrWhiteSpace(typeTicketNumber))">
-                            @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            @if (isLoading && !isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Set Type
                         </button>
                     </div>
                 </div>
             </div>
+
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header"><strong>CSV Bulk Upload — Room Type</strong></div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Ticket Number</label>
+                            <input type="text" class="form-control" @bind="csvTypeTicket" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">CSV File</label>
+                            <InputFile OnChange="HandleTypeCsvUpload" accept=".csv" disabled="@isLoading" />
+                            <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadTypeSampleCsv">Sample CSV</button>
+                        </div>
+                        @if (typePreview.Count > 0 && !typeApplied)
+                        {
+                            <div class="alert alert-info py-2">
+                                <strong>@typePreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
+                            </div>
+                            <button class="btn btn-success" @onclick="ApplyTypeCsv"
+                                    disabled="@(isLoading || string.IsNullOrWhiteSpace(csvTypeTicket))">
+                                @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Apply Changes
+                            </button>
+                        }
+                    </div>
+                </div>
+            </div>
         </div>
+
+        @* Type CSV Preview *@
+        @if (typePreview.Count > 0 && !typeApplied)
+        {
+            <div class="card mt-3">
+                <div class="card-header"><strong>Preview — Room Type Configuration</strong></div>
+                <div class="card-body p-0" style="overflow-x:auto">
+                    <table class="table table-sm table-striped mb-0">
+                        <thead>
+                            <tr>
+                                <th>#</th><th>Email</th><th>Type</th><th>Site</th><th>TimeZone</th>
+                                <th>CustomAttribute9</th><th>MailTip</th><th>Default/Anonymous</th>
+                                <th>BookInPolicy</th><th>Calendar Permissions</th><th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in typePreview)
+                            {
+                                <tr class="@(!row.RoomResolved ? "table-danger" : row.Warnings.Count > 0 ? "table-warning" : "")">
+                                    <td>@row.RowIndex</td>
+                                    <td><small>@row.Email</small></td>
+                                    <td><strong>@row.Type</strong></td>
+                                    <td>@(row.Site != "none" ? row.Site : "")</td>
+                                    <td><small>@row.TimeZone</small></td>
+                                    <td><small>@row.CustomAttribute9Tag</small></td>
+                                    <td><small class="text-truncate d-inline-block" style="max-width:200px" title="@row.MailTip">@row.MailTip</small></td>
+                                    <td><small>@row.DefaultCalPermission / @row.AnonymousCalPermission</small></td>
+                                    <td>
+                                        @foreach (var g in row.BookInPolicyGroups)
+                                        {
+                                            <small class="d-block text-muted">@g</small>
+                                        }
+                                    </td>
+                                    <td>
+                                        @foreach (var p in row.CalendarPermissions)
+                                        {
+                                            <small class="d-block">@p.User → @p.AccessRights</small>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (!row.RoomResolved) { <span class="text-danger">@row.ResolveError</span> }
+                                        else if (row.Warnings.Count > 0)
+                                        {
+                                            @foreach (var w in row.Warnings) { <small class="text-warning d-block">@w</small> }
+                                        }
+                                        else { <span class="text-success">Ready</span> }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        @* Type Results *@
+        @if (typeResults.Count > 0)
+        {
+            <div class="card mt-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>Results</strong>
+                    <small class="text-muted">@typeResults.Count(r => r.Success) / @typeResults.Count succeeded</small>
+                </div>
+                <div class="card-body p-0" style="overflow-x:auto">
+                    <table class="table table-sm mb-0">
+                        <thead><tr><th>Room</th><th>Status</th><th>Steps</th><th>Message</th></tr></thead>
+                        <tbody>
+                            @foreach (var r in typeResults)
+                            {
+                                <tr class="@(r.Success ? "" : "table-danger")">
+                                    <td><small>@r.Email</small></td>
+                                    <td>@(r.Success ? "OK" : "FAILED")</td>
+                                    <td>
+                                        @foreach (var s in r.Steps)
+                                        {
+                                            <small class="d-block @(s.Success ? "text-muted" : "text-danger")">
+                                                @(s.Success ? "+" : "x") @s.Stage @(s.Error != null ? $"— {s.Error}" : "")
+                                            </small>
+                                        }
+                                    </td>
+                                    <td><small>@r.Message</small></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
     }
 
+    @* Shared single-operation result *@
     @if (result != null)
     {
         <div class="row mt-3">
-            <div class="col-md-6">
-                <div class="alert @(result.Success ? "alert-success" : "alert-danger") alert-dismissible">
+            <div class="col-md-8">
+                <div class="alert @(result.Success ? "alert-success" : result.AdAttributeFixRequired ? "alert-warning" : "alert-danger") alert-dismissible">
                     @result.Message
-                    @if (!string.IsNullOrWhiteSpace(result.Detail))
+                    @if (result.AdAttributeFixRequired)
                     {
-                        <br /><small>@result.Detail</small>
+                        <br /><small>@result.AdAttributeDetail</small>
+                    }
+                    @if (result.Steps.Count > 0)
+                    {
+                        <hr class="my-2" />
+                        @foreach (var s in result.Steps)
+                        {
+                            <small class="d-block @(s.Success ? "text-muted" : "text-danger")">
+                                @(s.Success ? "+" : "x") @s.Stage @(s.Error != null ? $"— {s.Error}" : "")
+                            </small>
+                        }
                     }
                     <button type="button" class="btn-close" @onclick="() => result = null"></button>
                 </div>
@@ -207,29 +472,46 @@
     private bool authChecked;
     private bool isLoading;
     private bool isCsvProcessing;
-    private string activeTab = "setup";
+    private string activeTab = "finder";
 
-    // Single room setup fields
+    // Single room finder fields
     private string roomEmail = "";
     private string city = "";
+    private string countryOrRegion = "";
+    private string state = "";
     private string building = "";
     private int capacity = 1;
     private string floor = "";
+    private string floorLabel = "";
+    private string displayDevice = "";
+    private string videoDevice = "";
     private string timezone = "";
     private string ticketNumber = "";
 
-    // CSV fields
-    private string csvTicketNumber = "";
-    private List<CsvRoomRow> csvRows = new();
-    private List<CsvRoomResult> csvResults = new();
+    // Finder CSV
+    private string csvFinderTicket = "";
+    private List<RoomFinderPreviewRow> finderPreview = new();
+    private List<RoomOperationResult> finderResults = new();
+    private bool finderApplied;
+    private List<FinderCsvRow> finderCsvData = new();
 
-    // Room Type fields
+    // Single room type fields
     private string typeRoomEmail = "";
     private string selectedRoomType = "";
     private string typeTimezone = "";
+    private string typeArbiter = "";
+    private string typeSite = "none";
+    private bool typeRemovePerms;
     private string typeTicketNumber = "";
 
-    private PermissionResult? result;
+    // Type CSV
+    private string csvTypeTicket = "";
+    private List<RoomTypePreviewRow> typePreview = new();
+    private List<RoomOperationResult> typeResults = new();
+    private bool typeApplied;
+    private List<TypeCsvRow> typeCsvData = new();
+
+    private RoomOperationResult? result;
 
     protected override async Task OnInitializedAsync()
     {
@@ -250,6 +532,10 @@
         authChecked = true;
     }
 
+    // =========================================================================
+    // ROOM FINDER — Single Room
+    // =========================================================================
+
     private async Task SetupSingleRoom()
     {
         isLoading = true;
@@ -258,90 +544,67 @@
 
         var email = roomEmail.Trim();
         var ticket = ticketNumber.Trim();
-        var newCity = city.Trim();
-        var newBuilding = building.Trim();
-        var newFloor = floor.Trim();
-        var newTimezone = timezone.Trim();
 
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                result = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                AuditFinderAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
                 return;
             }
 
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded)
-            {
-                result = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
-                return;
-            }
+            if (!await ReauthorizeAsync()) return;
 
-            // Capture old values before mutation (best-effort)
+            // Capture old values
             Dictionary<string, object?>? oldValues = null;
             try
             {
                 var existing = await RoomService.GetRoomInfoAsync(email);
                 if (existing != null)
-                {
-                    oldValues = new Dictionary<string, object?>
-                    {
-                        ["city"] = existing.City,
-                        ["building"] = existing.Building,
-                        ["capacity"] = existing.Capacity,
-                        ["floor"] = existing.Floor,
-                        ["timezone"] = existing.TimeZone
-                    };
-                }
+                    oldValues = new() { ["city"] = existing.City, ["building"] = existing.Building, ["capacity"] = existing.Capacity, ["floor"] = existing.Floor, ["timezone"] = existing.TimeZone };
             }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before metadata update", email);
-            }
+            catch { }
+
+            using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
+
+            result = await RoomService.SetRoomMetadataAndListAsync(
+                email, city.Trim(), building.Trim(), capacity,
+                floor.Trim(), floorLabel.Trim(), displayDevice.Trim(), videoDevice.Trim(),
+                countryOrRegion.Trim(), state.Trim(), timezone.Trim());
+
+            op.Complete(result.Success, result.Message);
 
             var newValues = new Dictionary<string, object?>
             {
-                ["city"] = newCity,
-                ["building"] = newBuilding,
-                ["capacity"] = capacity,
-                ["floor"] = newFloor,
-                ["timezone"] = newTimezone
+                ["city"] = city, ["building"] = building, ["capacity"] = capacity,
+                ["floor"] = floor, ["floorLabel"] = floorLabel, ["timezone"] = timezone,
+                ["countryOrRegion"] = countryOrRegion, ["state"] = state
             };
-
-            result = await RoomService.SetRoomMetadataAsync(email, newCity, newBuilding, capacity, newFloor, newTimezone);
-
-            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, oldValues: oldValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetMetadata"); }
-
-            if (result.Success)
-            {
-                var addResult = await RoomService.AddToRoomListAsync(email, newCity);
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_AddToRoomList", email, addResult.Success, ticket, errorDetail: addResult.Success ? null : addResult.Message, newValues: new Dictionary<string, object?> { ["roomList"] = $"RoomList-{newCity}" }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_AddToRoomList"); }
-
-                if (!addResult.Success)
-                    result = PermissionResult.Fail($"Metadata set but failed to add to room list: {addResult.Message}");
-            }
+            AuditFinderAction(email, result.Success, ticket, result.Success ? null : result.Message, oldValues, newValues);
         }
         catch (Exception ex)
         {
-            result = PermissionResult.Fail(ex.Message);
-            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", email, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+            result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
+            AuditFinderAction(email, false, ticket, ex.Message);
         }
-        finally
-        {
-            isLoading = false;
-        }
+        finally { isLoading = false; }
     }
 
-    private async Task HandleCsvUpload(InputFileChangeEventArgs e)
+    // =========================================================================
+    // ROOM FINDER — CSV Upload + Preview + Apply
+    // =========================================================================
+
+    private async Task HandleFinderCsvUpload(InputFileChangeEventArgs e)
     {
-        csvRows = new();
-        csvResults = new();
+        finderPreview = new();
+        finderResults = new();
+        finderApplied = false;
+        finderCsvData = new();
         result = null;
+        isLoading = true;
+        await Task.Yield();
 
         try
         {
@@ -349,138 +612,178 @@
             using var reader = new System.IO.StreamReader(stream);
             var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
             {
-                HeaderValidated = null,
-                MissingFieldFound = null
+                HeaderValidated = null, MissingFieldFound = null
             };
             using var csv = new CsvReader(reader, csvConfig);
             await csv.ReadAsync();
             csv.ReadHeader();
+            int idx = 1;
 
             while (await csv.ReadAsync())
             {
-                var email = csv.GetField("PrimarySmtpAddress")?.Trim();
+                var email = csv.GetField("PrimarySmtpAddress")?.Trim()
+                    ?? csv.GetField("Identity")?.Trim()
+                    ?? csv.GetField("EmailAddress")?.Trim()
+                    ?? csv.GetField("Mail")?.Trim()
+                    ?? csv.GetField("Email")?.Trim();
                 if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;
 
-                csvRows.Add(new CsvRoomRow
+                finderCsvData.Add(new FinderCsvRow
                 {
-                    PrimarySmtpAddress = email,
+                    Email = email,
                     City = csv.GetField("City")?.Trim() ?? "",
-                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? "",
+                    CountryOrRegion = csv.GetField("CountryOrRegion")?.Trim() ?? "",
+                    State = csv.GetField("State")?.Trim() ?? "",
                     Building = csv.GetField("Building")?.Trim() ?? "",
                     Capacity = int.TryParse(csv.GetField("Capacity")?.Trim(), out var c) ? c : 1,
-                    Floor = csv.GetField("Floor")?.Trim() ?? ""
+                    Floor = csv.GetField("Floor")?.Trim() ?? "",
+                    FloorLabel = csv.GetField("FloorLabel")?.Trim() ?? "",
+                    DisplayDeviceName = csv.GetField("DisplayDeviceName")?.Trim() ?? "",
+                    VideoDeviceName = csv.GetField("VideoDeviceName")?.Trim() ?? "",
+                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? ""
                 });
+                idx++;
+            }
+
+            // Resolve each room and build preview
+            int rowNum = 1;
+            foreach (var row in finderCsvData)
+            {
+                var preview = new RoomFinderPreviewRow
+                {
+                    RowIndex = rowNum++,
+                    Email = row.Email,
+                    City = row.City,
+                    CountryOrRegion = row.CountryOrRegion,
+                    State = row.State,
+                    Building = row.Building,
+                    Capacity = row.Capacity,
+                    Floor = row.Floor,
+                    FloorLabel = row.FloorLabel,
+                    DisplayDeviceName = row.DisplayDeviceName,
+                    VideoDeviceName = row.VideoDeviceName,
+                    TimeZone = row.TimeZone
+                };
+
+                try
+                {
+                    var info = await RoomService.GetRoomInfoAsync(row.Email);
+                    if (info != null)
+                    {
+                        preview.RoomResolved = true;
+                        preview.DisplayName = info.DisplayName;
+                    }
+                    else
+                    {
+                        preview.RoomResolved = false;
+                        preview.ResolveError = "Room not found";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    preview.RoomResolved = false;
+                    preview.ResolveError = ex.Message;
+                }
+
+                if (!string.IsNullOrWhiteSpace(row.City) && preview.RoomResolved)
+                {
+                    try
+                    {
+                        var (listName, listExists, isLegacy) = await RoomService.ResolveRoomListAsync(row.City);
+                        preview.RoomListName = listName ?? $"{row.City} Conference Rooms";
+                        preview.RoomListExists = listExists;
+                        preview.IsLegacyRoomList = isLegacy;
+                        if (isLegacy)
+                            preview.Warnings.Add($"Using legacy room list '{listName}'. New naming would be '{row.City} Conference Rooms'.");
+                    }
+                    catch { preview.RoomListName = $"{row.City} Conference Rooms"; }
+                }
+
+                if (string.IsNullOrWhiteSpace(row.City))
+                    preview.Warnings.Add("Missing City — will not be added to a room list.");
+                if (string.IsNullOrWhiteSpace(row.TimeZone))
+                    preview.Warnings.Add("Missing TimeZone — timezone will not be set.");
+
+                finderPreview.Add(preview);
+                StateHasChanged();
             }
         }
         catch (Exception ex)
         {
-            result = PermissionResult.Fail($"Failed to parse CSV: {ex.Message}");
+            result = new RoomOperationResult { Success = false, Message = $"Failed to parse CSV: {ex.Message}" };
         }
+        finally { isLoading = false; }
     }
 
-    private async Task ProcessCsvRooms()
+    private async Task ApplyFinderCsv()
     {
         isLoading = true;
         isCsvProcessing = true;
-        csvResults = new();
+        finderResults = new();
         await Task.Yield();
 
         try
         {
-            var ticket = csvTicketNumber.Trim();
+            var ticket = csvFinderTicket.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", "(bulk)", false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                AuditFinderAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
                 return;
             }
+            if (!await ReauthorizeAsync()) return;
 
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded)
+            for (int i = 0; i < finderCsvData.Count; i++)
             {
-                result = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", "(bulk)", false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
-                return;
-            }
+                var row = finderCsvData[i];
+                var preview = finderPreview[i];
+                if (!preview.RoomResolved)
+                {
+                    finderResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = preview.ResolveError ?? "Not resolved" });
+                    continue;
+                }
 
-            foreach (var row in csvRows)
-            {
                 try
                 {
-                    // Capture old values before mutation (best-effort)
-                    Dictionary<string, object?>? oldValues = null;
-                    try
-                    {
-                        var existing = await RoomService.GetRoomInfoAsync(row.PrimarySmtpAddress);
-                        if (existing != null)
-                        {
-                            oldValues = new Dictionary<string, object?>
-                            {
-                                ["city"] = existing.City,
-                                ["building"] = existing.Building,
-                                ["capacity"] = existing.Capacity,
-                                ["floor"] = existing.Floor,
-                                ["timezone"] = existing.TimeZone
-                            };
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before bulk metadata update", row.PrimarySmtpAddress);
-                    }
+                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata_Bulk", currentUser, clientIpAddress, row.Email, ticket);
+                    var r = await RoomService.SetRoomMetadataAndListAsync(
+                        row.Email, row.City, row.Building, row.Capacity,
+                        row.Floor, row.FloorLabel, row.DisplayDeviceName, row.VideoDeviceName,
+                        row.CountryOrRegion, row.State, row.TimeZone);
+                    op.Complete(r.Success, r.Message);
 
-                    var newValues = new Dictionary<string, object?>
-                    {
-                        ["city"] = row.City,
-                        ["building"] = row.Building,
-                        ["capacity"] = row.Capacity,
-                        ["floor"] = row.Floor,
-                        ["timezone"] = row.TimeZone
-                    };
-
-                    var r = await RoomService.SetRoomMetadataAsync(row.PrimarySmtpAddress, row.City, row.Building, row.Capacity, row.Floor, row.TimeZone);
-
-                    try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", row.PrimarySmtpAddress, r.Success, ticket, errorDetail: r.Success ? null : r.Message, oldValues: oldValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
-
-                    if (r.Success && !string.IsNullOrWhiteSpace(row.City))
-                    {
-                        var addResult = await RoomService.AddToRoomListAsync(row.PrimarySmtpAddress, row.City);
-                        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_AddToRoomList", row.PrimarySmtpAddress, addResult.Success, ticket, errorDetail: addResult.Success ? null : addResult.Message, newValues: new Dictionary<string, object?> { ["roomList"] = $"RoomList-{row.City}" }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
-
-                        if (!addResult.Success)
-                            r = PermissionResult.Fail($"Metadata set but room list failed: {addResult.Message}");
-                    }
-
-                    csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = r.Success, Message = r.Message });
+                    finderResults.Add(r);
+                    AuditFinderAction(row.Email, r.Success, ticket, r.Success ? null : r.Message);
                 }
                 catch (Exception ex)
                 {
-                    csvResults.Add(new CsvRoomResult { Email = row.PrimarySmtpAddress, Success = false, Message = ex.Message });
-                    try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", row.PrimarySmtpAddress, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Bulk audit failed for {Room}", row.PrimarySmtpAddress); }
+                    finderResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = ex.Message });
+                    AuditFinderAction(row.Email, false, ticket, ex.Message);
                 }
-
                 StateHasChanged();
             }
 
-            var successCount = csvResults.Count(r => r.Success);
-            result = successCount == csvResults.Count
-                ? PermissionResult.Ok($"All {successCount} rooms configured successfully.")
-                : PermissionResult.Fail($"{successCount}/{csvResults.Count} rooms succeeded. See table for details.");
+            finderApplied = true;
+            var success = finderResults.Count(r => r.Success);
+            result = new RoomOperationResult
+            {
+                Success = success == finderResults.Count,
+                Message = $"{success}/{finderResults.Count} rooms configured."
+            };
         }
         catch (Exception ex)
         {
-            result = PermissionResult.Fail(ex.Message);
+            result = new RoomOperationResult { Success = false, Message = ex.Message };
         }
-        finally
-        {
-            isLoading = false;
-            isCsvProcessing = false;
-        }
+        finally { isLoading = false; isCsvProcessing = false; }
     }
 
-    private async Task SetRoomType()
+    // =========================================================================
+    // ROOM TYPE — Single Room
+    // =========================================================================
+
+    private async Task SetSingleRoomType()
     {
         isLoading = true;
         result = null;
@@ -488,86 +791,366 @@
 
         var email = typeRoomEmail.Trim();
         var ticket = typeTicketNumber.Trim();
-        var newTimezone = typeTimezone.Trim();
 
         try
         {
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
-                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: $"Ticket validation failed: {ticketValidation.Message}"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+                result = new RoomOperationResult { Email = email, Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                AuditTypeAction(email, false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+            if (!await ReauthorizeAsync()) return;
+
+            if (!Enum.TryParse<RoomType>(selectedRoomType, out var roomType))
+            {
+                result = new RoomOperationResult { Email = email, Success = false, Message = $"Invalid room type: {selectedRoomType}" };
                 return;
             }
 
-            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
-            if (!authCheck.Succeeded)
-            {
-                result = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
-                return;
-            }
+            // Protected principal check
+            var ppResult = await CheckProtectedPrincipalAsync(email, ticket, "ConferenceRooms_SetType");
+            if (ppResult != null) { result = ppResult; return; }
 
-            // Capture old state before mutation (best-effort)
-            Dictionary<string, object?>? oldTypeValues = null;
-            try
-            {
-                var existing = await RoomService.GetRoomInfoAsync(email);
-                if (existing != null)
-                {
-                    oldTypeValues = new Dictionary<string, object?>
-                    {
-                        ["timezone"] = existing.TimeZone
-                    };
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Could not retrieve existing room info for {Room} before type change", email);
-            }
-
-            result = await RoomService.SetRoomTypeAsync(email, selectedRoomType, newTimezone);
+            using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
+            result = await RoomService.SetRoomTypeAsync(email, roomType, typeTimezone.Trim(),
+                selectedRoomType == "Restricted" ? typeSite : "none",
+                string.IsNullOrWhiteSpace(typeArbiter) ? null : typeArbiter.Trim(),
+                typeRemovePerms);
+            op.Complete(result.Success, result.Message);
 
             var newValues = new Dictionary<string, object?>
             {
-                ["roomType"] = selectedRoomType,
-                ["timezone"] = newTimezone
+                ["roomType"] = selectedRoomType, ["timezone"] = typeTimezone,
+                ["site"] = typeSite, ["removePerms"] = typeRemovePerms
             };
-            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, result.Success, ticket, errorDetail: result.Success ? null : result.Message, oldValues: oldTypeValues, newValues: newValues); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for ConferenceRooms_SetType"); }
+            AuditTypeAction(email, result.Success, ticket, result.Success ? null : result.Message, newValues: newValues);
         }
         catch (Exception ex)
         {
-            result = PermissionResult.Fail(ex.Message);
-            try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", email, false, ticket, errorDetail: ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed"); }
+            result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
+            AuditTypeAction(email, false, ticket, ex.Message);
         }
-        finally
+        finally { isLoading = false; }
+    }
+
+    // =========================================================================
+    // ROOM TYPE — CSV Upload + Preview + Apply
+    // =========================================================================
+
+    private async Task HandleTypeCsvUpload(InputFileChangeEventArgs e)
+    {
+        typePreview = new();
+        typeResults = new();
+        typeApplied = false;
+        typeCsvData = new();
+        result = null;
+        isLoading = true;
+        await Task.Yield();
+
+        try
         {
-            isLoading = false;
+            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
+            using var reader = new System.IO.StreamReader(stream);
+            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            {
+                HeaderValidated = null, MissingFieldFound = null
+            };
+            using var csv = new CsvReader(reader, csvConfig);
+            await csv.ReadAsync();
+            csv.ReadHeader();
+
+            while (await csv.ReadAsync())
+            {
+                var email = csv.GetField("Identity")?.Trim()
+                    ?? csv.GetField("PrimarySmtpAddress")?.Trim()
+                    ?? csv.GetField("EmailAddress")?.Trim()
+                    ?? csv.GetField("Mail")?.Trim()
+                    ?? csv.GetField("Email")?.Trim();
+                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;
+
+                var typeStr = csv.GetField("Type")?.Trim();
+                var tz = csv.GetField("TimeZone")?.Trim() ?? "";
+                var site = csv.GetField("Site")?.Trim() ?? "none";
+                var arbiter = csv.GetField("Arbiter")?.Trim() ?? "";
+                var removePermField = csv.GetField("RemoveExistingPermissions")?.Trim();
+                bool removePerm = false;
+                if (!string.IsNullOrWhiteSpace(removePermField))
+                {
+                    if (string.Equals(removePermField, "True", StringComparison.OrdinalIgnoreCase))
+                        removePerm = true;
+                    else if (!string.Equals(removePermField, "False", StringComparison.OrdinalIgnoreCase))
+                    {
+                        typePreview.Add(new RoomTypePreviewRow
+                        {
+                            RowIndex = typeCsvData.Count + 1, Email = email ?? "", RoomResolved = false,
+                            ResolveError = $"Invalid value '{removePermField}' for RemoveExistingPermissions. Use True or False."
+                        });
+                        continue;
+                    }
+                }
+
+                typeCsvData.Add(new TypeCsvRow
+                {
+                    Email = email,
+                    Type = typeStr ?? "",
+                    TimeZone = tz,
+                    Site = string.IsNullOrWhiteSpace(site) ? "none" : site,
+                    Arbiter = arbiter,
+                    RemoveExistingPermissions = removePerm
+                });
+            }
+
+            // Resolve and build preview
+            int rowNum = 1;
+            foreach (var row in typeCsvData)
+            {
+                if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
+                {
+                    typePreview.Add(new RoomTypePreviewRow
+                    {
+                        RowIndex = rowNum++, Email = row.Email, RoomResolved = false,
+                        ResolveError = $"Invalid room type: '{row.Type}'. Valid: Standard, Video, Restricted, Exception, CEO, Executive"
+                    });
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(row.TimeZone))
+                {
+                    typePreview.Add(new RoomTypePreviewRow
+                    {
+                        RowIndex = rowNum++, Email = row.Email, RoomResolved = false,
+                        ResolveError = "Missing TimeZone field"
+                    });
+                    continue;
+                }
+
+                string displayName = "";
+                bool resolved = false;
+                string? resolveError = null;
+                try
+                {
+                    var info = await RoomService.GetRoomInfoAsync(row.Email);
+                    if (info != null) { resolved = true; displayName = info.DisplayName; }
+                    else resolveError = "Room not found";
+                }
+                catch (Exception ex) { resolveError = ex.Message; }
+
+                var preview = RoomService.BuildTypePreview(
+                    row.Email, displayName, roomType, row.TimeZone,
+                    row.Site, row.Arbiter, row.RemoveExistingPermissions);
+                preview.RowIndex = rowNum++;
+                preview.RoomResolved = resolved;
+                preview.ResolveError = resolveError;
+
+                typePreview.Add(preview);
+                StateHasChanged();
+            }
         }
+        catch (Exception ex)
+        {
+            result = new RoomOperationResult { Success = false, Message = $"Failed to parse CSV: {ex.Message}" };
+        }
+        finally { isLoading = false; }
     }
 
-    private async Task DownloadSampleCsv()
+    private async Task ApplyTypeCsv()
     {
-        var content = "PrimarySmtpAddress,City,TimeZone,Building,Capacity,Floor\nroom1@company.com,New York,Eastern Standard Time,HQ,10,3\n";
+        isLoading = true;
+        isCsvProcessing = true;
+        typeResults = new();
+        await Task.Yield();
+
+        try
+        {
+            var ticket = csvTypeTicket.Trim();
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                result = new RoomOperationResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                AuditTypeAction("(bulk)", false, ticket, $"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+            if (!await ReauthorizeAsync()) return;
+
+            for (int i = 0; i < typeCsvData.Count; i++)
+            {
+                var row = typeCsvData[i];
+                var preview = typePreview[i];
+                if (!preview.RoomResolved)
+                {
+                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = preview.ResolveError ?? "Not resolved" });
+                    continue;
+                }
+
+                if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
+                {
+                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = $"Invalid type: {row.Type}" });
+                    continue;
+                }
+
+                try
+                {
+                    // Protected principal check
+                    var ppResult = await CheckProtectedPrincipalAsync(row.Email, ticket, "ConferenceRooms_SetType_Bulk");
+                    if (ppResult != null)
+                    {
+                        typeResults.Add(ppResult);
+                        continue;
+                    }
+
+                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType_Bulk", currentUser, clientIpAddress, row.Email, ticket);
+                    var r = await RoomService.SetRoomTypeAsync(row.Email, roomType, row.TimeZone,
+                        row.Site, string.IsNullOrWhiteSpace(row.Arbiter) ? null : row.Arbiter,
+                        row.RemoveExistingPermissions);
+                    op.Complete(r.Success, r.Message);
+
+                    typeResults.Add(r);
+                    AuditTypeAction(row.Email, r.Success, ticket, r.Success ? null : r.Message,
+                        newValues: new() { ["roomType"] = row.Type, ["timezone"] = row.TimeZone, ["site"] = row.Site });
+                }
+                catch (Exception ex)
+                {
+                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = ex.Message });
+                    AuditTypeAction(row.Email, false, ticket, ex.Message);
+                }
+                StateHasChanged();
+            }
+
+            typeApplied = true;
+            var success = typeResults.Count(r => r.Success);
+            result = new RoomOperationResult
+            {
+                Success = success == typeResults.Count,
+                Message = $"{success}/{typeResults.Count} rooms configured."
+            };
+        }
+        catch (Exception ex)
+        {
+            result = new RoomOperationResult { Success = false, Message = ex.Message };
+        }
+        finally { isLoading = false; isCsvProcessing = false; }
+    }
+
+    // =========================================================================
+    // Shared Helpers
+    // =========================================================================
+
+    private async Task<bool> ReauthorizeAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "ConferenceRooms");
+        if (!authCheck.Succeeded)
+        {
+            result = new RoomOperationResult { Success = false, Message = "Authorization denied." };
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<RoomOperationResult?> CheckProtectedPrincipalAsync(string identity, string ticket, string action)
+    {
+        try
+        {
+            var (resolved, status) = await ProtectedPrincipalService.ResolveWithStatusAsync(identity);
+            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? "Identity is ambiguous — matches multiple AD users."
+                    : "Protection check unavailable.";
+                AuditTypeAction(identity, false, ticket, $"{reason} — blocked");
+                return new RoomOperationResult { Email = identity, Success = false, Message = reason };
+            }
+            if (resolved != null)
+            {
+                var check = await ProtectedPrincipalService.CheckAsync(resolved);
+                if (check.CheckFailed)
+                {
+                    AuditTypeAction(identity, false, ticket, $"Protection check failed: {check.Reason}");
+                    return new RoomOperationResult { Email = identity, Success = false, Message = $"Protection check failed: {check.Reason}" };
+                }
+                if (check.IsProtected)
+                {
+                    AuditTypeAction(identity, false, ticket, $"Protected principal — matched rules: {string.Join(", ", check.MatchedRules)}");
+                    return new RoomOperationResult { Email = identity, Success = false, Message = "This is a protected principal. Operation not permitted." };
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
+            AuditTypeAction(identity, false, ticket, $"Protection check exception: {ex.Message}");
+            return new RoomOperationResult { Email = identity, Success = false, Message = $"Protection check error: {ex.Message}" };
+        }
+        return null;
+    }
+
+    private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
+        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null)
+    {
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues); }
+        catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
+    }
+
+    private void AuditTypeAction(string target, bool success, string ticket, string? error = null,
+        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null)
+    {
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues); }
+        catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
+    }
+
+    // =========================================================================
+    // CSV Downloads
+    // =========================================================================
+
+    private async Task DownloadFinderSampleCsv()
+    {
+        var content = "PrimarySmtpAddress,Name,City,CountryOrRegion,State,Building,Capacity,Floor,FloorLabel,DisplayDeviceName,VideoDeviceName,TimeZone\n"
+            + "room1@company.com,Conference Room 1,Boston,USA,MA,Building A,10,2,Second Floor,TV,Polycom,Eastern Standard Time\n"
+            + "room2@company.com,Conference Room 2,London,UK,,Building B,20,1,First Floor,Display,Teams,GMT Standard Time\n";
         var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
-        await JS.InvokeVoidAsync("downloadFile", "conference_rooms_sample.csv", "text/csv", base64);
+        await JS.InvokeVoidAsync("downloadFile", "room_finder_sample.csv", "text/csv", base64);
     }
 
-    private class CsvRoomRow
+    private async Task DownloadTypeSampleCsv()
     {
-        public string PrimarySmtpAddress { get; set; } = "";
+        var content = "Identity,Type,TimeZone,Site,Arbiter,RemoveExistingPermissions\n"
+            + "room1@company.com,Standard,Eastern Standard Time,,,\n"
+            + "room2@company.com,Video,Pacific Standard Time,,,\n"
+            + "auditorium@company.com,Restricted,Central Standard Time,ADGT,,\n"
+            + "boardroom@company.com,Executive,Eastern Standard Time,,,\n"
+            + "ceo-conference@company.com,CEO,Eastern Standard Time,,,True\n";
+        var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
+        await JS.InvokeVoidAsync("downloadFile", "room_type_sample.csv", "text/csv", base64);
+    }
+
+    // =========================================================================
+    // CSV Row Models
+    // =========================================================================
+
+    private class FinderCsvRow
+    {
+        public string Email { get; set; } = "";
         public string City { get; set; } = "";
-        public string TimeZone { get; set; } = "";
+        public string CountryOrRegion { get; set; } = "";
+        public string State { get; set; } = "";
         public string Building { get; set; } = "";
         public int Capacity { get; set; }
         public string Floor { get; set; } = "";
+        public string FloorLabel { get; set; } = "";
+        public string DisplayDeviceName { get; set; } = "";
+        public string VideoDeviceName { get; set; } = "";
+        public string TimeZone { get; set; } = "";
     }
 
-    private class CsvRoomResult
+    private class TypeCsvRow
     {
         public string Email { get; set; } = "";
-        public bool Success { get; set; }
-        public string Message { get; set; } = "";
+        public string Type { get; set; } = "";
+        public string TimeZone { get; set; } = "";
+        public string Site { get; set; } = "none";
+        public string Arbiter { get; set; } = "";
+        public bool RemoveExistingPermissions { get; set; }
     }
 }

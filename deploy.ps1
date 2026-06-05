@@ -75,6 +75,32 @@ function SecureString-ToPlain {
         [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Secure))
 }
 
+function Write-DeploymentManifest {
+    param([string]$PublishFolder, [string]$RepoRoot)
+
+    $dllPath = Join-Path $PublishFolder "ExchangeAdminWeb.dll"
+    $version = if (Test-Path -LiteralPath $dllPath) {
+        (Get-Item $dllPath | Select-Object -ExpandProperty VersionInfo).FileVersion
+    } else { "unknown" }
+
+    $gitCommit = try { (git -C $RepoRoot rev-parse HEAD 2>$null) } catch { "unknown" }
+    $gitBranch = try { (git -C $RepoRoot rev-parse --abbrev-ref HEAD 2>$null) } catch { "unknown" }
+    $gitDirty = try { [bool](git -C $RepoRoot status --porcelain 2>$null) } catch { $false }
+
+    $manifest = [ordered]@{
+        version   = ($version -split '\.')[0..2] -join '.'
+        gitCommit = $gitCommit
+        gitBranch = $gitBranch
+        gitDirty  = $gitDirty
+        buildTime = (Get-Date).ToUniversalTime().ToString("o")
+        repoPath  = $RepoRoot
+    }
+
+    $manifestPath = Join-Path $PublishFolder "deployment-manifest.json"
+    $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    Write-Success "Deployment manifest written: v$($manifest.version) @ $($gitCommit.Substring(0, [Math]::Min(8, $gitCommit.Length)))"
+}
+
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
@@ -354,6 +380,7 @@ if ($isUpgrade) {
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3
 
+    $deploymentReadyForManifest = $false
     try {
         Write-Step "Deploying files (robocopy /MIR)"
         $robocopyArgs = @(
@@ -429,10 +456,14 @@ if ($isUpgrade) {
         }
 
         Write-Success "Configuration reconciled"
+        $deploymentReadyForManifest = $true
     } finally {
         Write-Step "Starting app pool"
         Start-AppPoolWithRetry -Name $AppPoolName
         Write-Success "App pool started"
+        if ($deploymentReadyForManifest) {
+            Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+        }
     }
 
     Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
@@ -486,6 +517,7 @@ if ($isUpgrade) {
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3
 
+    $deploymentReadyForManifest = $false
     try {
         # Deploy files
         Write-Step "Deploying files (robocopy /MIR)"
@@ -562,10 +594,14 @@ if ($isUpgrade) {
 
         $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
         Write-Success "appsettings.json generated"
+        $deploymentReadyForManifest = $true
     } finally {
         Write-Step "Starting app pool"
         Start-AppPoolWithRetry -Name $AppPoolName
         Write-Success "App pool started"
+        if ($deploymentReadyForManifest) {
+            Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
+        }
     }
 }
 

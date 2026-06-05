@@ -5,23 +5,23 @@
 ### Columns
 - `Target` - Target mailbox (accepts SMTP, UPN, or SamAccountName)
 - `User` - User to grant/revoke permissions (accepts SMTP, UPN, or SamAccountName)
-- `FullAccess` - Grant/revoke Full Access permission (Yes/No/True/False/1/0/X)
-- `SendAs` - Grant/revoke Send As permission (Yes/No/True/False/1/0/X)
-- `AutoMapping` - (Optional) Auto-add to Outlook for Full Access (Yes/No/True/False/1/0/X, defaults to Yes)
+- `FullAccess` - Grant/revoke Full Access permission (True/False)
+- `SendAs` - Grant/revoke Send As permission (True/False)
+- `AutoMapping` - (Optional) Auto-add to Outlook for Full Access (True/False, defaults to True)
 
 ### Example - Add Permissions
 ```csv
 Target,User,FullAccess,SendAs,AutoMapping
-helpdesk@example.com,jsmith,Yes,Yes,Yes
-finance@example.com,jdoe,Yes,No,No
-sales@example.com,DOMAIN\bwilson,No,Yes,
+helpdesk@example.com,jsmith,True,True,True
+finance@example.com,jdoe,True,False,False
+sales@example.com,DOMAIN\bwilson,False,True,
 ```
 
 ### Example - Remove Permissions
 ```csv
 Target,User,FullAccess,SendAs
-helpdesk@example.com,jsmith,Yes,Yes
-finance@example.com,jdoe,Yes,No
+helpdesk@example.com,jsmith,True,True
+finance@example.com,jdoe,True,False
 ```
 
 ---
@@ -76,9 +76,7 @@ manager@example.com,exemployee@example.com
 
 - **Calendar Folders**: The app automatically detects the correct calendar folder name for each mailbox (handles international/localized folder names like "Kalender", "Calendrier", etc.)
 
-- **Boolean Values**: For Yes/No fields, accepted values are:
-  - **True**: `Yes`, `True`, `1`, `X` (case-insensitive)
-  - **False**: `No`, `False`, `0`, or empty
+- **Boolean Values**: Use `True` or `False` (case-insensitive). Any other value is rejected with an error. Optional boolean fields left blank use their documented default.
 
 - **File Size Limit**: 10 MB maximum CSV file size
 

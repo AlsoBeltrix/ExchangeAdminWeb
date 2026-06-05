@@ -593,12 +593,15 @@ public abstract class ExchangeServiceBase
         return ParseSizeToGB(sizeString) ?? 0;
     }
 
-    protected static bool ParseBool(string? value) =>
-        value?.Trim().ToLowerInvariant() switch
-        {
-            "yes" or "true" or "1" or "x" => true,
-            _ => false
-        };
+    protected static bool ParseBool(string? value, string fieldName = "field")
+    {
+        var trimmed = value?.Trim();
+        if (string.Equals(trimmed, "True", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (string.Equals(trimmed, "False", StringComparison.OrdinalIgnoreCase))
+            return false;
+        throw new FormatException($"Invalid value '{value}' for {fieldName}. Use True or False.");
+    }
 
     // -------------------------------------------------------------------------
     // Connection error detection

@@ -118,9 +118,9 @@ public class MailboxPermissionService : ExchangeServiceBase
         {
             try
             {
-                var fullAccess = ParseBool(row.FullAccess);
-                var sendAs = ParseBool(row.SendAs);
-                var autoMap = ParseBool(row.AutoMapping ?? "true");
+                var fullAccess = ParseBool(row.FullAccess, "FullAccess");
+                var sendAs = ParseBool(row.SendAs, "SendAs");
+                var autoMap = ParseBool(string.IsNullOrWhiteSpace(row.AutoMapping) ? "True" : row.AutoMapping, "AutoMapping");
 
                 if (!fullAccess && !sendAs)
                 {

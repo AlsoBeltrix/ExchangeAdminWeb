@@ -254,6 +254,17 @@
                                     </div>
                                 }
                             }
+                            else if (field.FieldType == ConfigFieldType.AdGroup)
+                            {
+                                <ADGroupAutocomplete Value="@GetConfigValue(field.Key, field.DefaultValue)"
+                                                     ValueChanged="(v) => SetConfigValue(capturedKey, v)"
+                                                     Placeholder="@field.Description"
+                                                     Disabled="@saving" />
+                                @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                                {
+                                    <div class="form-text">@field.Description</div>
+                                }
+                            }
                             else
                             {
                                 <input type="text"
