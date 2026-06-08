@@ -43,6 +43,7 @@ Thumbs.db
 # Claude Code & Agents
 .claude/
 .antigravitycli/
+.playwright-mcp/
 
 # Local/private cleanup archive
 _not_for_github/

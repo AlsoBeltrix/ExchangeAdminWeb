@@ -1,7 +1,8 @@
 # ExchangeAdminWeb Module Developer Guide
 
-Version: 1.2
-Host baseline: ExchangeAdminWeb 2.2.x
+Version: 1.3
+Host baseline: ExchangeAdminWeb 2.3.0
+Last verified against code: commit 6e2fbb6 (2026-06-05)
 
 ## Purpose
 
@@ -213,6 +214,8 @@ public sealed record AdminModuleDescriptor
     public required bool IsSystemModule { get; init; }
     public string Version { get; init; } = "1.0.0";
     public required ModulePermission MainPermission { get; init; }
+    public string? DependsOn { get; init; }
+    public bool IsConfigOnly { get; init; }
     public IReadOnlyList<ModulePermission> GranularPermissions { get; init; } = [];
     public IReadOnlyList<ModuleConfigField> ConfigFields { get; init; } = [];
 }
@@ -277,6 +280,19 @@ new()
 - `ConfigFields` are string-valued. Do not stuff complex structured config into
   a single field unless the module explicitly parses and validates it
   fail-closed. Prefer a dedicated config fragment for complex data.
+- `DependsOn` optionally names another module ID this module requires. The
+  catalog rejects self-dependencies, unknown IDs, and dependency cycles at
+  startup. Enablement cascades at runtime:
+  `ModuleEnablementService.IsModuleEnabled` reports a module disabled when any
+  module in its `DependsOn` chain is disabled, and Admin Settings shows such
+  modules as parent-disabled. Exchange-backed modules declare
+  `DependsOn = "ExchangeOnline"`.
+- `IsConfigOnly` marks a module that exists to hold shared configuration
+  consumed by dependent modules (current example: `ExchangeOnline`).
+  Config-only modules are excluded from home page cards, the operational
+  sidebar, the enablement toggle list, and configurable policy aliases. Their
+  page is reached through config navigation, and its Razor `[Authorize]`
+  policy is `AdminSettings`, not the module's main permission alias.
 
 ## Categories And Navigation
 
@@ -454,7 +470,10 @@ public event Action<string>? ConfigSaved;
 
 Rules:
 
-- Treat `IsCorrupt` as fail-closed for privileged operations.
+- Treat `IsCorrupt` as fail-closed for privileged operations. For a specific
+  module's state, prefer the per-module overloads `IsModuleCorrupt(moduleId)`
+  and `HasModuleConfigFile(moduleId)`; the parameterless `IsCorrupt` and
+  `HasConfigFile` are aggregate views across all modules.
 - Required config missing means the operation must not proceed.
 - Do not store secrets in module config.
 - For values that need immediate runtime effect, read from `ModuleConfigService`
