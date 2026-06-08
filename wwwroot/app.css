@@ -64,6 +64,8 @@ h1:focus {
 .bi {
     display: inline-block;
     position: relative;
+    flex: 0 0 1.25rem;
+    min-width: 1.25rem;
     width: 1.25rem;
     height: 1.25rem;
     margin-right: 0.75rem;
@@ -185,11 +187,6 @@ html.dark {
 html.dark body {
     background-color: #1a1d21;
     color: #e0e0e0;
-}
-
-html.dark .top-row {
-    background-color: #2b2f33 !important;
-    border-bottom-color: #3a3f44 !important;
 }
 
 html.dark .card {
@@ -379,8 +376,9 @@ html.dark .sidebar {
 }
 
 html.dark {
-    --toprow-bg: #1e2128;
-    --toprow-border: rgba(255,255,255,0.08);
+    --toprow-bg: #2b2f33;
+    --toprow-border: #3a3f44;
+    --toprow-color: #e0e0e0;
 }
 
 html.dark .modal-content {
@@ -426,6 +424,12 @@ html.dark .dropdown-item:hover {
     --sidebar-accent: #4a7cc9;
     --sidebar-active: rgba(255,255,255,0.1);
     --sidebar-hover: rgba(255,255,255,0.05);
+
+    /* Header bar (top-row + sidebar brand) — single source of truth so both
+       panes render an identical, continuous header. Light defaults here. */
+    --toprow-bg: #edeef1;
+    --toprow-border: #d8dae0;
+    --toprow-color: #1e2028;
 }
 
 /* Light mode: warm off-white body, medium slate sidebar */
@@ -436,12 +440,6 @@ html:not(.dark) {
     --bs-body-color: #1e2028;
 }
 
-html:not(.dark) main > .top-row {
-    background-color: #edeef1;
-    border-bottom-color: #d8dae0;
-    color: #1e2028;
-}
-
 html:not(.dark) main > .top-row a,
 html:not(.dark) main > .top-row .btn-link,
 html:not(.dark) main > .top-row .text-muted {
@@ -449,7 +447,7 @@ html:not(.dark) main > .top-row .text-muted {
 }
 
 .sidebar .navbar-brand {
-    color: #f8fafc !important;
+    color: var(--toprow-color) !important;
     font-weight: 600;
 }
 
