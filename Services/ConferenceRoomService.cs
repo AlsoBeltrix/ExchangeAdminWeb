@@ -1,5 +1,8 @@
+using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using CsvHelper;
+using CsvHelper.Configuration;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
@@ -551,6 +554,158 @@ public class ConferenceRoomService : ExchangeServiceBase
         result.Success = true;
         result.Message = $"Configured as {roomType}" + (site != "none" ? $" ({site})" : "") + ".";
         return result;
+    }
+
+    // -------------------------------------------------------------------------
+    // CSV parsing — shared, testable. Email selection matches SetupRoomType.ps1:
+    // first non-blank identifier column wins; no '@' requirement (Exchange
+    // resolves SMTP/alias/DN/canonical). Skipped rows carry a reason and the
+    // header names found, and are never silently dropped.
+    // -------------------------------------------------------------------------
+
+    // Identity columns in priority order. PrimarySmtpAddress first yields the
+    // cleanest resolution + display name; Identity (often a canonical name in
+    // Exchange exports) is the documented primary column and resolves fine too.
+    private static readonly string[] IdentityColumns =
+        ["PrimarySmtpAddress", "Identity", "EmailAddress", "Mail", "Email"];
+
+    private static string? SelectIdentity(CsvReader csv)
+    {
+        foreach (var col in IdentityColumns)
+        {
+            if (csv.TryGetField<string>(col, out var val) && !string.IsNullOrWhiteSpace(val))
+                return val.Trim();
+        }
+        return null;
+    }
+
+    private static CsvReader OpenCsv(Stream stream)
+    {
+        var reader = new StreamReader(stream);
+        var cfg = new CsvConfiguration(CultureInfo.InvariantCulture)
+        {
+            HeaderValidated = null,
+            MissingFieldFound = null
+        };
+        var csv = new CsvReader(reader, cfg);
+        return csv;
+    }
+
+    /// <summary>
+    /// Parse the Room Finder bulk CSV. Returns one result per data row, in file
+    /// order. A result is either a populated row or a skip with a reason.
+    /// </summary>
+    public static async Task<List<FinderCsvParseResult>> ParseFinderCsvAsync(Stream stream)
+    {
+        var results = new List<FinderCsvParseResult>();
+        using var csv = OpenCsv(stream);
+        await csv.ReadAsync();
+        csv.ReadHeader();
+        var columns = csv.HeaderRecord?.ToList() ?? [];
+        int rowNum = 1;
+
+        while (await csv.ReadAsync())
+        {
+            var email = SelectIdentity(csv);
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                results.Add(new FinderCsvParseResult
+                {
+                    RowIndex = rowNum++,
+                    SkipReason = "Missing identity — no value in any of: " + string.Join(", ", IdentityColumns),
+                    AvailableColumns = columns
+                });
+                continue;
+            }
+
+            results.Add(new FinderCsvParseResult
+            {
+                RowIndex = rowNum++,
+                AvailableColumns = columns,
+                Row = new FinderCsvRow
+                {
+                    Email = email,
+                    City = csv.GetField("City")?.Trim() ?? "",
+                    CountryOrRegion = csv.GetField("CountryOrRegion")?.Trim() ?? "",
+                    State = csv.GetField("State")?.Trim() ?? "",
+                    Building = csv.GetField("Building")?.Trim() ?? "",
+                    Capacity = int.TryParse(csv.GetField("Capacity")?.Trim(), out var c) ? c : 1,
+                    Floor = csv.GetField("Floor")?.Trim() ?? "",
+                    FloorLabel = csv.GetField("FloorLabel")?.Trim() ?? "",
+                    DisplayDeviceName = csv.GetField("DisplayDeviceName")?.Trim() ?? "",
+                    VideoDeviceName = csv.GetField("VideoDeviceName")?.Trim() ?? "",
+                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? ""
+                }
+            });
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Parse the Room Type bulk CSV. Returns one result per data row, in file
+    /// order. A result is either a populated row or a skip with a reason
+    /// (missing identity, or an invalid RemoveExistingPermissions value).
+    /// </summary>
+    public static async Task<List<TypeCsvParseResult>> ParseTypeCsvAsync(Stream stream)
+    {
+        var results = new List<TypeCsvParseResult>();
+        using var csv = OpenCsv(stream);
+        await csv.ReadAsync();
+        csv.ReadHeader();
+        var columns = csv.HeaderRecord?.ToList() ?? [];
+        int rowNum = 1;
+
+        while (await csv.ReadAsync())
+        {
+            var email = SelectIdentity(csv);
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                results.Add(new TypeCsvParseResult
+                {
+                    RowIndex = rowNum++,
+                    SkipReason = "Missing identity — no value in any of: " + string.Join(", ", IdentityColumns),
+                    AvailableColumns = columns
+                });
+                continue;
+            }
+
+            var removePermField = csv.GetField("RemoveExistingPermissions")?.Trim();
+            bool removePerm = false;
+            if (!string.IsNullOrWhiteSpace(removePermField))
+            {
+                if (string.Equals(removePermField, "True", StringComparison.OrdinalIgnoreCase))
+                    removePerm = true;
+                else if (!string.Equals(removePermField, "False", StringComparison.OrdinalIgnoreCase))
+                {
+                    results.Add(new TypeCsvParseResult
+                    {
+                        RowIndex = rowNum++,
+                        SkipReason = $"Invalid value '{removePermField}' for RemoveExistingPermissions. Use True or False.",
+                        AvailableColumns = columns
+                    });
+                    continue;
+                }
+            }
+
+            var site = csv.GetField("Site")?.Trim();
+            results.Add(new TypeCsvParseResult
+            {
+                RowIndex = rowNum++,
+                AvailableColumns = columns,
+                Row = new TypeCsvRow
+                {
+                    Email = email,
+                    Type = csv.GetField("Type")?.Trim() ?? "",
+                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? "",
+                    Site = string.IsNullOrWhiteSpace(site) ? "none" : site,
+                    Arbiter = csv.GetField("Arbiter")?.Trim() ?? "",
+                    RemoveExistingPermissions = removePerm
+                }
+            });
+        }
+
+        return results;
     }
 
     // -------------------------------------------------------------------------

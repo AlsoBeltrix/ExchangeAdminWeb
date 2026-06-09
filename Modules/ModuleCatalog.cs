@@ -325,7 +325,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.0",
+            Version = "2.0.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [

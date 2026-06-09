@@ -105,6 +105,67 @@ public class CalendarPermissionPreview
     public string AccessRights { get; set; } = "";
 }
 
+// -----------------------------------------------------------------------------
+// CSV bulk-upload row models + parse results
+//
+// Email selection mirrors the working SetupRoomType.ps1 reference: take the
+// first non-blank identifier column and hand it to Exchange (Get-Mailbox), which
+// resolves SMTP, alias, DN, or canonical name. We do NOT require an '@' — real
+// Exchange exports put a non-SMTP canonical name in the Identity column, and
+// rejecting those was the cause of the "no Apply button" bug (rows silently
+// dropped -> empty preview). See docs/ConferenceRooms-CsvFix-Plan.md.
+// -----------------------------------------------------------------------------
+
+public class FinderCsvRow
+{
+    public string Email { get; set; } = "";
+    public string City { get; set; } = "";
+    public string CountryOrRegion { get; set; } = "";
+    public string State { get; set; } = "";
+    public string Building { get; set; } = "";
+    public int Capacity { get; set; } = 1;
+    public string Floor { get; set; } = "";
+    public string FloorLabel { get; set; } = "";
+    public string DisplayDeviceName { get; set; } = "";
+    public string VideoDeviceName { get; set; } = "";
+    public string TimeZone { get; set; } = "";
+}
+
+public class TypeCsvRow
+{
+    public string Email { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string TimeZone { get; set; } = "";
+    public string Site { get; set; } = "none";
+    public string Arbiter { get; set; } = "";
+    public bool RemoveExistingPermissions { get; set; }
+}
+
+/// <summary>
+/// One CSV data row's parse outcome: either a populated <see cref="Row"/>, or a
+/// skip with a human-readable <see cref="SkipReason"/> (the row is never silently
+/// dropped). <see cref="AvailableColumns"/> lists the header names found, to help
+/// the user diagnose a wrong/missing identity column.
+/// </summary>
+public class FinderCsvParseResult
+{
+    public int RowIndex { get; set; }
+    public FinderCsvRow? Row { get; set; }
+    public string? SkipReason { get; set; }
+    public List<string> AvailableColumns { get; set; } = [];
+    public bool Skipped => Row == null;
+}
+
+/// <inheritdoc cref="FinderCsvParseResult"/>
+public class TypeCsvParseResult
+{
+    public int RowIndex { get; set; }
+    public TypeCsvRow? Row { get; set; }
+    public string? SkipReason { get; set; }
+    public List<string> AvailableColumns { get; set; } = [];
+    public bool Skipped => Row == null;
+}
+
 public class RoomOperationResult
 {
     public string Email { get; set; } = "";

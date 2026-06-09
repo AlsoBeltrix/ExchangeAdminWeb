@@ -11,6 +11,9 @@ on-prem AD administration. 21 modules built on a descriptor-based module archite
 - Dev deploy: `./deploy.ps1` (ADI-specific). Generic install: `tools/Install-ExchangeAdminWeb.ps1`.
 
 ## Authoritative docs — read BEFORE touching the related area
+- `docs/ProjectConstitution.md` — **highest authority.** Non-negotiable engineering rules
+  for the whole app; outranks module plans, this file's specifics, and chat summaries. When
+  any guidance here conflicts with the Constitution, the Constitution wins — read it first.
 - `docs/AdminModuleSpec.md` — module contract. Binding for `Modules/`, `Components/Pages/`.
   NOTE: check its version header against the csproj version; flag drift, don't silently trust it.
 - `docs/AdminModuleDeveloperGuide.md` — how to build a module.
@@ -28,6 +31,12 @@ on-prem AD administration. 21 modules built on a descriptor-based module archite
 5. PowerShell error model: `$ErrorActionPreference = "Stop"`; failures go through
    `Write-Fail` (throw). Native exe results must be converted to throws by checking
    `$LASTEXITCODE` (robocopy: ≥8 is failure; 0–7 are success variants).
+6. Versioning (two independent rules — see `docs/ProjectConstitution.md` §Deployment And
+   Versioning): shared/app-wide changes bump the base app version (`<VersionPrefix>` +
+   `AssemblyVersion` + `FileVersion` in `ExchangeAdminWeb.csproj`; the sidebar reads it via
+   `BuildInfo`). Module-scoped behavior changes bump that module's `Version` in
+   `Modules/ModuleCatalog.cs`. A change touching both layers gets both bumps; each rule
+   fires on its own, not because of a special "both" rule.
 
 ## Known failure classes — check every diff against these
 1. **Side-effect ordering vs try/catch/finally** — state writes (manifests, markers) must

@@ -14,9 +14,6 @@
 @inject IJSRuntime JS
 @inject ILogger<ConferenceRooms> Logger
 @inject ProtectedPrincipalService ProtectedPrincipalService
-@using CsvHelper
-@using CsvHelper.Configuration
-@using System.Globalization
 
 <PageTitle>Conference Rooms</PageTitle>
 
@@ -138,6 +135,12 @@
                             <div class="alert alert-info py-2">
                                 <strong>@finderPreview.Count room(s)</strong> parsed. Review the preview below, then click Apply.
                             </div>
+                            @if (string.IsNullOrWhiteSpace(csvFinderTicket))
+                            {
+                                <div class="alert alert-warning py-2">
+                                    <small>Enter a <strong>Ticket Number</strong> above to enable Apply Changes.</small>
+                                </div>
+                            }
                             <button class="btn btn-success" @onclick="ApplyFinderCsv"
                                     disabled="@(isLoading || string.IsNullOrWhiteSpace(csvFinderTicket))">
                                 @if (isCsvProcessing) { <span class="spinner-border spinner-border-sm me-1"></span> }
@@ -608,50 +611,38 @@
 
         try
         {
-            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
-            using var reader = new System.IO.StreamReader(stream);
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            List<FinderCsvParseResult> parsed;
+            await using (var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024))
             {
-                HeaderValidated = null, MissingFieldFound = null
-            };
-            using var csv = new CsvReader(reader, csvConfig);
-            await csv.ReadAsync();
-            csv.ReadHeader();
-            int idx = 1;
-
-            while (await csv.ReadAsync())
-            {
-                var email = csv.GetField("PrimarySmtpAddress")?.Trim()
-                    ?? csv.GetField("Identity")?.Trim()
-                    ?? csv.GetField("EmailAddress")?.Trim()
-                    ?? csv.GetField("Mail")?.Trim()
-                    ?? csv.GetField("Email")?.Trim();
-                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;
-
-                finderCsvData.Add(new FinderCsvRow
-                {
-                    Email = email,
-                    City = csv.GetField("City")?.Trim() ?? "",
-                    CountryOrRegion = csv.GetField("CountryOrRegion")?.Trim() ?? "",
-                    State = csv.GetField("State")?.Trim() ?? "",
-                    Building = csv.GetField("Building")?.Trim() ?? "",
-                    Capacity = int.TryParse(csv.GetField("Capacity")?.Trim(), out var c) ? c : 1,
-                    Floor = csv.GetField("Floor")?.Trim() ?? "",
-                    FloorLabel = csv.GetField("FloorLabel")?.Trim() ?? "",
-                    DisplayDeviceName = csv.GetField("DisplayDeviceName")?.Trim() ?? "",
-                    VideoDeviceName = csv.GetField("VideoDeviceName")?.Trim() ?? "",
-                    TimeZone = csv.GetField("TimeZone")?.Trim() ?? ""
-                });
-                idx++;
+                parsed = await ConferenceRoomService.ParseFinderCsvAsync(stream);
             }
 
-            // Resolve each room and build preview
-            int rowNum = 1;
-            foreach (var row in finderCsvData)
+            // Keep finderCsvData and finderPreview index-aligned (ApplyFinderCsv
+            // pairs them by index). Skipped rows get a placeholder data row plus a
+            // non-resolved preview row so they're visible and flow through Apply
+            // as per-row failures rather than vanishing.
+            foreach (var pr in parsed)
             {
+                if (pr.Skipped)
+                {
+                    finderCsvData.Add(new FinderCsvRow { Email = "(row " + pr.RowIndex + ")" });
+                    finderPreview.Add(new RoomFinderPreviewRow
+                    {
+                        RowIndex = pr.RowIndex,
+                        Email = "(row " + pr.RowIndex + ")",
+                        RoomResolved = false,
+                        ResolveError = pr.SkipReason + " | Columns found: " + string.Join(", ", pr.AvailableColumns)
+                    });
+                    StateHasChanged();
+                    continue;
+                }
+
+                var row = pr.Row!;
+                finderCsvData.Add(row);
+
                 var preview = new RoomFinderPreviewRow
                 {
-                    RowIndex = rowNum++,
+                    RowIndex = pr.RowIndex,
                     Email = row.Email,
                     City = row.City,
                     CountryOrRegion = row.CountryOrRegion,
@@ -707,6 +698,9 @@
                 finderPreview.Add(preview);
                 StateHasChanged();
             }
+
+            if (finderPreview.Count == 0)
+                result = new RoomOperationResult { Success = false, Message = "0 rooms parsed. Check that your CSV has a header row with an identity column (PrimarySmtpAddress, Identity, EmailAddress, Mail, or Email)." };
         }
         catch (Exception ex)
         {
@@ -851,68 +845,43 @@
 
         try
         {
-            await using var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024);
-            using var reader = new System.IO.StreamReader(stream);
-            var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture)
+            List<TypeCsvParseResult> parsed;
+            await using (var stream = e.File.OpenReadStream(maxAllowedSize: 16 * 1024 * 1024))
             {
-                HeaderValidated = null, MissingFieldFound = null
-            };
-            using var csv = new CsvReader(reader, csvConfig);
-            await csv.ReadAsync();
-            csv.ReadHeader();
-
-            while (await csv.ReadAsync())
-            {
-                var email = csv.GetField("Identity")?.Trim()
-                    ?? csv.GetField("PrimarySmtpAddress")?.Trim()
-                    ?? csv.GetField("EmailAddress")?.Trim()
-                    ?? csv.GetField("Mail")?.Trim()
-                    ?? csv.GetField("Email")?.Trim();
-                if (string.IsNullOrWhiteSpace(email) || !email.Contains('@')) continue;
-
-                var typeStr = csv.GetField("Type")?.Trim();
-                var tz = csv.GetField("TimeZone")?.Trim() ?? "";
-                var site = csv.GetField("Site")?.Trim() ?? "none";
-                var arbiter = csv.GetField("Arbiter")?.Trim() ?? "";
-                var removePermField = csv.GetField("RemoveExistingPermissions")?.Trim();
-                bool removePerm = false;
-                if (!string.IsNullOrWhiteSpace(removePermField))
-                {
-                    if (string.Equals(removePermField, "True", StringComparison.OrdinalIgnoreCase))
-                        removePerm = true;
-                    else if (!string.Equals(removePermField, "False", StringComparison.OrdinalIgnoreCase))
-                    {
-                        typePreview.Add(new RoomTypePreviewRow
-                        {
-                            RowIndex = typeCsvData.Count + 1, Email = email ?? "", RoomResolved = false,
-                            ResolveError = $"Invalid value '{removePermField}' for RemoveExistingPermissions. Use True or False."
-                        });
-                        continue;
-                    }
-                }
-
-                typeCsvData.Add(new TypeCsvRow
-                {
-                    Email = email,
-                    Type = typeStr ?? "",
-                    TimeZone = tz,
-                    Site = string.IsNullOrWhiteSpace(site) ? "none" : site,
-                    Arbiter = arbiter,
-                    RemoveExistingPermissions = removePerm
-                });
+                parsed = await ConferenceRoomService.ParseTypeCsvAsync(stream);
             }
 
-            // Resolve and build preview
-            int rowNum = 1;
-            foreach (var row in typeCsvData)
+            // Keep typeCsvData and typePreview index-aligned (ApplyTypeCsv pairs
+            // them by index). Every parse result produces exactly one entry in
+            // each list, so skipped/invalid rows are visible and flow through
+            // Apply as per-row failures.
+            foreach (var pr in parsed)
             {
+                if (pr.Skipped)
+                {
+                    typeCsvData.Add(new TypeCsvRow { Email = "(row " + pr.RowIndex + ")" });
+                    typePreview.Add(new RoomTypePreviewRow
+                    {
+                        RowIndex = pr.RowIndex,
+                        Email = "(row " + pr.RowIndex + ")",
+                        RoomResolved = false,
+                        ResolveError = pr.SkipReason + " | Columns found: " + string.Join(", ", pr.AvailableColumns)
+                    });
+                    StateHasChanged();
+                    continue;
+                }
+
+                var row = pr.Row!;
+                typeCsvData.Add(row);
+
                 if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
                 {
                     typePreview.Add(new RoomTypePreviewRow
                     {
-                        RowIndex = rowNum++, Email = row.Email, RoomResolved = false,
+                        RowIndex = pr.RowIndex, Email = row.Email, RoomResolved = false,
                         ResolveError = $"Invalid room type: '{row.Type}'. Valid: Standard, Video, Restricted, Exception, CEO, Executive"
                     });
+                    StateHasChanged();
                     continue;
                 }
 
@@ -920,9 +889,10 @@
                 {
                     typePreview.Add(new RoomTypePreviewRow
                     {
-                        RowIndex = rowNum++, Email = row.Email, RoomResolved = false,
+                        RowIndex = pr.RowIndex, Email = row.Email, RoomResolved = false,
                         ResolveError = "Missing TimeZone field"
                     });
+                    StateHasChanged();
                     continue;
                 }
 
@@ -940,13 +910,16 @@
                 var preview = RoomService.BuildTypePreview(
                     row.Email, displayName, roomType, row.TimeZone,
                     row.Site, row.Arbiter, row.RemoveExistingPermissions);
-                preview.RowIndex = rowNum++;
+                preview.RowIndex = pr.RowIndex;
                 preview.RoomResolved = resolved;
                 preview.ResolveError = resolveError;
 
                 typePreview.Add(preview);
                 StateHasChanged();
             }
+
+            if (typePreview.Count == 0)
+                result = new RoomOperationResult { Success = false, Message = "0 rooms parsed. Check that your CSV has a header row with an identity column (Identity, PrimarySmtpAddress, EmailAddress, Mail, or Email)." };
         }
         catch (Exception ex)
         {
@@ -1123,34 +1096,5 @@
             + "ceo-conference@company.com,CEO,Eastern Standard Time,,,True\n";
         var base64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(content));
         await JS.InvokeVoidAsync("downloadFile", "room_type_sample.csv", "text/csv", base64);
-    }
-
-    // =========================================================================
-    // CSV Row Models
-    // =========================================================================
-
-    private class FinderCsvRow
-    {
-        public string Email { get; set; } = "";
-        public string City { get; set; } = "";
-        public string CountryOrRegion { get; set; } = "";
-        public string State { get; set; } = "";
-        public string Building { get; set; } = "";
-        public int Capacity { get; set; }
-        public string Floor { get; set; } = "";
-        public string FloorLabel { get; set; } = "";
-        public string DisplayDeviceName { get; set; } = "";
-        public string VideoDeviceName { get; set; } = "";
-        public string TimeZone { get; set; } = "";
-    }
-
-    private class TypeCsvRow
-    {
-        public string Email { get; set; } = "";
-        public string Type { get; set; } = "";
-        public string TimeZone { get; set; } = "";
-        public string Site { get; set; } = "none";
-        public string Arbiter { get; set; } = "";
-        public bool RemoveExistingPermissions { get; set; }
     }
 }
