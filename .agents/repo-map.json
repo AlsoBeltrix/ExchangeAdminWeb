@@ -1,0 +1,58 @@
+{
+  "validated_against": {
+    "commit": "7e7c9ac25cb5b96d507486a5fbd57ff1ffc6fb8f",
+    "date": "2026-06-11"
+  },
+  "projects": [
+    {
+      "name": "ExchangeAdminWeb",
+      "path": "ExchangeAdminWeb.csproj",
+      "type": "aspnetcore-blazor-server",
+      "framework": "net10.0-windows10.0.17763.0",
+      "role": "Main app: EXO / Graph / on-prem AD administration portal, 21 modules"
+    },
+    {
+      "name": "ExchangeAdminWeb.Tests",
+      "path": "ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.csproj",
+      "type": "xunit-v3",
+      "role": "Unit tests (xUnit v3 + NSubstitute)"
+    }
+  ],
+  "verification": {
+    "status": "confirmed",
+    "commands": [
+      "dotnet build -c Release",
+      "dotnet test",
+      "dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore",
+      "git diff --check HEAD",
+      "Invoke-ScriptAnalyzer -Path . -Recurse",
+      "Invoke-Pester tests/ps"
+    ],
+    "ci": "NONE ACTIVE. ci.yml exists in the repo root but GitHub Actions only runs workflows under .github/workflows/, which does not exist; the workflow has never run. It also targets branches:[main] while the repo branch is master. Verification is local-only until fixed.",
+    "policy": {
+      "code_changes": "Run current automated verification before claiming completion.",
+      "docs_only": "Code verification is not required unless docs affect setup, commands, runtime behavior, generated files, or user-visible behavior.",
+      "manual_behavior": "Run the relevant manual check, smoke test, or playtest for behavior not covered by automation (operator workflows, dev deployment, Delinea secret creation, section access groups), or state clearly that it was not run."
+    }
+  },
+  "fact_bearing_paths": [
+    "docs/ProjectConstitution.md",
+    "docs/AdminModuleSpec.md",
+    "docs/AdminModuleDeveloperGuide.md",
+    "Modules/ModuleCatalog.cs",
+    "ExchangeAdminWeb.csproj",
+    "README.md"
+  ],
+  "guidance_paths": [
+    "AGENTS.md",
+    ".agents/state.md",
+    ".agents/decisions.md",
+    ".agents/repo-map.json",
+    ".agents/artifact-manifest.json"
+  ],
+  "notes": [
+    "docs/ProjectConstitution.md is the highest engineering authority and is not duplicated in AGENTS.md.",
+    "CLAUDE.md is a pointer shim that includes AGENTS.md for the Claude Code harness.",
+    "Two independent version bumps: app-wide changes bump ExchangeAdminWeb.csproj; module-scoped changes bump Modules/ModuleCatalog.cs."
+  ]
+}

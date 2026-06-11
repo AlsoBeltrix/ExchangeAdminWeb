@@ -41,7 +41,7 @@ Thumbs.db
 ~$*
 
 # Claude Code & Agents
-.claude/
+.claude/settings.local.json
 .antigravitycli/
 .playwright-mcp/
 
