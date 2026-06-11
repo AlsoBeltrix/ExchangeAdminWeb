@@ -1,0 +1,15 @@
+{
+  "_comment": "EXAMPLE schema for the Conference Rooms module config. Copy to module-config-ConferenceRooms.json in the deployed instance's config/ directory and replace placeholders with your environment's real groups/OU/contacts (or set them via the Module Config admin page). Real values are deploy-only and not stored in source control. RestrictedMailTip/ExecMailTip/OnPremDelineaSecretId are optional and omitted here.",
+  "DefaultArbiterGroup": "room-admins@example.com",
+  "ExecConfCoordinatorsGroup": "exec-coordinators@example.com",
+  "ConfExecAdminsGroup": "exec-admins@example.com",
+  "ConfExecVPsGroup": "exec-vps@example.com",
+  "ConfAdminsGroup": "conf-admins@example.com",
+  "ConfCEOGroup": "ceo-room@example.com",
+  "ConfExceptionGroup": "exception-room@example.com",
+  "ADGTAdminsGroup": "adgt-admins@example.com",
+  "RoomListOU": "ad.example.com/OU/Conference Rooms",
+  "RestrictedContactEmail": "conf-admins@example.com",
+  "ExecContactEmail": "exec-admins@example.com",
+  "ADGTContactEmail": "adgt-admins@example.com"
+}

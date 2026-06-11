@@ -6,17 +6,23 @@ repo facts change.
 ## Now
 
 - App version `2.3.5` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **Uncommitted work in tree** (three independent changes, awaiting owner's commit decision):
-  1. CI wiring: `ci.yml` moved to `.github/workflows/ci.yml`, push trigger `main`→`master`.
-  2. Conference Rooms: room lists now grouped by **Building**, not City (module `2.0.2`→`2.0.3`).
-     Plan: `docs/ConferenceRooms-BuildingRoomList-Plan.md` (Implemented). Manual EXO check not run.
-  3. Conference Rooms synced-room Set-Mailbox + shared base error-bleed fix (app `2.3.5`,
-     module `2.0.3`). Plan: `docs/ConferenceRooms-SyncedRoomSetMailbox-Plan.md` (Implemented,
-     rev 2 after external review). Base `ExchangeServiceBase.Invoke` now clears the pipeline
-     before throwing; synced-room cloud write is best-effort with success coupled to the
-     on-prem write. 365/365 tests pass; guard-revert verified. Manual EXO check not run.
-- Latest landed work (commit `7e7c9ac`): Conference Rooms bulk CSV upload `@`-gate fix +
-  versioning-governance gap closed.
+- **Committed** (local, ahead of `origin/master`, not pushed):
+  - `00054a8` CI wiring: `ci.yml` → `.github/workflows/`, trigger `main`→`master`.
+  - `54c07da` Conference Rooms room lists grouped by **Building** not City (module `2.0.3`).
+  - `c8ed096` Synced-room Set-Mailbox + shared base error-bleed fix (app `2.3.5`).
+- **Uncommitted work in tree** (one change, awaiting owner's commit decision):
+  - Conference Rooms config extraction (module `2.0.3`→`2.0.4`). Removed all ADI
+    `@analog.com` fallbacks from `ConferenceRoomService.cs`; real values moved to
+    deploy-path `config/module-config-ConferenceRooms.json` (dev instance, not in repo).
+    Added fail-closed preflight (`FindMissingRequiredGroups`) so Set Room Type aborts when
+    required groups are unconfigured; committed placeholder example config; sanitized catalog
+    description hints. Plan: `docs/ConferenceRooms-ConfigExtraction-Plan.md` (Implemented).
+    370/370 tests pass; guard-revert verified. Manual EXO check not run.
+  - Note: `ModuleCatalog.cs:404` still has a hardcoded `analog.com` UPN-suffix example in the
+    **Test Account Pool** module (out of scope for this Conference Rooms task) — flag for a
+    future cleanup.
+- Latest landed work before this batch (commit `7e7c9ac`): Conference Rooms bulk CSV upload
+  `@`-gate fix + versioning-governance gap closed.
 
 ## Findings
 

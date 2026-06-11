@@ -36,29 +36,32 @@ public class ConferenceRoomService : ExchangeServiceBase
     private string Cfg(string key, string fallback = "")
         => _moduleConfig.GetValue(ModuleId, key) ?? fallback;
 
-    private string ArbiterGroup => Cfg("DefaultArbiterGroup", "ConfSiteAdmins@analog.com");
-    private string ExecCoordinatorsGroup => Cfg("ExecConfCoordinatorsGroup", "ExecConfCoordinators@analog.com");
-    private string ExecAdminsGroup => Cfg("ConfExecAdminsGroup", "ConfExecAdmins@analog.com");
-    private string ExecVPsGroup => Cfg("ConfExecVPsGroup", "ConfExecVPs@analog.com");
-    private string ConfAdminsGroup => Cfg("ConfAdminsGroup", "ConfAdmins@analog.com");
-    private string CeoGroup => Cfg("ConfCEOGroup", "ConfCEO@analog.com");
-    private string ExceptionGroup => Cfg("ConfExceptionGroup", "ConfException@analog.com");
-    private string AdgtAdminsGroup => Cfg("ADGTAdminsGroup", "ADGTMeetingRoomAdmins@analog.com");
-    private string RoomListOU => Cfg("RoomListOU", "ad.analog.com/Exchange/Analog/Recipients/Conference Rooms");
+    // Environment-specific values come from module config — no hardcoded defaults. When a
+    // required group is unconfigured the operation fails closed (see SetRoomTypeAsync
+    // preflight); the real values live in deploy-path config/module-config-ConferenceRooms.json.
+    private string ArbiterGroup => Cfg("DefaultArbiterGroup");
+    private string ExecCoordinatorsGroup => Cfg("ExecConfCoordinatorsGroup");
+    private string ExecAdminsGroup => Cfg("ConfExecAdminsGroup");
+    private string ExecVPsGroup => Cfg("ConfExecVPsGroup");
+    private string ConfAdminsGroup => Cfg("ConfAdminsGroup");
+    private string CeoGroup => Cfg("ConfCEOGroup");
+    private string ExceptionGroup => Cfg("ConfExceptionGroup");
+    private string AdgtAdminsGroup => Cfg("ADGTAdminsGroup");
+    private string RoomListOU => Cfg("RoomListOU");
 
     private string RestrictedMailTip => Cfg("RestrictedMailTip",
-        $"This is a restricted room. Email {Cfg("RestrictedContactEmail", "confadmins@analog.com")} for assistance with booking this room.");
+        $"This is a restricted room. Email {Cfg("RestrictedContactEmail")} for assistance with booking this room.");
     private string ExecMailTip => Cfg("ExecMailTip",
         $"Only exec admins may book this room.");
     private string AdgtRestrictedMailTip =>
-        $"This is a restricted room. Email {Cfg("ADGTContactEmail", "adgtmeetingroomadmins@analog.com")} if you need assistance with booking this room.";
+        $"This is a restricted room. Email {Cfg("ADGTContactEmail")} if you need assistance with booking this room.";
 
     private string ExecRoomResponse =>
-        $"This is an executive only room. Email {Cfg("ExecContactEmail", "confexecadmins@analog.com")} if you need assistance.";
+        $"This is an executive only room. Email {Cfg("ExecContactEmail")} if you need assistance.";
     private string RestrictedRoomResponse =>
-        $"This is a restricted room. Email {Cfg("RestrictedContactEmail", "confadmins@analog.com")} for assistance with booking this room.";
+        $"This is a restricted room. Email {Cfg("RestrictedContactEmail")} for assistance with booking this room.";
     private string AdgtRestrictedRoomResponse =>
-        $"For room requests, please send complete details to {Cfg("ADGTContactEmail", "adgtmeetingroomadmins@analog.com")} (Note: Reservations are only allowed 14 days before the event date - subject to availability.)";
+        $"For room requests, please send complete details to {Cfg("ADGTContactEmail")} (Note: Reservations are only allowed 14 days before the event date - subject to availability.)";
     private const string VideoRoomMailTip = "This is a video conference room.";
     private const string VideoRoomResponse = "This is a video conference room.";
     private const string CeoRoomResponse = "This is an executive only room.";
@@ -142,6 +145,30 @@ public class ConferenceRoomService : ExchangeServiceBase
     // attribute is written nowhere — that is a failure. Pure + static for unit testing.
     public static bool OnPremSkipCountsAsSuccess(bool cloudAttrDeferredToOnPrem)
         => !cloudAttrDeferredToOnPrem;
+
+    // The config keys whose values are required before any Room Type operation may run.
+    // RoomListOU is excluded (already IsNullOrWhiteSpace-guarded at the room-list step) and
+    // the contact-email keys are excluded (used only in cosmetic response text).
+    public static readonly string[] RequiredGroupConfigKeys =
+    [
+        "DefaultArbiterGroup", "ExecConfCoordinatorsGroup", "ConfExecAdminsGroup",
+        "ConfExecVPsGroup", "ConfAdminsGroup", "ConfCEOGroup", "ConfExceptionGroup",
+        "ADGTAdminsGroup"
+    ];
+
+    // Pure, unit-testable: given a (key -> value) view of the required group config, return
+    // the keys that are missing/blank. Empty result means the module is configured enough to
+    // run a Room Type operation. See docs/ConferenceRooms (fail-closed when unconfigured).
+    public static List<string> FindMissingRequiredGroups(Func<string, string?> getValue)
+    {
+        var missing = new List<string>();
+        foreach (var key in RequiredGroupConfigKeys)
+        {
+            if (string.IsNullOrWhiteSpace(getValue(key)))
+                missing.Add(key);
+        }
+        return missing;
+    }
 
     /// <summary>
     /// Resolve the target room list for a room, keyed on <paramref name="building"/>.
@@ -436,6 +463,18 @@ public class ConferenceRoomService : ExchangeServiceBase
         {
             result.Success = false;
             result.Message = recipientError;
+            return result;
+        }
+
+        // Fail closed before any EXO mutation: the required group addresses come from module
+        // config (no hardcoded defaults). Applying empty group values would send -User "" /
+        // -BookInPolicy [""] to EXO and fail per-room mid-operation, risking partial calendar
+        // state. Abort cleanly with an actionable message instead.
+        var missingGroups = FindMissingRequiredGroups(key => _moduleConfig.GetValue(ModuleId, key));
+        if (missingGroups.Count > 0)
+        {
+            result.Success = false;
+            result.Message = $"Conference Rooms module is not configured. Set {string.Join(", ", missingGroups)} in Module Config.";
             return result;
         }
 
@@ -830,6 +869,11 @@ public class ConferenceRoomService : ExchangeServiceBase
             preview.Warnings.Add("CEO type always removes all existing calendar permissions.");
         if (removeExisting && type != RoomType.CEO)
             preview.Warnings.Add("Existing calendar permissions will be removed before applying new ones.");
+
+        // Signal (don't throw) when the module isn't configured — Apply will fail closed.
+        var missingGroups = FindMissingRequiredGroups(key => _moduleConfig.GetValue(ModuleId, key));
+        if (missingGroups.Count > 0)
+            preview.Warnings.Add($"Module not configured: set {string.Join(", ", missingGroups)} in Module Config before applying.");
 
         return preview;
     }
