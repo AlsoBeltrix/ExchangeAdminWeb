@@ -61,13 +61,19 @@ public abstract class ExchangeServiceBase
                 }
                 catch (Exception ex)
                 {
-                    var psErrors = ps.Streams.Error
-                        .Select(e => e.Exception?.Message ?? e.ToString())
-                        .Where(m => !string.IsNullOrWhiteSpace(m))
-                        .ToList();
-
-                    var primary = psErrors.FirstOrDefault() ?? ex.Message;
-                    var detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
+                    // Invoke clears ps.Streams.Error before throwing, so recover the captured
+                    // detail from the exception (ex.Data) rather than re-reading the stream.
+                    // Fall back to the live stream for any throw that didn't route through Invoke.
+                    var (primary, detail) = ResolvePsErrors(ex);
+                    if (ex.Data[PsErrorsDataKey] is null)
+                    {
+                        var psErrors = SnapshotErrorMessages(ps);
+                        if (psErrors.Count > 0)
+                        {
+                            primary = psErrors[0];
+                            detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
+                        }
+                    }
 
                     if (IsConnectionError(ex))
                         tracker.HasConnectionError = true;
@@ -140,6 +146,43 @@ public abstract class ExchangeServiceBase
     // Invoke helpers
     // -------------------------------------------------------------------------
 
+    // Key under which Invoke stashes the captured PowerShell error messages on a thrown
+    // InvalidOperationException, so callers (e.g. RunAsync) can recover primary + secondary
+    // detail AFTER the error stream itself has been cleared. See ResolvePsErrors.
+    internal const string PsErrorsDataKey = "PsErrors";
+
+    private static List<string> SnapshotErrorMessages(PowerShell ps) =>
+        ps.Streams.Error
+          .Select(e => e.Exception?.Message ?? e.ToString())
+          .Where(m => !string.IsNullOrWhiteSpace(m))
+          .ToList();
+
+    private static InvalidOperationException BuildPsException(string primary, IReadOnlyList<string> allErrors, Exception? inner = null)
+    {
+        var ex = inner is null
+            ? new InvalidOperationException(primary)
+            : new InvalidOperationException(primary, inner);
+        if (allErrors.Count > 0)
+            ex.Data[PsErrorsDataKey] = allErrors.ToArray();
+        return ex;
+    }
+
+    /// <summary>
+    /// Recover the captured PowerShell error messages from an exception thrown by
+    /// <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/> — the structured detail in
+    /// <see cref="PsErrorsDataKey"/> if present, else the exception message.
+    /// </summary>
+    internal static (string primary, string? detail) ResolvePsErrors(Exception ex)
+    {
+        if (ex.Data[PsErrorsDataKey] is string[] errors && errors.Length > 0)
+        {
+            var primary = errors[0];
+            var detail = errors.Length > 1 ? string.Join(" | ", errors.Skip(1)) : null;
+            return (primary, detail);
+        }
+        return (ex.Message, null);
+    }
+
     protected static Collection<PSObject> Invoke(PowerShell ps, ConnectionErrorTracker tracker)
     {
         Collection<PSObject> result;
@@ -147,23 +190,73 @@ public abstract class ExchangeServiceBase
         {
             result = ps.Invoke();
         }
-        catch (RuntimeException ex)
+        catch (Exception ex)
         {
-            if (IsConnectionError(ex))
+            // A terminating error leaves the failed command queued and errors on the stream.
+            // Capture detail, then clear BOTH before throwing so the next step on this pooled
+            // runspace starts clean (the pipeline is shared across steps in one operation).
+            var psErrors = SnapshotErrorMessages(ps);
+            if (IsConnectionError(ex) || ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
                 tracker.HasConnectionError = true;
-            throw new InvalidOperationException(ex.Message, ex);
+
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+
+            var primary = psErrors.FirstOrDefault() ?? ex.Message;
+            throw BuildPsException(primary, psErrors, ex);
         }
 
         if (ps.HadErrors)
         {
-            var err = ps.Streams.Error.FirstOrDefault();
-            var msg = err?.Exception?.Message ?? err?.ToString() ?? "An unknown error occurred.";
-            if (IsConnectionError(err?.Exception))
+            var psErrors = SnapshotErrorMessages(ps);
+            if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
                 tracker.HasConnectionError = true;
-            throw new InvalidOperationException(msg);
+
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+
+            var primary = psErrors.FirstOrDefault() ?? "An unknown error occurred.";
+            throw BuildPsException(primary, psErrors);
         }
 
         ps.Commands.Clear();
+        return result;
+    }
+
+    /// <summary>
+    /// Best-effort invoke: never throws on a cmdlet error. Returns the pipeline results and
+    /// outputs any error-stream messages, captured BEFORE the stream is cleared, so the
+    /// caller can classify them (e.g. distinguish an on-prem-mastered write rejection from a
+    /// real failure). Clears commands + error stream before returning.
+    /// </summary>
+    protected static Collection<PSObject> InvokeBestEffort(PowerShell ps, ConnectionErrorTracker tracker, out IReadOnlyList<string> errors)
+    {
+        Collection<PSObject> result;
+        try
+        {
+            result = ps.Invoke();
+        }
+        catch (Exception ex)
+        {
+            var captured = SnapshotErrorMessages(ps);
+            if (captured.Count == 0)
+                captured.Add(ex.Message);
+            if (IsConnectionError(ex) || ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
+                tracker.HasConnectionError = true;
+
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            errors = captured;
+            return new Collection<PSObject>();
+        }
+
+        var streamErrors = SnapshotErrorMessages(ps);
+        if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
+            tracker.HasConnectionError = true;
+
+        ps.Commands.Clear();
+        ps.Streams.Error.Clear();
+        errors = streamErrors;
         return result;
     }
 

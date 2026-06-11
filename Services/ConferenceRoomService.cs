@@ -124,6 +124,25 @@ public class ConferenceRoomService : ExchangeServiceBase
     public static string BuildRoomListName(string building) => $"{building.Trim()} Conference Rooms";
     public static string BuildLegacyRoomListName(string key) => $"RoomList-{key.Trim()}";
 
+    // True when an EXO write was rejected because the object is mastered on-premises
+    // (DirSync'd) and must be written via Set-RemoteMailbox instead. Pure + static so the
+    // classification is unit-testable. The two phrases are EXO's stable wording for this
+    // condition. See docs/ConferenceRooms-SyncedRoomSetMailbox-Plan.md.
+    public static bool IsOnPremMasteredWriteError(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+        return message.Contains("out of the current user's write scope", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("being synchronized from your on-premises organization", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Whether an on-prem write that was SKIPPED (on-prem not configured) should count as
+    // success. It is success only when the cloud write already set the attribute. If the
+    // cloud write was deferred because the room is on-prem mastered, a skip means the
+    // attribute is written nowhere — that is a failure. Pure + static for unit testing.
+    public static bool OnPremSkipCountsAsSuccess(bool cloudAttrDeferredToOnPrem)
+        => !cloudAttrDeferredToOnPrem;
+
     /// <summary>
     /// Resolve the target room list for a room, keyed on <paramref name="building"/>.
     /// <paramref name="city"/> is used only to detect a stray city-named list that differs
@@ -425,6 +444,11 @@ public class ConferenceRoomService : ExchangeServiceBase
         var mailTip = GetMailTipForType(roomType, site);
         var additionalResponse = GetAdditionalResponseForType(roomType, site);
 
+        // Set when the cloud CustomAttribute9/MailTip write was rejected because the room is
+        // on-prem mastered (DirSync'd). When true, the on-prem Set-RemoteMailbox (Step 9)
+        // becomes the ONLY path that writes these attributes, so it is mandatory — see Step 9.
+        bool cloudAttrDeferredToOnPrem = false;
+
         var opResult = await RunAsync((ps, tracker) =>
         {
             // Step 1: Resolve room and calendar folder
@@ -517,21 +541,45 @@ public class ConferenceRoomService : ExchangeServiceBase
             result.Steps.Add(new RoomOperationStep { Stage = "Set-CalendarProcessing", Success = true });
 
             // Step 5: Set CustomAttribute9 + MailTip on cloud mailbox
+            // Step 5: Set CustomAttribute9 + MailTip on the cloud mailbox. For a DirSync'd
+            // (on-prem mastered) room this write is rejected cloud-side and must be done
+            // on-prem via Set-RemoteMailbox (Step 9) — so run it best-effort and classify the
+            // result. The cloud rejection is expected and informational; any OTHER error is a
+            // real failure and is surfaced as such. Best-effort also avoids leaving a failed
+            // command queued on the shared pipeline (which previously poisoned later steps).
             _operationTrace?.Step("SetMailbox", backend: "EXO", command: "Set-Mailbox", target: roomPrimary);
-            try
+            var mbxCmd = ps.AddCommand("Set-Mailbox")
+              .AddParameter("Identity", roomPrimary)
+              .AddParameter("CustomAttribute9", customAttr9)
+              .AddParameter("ErrorAction", "SilentlyContinue");
+            if (mailTip != null)
+                mbxCmd.AddParameter("MailTip", mailTip);
+            InvokeBestEffort(ps, tracker, out var setMbxErrors);
+
+            if (setMbxErrors.Count == 0)
             {
-                var mbxCmd = ps.AddCommand("Set-Mailbox")
-                  .AddParameter("Identity", roomPrimary)
-                  .AddParameter("CustomAttribute9", customAttr9)
-                  .AddParameter("ErrorAction", "Stop");
-                if (mailTip != null)
-                    mbxCmd.AddParameter("MailTip", mailTip);
-                Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = "Set-Mailbox (CustomAttribute9/MailTip)", Success = true });
             }
-            catch (Exception ex)
+            else if (setMbxErrors.Any(IsOnPremMasteredWriteError))
             {
-                result.Steps.Add(new RoomOperationStep { Stage = "Set-Mailbox (CustomAttribute9/MailTip)", Success = false, Error = ex.Message });
+                cloudAttrDeferredToOnPrem = true;
+                // Informational, not a failure: the attribute is written on-prem in Step 9.
+                // (RoomOperationStep has no info severity; represent as Success=true with text.)
+                result.Steps.Add(new RoomOperationStep
+                {
+                    Stage = "CustomAttribute9/MailTip set on-prem (synced room — cloud write skipped)",
+                    Success = true
+                });
+            }
+            else
+            {
+                // Unexpected cloud error — keep it visible as a failure.
+                result.Steps.Add(new RoomOperationStep
+                {
+                    Stage = "Set-Mailbox (CustomAttribute9/MailTip)",
+                    Success = false,
+                    Error = string.Join(" | ", setMbxErrors)
+                });
             }
 
             // Step 6: Calendar folder permissions
@@ -572,8 +620,10 @@ public class ConferenceRoomService : ExchangeServiceBase
             return result;
         }
 
-        // Step 9: Set-RemoteMailbox on-prem (separate runspace, best-effort)
-        await SetRemoteMailboxAsync(roomEmail, customAttr9, mailTip, result);
+        // Step 9: Set-RemoteMailbox on-prem (separate runspace). When the cloud write was
+        // deferred to on-prem (synced room), this becomes the mandatory authoritative write:
+        // a skip or failure must fail the operation, not be reported as success.
+        await SetRemoteMailboxAsync(roomEmail, customAttr9, mailTip, result, cloudAttrDeferredToOnPrem);
 
         var failedSteps = result.Steps.Where(s => !s.Success).ToList();
         if (failedSteps.Count > 0)
@@ -948,15 +998,20 @@ public class ConferenceRoomService : ExchangeServiceBase
         }
     }
 
-    private async Task SetRemoteMailboxAsync(string roomEmail, string customAttr9, string? mailTip, RoomOperationResult result)
+    private async Task SetRemoteMailboxAsync(string roomEmail, string customAttr9, string? mailTip, RoomOperationResult result, bool required = false)
     {
         if (string.IsNullOrWhiteSpace(_onPremServerUri))
         {
+            // Normally on-prem is optional (cloud write already set the attribute). But when
+            // the cloud write was deferred because the room is on-prem mastered, skipping here
+            // means the attribute is written NOWHERE — that must fail, not report success.
             result.Steps.Add(new RoomOperationStep
             {
                 Stage = "Set-RemoteMailbox",
-                Success = true,
-                Error = "Skipped — on-prem not configured"
+                Success = OnPremSkipCountsAsSuccess(required),
+                Error = required
+                    ? "Room is on-prem mastered (cloud write rejected) but on-prem is not configured — CustomAttribute9/MailTip could not be written anywhere."
+                    : "Skipped — on-prem not configured"
             });
             return;
         }
