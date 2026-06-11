@@ -72,6 +72,9 @@ public class RoomFinderPreviewRow
     public string RoomListName { get; set; } = "";
     public bool RoomListExists { get; set; }
     public bool IsLegacyRoomList { get; set; }
+    // Set when a stray city-named list (e.g. "Durham Conference Rooms") exists that differs
+    // from the building-named target. Drives an operator warning; nothing is auto-deleted.
+    public string? StrayCityRoomListName { get; set; }
     public bool RoomResolved { get; set; }
     public string? ResolveError { get; set; }
     public List<string> Warnings { get; set; } = [];

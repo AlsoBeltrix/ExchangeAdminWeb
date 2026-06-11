@@ -74,6 +74,7 @@
                             <div class="col-md-6 mb-3">
                                 <label class="form-label fw-semibold">Building</label>
                                 <input type="text" class="form-control" @bind="building" placeholder="Building name" disabled="@isLoading" />
+                                <small class="form-text text-muted">Determines the room list (<em>&lt;Building&gt; Conference Rooms</em>). Leave blank to skip room-list assignment.</small>
                             </div>
                         </div>
                         <div class="row">
@@ -676,22 +677,27 @@
                     preview.ResolveError = ex.Message;
                 }
 
-                if (!string.IsNullOrWhiteSpace(row.City) && preview.RoomResolved)
+                // The room list IS the building (Room Finder groups it under the room's
+                // City metadata). Resolve/name the list from Building, not City.
+                if (!string.IsNullOrWhiteSpace(row.Building) && preview.RoomResolved)
                 {
                     try
                     {
-                        var (listName, listExists, isLegacy) = await RoomService.ResolveRoomListAsync(row.City);
-                        preview.RoomListName = listName ?? $"{row.City} Conference Rooms";
+                        var (listName, listExists, isLegacy, strayCityList) = await RoomService.ResolveRoomListAsync(row.Building, row.City);
+                        preview.RoomListName = listName ?? ConferenceRoomService.BuildRoomListName(row.Building);
                         preview.RoomListExists = listExists;
                         preview.IsLegacyRoomList = isLegacy;
+                        preview.StrayCityRoomListName = strayCityList;
                         if (isLegacy)
-                            preview.Warnings.Add($"Using legacy room list '{listName}'. New naming would be '{row.City} Conference Rooms'.");
+                            preview.Warnings.Add($"Using legacy room list '{listName}'. New naming would be '{ConferenceRoomService.BuildRoomListName(row.Building)}'.");
+                        if (!string.IsNullOrWhiteSpace(strayCityList))
+                            preview.Warnings.Add($"A city-named list '{strayCityList}' also exists. This room will be added to '{preview.RoomListName}' (the building list). Review the stray list manually.");
                     }
-                    catch { preview.RoomListName = $"{row.City} Conference Rooms"; }
+                    catch { preview.RoomListName = ConferenceRoomService.BuildRoomListName(row.Building); }
                 }
 
-                if (string.IsNullOrWhiteSpace(row.City))
-                    preview.Warnings.Add("Missing City — will not be added to a room list.");
+                if (string.IsNullOrWhiteSpace(row.Building))
+                    preview.Warnings.Add("Missing Building — will not be added to a room list.");
                 if (string.IsNullOrWhiteSpace(row.TimeZone))
                     preview.Warnings.Add("Missing TimeZone — timezone will not be set.");
 

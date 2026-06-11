@@ -116,28 +116,60 @@ public class ConferenceRoomService : ExchangeServiceBase
         });
     }
 
-    public async Task<(string? roomListName, bool exists, bool isLegacy)> ResolveRoomListAsync(string city)
+    // Room-list naming. The room list IS the building in Microsoft Room Finder; the
+    // city above it is derived from each room's Place metadata (set via Set-Place /
+    // Set-User), NOT from the list name. Keep these pure + static so the naming rule is
+    // unit-testable without a live EXO connection. See
+    // docs/ConferenceRooms-BuildingRoomList-Plan.md.
+    public static string BuildRoomListName(string building) => $"{building.Trim()} Conference Rooms";
+    public static string BuildLegacyRoomListName(string key) => $"RoomList-{key.Trim()}";
+
+    /// <summary>
+    /// Resolve the target room list for a room, keyed on <paramref name="building"/>.
+    /// <paramref name="city"/> is used only to detect a stray city-named list that differs
+    /// from the building target (so the UI can warn the operator — Option ii). Returns the
+    /// canonical-or-legacy target name, whether it already exists, whether the match was the
+    /// legacy form, and the name of any differing city-named list found (else null).
+    /// </summary>
+    public async Task<(string? roomListName, bool exists, bool isLegacy, string? strayCityListName)> ResolveRoomListAsync(string building, string city)
     {
         return await RunPooledQueryAsync((ps, tracker) =>
         {
-            var canonicalName = $"{city} Conference Rooms";
-            var legacyName = $"RoomList-{city}";
+            var canonicalName = BuildRoomListName(building);
+            var legacyName = BuildLegacyRoomListName(building);
+
+            // Stray city-named list detection (Option ii): only meaningful when the city
+            // would produce a different list name than the building target.
+            string? strayCityListName = null;
+            if (!string.IsNullOrWhiteSpace(city))
+            {
+                var cityListName = BuildRoomListName(city);
+                if (!string.Equals(cityListName, canonicalName, StringComparison.OrdinalIgnoreCase))
+                {
+                    ps.AddCommand("Get-DistributionGroup")
+                      .AddParameter("Identity", cityListName)
+                      .AddParameter("ErrorAction", "SilentlyContinue");
+                    var cityList = InvokeOptional(ps, tracker);
+                    if (cityList.Count > 0)
+                        strayCityListName = cityListName;
+                }
+            }
 
             ps.AddCommand("Get-DistributionGroup")
               .AddParameter("Identity", canonicalName)
               .AddParameter("ErrorAction", "SilentlyContinue");
             var canonical = InvokeOptional(ps, tracker);
             if (canonical.Count > 0)
-                return (canonicalName, true, false);
+                return (canonicalName, true, false, strayCityListName);
 
             ps.AddCommand("Get-DistributionGroup")
               .AddParameter("Identity", legacyName)
               .AddParameter("ErrorAction", "SilentlyContinue");
             var legacy = InvokeOptional(ps, tracker);
             if (legacy.Count > 0)
-                return (legacyName, true, true);
+                return (legacyName, true, true, strayCityListName);
 
-            return (canonicalName, false, false);
+            return (canonicalName, false, false, strayCityListName);
         });
     }
 
@@ -247,10 +279,11 @@ public class ConferenceRoomService : ExchangeServiceBase
             return result;
         }
 
-        // Step 4: Room list
-        if (!string.IsNullOrWhiteSpace(city))
+        // Step 4: Room list — keyed on building (the room list IS the building; city is
+        // metadata only). A room with no building is not added to any list.
+        if (!string.IsNullOrWhiteSpace(building))
         {
-            var listResult = await AddToRoomListAsync(roomEmail, city);
+            var listResult = await AddToRoomListAsync(roomEmail, building, city);
             result.Steps.AddRange(listResult.Steps);
             if (!listResult.Success)
             {
@@ -270,11 +303,11 @@ public class ConferenceRoomService : ExchangeServiceBase
         return result;
     }
 
-    public async Task<RoomOperationResult> AddToRoomListAsync(string roomEmail, string city)
+    public async Task<RoomOperationResult> AddToRoomListAsync(string roomEmail, string building, string city = "")
     {
         var result = new RoomOperationResult { Email = roomEmail };
 
-        var (roomListName, exists, isLegacy) = await ResolveRoomListAsync(city);
+        var (roomListName, exists, isLegacy, _) = await ResolveRoomListAsync(building, city);
         if (roomListName == null)
         {
             result.Success = false;
