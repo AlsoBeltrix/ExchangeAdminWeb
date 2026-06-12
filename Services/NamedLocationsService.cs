@@ -55,14 +55,19 @@ public class NamedLocationsService
 
         while (endpoint != null)
         {
-            using var doc = await client.GetAsync(endpoint);
+            var (doc, status) = await client.GetWithStatusAsync(endpoint);
             if (doc == null)
             {
-                if (!isFirstPage)
-                    _logger.LogWarning("Graph API returned non-success on a subsequent page; returning {Count} locations (list may be incomplete)", locations.Count);
+                // First-page failure must surface as an error, not render as
+                // "no named locations exist".
+                if (isFirstPage)
+                    throw new InvalidOperationException($"Graph request for named locations failed: {(int)status} {status}.");
+
+                _logger.LogWarning("Graph API returned {Status} on a subsequent page; returning {Count} locations (list may be incomplete)", status, locations.Count);
                 break;
             }
 
+            using var _ = doc;
             isFirstPage = false;
 
             foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())

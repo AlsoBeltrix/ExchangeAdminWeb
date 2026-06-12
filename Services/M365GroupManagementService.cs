@@ -67,12 +67,13 @@ public class M365GroupManagementService
         var filterQuery = Uri.EscapeDataString($"groupTypes/any(g:g eq 'Unified') and startsWith(displayName,'{odataEscaped}')");
         var endpoint = $"/groups?$filter={filterQuery}&$select=id,displayName,mail,description,visibility,createdDateTime&$top=50";
 
-        using var doc = await client.GetAsync(endpoint);
+        var (doc, status) = await client.GetWithStatusAsync(endpoint);
         if (doc == null)
         {
-            _logger.LogWarning("Graph API returned non-success searching M365 groups for '{Term}'", searchTerm);
-            return groups;
+            // A failed search must not render as "no groups found".
+            throw new InvalidOperationException($"Graph search for M365 groups failed: {(int)status} {status}.");
         }
+        using var _ = doc;
 
         foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
         {

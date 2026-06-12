@@ -48,8 +48,15 @@ public class MfaResetService
     public async Task<List<AuthMethod>> GetUserMethodsAsync(string userPrincipalName)
     {
         var methods = new List<AuthMethod>();
-        using var doc = await (await GetGraphClientAsync() ?? throw new InvalidOperationException("MFA Reset Graph credentials not available.")).GetAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
-        if (doc == null) return methods;
+        var client = await GetGraphClientAsync() ?? throw new InvalidOperationException("MFA Reset Graph credentials not available.");
+        var (doc, status) = await client.GetWithStatusAsync($"/users/{Uri.EscapeDataString(userPrincipalName)}/authentication/methods");
+
+        // A failed request must not read as "user has no methods" - that turned
+        // Graph 403/404/429/5xx into a blanket-success MFA reset.
+        if (doc == null)
+            throw new InvalidOperationException($"Graph request for {userPrincipalName} failed: {(int)status} {status}.");
+
+        using var _ = doc;
 
         foreach (var item in doc.RootElement.GetProperty("value").EnumerateArray())
         {
@@ -75,7 +82,18 @@ public class MfaResetService
 
     public async Task<MfaResetResult> ResetAllMethodsAsync(string userPrincipalName)
     {
-        var methods = await GetUserMethodsAsync(userPrincipalName);
+        List<AuthMethod> methods;
+        try
+        {
+            methods = await GetUserMethodsAsync(userPrincipalName);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return new MfaResetResult { Success = false, Message = $"Could not read MFA methods - nothing was reset. {ex.Message}", RemovedCount = 0 };
+        }
+
+        // Reaching here means Graph answered 200; an empty list is genuinely
+        // "user has no methods", not a failed request.
         if (methods.Count == 0)
             return new MfaResetResult { Success = true, Message = "No MFA methods to remove.", RemovedCount = 0 };
 

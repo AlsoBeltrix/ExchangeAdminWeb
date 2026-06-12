@@ -25,17 +25,29 @@ public sealed class GraphTokenClient
         _clientSecret = clientSecret ?? "";
     }
 
-    public async Task<JsonDocument?> GetAsync(string endpoint)
+    /// <summary>
+    /// GET that surfaces the HTTP status so callers can distinguish "empty result"
+    /// from "request failed" (403/404/429/5xx). Document is null on non-success.
+    /// </summary>
+    public async Task<(JsonDocument? Document, System.Net.HttpStatusCode StatusCode)> GetWithStatusAsync(string endpoint)
     {
         var token = await GetAccessTokenAsync();
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await _httpClient.SendAsync(request);
-        if (!response.IsSuccessStatusCode) return null;
+        if (!response.IsSuccessStatusCode) return (null, response.StatusCode);
 
         var content = await response.Content.ReadAsStringAsync();
-        return JsonDocument.Parse(content);
+        return (JsonDocument.Parse(content), response.StatusCode);
+    }
+
+    // Null collapses failure and "no content" into one value - prefer
+    // GetWithStatusAsync anywhere the caller reports success/failure to a user.
+    public async Task<JsonDocument?> GetAsync(string endpoint)
+    {
+        var (document, _) = await GetWithStatusAsync(endpoint);
+        return document;
     }
 
     public async Task<bool> DeleteAsync(string endpoint)
