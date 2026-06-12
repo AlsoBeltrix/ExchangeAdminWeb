@@ -14,6 +14,8 @@ public class PageAuthorizationRecheckTests
     [Theory]
     [InlineData("MailboxPermissions.razor", "SubmitSingle")]
     [InlineData("MailboxPermissions.razor", "ProcessBulk")]
+    [InlineData("CalendarPermissions.razor", "SubmitSingle")]
+    [InlineData("CalendarPermissions.razor", "ProcessBulk")]
     public void MutatingHandler_RechecksAuthorizationBeforeWrite(string page, string handler)
     {
         var body = GetMethodBody(page, handler);
