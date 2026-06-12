@@ -159,10 +159,12 @@
         authChecked = true;
     }
 
-    private void HandleKeyDown(KeyboardEventArgs e)
+    private async Task HandleKeyDown(KeyboardEventArgs e)
     {
+        // Await (never discard) so Blazor re-renders when the work completes;
+        // a discarded task left results invisible until the next UI event.
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(userPrincipalName))
-            _ = ListMethods();
+            await ListMethods();
     }
 
     private async Task ListMethods()

@@ -191,10 +191,12 @@
         authChecked = true;
     }
 
-    private void HandleSearchKey(KeyboardEventArgs e)
+    private async Task HandleSearchKey(KeyboardEventArgs e)
     {
+        // Await (never discard) so Blazor re-renders when the search completes;
+        // a discarded task left results invisible until the next UI event.
         if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchTerm))
-            _ = Search();
+            await Search();
     }
 
     private async Task Search()
