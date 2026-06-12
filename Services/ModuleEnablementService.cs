@@ -12,7 +12,7 @@ public class ModuleEnablementService
     private readonly IConfiguration _config;
     private readonly ILogger<ModuleEnablementService> _logger;
     private readonly object _writeLock = new();
-    private bool _migrationChecked;
+    private bool _startupCheckDone;
 
     public ModuleEnablementService(
         ModuleCatalog catalog,
@@ -53,7 +53,7 @@ public class ModuleEnablementService
     /// </summary>
     public bool IsModuleRawEnabled(string moduleId)
     {
-        RunUpgradeMigration();
+        WarnIfExchangeOnlineUnset();
 
         var module = _catalog.GetById(moduleId);
         if (module == null) return false;
@@ -68,7 +68,7 @@ public class ModuleEnablementService
 
     public Dictionary<string, bool> GetAllEnablement()
     {
-        RunUpgradeMigration();
+        WarnIfExchangeOnlineUnset();
 
         var state = ReadState();
         var result = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -129,68 +129,28 @@ public class ModuleEnablementService
         }
     }
 
-    private void RunUpgradeMigration()
+    // Read-only startup check. Enablement state is written ONLY by SaveEnablement from
+    // Admin Settings — never at startup (owner direction, incident 2026-06-12).
+    private void WarnIfExchangeOnlineUnset()
     {
-        if (_migrationChecked) return;
-        _migrationChecked = true;
+        if (_startupCheckDone) return;
+        _startupCheckDone = true;
 
         try
         {
-            Dictionary<string, bool>? state = null;
-
-            if (File.Exists(_configFilePath))
-            {
-                var json = File.ReadAllText(_configFilePath);
-                state = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
-            }
-
-            state ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-
+            var state = ReadState();
             if (state.ContainsKey("ExchangeOnline"))
                 return;
 
             var hasExoConfig = !string.IsNullOrWhiteSpace(_moduleConfig.GetValue("ExchangeOnline", "AppId"))
                             || !string.IsNullOrWhiteSpace(_config["ExchangeOnline:AppId"]);
 
-            lock (_writeLock)
-            {
-                Dictionary<string, bool>? reState = null;
-                if (File.Exists(_configFilePath))
-                {
-                    var reJson = File.ReadAllText(_configFilePath);
-                    reState = JsonSerializer.Deserialize<Dictionary<string, bool>>(reJson);
-                }
-                reState ??= new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-
-                if (reState.ContainsKey("ExchangeOnline")) return;
-
-                reState["ExchangeOnline"] = hasExoConfig;
-                var updated = JsonSerializer.Serialize(reState, new JsonSerializerOptions { WriteIndented = true });
-                var configDir = Path.GetDirectoryName(_configFilePath)!;
-                var tempPath = Path.Combine(configDir, $"modules-enabled.{Guid.NewGuid():N}.tmp");
-                try
-                {
-                    File.WriteAllText(tempPath, updated);
-                    if (File.Exists(_configFilePath))
-                        File.Replace(tempPath, _configFilePath, null);
-                    else
-                        File.Move(tempPath, _configFilePath);
-                }
-                finally
-                {
-                    if (File.Exists(tempPath))
-                        try { File.Delete(tempPath); } catch { }
-                }
-            }
-
             if (hasExoConfig)
-                _logger.LogInformation("Auto-enabled ExchangeOnline: existing EXO config detected");
-            else
-                _logger.LogInformation("ExchangeOnline disabled: no EXO config found (fresh install)");
+                _logger.LogWarning("ExchangeOnline has EXO config but no enablement entry; it stays disabled (and dependent modules with it) until an admin saves enablement from Admin Settings");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Skipping ExchangeOnline upgrade migration - enablement file may be corrupt");
+            _logger.LogWarning(ex, "Skipping ExchangeOnline enablement check");
         }
     }
 

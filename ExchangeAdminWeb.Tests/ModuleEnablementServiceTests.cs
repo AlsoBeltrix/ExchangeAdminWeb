@@ -347,25 +347,71 @@ public class ModuleEnablementServiceTests : IDisposable
         Assert.True(service.IsModuleEnabled("MfaReset"));
     }
 
+    // --- Startup must never write enablement state (incident 2026-06-12, fix #1) ---
+    // Enablement is written ONLY by SaveEnablement from Admin Settings.
+
     [Fact]
-    public void UpgradeMigration_NoExoConfig_SetsExchangeOnlineFalse()
+    public void Startup_NoFile_ReadsDoNotCreateFile()
     {
-        // Write enablement file without ExchangeOnline key
+        var service = CreateService();
+
+        service.GetAllEnablement();
+        service.IsModuleRawEnabled("MailboxPermissions");
+
+        Assert.False(File.Exists(_configFilePath));
+    }
+
+    [Fact]
+    public void Startup_MissingExchangeOnlineKey_NoExoConfig_DefaultsFalse_AndWritesNothing()
+    {
         var state = new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = true
         };
         WriteEnablementFile(state);
+        var before = File.ReadAllText(_configFilePath);
 
         var service = CreateService();
         var result = service.GetAllEnablement();
 
-        // Migration should have set ExchangeOnline = false (no config exists)
-        Assert.False(result["ExchangeOnline"]);
+        Assert.False(result["ExchangeOnline"]); // EnabledByDefault = false
+        Assert.Equal(before, File.ReadAllText(_configFilePath));
     }
 
     [Fact]
-    public void UpgradeMigration_ExistingKey_NotOverwritten()
+    public void Startup_MissingExchangeOnlineKey_WithExoConfig_DoesNotAutoEnable_AndWritesNothing()
+    {
+        var state = new Dictionary<string, bool>
+        {
+            ["MailboxPermissions"] = true
+        };
+        WriteEnablementFile(state);
+        File.WriteAllText(Path.Combine(_configDir, "module-config-ExchangeOnline.json"),
+            """{ "AppId": "00000000-0000-0000-0000-000000000001" }""");
+        var before = File.ReadAllText(_configFilePath);
+
+        var service = CreateService();
+        var result = service.GetAllEnablement();
+
+        Assert.False(result["ExchangeOnline"]); // no auto-enable: an admin must enable it explicitly
+        Assert.Equal(before, File.ReadAllText(_configFilePath));
+    }
+
+    [Fact]
+    public void Startup_CorruptFile_ReadsDoNotRewriteFile()
+    {
+        const string corrupt = "{ this is not valid json !!!";
+        WriteRawFile(corrupt);
+
+        var service = CreateService();
+        service.GetAllEnablement();
+        service.IsModuleRawEnabled("MailboxPermissions");
+
+        Assert.Equal(corrupt, File.ReadAllText(_configFilePath));
+    }
+
+    [Fact]
+    public void Startup_ExistingExchangeOnlineKey_PreservedAndFileUntouched()
     {
         var state = new Dictionary<string, bool>
         {
@@ -373,11 +419,12 @@ public class ModuleEnablementServiceTests : IDisposable
             ["MailboxPermissions"] = true
         };
         WriteEnablementFile(state);
+        var before = File.ReadAllText(_configFilePath);
 
         var service = CreateService();
         var result = service.GetAllEnablement();
 
-        // Existing key should not be overwritten by migration
         Assert.True(result["ExchangeOnline"]);
+        Assert.Equal(before, File.ReadAllText(_configFilePath));
     }
 }
