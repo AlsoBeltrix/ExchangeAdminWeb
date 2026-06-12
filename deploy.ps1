@@ -132,6 +132,12 @@ if ($Force -and (Test-Path $configPath)) {
     $backupName = "appsettings.${timestamp}.pre-force.bak"
     Copy-Item $configPath (Join-Path $BackupDir $backupName)
     Write-Warn "Existing config backed up to $BackupDir\$backupName"
+    $forceConfigDir = Join-Path $PublishPath "config"
+    if (Test-Path $forceConfigDir) {
+        $forceConfigBackup = Join-Path $BackupDir "config.${timestamp}.pre-force.bak"
+        Copy-Item $forceConfigDir $forceConfigBackup -Recurse
+        Write-Warn "Existing runtime config directory backed up to $forceConfigBackup"
+    }
 }
 
 $mode = if ($isUpgrade) { "UPGRADE" } else { "INSTALL" }
@@ -386,6 +392,18 @@ if ($isUpgrade) {
     $backupName = "appsettings.${timestamp}.bak"
     Copy-Item $configPath (Join-Path $BackupDir $backupName)
     Write-Success "Config backed up to $BackupDir\$backupName"
+
+    # The 2026-06-12 incident had no pre-deploy snapshot of config/, leaving the
+    # pre-incident enablement state unknowable. Back up the whole runtime config
+    # directory, retained alongside the appsettings backups.
+    $runtimeConfigDir = Join-Path $PublishPath "config"
+    if (Test-Path $runtimeConfigDir) {
+        $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
+        Copy-Item $runtimeConfigDir $configDirBackup -Recurse
+        Write-Success "Runtime config directory backed up to $configDirBackup"
+    } else {
+        Write-Warn "No runtime config directory at $runtimeConfigDir -- nothing to back up"
+    }
 
     Write-Step "Stopping app pool"
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}

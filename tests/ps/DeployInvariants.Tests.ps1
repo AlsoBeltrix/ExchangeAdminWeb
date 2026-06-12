@@ -129,6 +129,21 @@ Describe 'deploy.ps1' {
         $cleaning.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths stage a publish containing live appsettings.json'
     }
 
+    It 'backs up the whole runtime config directory before the upgrade mirror (incident fix #4)' {
+        $upgradeBlock = [regex]::Match(
+            $s.Text,
+            '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
+        ).Value
+
+        $upgradeBlock | Should -Match 'Copy-Item \$runtimeConfigDir \$configDirBackup -Recurse' `
+            -Because 'the 2026-06-12 incident had no pre-deploy snapshot of config/ to diagnose from'
+        $upgradeBlock | Should -Match 'config\.\$\{timestamp\}\.bak' `
+            -Because 'the snapshot must be timestamped and retained like appsettings backups'
+        $upgradeBlock.IndexOf('Copy-Item $runtimeConfigDir') |
+            Should -BeLessThan $upgradeBlock.IndexOf('robocopy') `
+            -Because 'the snapshot must be taken before any files change'
+    }
+
     It 'does not rewrite appsettings.json during upgrade reconciliation' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
