@@ -384,3 +384,11 @@ infrastructure; module versions per touched module (rule fires independently).
   All deploys are on hold until incident fixes 1 (and 2 if confirmed by the appsettings
   diff) land. Task 20 blocked pending dev recovery confirmation. Handoff prepared for a
   successor session.
+- 2026-06-12, round 7: Michael requested assessment/fix for whether the deploy pipeline
+  is usable after manual dev config recovery. Scope approved for this slice: make the
+  dev deploy path stop rewriting upgrade `appsettings.json`; keep fresh-install
+  generation and prod promotion unchanged; add Pester coverage for the invariant.
+  This resolves incident fix #2's deploy-side mitigation by warning about
+  obsolete/missing keys instead of whole-file `ConvertTo-Json` rewrite. Utility deploy
+  script changes do not bump the app version because they do not change the deployed app
+  binaries. Startup enablement writes remain a separate blocker.

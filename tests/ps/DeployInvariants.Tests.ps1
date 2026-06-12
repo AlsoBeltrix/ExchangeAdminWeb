@@ -123,6 +123,20 @@ Describe 'deploy.ps1' {
         $cleaning = @($tries | Where-Object { $_.Finally.Extent.Text -match 'Remove-Item \$StagingPath' })
         $cleaning.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths stage a publish containing live appsettings.json'
     }
+
+    It 'does not rewrite appsettings.json during upgrade reconciliation' {
+        $upgradeBlock = [regex]::Match(
+            $s.Text,
+            '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
+        ).Value
+
+        $upgradeBlock | Should -Not -Match 'ConvertTo-Json\s+-Depth\s+10\s+\|\s+Set-Content\s+\$configPath' `
+            -Because 'upgrade deploys preserve environment-owned appsettings.json byte-for-byte except for explicit operator edits'
+        $upgradeBlock | Should -Not -Match '\.PSObject\.Properties\.Remove' `
+            -Because 'obsolete appsettings keys are warned about, not silently removed by deploy'
+        $upgradeBlock | Should -Not -Match 'Add-Member\s+-NotePropertyName\s+"AdminGroups"' `
+            -Because 'deploy must not synthesize Security:AdminGroups by reserializing the whole file'
+    }
 }
 
 Describe 'tools/Install-ExchangeAdminWeb.ps1' {

@@ -411,49 +411,32 @@ if ($isUpgrade) {
         Write-Step "Reconciling configuration"
         $config = Get-Content $configPath -Raw | ConvertFrom-Json
 
-        $configChanged = $false
-
         if ($config.Migration -and (Get-Member -InputObject $config.Migration -Name "OnPremTargetDAG" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
             $hasTargetDatabases = (Get-Member -InputObject $config.Migration -Name "OnPremTargetDatabases" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
                                   $config.Migration.OnPremTargetDatabases -and $config.Migration.OnPremTargetDatabases.Count -gt 0
             if (-not $hasTargetDatabases) {
                 Write-Warn "Migration:OnPremTargetDatabases is not configured. Move-back batches will fail until target databases are set in Module Config."
             }
-            $config.Migration.PSObject.Properties.Remove("OnPremTargetDAG")
-            $configChanged = $true
-            Write-Warn "Removed obsolete Migration:OnPremTargetDAG. Move-back batches now pass all configured databases from Migration:OnPremTargetDatabases to Exchange for distribution."
+            Write-Warn "Migration:OnPremTargetDAG is obsolete. Leaving appsettings.json unchanged during deploy; remove it manually after confirming Migration:OnPremTargetDatabases."
         }
 
         if ($config.Delinea -and (Get-Member -InputObject $config.Delinea -Name "ExchangeSecretId" -MemberType NoteProperty -ErrorAction SilentlyContinue)) {
-            $config.Delinea.PSObject.Properties.Remove("ExchangeSecretId")
-            $configChanged = $true
-            Write-Success "Removed obsolete Delinea:ExchangeSecretId; configure DelineaSecretId separately per module"
+            Write-Warn "Delinea:ExchangeSecretId is obsolete. Leaving appsettings.json unchanged during deploy; configure DelineaSecretId separately per module."
         }
 
-        # Auto-add AdminGroups if supplied via parameter and missing from config
-        $hasAdminGroups = (Get-Member -InputObject $config.Security -Name "AdminGroups" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
+        $hasAdminGroups = $config.Security -and
+                          (Get-Member -InputObject $config.Security -Name "AdminGroups" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
                           $config.Security.AdminGroups -and $config.Security.AdminGroups.Count -gt 0
         if (-not $hasAdminGroups) {
             if ($AdminGroups -and $AdminGroups.Count -gt 0) {
-                $qualifiedAdmin = $AdminGroups | ForEach-Object { if ($_ -like '*\*') { $_ } else { "$DomainPrefix\$_" } }
-                if (Get-Member -InputObject $config.Security -Name "AdminGroups" -MemberType NoteProperty -ErrorAction SilentlyContinue) {
-                    $config.Security.AdminGroups = @($qualifiedAdmin)
-                } else {
-                    $config.Security | Add-Member -NotePropertyName "AdminGroups" -NotePropertyValue @($qualifiedAdmin)
-                }
-                $configChanged = $true
-                Write-Success "Set Security:AdminGroups in config"
+                Write-Warn "Security:AdminGroups is missing or empty. Leaving appsettings.json unchanged during deploy; add AdminGroups manually."
             } else {
                 Write-Warn "Security:AdminGroups is missing or empty -- /admin-settings page will be inaccessible until configured (see appsettings.json.sample)"
             }
         }
 
-        if ($configChanged) {
-            $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
-        }
-
         $sectionAccessFragment = Join-Path $PublishPath "config\sectionaccess.json"
-        if (-not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue) -and
+        if ((-not $config.Security -or -not (Get-Member -InputObject $config.Security -Name "SectionAccess" -MemberType NoteProperty -ErrorAction SilentlyContinue)) -and
             -not (Test-Path $sectionAccessFragment)) {
             Write-Warn "Section-level permissions not configured -- use per-module config pages or create config\sectionaccess.json"
         }

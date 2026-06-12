@@ -8,12 +8,16 @@ repo facts change.
 - App version `2.3.6` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **ACTIVE INCIDENT — read `docs/Incident-2026-06-12-DevConfigLoss.md` FIRST.** The
   2026-06-12 task-20 dev deploy triggered loss of dev's section-access/enablement state.
-  Recovery steps were issued to the owner (restore appsettings from the 12:47 .bak; copy
-  modules-enabled.json from prod; recycle pool) — completion unconfirmed. The incident doc
-  contains root cause, the previous session's errors, open diagnostics, and required
-  fixes 1-8 (NOT implemented; owner approval required).
-- **ALL DEPLOYS ON HOLD** until incident fixes land (startup enablement write removal is
-  owner-directed; deploy.ps1 appsettings reconciliation rewrite pending diff evidence).
+  Dev config recovery was performed on 2026-06-12: current dev files were backed up to
+  `E:\WWWOutput\ExchangeAdminWeb\ConfigBackups\dev-recovery-20260612144642`,
+  dev `appsettings.json` was restored from `appsettings.20260612124749.bak`,
+  prod `modules-enabled.json` and `sectionaccess.json` were copied to dev, JSON was
+  validated, and `web.config` was touched because direct IIS recycle required an
+  elevated admin token. The incident doc contains root cause, the previous session's
+  errors, open diagnostics, and required fixes.
+- **DEPLOYS PARTIALLY ON HOLD**: deploy appsettings reconciliation no longer rewrites
+  upgrade `appsettings.json`, but the startup enablement write removal is
+  still owner-directed and not implemented.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and CI-green
   (405/405 xUnit windows-latest, 24/24 Pester). Task 20 blocked on incident recovery.
   Phase 4 waits behind incident fixes. Findings register:
@@ -33,8 +37,10 @@ repo facts change.
 
 ## Blockers
 
-- Incident recovery unconfirmed (owner executing manually on the server).
-- Incident fixes 1-8 need owner approval before implementation (plan review log round 6).
+- Startup enablement writes still need to be removed before trusting another deploy
+  against dev or prod.
+- Remaining incident fixes need owner approval/scheduling before implementation (plan
+  review log round 6).
 
 ## Deploy notes (before the FailClosed change reaches prod)
 
