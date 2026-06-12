@@ -54,4 +54,26 @@ public class ConferenceRoomSyncedRoomTests
         // nowhere, so it must NOT count as success.
         Assert.False(ConferenceRoomService.OnPremSkipCountsAsSuccess(cloudAttrDeferredToOnPrem: true));
     }
+
+    [Fact]
+    public void PermissionRemovalStep_NoErrors_Succeeds()
+    {
+        var step = ConferenceRoomService.BuildPermissionRemovalStep([]);
+
+        Assert.True(step.Success);
+        Assert.Equal("Remove existing permissions", step.Stage);
+    }
+
+    [Fact]
+    public void PermissionRemovalStep_AnyError_FailsWithDetail()
+    {
+        // A CEO conversion must never report success while previous permission
+        // holders retain access; every captured removal error fails the step.
+        var step = ConferenceRoomService.BuildPermissionRemovalStep(
+            ["alice@contoso.com: Access is denied.", "Get-MailboxFolderPermission: timeout"]);
+
+        Assert.False(step.Success);
+        Assert.Contains("alice@contoso.com", step.Error);
+        Assert.Contains("timeout", step.Error);
+    }
 }

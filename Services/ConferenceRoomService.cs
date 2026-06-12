@@ -146,6 +146,20 @@ public class ConferenceRoomService : ExchangeServiceBase
     public static bool OnPremSkipCountsAsSuccess(bool cloudAttrDeferredToOnPrem)
         => !cloudAttrDeferredToOnPrem;
 
+    // Step result for "Remove existing permissions": any captured error makes the
+    // step fail so the failedSteps aggregation surfaces it. A CEO conversion must
+    // never report success while previous permission holders retain access.
+    // Pure + static for unit testing.
+    public static RoomOperationStep BuildPermissionRemovalStep(IReadOnlyList<string> errors)
+        => errors.Count == 0
+            ? new RoomOperationStep { Stage = "Remove existing permissions", Success = true }
+            : new RoomOperationStep
+            {
+                Stage = "Remove existing permissions",
+                Success = false,
+                Error = string.Join("; ", errors)
+            };
+
     // The config keys whose values are required before any Room Type operation may run.
     // RoomListOU is excluded (already IsNullOrWhiteSpace-guarded at the room-list step) and
     // the contact-email keys are excluded (used only in cosmetic response text).
@@ -525,16 +539,21 @@ public class ConferenceRoomService : ExchangeServiceBase
             }
             catch { /* use raw value */ }
 
-            // Step 3: Remove existing permissions if requested (always for CEO)
+            // Step 3: Remove existing permissions if requested (always for CEO).
+            // Errors must surface: a CEO conversion that reports success while old
+            // Editor grants survive would leave unauthorized access to the CEO
+            // calendar. InvokeBestEffort captures per-command errors that the old
+            // SilentlyContinue + InvokeOptional combination discarded.
             if (removeExistingPermissions || roomType == RoomType.CEO)
             {
                 _operationTrace?.Step("RemoveExistingPermissions", backend: "EXO", command: "Remove-MailboxFolderPermission", target: calFolderPath);
+                var removalErrors = new List<string>();
                 try
                 {
                     ps.AddCommand("Get-MailboxFolderPermission")
-                      .AddParameter("Identity", calFolderPath)
-                      .AddParameter("ErrorAction", "SilentlyContinue");
-                    var existingPerms = InvokeOptional(ps, tracker);
+                      .AddParameter("Identity", calFolderPath);
+                    var existingPerms = InvokeBestEffort(ps, tracker, out var readErrors);
+                    removalErrors.AddRange(readErrors);
                     foreach (var perm in existingPerms)
                     {
                         var user = perm.Properties["User"]?.Value?.ToString() ?? "";
@@ -545,16 +564,17 @@ public class ConferenceRoomService : ExchangeServiceBase
                         ps.AddCommand("Remove-MailboxFolderPermission")
                           .AddParameter("Identity", calFolderPath)
                           .AddParameter("User", user)
-                          .AddParameter("Confirm", false)
-                          .AddParameter("ErrorAction", "SilentlyContinue");
-                        InvokeOptional(ps, tracker);
+                          .AddParameter("Confirm", false);
+                        InvokeBestEffort(ps, tracker, out var removeErrors);
+                        foreach (var err in removeErrors)
+                            removalErrors.Add($"{user}: {err}");
                     }
-                    result.Steps.Add(new RoomOperationStep { Stage = "Remove existing permissions", Success = true });
                 }
                 catch (Exception ex)
                 {
-                    result.Steps.Add(new RoomOperationStep { Stage = "Remove existing permissions", Success = false, Error = ex.Message });
+                    removalErrors.Add(ex.Message);
                 }
+                result.Steps.Add(BuildPermissionRemovalStep(removalErrors));
             }
 
             // Step 4: Calendar processing settings
