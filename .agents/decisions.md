@@ -24,6 +24,35 @@ The standalone `CLAUDE.md` agent guide. Its content moved into `AGENTS.md`; the 
 rulebook `docs/ProjectConstitution.md` was left in place and remains the highest
 engineering authority.
 
+### 2026-06-12 - Runtime config and operational data move to SQLite
+
+Status: Active (direction approved by Michael; implementation gated on approval of
+`docs/SqliteConfigStore-Plan.md`)
+
+Decision:
+The scattered JSON fragments under `config/` (and runtime-editable operational state
+generally) will move to a SQLite database stored outside the deploy target. SQL
+Express was considered and rejected: no ADI policy mandates a managed SQL instance for
+this app, the app is single-writer/single-box by design, and SQLite removes ops
+surface (no service, file-copy backups, `VACUUM INTO` snapshots for the planned
+prod<->dev config copy tool) where Express adds it.
+
+Consequences (to be finalized at plan approval):
+- New modules and new app settings self-register idempotently at startup
+  (INSERT-if-missing with defaults). This RELAXES the 2026-06-12 owner direction
+  "the app must never write enablement state at startup" for NON-DESTRUCTIVE seeding
+  only; destructive startup writes remain forbidden. The original direction stands
+  unmodified until the plan is approved and this entry is updated.
+- Much of the 2026-06-12 incident hardening (config/ backup snapshots, post-deploy
+  drift check, robocopy config exclusions, corrupt-JSON guards) becomes
+  obsolete-by-design; the plan must enumerate what is retired vs kept.
+
+Reason:
+Repeated config-file incidents (see `docs/Incident-2026-06-12-DevConfigLoss.md`) all
+stem from many loose files shared by the app, deploys, and humans. Transactional
+single-file storage retires the corrupt-file and partial-state failure classes
+structurally.
+
 ### 2026-06-10 - `docs/ProjectConstitution.md` remains the highest engineering authority
 
 Status: Active
