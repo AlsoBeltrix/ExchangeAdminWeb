@@ -195,7 +195,11 @@ public class AuditServiceTests : IDisposable
     [Fact]
     public void LogMailboxPermission_ThrowsOnWriteFailure()
     {
-        var config = CreateConfig(@"Z:\nonexistent\path\that\does\not\exist");
+        // A log root whose path contains an existing file fails directory
+        // creation on every OS (the previous Z:\ path was only invalid on Windows).
+        var blocker = Path.Combine(_tempDir, "blocker");
+        File.WriteAllText(blocker, "");
+        var config = CreateConfig(Path.Combine(blocker, "logs"));
 
         Assert.ThrowsAny<Exception>(() => CreateAudit(config));
     }
