@@ -46,6 +46,23 @@ repo facts change.
 
 ## Queued work (owner-requested 2026-06-12)
 
+- **Config storage rethink — database instead of JSON fragments** (decision DEFERRED to
+  week of 2026-06-15; Michael will decide; needs a plan doc before any implementation).
+  Motivation: repeated config-file headaches (2026-06-12 incident class). Owner asks:
+  (a) evaluate a database (SQLite vs SQL Server) for runtime config; (b) what else
+  should move there (candidates: all config/ fragments — enablement, section access,
+  module configs, module admins, protected principals, AD attribute allowlist, extended
+  log level — plus audit/event log, operation traces, config change history, test
+  account pool state; bootstrap settings stay in appsettings.json); (c) a quick
+  "copy prod config to dev" / "copy dev config to prod" tool; (d) new modules and new
+  app settings self-register idempotently at startup (INSERT-if-missing with defaults).
+  Item (d) would RELAX the no-writes-at-startup rule (2026-06-12 owner direction) for
+  non-destructive seeding only — if adopted, supersede that direction explicitly in
+  `.agents/decisions.md`; until then the current rule stands. Interacts with the module
+  packaging item below (module manifest table). Much of this week's deploy hardening
+  (config backups, drift check, corrupt-store guards) becomes obsolete-by-design if
+  this lands; plan should say what gets retired.
+
 - **Module developer guide review**: drift-check `docs/AdminModuleDeveloperGuide.md`
   (and the `docs/AdminModuleSpec.md` version header) against current code before the
   week of 2026-06-15 — Michael will farm out new-module development and the guide must
