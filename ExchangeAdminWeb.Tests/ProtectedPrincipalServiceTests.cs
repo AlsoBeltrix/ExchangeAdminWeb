@@ -528,4 +528,21 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.Null(principal);
         Assert.Equal(ProtectedPrincipalService.ResolutionStatus.Unavailable, status);
     }
+
+    [Fact]
+    public async Task Check_CorruptMailboxPermissionsModuleConfig_FailsClosed()
+    {
+        // The legacy ExcludedUsers protection list lives in the MailboxPermissions
+        // module config. A corrupt file must fail the check (deny the mutation),
+        // never silently drop the exclusions (fail open).
+        File.WriteAllText(
+            Path.Combine(_configDir, "module-config-MailboxPermissions.json"),
+            "{ this is not valid json");
+
+        var service = CreateService();
+        var result = await service.CheckAsync(MakePrincipal("excluded@contoso.com"));
+
+        Assert.True(result.CheckFailed);
+        Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -122,6 +122,13 @@ public class ProtectedPrincipalService
 
     public (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
     {
+        // The legacy ExcludedUsers protection list lives in the MailboxPermissions
+        // module config. If that file exists but is corrupt, silently reading it as
+        // empty would un-protect those principals - fail closed instead, the same
+        // way PermissionValidator blocks on the same corruption.
+        if (_moduleConfig.IsModuleCorrupt("MailboxPermissions"))
+            return (null, [], "MailboxPermissions module configuration is corrupt - protected-principal exclusions unavailable. Contact your administrator.");
+
         lock (_cacheLock)
         {
             if (_cachedConfig != null && DateTime.UtcNow - _configLoadedAt < ConfigCacheTtl && !_configCorrupt)
