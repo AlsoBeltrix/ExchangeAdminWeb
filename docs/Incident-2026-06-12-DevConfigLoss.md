@@ -1,7 +1,8 @@
 # Incident: Dev runtime config loss after 2026-06-12 deploy — handoff document
 
-Status: Diagnosed (server diagnostics complete 2026-06-12 PM; root cause CORRECTED below;
-fixes #1 and #2 implemented; awaiting owner sign-off to close)
+Status: Remediated (diagnostics complete; root cause CORRECTED below; fixes #1-#7
+implemented, #8 closed by diagnostics; remaining: owner sign-off and task-20 manual
+UI verification of the new error states)
 Owner: Michael
 Written by: the session that caused/handled the incident, for a successor model.
 Authority context: read `AGENTS.md`, `docs/ProjectConstitution.md`, `docs/ProdReadiness-Plan.md`
@@ -50,12 +51,18 @@ Server diagnostics (file hashes, dev app logs, git history) settled every open q
    both disabled modules whose aliases are absent from prod's copied fragment. Benign
    noise; add groups before ever enabling them on dev.
 
-Fix statuses after this session: #1 implemented (startup write removed —
-`WarnIfExchangeOnlineUnset` is read-only; tests prove no startup writes; app 2.3.7);
-#2 implemented earlier as hardening (commit `2c3256f`, plan round 7) and its suspected
-causal role is refuted; #3–#8 remain open for owner scheduling (#8's mechanism is
-identified above and mitigated by `c473fba`'s guard; #6 — note bare `deploy.ps1` still
-defaults to prod names).
+Fix statuses (all complete as of 2026-06-12 evening, owner-approved plan round 9):
+#1 implemented (startup write removed — `WarnIfExchangeOnlineUnset` is read-only; tests
+prove no startup writes; app 2.3.7); #2 implemented earlier as hardening (commit
+`2c3256f`, plan round 7), suspected causal role refuted; #3 implemented (corrupt-store
+probes + admin pages show explicit errors and refuse to save over corrupt/unknown
+backing state; app 2.3.8); #4 implemented (deploys snapshot the whole config/ directory
+to ConfigBackups, timestamped); #5 implemented (post-deploy drift check compares config/
+inventory + appsettings keys against the pre-deploy snapshot and warns loudly);
+#6 implemented (deploy.ps1 defaults now target dev; fresh installs require
+-ConfirmFreshInstall); #7 implemented (duplicate import removed, exactly-once invariant
+in Pester); #8 closed by diagnostics (IIS:-drive absence makes Test-Path silently false;
+guarded loud by `c473fba`).
 
 ## What happened (timeline, 2026-06-12)
 

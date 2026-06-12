@@ -5,7 +5,7 @@ repo facts change.
 
 ## Now
 
-- App version `2.3.7` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.8` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **INCIDENT DIAGNOSED — see Diagnostic Results in
   `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
   proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,
@@ -16,18 +16,21 @@ repo facts change.
   design. Dev recovery is confirmed healthy from logs (residual denials only for
   disabled LicensingUpdates/TestAccountPool, absent from prod's fragment — add groups
   before enabling them).
-- Incident fix #1 implemented (2.3.7): `ModuleEnablementService` startup migration
-  reduced to read-only `WarnIfExchangeOnlineUnset`; enablement is written only by
-  `SaveEnablement`; startup-no-write tests added. Fix #2 shipped earlier (round 7) as
-  hardening; its suspected causal role is refuted. Fixes #3-#8 await owner scheduling.
+- **ALL incident fixes #1-#8 are complete** (incident doc Status: Remediated). #1:
+  startup enablement writes removed (2.3.7). #3: corrupt-store probes + admin pages
+  refuse to save over corrupt backing state (2.3.8). #4: deploys snapshot the whole
+  config/ dir. #5: post-deploy config drift check warns loudly. #6: deploy.ps1 defaults
+  target dev, fresh installs need -ConfirmFreshInstall. #7: duplicate import removed.
+  #8: closed by diagnostics. Remaining: owner sign-off + task-20 manual verification.
 - **Deploy hold lifted for dev** (Michael accepted the round-8 findings; round 9).
   **Prod is frozen for the weekend of 2026-06-13** — no prod deploys until Michael runs
   them post-freeze with the §Deploy-notes alias check below (prod's fragment already
-  covers the six aliases). Incident fixes #3-#7 approved for implementation against dev.
-- Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and CI-green
-  (now 408/408 xUnit local, 24/24 Pester). Task 20 (manual UI verification) is
-  unblocked once Michael confirms. Phase 4 waits behind incident-fix scheduling.
-  Findings register: `docs/ProdReadinessReview-2026-06-12.md`.
+  covers the six aliases).
+- Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete. Local
+  verification at 2.3.8: 415/415 xUnit, 30/30 Pester. Task 20 (manual UI verification)
+  is ready for Michael, now also covering the new corrupt-store error states. Phase 4
+  is next once task 20 passes. Findings register:
+  `docs/ProdReadinessReview-2026-06-12.md`.
 
 ## Findings
 
