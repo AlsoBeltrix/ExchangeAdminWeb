@@ -376,3 +376,11 @@ infrastructure; module versions per touched module (rule fires independently).
   2.3.5 → 2.3.6 (shared infra: GraphTokenClient, ExoConnectionPool, CircuitHandler,
   deploy scripts, CI). Task 20 (manual UI verification of AC13 with Michael in dev)
   remains open and gates Phase 3 sign-off.
+- 2026-06-12, round 6 (INCIDENT): the task-20 dev deploy triggered loss of runtime
+  section-access/enablement state on dev. Full writeup, root cause, session errors, and
+  required fixes: `docs/Incident-2026-06-12-DevConfigLoss.md`. New owner-directed
+  requirement: the app must never write module-enablement state at startup. New tasks
+  (incident fixes 1–8 in that doc) must be approved and slotted before Phase 4 proceeds.
+  All deploys are on hold until incident fixes 1 (and 2 if confirmed by the appsettings
+  diff) land. Task 20 blocked pending dev recovery confirmation. Handoff prepared for a
+  successor session.

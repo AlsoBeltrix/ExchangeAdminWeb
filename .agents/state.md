@@ -6,24 +6,18 @@ repo facts change.
 ## Now
 
 - App version `2.3.6` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **Active work stream:** `docs/ProdReadiness-Plan.md` (Status: Approved) — prod-release
-  remediation of the 2026-06-12 multi-agent review. Findings register:
+- **ACTIVE INCIDENT — read `docs/Incident-2026-06-12-DevConfigLoss.md` FIRST.** The
+  2026-06-12 task-20 dev deploy triggered loss of dev's section-access/enablement state.
+  Recovery steps were issued to the owner (restore appsettings from the 12:47 .bak; copy
+  modules-enabled.json from prod; recycle pool) — completion unconfirmed. The incident doc
+  contains root cause, the previous session's errors, open diagnostics, and required
+  fixes 1-8 (NOT implemented; owner approval required).
+- **ALL DEPLOYS ON HOLD** until incident fixes land (startup enablement write removal is
+  owner-directed; deploy.ps1 appsettings reconciliation rewrite pending diff evidence).
+- Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and CI-green
+  (405/405 xUnit windows-latest, 24/24 Pester). Task 20 blocked on incident recovery.
+  Phase 4 waits behind incident fixes. Findings register:
   `docs/ProdReadinessReview-2026-06-12.md`.
-- **Phases 1–3 complete and pushed; CI green** (405/405 xUnit on windows-latest,
-  23/23 Pester, format + PSScriptAnalyzer). Highlights: real test execution via
-  `ExchangeAdminWeb.slnx` (bare `dotnet test` previously ran ZERO tests); Pester
-  invariant suite in `tests/ps/`; FailClosed backport to legacy mutating modules;
-  pre-write auth re-checks (MailboxPermissions/CalendarPermissions cloud+bulk,
-  AdminEventLog undo); protected-principal corrupt-config fail-closed; CEO-room
-  permission-removal surfacing; deploy.ps1 Write-Fail throws + staging cleanup in
-  finally; deploy-pipeline failure masking fixed + -PlanOnly prod dry run;
-  ADAttributeEditor/Migration failure audits; Graph status surfacing (MFA blanket
-  success fixed); per-circuit audit IP via ClientInfoCircuitHandler; UI freeze fixes
-  (fire-and-forget handlers, EXO connect off dispatcher, autocomplete contention);
-  ConferenceRooms on-prem path retired (on-prem Exchange decommissioning, plan Q1).
-- **Open:** plan task 20 — owner manually verifies in dev that buttons respond on
-  first click (AC13) after deploying this batch. Then Phase 4 (docs drift sweep,
-  register backlog incl. the hardcoded `E:\WWWOutput` Audit:LogRoot default).
 
 ## Findings
 
@@ -39,7 +33,8 @@ repo facts change.
 
 ## Blockers
 
-- None. (Pushes from this machine work since the owner fixed GitHub auth.)
+- Incident recovery unconfirmed (owner executing manually on the server).
+- Incident fixes 1-8 need owner approval before implementation (plan review log round 6).
 
 ## Deploy notes (before the FailClosed change reaches prod)
 
