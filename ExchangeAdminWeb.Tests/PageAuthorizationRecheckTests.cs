@@ -22,6 +22,14 @@ public class PageAuthorizationRecheckTests
         Assert.Contains("await ReauthorizeAsync()", body);
     }
 
+    [Fact]
+    public void AdminEventLog_ExecuteUndo_RechecksBothPoliciesBeforeWrite()
+    {
+        var body = GetMethodBody("AdminEventLog.razor", "ExecuteUndo");
+        Assert.Contains("AuthorizeAsync(authState.User, \"EventLog\")", body);
+        Assert.Contains("AuthorizeAsync(authState.User, \"UndoAuditedActions\")", body);
+    }
+
     private static string GetMethodBody(string pageFile, string methodName)
     {
         var path = Path.Combine(GetPagesDirectory(), pageFile);

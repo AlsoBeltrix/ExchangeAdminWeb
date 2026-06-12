@@ -805,6 +805,19 @@
             }
 
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+
+            // Re-check authorization immediately before the write: hasUndoPermission
+            // is evaluated at render and only hides UI, which is not security. A
+            // user whose undo (or page) permission was revoked mid-session must be
+            // denied here, on the live circuit.
+            var pageAuth = await AuthorizationService.AuthorizeAsync(authState.User, "EventLog");
+            var undoAuth = await AuthorizationService.AuthorizeAsync(authState.User, "UndoAuditedActions");
+            if (!pageAuth.Succeeded || !undoAuth.Succeeded)
+            {
+                undoError = "Authorization denied.";
+                return;
+            }
+
             var userName = authState.User.Identity?.Name ?? "unknown";
             var clientIp = ClientInfo.IpAddress;
 
