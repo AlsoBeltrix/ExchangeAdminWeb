@@ -66,7 +66,7 @@ should win. Do not silently choose whichever source is convenient.
   (the app targets `net10.0-windows`).
 - Format check: `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore`
 - PowerShell lint: `Invoke-ScriptAnalyzer -Path . -Recurse`
-- PowerShell tests: `Invoke-Pester tests/ps` (when present)
+- PowerShell tests: `Invoke-Pester tests/ps`
 - Dev deploy: `./deploy.ps1` (ADI-specific). Generic install:
   `tools/Install-ExchangeAdminWeb.ps1`.
 

@@ -1,0 +1,177 @@
+#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5' }
+
+<#
+Static invariant tests for the ops scripts. Nothing here executes a script:
+each test parses the script (AST/text) and asserts the invariants from
+AGENTS.md "Architectural Invariants" and docs/ProjectConstitution.md
+"Deployment And Versioning".
+
+Regression anchor: commit 0021502 - a robocopy /XD mistake made deploys purge
+runtime config. The exclusion tests below exist so that class of incident
+cannot ship silently again.
+#>
+
+BeforeAll {
+    $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
+
+    function Get-ScriptUnderTest {
+        param([string]$RelativePath)
+        $path = Join-Path $RepoRoot $RelativePath
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        [pscustomobject]@{
+            Path   = $path
+            Text   = Get-Content -LiteralPath $path -Raw
+            Ast    = $ast
+            Errors = $errors
+        }
+    }
+
+    function Get-RobocopyArgumentList {
+        param($Script)
+        # Every "$robocopyArgs = @(...)" assignment, as its literal string elements.
+        $assignments = $Script.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left.Extent.Text -match 'robocopyArgs'
+            }, $true)
+        foreach ($assignment in $assignments) {
+            $strings = $assignment.Right.FindAll({
+                    param($node)
+                    $node -is [System.Management.Automation.Language.StringConstantExpressionAst]
+                }, $true)
+            , @($strings | ForEach-Object Value)
+        }
+    }
+
+    function Find-FunctionDefinition {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Name',
+            Justification = 'Used inside the Find predicate scriptblock; analyzer cannot see into it')]
+        param($Script, [string]$Name)
+        $Script.Ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq $Name
+            }, $true)
+    }
+}
+
+Describe 'deploy.ps1' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'deploy.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop' {
+        $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+    }
+
+    It 'excludes runtime config from every robocopy mirror (regression: commit 0021502)' {
+        $arrays = @(Get-RobocopyArgumentList $s)
+        $arrays.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths mirror with robocopy'
+        foreach ($robocopyArgs in $arrays) {
+            $robocopyArgs | Should -Contain '/MIR'
+            $robocopyArgs | Should -Contain '/XF'
+            $robocopyArgs | Should -Contain 'appsettings*.json'
+            $robocopyArgs | Should -Contain '/XD'
+            $robocopyArgs | Should -Contain 'logs'
+            $robocopyArgs | Should -Contain 'config'
+            # /XD only excludes directories listed after it
+            [array]::IndexOf($robocopyArgs, '/XD') | Should -BeLessThan ([array]::IndexOf($robocopyArgs, 'logs'))
+            [array]::IndexOf($robocopyArgs, '/XD') | Should -BeLessThan ([array]::IndexOf($robocopyArgs, 'config'))
+        }
+    }
+
+    It 'checks $LASTEXITCODE -ge 8 after every robocopy invocation' {
+        $invocations = $s.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'robocopy'
+            }, $true)
+        $invocations.Count | Should -BeGreaterThan 0
+        [regex]::Matches($s.Text, '\$LASTEXITCODE\s+-ge\s+8').Count |
+            Should -BeGreaterOrEqual $invocations.Count
+    }
+
+    It 'fails on dotnet publish errors' {
+        $s.Text | Should -Match 'dotnet publish failed'
+    }
+}
+
+Describe 'tools/Install-ExchangeAdminWeb.ps1' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'tools/Install-ExchangeAdminWeb.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop' {
+        $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+    }
+
+    It 'is environment-neutral: no ADI-specific strings' {
+        $s.Text | Should -Not -Match '(?i)analog'
+    }
+
+    It 'is standalone: never references deploy.ps1' {
+        $s.Text | Should -Not -Match 'deploy\.ps1'
+    }
+
+    It 'exposes a -PlanOnly switch' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'PlanOnly'
+    }
+
+    It 'gates actions on $PlanOnly through Invoke-PlanOrAction' {
+        $fn = Find-FunctionDefinition $s 'Invoke-PlanOrAction'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '\$PlanOnly'
+    }
+
+    It 'Write-Fail throws (repo error model)' {
+        $fn = Find-FunctionDefinition $s 'Write-Fail'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Find({ param($node) $node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) |
+            Should -Not -BeNullOrEmpty
+    }
+}
+
+Describe 'tools/promote-dev-to-prod.ps1' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'tools/promote-dev-to-prod.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop' {
+        $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+    }
+
+    It 'defaults to dry run: applying requires an explicit -Apply switch' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'Apply'
+    }
+
+    It 'gates robocopy on $Apply and checks exit code >= 8' {
+        $fn = Find-FunctionDefinition $s 'Invoke-RobocopyChecked'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '-not \$Apply'
+        $fn.Extent.Text | Should -Match '-ge\s+8'
+    }
+
+    It 'patches prod appsettings.json atomically via a temp file' {
+        $s.Text | Should -Match 'appsettings\.promote\..*\.tmp'
+    }
+}
+
+Describe 'tools/deploy-pipeline.ps1' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'tools/deploy-pipeline.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    # Exit-code semantics (the current -ge 8 check applied to a PowerShell child
+    # script) are a known defect; tests for the corrected behavior land with
+    # docs/ProdReadiness-Plan.md tasks 11-12.
+}
