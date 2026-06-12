@@ -144,6 +144,20 @@ Describe 'deploy.ps1' {
             -Because 'the snapshot must be taken before any files change'
     }
 
+    It 'verifies runtime config against a pre-deploy snapshot after the pool restarts (incident fix #5)' {
+        $upgradeBlock = [regex]::Match(
+            $s.Text,
+            '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
+        ).Value
+
+        # Snapshot taken before the pool stops; comparison after the pool restarts.
+        $upgradeBlock.IndexOf('$preConfigInventory') | Should -BeGreaterOrEqual 0
+        $upgradeBlock.IndexOf('$preConfigInventory') | Should -BeLessThan $upgradeBlock.IndexOf('Stopping app pool')
+        $upgradeBlock.IndexOf('Verifying runtime config integrity') | Should -BeGreaterThan $upgradeBlock.IndexOf('Start-AppPoolWithRetry')
+        $upgradeBlock | Should -Match 'POST-DEPLOY CHECK' -Because 'drift must be warned about loudly'
+        $upgradeBlock | Should -Match '\$lostKeys' -Because 'appsettings top-level key loss must be part of the check'
+    }
+
     It 'does not rewrite appsettings.json during upgrade reconciliation' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

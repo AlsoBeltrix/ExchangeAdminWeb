@@ -402,8 +402,26 @@ if ($isUpgrade) {
         Copy-Item $runtimeConfigDir $configDirBackup -Recurse
         Write-Success "Runtime config directory backed up to $configDirBackup"
     } else {
+        $configDirBackup = $null
         Write-Warn "No runtime config directory at $runtimeConfigDir -- nothing to back up"
     }
+
+    # Pre-deploy snapshot for the post-deploy drift check (incident fix #5): the
+    # 2026-06-12 incident surfaced as silent runtime-state divergence with nothing
+    # comparing before to after.
+    # extended-log-level.txt is rewritten by the app on every startup
+    # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
+    # pool restart and would false-positive the drift check.
+    $driftCheckExclusions = @('extended-log-level.txt')
+    $preConfigInventory = @{}
+    if (Test-Path $runtimeConfigDir) {
+        Get-ChildItem $runtimeConfigDir -File |
+            Where-Object { $_.Name -notin $driftCheckExclusions } |
+            ForEach-Object {
+                $preConfigInventory[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
+            }
+    }
+    $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
 
     Write-Step "Stopping app pool"
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
@@ -479,6 +497,51 @@ if ($isUpgrade) {
         # Staging contains the dev appsettings.json (real environment values).
         # Clean it on failure paths too, not only after a successful deploy.
         Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # --- Post-deploy config drift check (incident fix #5) ---
+    # Only reached on success (failures above throw past this point). The pool has
+    # restarted; nothing about this deploy should have changed runtime config.
+
+    Write-Step "Verifying runtime config integrity"
+
+    $driftFound = $false
+    $postFiles = @{}
+    if (Test-Path $runtimeConfigDir) {
+        Get-ChildItem $runtimeConfigDir -File |
+            Where-Object { $_.Name -notin $driftCheckExclusions } |
+            ForEach-Object {
+                $postFiles[$_.Name] = "$($_.Length)|$($_.LastWriteTimeUtc.Ticks)"
+            }
+    }
+    foreach ($name in $preConfigInventory.Keys) {
+        if (-not $postFiles.ContainsKey($name)) {
+            Write-Warn "POST-DEPLOY CHECK: config\$name existed before the deploy but is MISSING now"
+            $driftFound = $true
+        } elseif ($postFiles[$name] -ne $preConfigInventory[$name]) {
+            Write-Warn "POST-DEPLOY CHECK: config\$name was MODIFIED during the deploy (size or timestamp changed)"
+            $driftFound = $true
+        }
+    }
+    foreach ($name in $postFiles.Keys) {
+        if (-not $preConfigInventory.ContainsKey($name)) {
+            Write-Warn "POST-DEPLOY CHECK: config\$name APPEARED during the deploy"
+            $driftFound = $true
+        }
+    }
+
+    $postAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
+    $lostKeys = @($preAppSettingsKeys | Where-Object { $_ -notin $postAppSettingsKeys })
+    if ($lostKeys.Count -gt 0) {
+        Write-Warn ("POST-DEPLOY CHECK: appsettings.json LOST top-level keys: " + ($lostKeys -join ', '))
+        $driftFound = $true
+    }
+
+    if ($driftFound) {
+        $backupHint = if ($configDirBackup) { "$configDirBackup and " } else { "" }
+        Write-Warn "POST-DEPLOY CHECK: runtime config drifted during this deploy. Compare against ${backupHint}$BackupDir\$backupName before trusting the app, and investigate what wrote it."
+    } else {
+        Write-Success "Runtime config verified: config/ inventory and appsettings.json keys unchanged"
     }
 
 } else {
