@@ -392,3 +392,20 @@ infrastructure; module versions per touched module (rule fires independently).
   obsolete/missing keys instead of whole-file `ConvertTo-Json` rewrite. Utility deploy
   script changes do not bump the app version because they do not change the deployed app
   binaries. Startup enablement writes remain a separate blocker.
+- 2026-06-12, round 8: incident diagnostics run on the server (Michael approved).
+  Evidence (hashes, app logs, git history) rewrites the incident root cause: the
+  pre/post-deploy `appsettings.json` are byte-identical (no deploy rewrite — fix #2's
+  suspected mechanism refuted), the startup enablement write never fired on 6/12 (no
+  migration log line; the 12:49 `modules-enabled.json` write was Michael's own Save on
+  /admin-settings), and the actual cause is commit `f7df81a` (legacy mutating permissions
+  made FailClosed) landing on a dev box that had no `sectionaccess.json` and no legacy
+  `Security:SectionAccess` — fail-closed sections bypass the `Security:AllowedGroups`
+  fallback by design. Dev recovery is confirmed healthy from logs (residual benign
+  denials only for disabled LicensingUpdates/TestAccountPool, absent from prod's
+  fragment). Incident fix #1 implemented in this slice per standing owner direction:
+  `RunUpgradeMigration` reduced to a read-only warning (`WarnIfExchangeOnlineUnset`);
+  enablement is written only by `SaveEnablement`; five startup-no-write tests added
+  (three proven red against the old code). Base app version 2.3.6 → 2.3.7 (shared
+  service). Deploy hold can lift once Michael accepts these findings; prod deploy of
+  the FailClosed change stays gated on the §Deploy-notes alias check (prod's fragment
+  already covers the six aliases with non-empty groups).

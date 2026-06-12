@@ -5,23 +5,28 @@ repo facts change.
 
 ## Now
 
-- App version `2.3.6` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **ACTIVE INCIDENT — read `docs/Incident-2026-06-12-DevConfigLoss.md` FIRST.** The
-  2026-06-12 task-20 dev deploy triggered loss of dev's section-access/enablement state.
-  Dev config recovery was performed on 2026-06-12: current dev files were backed up to
-  `E:\WWWOutput\ExchangeAdminWeb\ConfigBackups\dev-recovery-20260612144642`,
-  dev `appsettings.json` was restored from `appsettings.20260612124749.bak`,
-  prod `modules-enabled.json` and `sectionaccess.json` were copied to dev, JSON was
-  validated, and `web.config` was touched because direct IIS recycle required an
-  elevated admin token. The incident doc contains root cause, the previous session's
-  errors, open diagnostics, and required fixes.
-- **DEPLOYS PARTIALLY ON HOLD**: deploy appsettings reconciliation no longer rewrites
-  upgrade `appsettings.json`, but the startup enablement write removal is
-  still owner-directed and not implemented.
+- App version `2.3.7` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **INCIDENT DIAGNOSED — see Diagnostic Results in
+  `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
+  proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,
+  the startup enablement write never fired (the 12:49 write was the owner's own Save on
+  /admin-settings), and the real cause was commit `f7df81a` (legacy permissions made
+  FailClosed) landing on a dev box with no `sectionaccess.json` and no legacy
+  `Security:SectionAccess` — fail-closed sections bypass the AllowedGroups fallback by
+  design. Dev recovery is confirmed healthy from logs (residual denials only for
+  disabled LicensingUpdates/TestAccountPool, absent from prod's fragment — add groups
+  before enabling them).
+- Incident fix #1 implemented (2.3.7): `ModuleEnablementService` startup migration
+  reduced to read-only `WarnIfExchangeOnlineUnset`; enablement is written only by
+  `SaveEnablement`; startup-no-write tests added. Fix #2 shipped earlier (round 7) as
+  hardening; its suspected causal role is refuted. Fixes #3-#8 await owner scheduling.
+- **Deploy hold**: lift pending Michael's acceptance of the diagnostic findings (plan
+  review log round 8). Prod deploy of the FailClosed change stays gated on the
+  §Deploy-notes alias check below (prod's fragment already covers the six aliases).
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and CI-green
-  (405/405 xUnit windows-latest, 24/24 Pester). Task 20 blocked on incident recovery.
-  Phase 4 waits behind incident fixes. Findings register:
-  `docs/ProdReadinessReview-2026-06-12.md`.
+  (now 408/408 xUnit local, 24/24 Pester). Task 20 (manual UI verification) is
+  unblocked once Michael confirms. Phase 4 waits behind incident-fix scheduling.
+  Findings register: `docs/ProdReadinessReview-2026-06-12.md`.
 
 ## Findings
 
@@ -37,10 +42,10 @@ repo facts change.
 
 ## Blockers
 
-- Startup enablement writes still need to be removed before trusting another deploy
-  against dev or prod.
-- Remaining incident fixes need owner approval/scheduling before implementation (plan
-  review log round 6).
+- Michael to accept the incident diagnostic findings and the fix-#1 implementation
+  (plan review log round 8) — lifts the deploy hold.
+- Incident fixes #3-#8 need owner approval/scheduling before implementation (plan
+  review log round 6; #8's mechanism is identified and guarded by `c473fba`).
 
 ## Deploy notes (before the FailClosed change reaches prod)
 

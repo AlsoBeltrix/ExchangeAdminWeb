@@ -1,10 +1,61 @@
 # Incident: Dev runtime config loss after 2026-06-12 deploy — handoff document
 
-Status: Open (recovery steps issued; root cause partially confirmed; fixes NOT implemented)
+Status: Diagnosed (server diagnostics complete 2026-06-12 PM; root cause CORRECTED below;
+fixes #1 and #2 implemented; awaiting owner sign-off to close)
 Owner: Michael
 Written by: the session that caused/handled the incident, for a successor model.
 Authority context: read `AGENTS.md`, `docs/ProjectConstitution.md`, `docs/ProdReadiness-Plan.md`
 (Status: Approved), and `docs/ProdReadinessReview-2026-06-12.md` before acting.
+
+## DIAGNOSTIC RESULTS (2026-06-12 PM session — supersedes the root-cause picture below)
+
+Server diagnostics (file hashes, dev app logs, git history) settled every open question.
+**No config was lost.** Both mechanisms hypothesized below are refuted for this incident:
+
+1. **Deploy appsettings rewrite — did not happen.** The 12:47 pre-deploy `.bak`, the
+   post-deploy file (preserved in `ConfigBackups\dev-recovery-20260612144642\appsettings.json`),
+   and current dev `appsettings.json` are SHA256-identical
+   (`F5E76C2C…AC29D81`). Dev's appsettings never contained `Security:SectionAccess` at
+   all — the doc's claim that the groups "live(d) in the legacy block" was wrong.
+2. **Startup enablement write — did not fire.** The 6/12 dev log has no
+   "Auto-enabled ExchangeOnline" / "no EXO config found" line; the pre-deploy
+   `modules-enabled.json` evidently already had the `ExchangeOnline` key. The 12:49:59
+   write was `SaveEnablement` ("Module enablement saved to …") — Michael's own Save on
+   `/admin-settings` (he was on that page from 12:49:11). The blank-render-save-trap
+   concern (fix #3) therefore still stands; what that save overwrote is unknowable
+   because the deploy did not snapshot `config/` (fix #4).
+3. **Actual root cause: commit `f7df81a` "Make legacy mutating module permissions fail
+   closed" (6/12 10:56, shipped in the 12:47 deploy).** Dev had no `sectionaccess.json`
+   fragment and no legacy appsettings block, so `SectionAccessService` source = None and
+   every section rode the `Security:AllowedGroups` fallback — which FailClosed sections
+   bypass by design (`GetGroupsForSection`). Log evidence: before 12:47 only the
+   already-fail-closed EventLog/MessageTrace denied ("has no groups configured", a
+   condition visible in logs back to at least 6/01); after 12:47 exactly the newly
+   fail-closed legacy aliases denied (MailboxPermissions, CalendarPermissions,
+   MigrationCheck, OutOfOffice, ConferenceRooms, plus EventLog/MessageTrace/
+   LicensingUpdates/TestAccountPool). The "blank groups on every module page" was dev's
+   normal unconfigured state; what changed was enforcement. The §Deploy-notes alias
+   check in `.agents/state.md` anticipated exactly this precondition for prod; dev was
+   never checked against it.
+4. **"ServiceAccount is required" (attempt #1) — mechanism identified.** When the IIS:
+   drive is not mounted (PowerShell 7, where the WebAdministration provider does not
+   load, or any session where the import did not take effect),
+   `Test-Path "IIS:\AppPools\<name>"` silently returns false, the script treats the
+   long-deployed pool as new and demands a ServiceAccount. Commit `c473fba`'s
+   top-of-script import plus `Get-PSDrive IIS` guard now fails loud with an actionable
+   message instead. Which shell attempt #1 used was not recorded, but the failure mode
+   is closed.
+5. **Dev recovery confirmed healthy from logs.** After the 15:40 config sync, the only
+   remaining "no groups configured" denials are LicensingUpdates and TestAccountPool —
+   both disabled modules whose aliases are absent from prod's copied fragment. Benign
+   noise; add groups before ever enabling them on dev.
+
+Fix statuses after this session: #1 implemented (startup write removed —
+`WarnIfExchangeOnlineUnset` is read-only; tests prove no startup writes; app 2.3.7);
+#2 implemented earlier as hardening (commit `2c3256f`, plan round 7) and its suspected
+causal role is refuted; #3–#8 remain open for owner scheduling (#8's mechanism is
+identified above and mitigated by `c473fba`'s guard; #6 — note bare `deploy.ps1` still
+defaults to prod names).
 
 ## What happened (timeline, 2026-06-12)
 
@@ -36,7 +87,7 @@ Screenshot evidence of `D:\inetpub\ExchangeAdminWebDev\config\` after the incide
   `E:\WWWOutput\ExchangeAdminWeb\ConfigBackups\appsettings.20260612124….bak`. That backup
   is the authoritative pre-incident state and must be preserved.
 
-## Root-cause picture (one confirmed mechanism, one suspected)
+## Root-cause picture (one confirmed mechanism, one suspected) — SUPERSEDED by Diagnostic Results above; kept for history
 
 **Confirmed mechanism — startup enablement write.**
 `Services/ModuleEnablementService.cs` `RunUpgradeMigration()` (PRE-EXISTING code, not from
@@ -132,7 +183,7 @@ Recorded in `docs/ProdReadiness-Plan.md` review log round 6. In priority order:
 8. **Investigate attempt #1's "ServiceAccount is required"** (see Open Questions) before
    trusting the next deploy.
 
-## Open questions for the successor
+## Open questions for the successor — ALL ANSWERED in Diagnostic Results above
 
 - Does the `.bak`-vs-`appsettings.broken.json` diff show `Security:SectionAccess` /
   `ExchangeOnline:AppId` loss? (Settles fix #2's urgency.)
