@@ -105,6 +105,10 @@ try
     builder.Services.AddScoped<MigrationService>();
     builder.Services.AddScoped<IIdentityResolver, ExchangeIdentityResolver>();
     builder.Services.AddScoped<ClientInfoService>();
+    // Captures IP/user agent into the circuit-scoped ClientInfoService at circuit
+    // open, so audit records carry the right per-session IP for the circuit's
+    // whole lifetime (the static cache is fallback only).
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, ClientInfoCircuitHandler>();
 
     builder.Services.AddScoped<IUndoableModule, ADAttributeEditorUndoService>();
     builder.Services.AddScoped<UndoRegistry>();
