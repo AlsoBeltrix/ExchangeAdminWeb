@@ -114,10 +114,16 @@ public sealed class ExoConnectionPool : IDisposable
                 }
 
                 _operationTrace.Step(pooled.ConfigGeneration != currentGen ? "ExoConnectionStaleConfig" : "ExoConnectionExpired", backend: "ExchangeOnline");
-                DestroyRunspace(pooled);
+                var stale = pooled;
+                await Task.Run(() => DestroyRunspace(stale), ct);
             }
 
-            return CreateConnected();
+            // Connect-ExchangeOnline takes multiple seconds and runs synchronously
+            // inside the runspace. When BorrowAsync is awaited from a Blazor
+            // handler, running it inline blocks the circuit dispatcher and freezes
+            // every UI event for that user until the connect finishes - run it on
+            // the thread pool instead.
+            return await Task.Run(CreateConnected, ct);
         }
         catch (Exception ex)
         {
