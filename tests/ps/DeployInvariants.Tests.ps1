@@ -98,6 +98,22 @@ Describe 'deploy.ps1' {
     It 'fails on dotnet publish errors' {
         $s.Text | Should -Match 'dotnet publish failed'
     }
+
+    It 'Write-Fail throws (repo error model, not exit)' {
+        $fn = Find-FunctionDefinition $s 'Write-Fail'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Find({ param($node) $node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) |
+            Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Not -Match '\bexit\b'
+    }
+
+    It 'cleans up the staging folder inside finally blocks (reached on failure paths)' {
+        $tries = $s.Ast.FindAll({ param($node)
+                $node -is [System.Management.Automation.Language.TryStatementAst] -and
+                $null -ne $node.Finally }, $true)
+        $cleaning = @($tries | Where-Object { $_.Finally.Extent.Text -match 'Remove-Item \$StagingPath' })
+        $cleaning.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths stage a publish containing live appsettings.json'
+    }
 }
 
 Describe 'tools/Install-ExchangeAdminWeb.ps1' {

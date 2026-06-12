@@ -36,7 +36,9 @@ $ErrorActionPreference = "Stop"
 function Write-Step    { param($m) Write-Host ">>> $m" -ForegroundColor Cyan }
 function Write-Success { param($m) Write-Host " OK  $m" -ForegroundColor Green }
 function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow }
-function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; exit 1 }
+# Throw (not exit) per the repo error model: callers like deploy-pipeline.ps1 run
+# under $ErrorActionPreference = "Stop" and must see failures as terminating errors.
+function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; throw $m }
 
 function Start-AppPoolWithRetry {
     param([string]$Name, [int]$MaxAttempts = 5, [int]$DelaySeconds = 3)
@@ -464,9 +466,10 @@ if ($isUpgrade) {
         if ($deploymentReadyForManifest) {
             Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
         }
+        # Staging contains the dev appsettings.json (real environment values).
+        # Clean it on failure paths too, not only after a successful deploy.
+        Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
     }
-
-    Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
 
 } else {
 
@@ -531,8 +534,6 @@ if ($isUpgrade) {
         & robocopy @robocopyArgs
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
         Write-Success "Files deployed"
-
-        Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
 
         # Generate appsettings.json
         Write-Step "Generating appsettings.json"
@@ -602,6 +603,8 @@ if ($isUpgrade) {
         if ($deploymentReadyForManifest) {
             Write-DeploymentManifest -PublishFolder $PublishPath -RepoRoot $ProjectRoot
         }
+        # Staging contains the generated appsettings.json; clean on failure paths too.
+        Remove-Item $StagingPath -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
