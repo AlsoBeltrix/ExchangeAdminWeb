@@ -365,3 +365,14 @@ infrastructure; module versions per touched module (rule fires independently).
   release to prod until all phases are done, so all phases gate the release. All open
   questions resolved; Status flipped to Approved. Implementation begins at Phase 1,
   task 1.
+- 2026-06-12, round 5: Phases 1–3 implemented (tasks 1–19, 21). Notes against plan:
+  (a) the first real CI run surfaced 38 Windows-only test failures caused by harnesses
+  falling back to the hardcoded ADI path E:\WWWOutput — harnesses fixed; the hardcoded
+  default itself moves to task 23/AC16; (b) deploy.ps1 did NOT get a native
+  -PlanOnly/Invoke-PlanOrAction retrofit (§6 sketch item) — deploy-pipeline -PlanOnly
+  prints the planned dev invocation and skips, while the prod path runs promote's
+  native dry run, which satisfies AC9 as written; the deploy.ps1 retrofit is recorded
+  as deferred scope for Michael to accept or schedule; (c) base app version bumped
+  2.3.5 → 2.3.6 (shared infra: GraphTokenClient, ExoConnectionPool, CircuitHandler,
+  deploy scripts, CI). Task 20 (manual UI verification of AC13 with Michael in dev)
+  remains open and gates Phase 3 sign-off.
