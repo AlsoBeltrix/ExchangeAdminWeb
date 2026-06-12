@@ -130,19 +130,31 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetGroupsForSection_NeitherExists_ReturnsAllowedGroups()
+    public void GetGroupsForSection_NeitherExists_ReadOnlySection_ReturnsAllowedGroups()
     {
+        // Read-only modules (DelegationReport, RecipientLookup) are the only
+        // sections still allowed to fall back to the global AllowedGroups.
         var service = CreateService();
-        var result = service.GetGroupsForSection("MailboxPermissions");
+        var result = service.GetGroupsForSection("DelegationReport");
 
         Assert.Equal(new[] { "AllUsersGroup", "PowerUsersGroup" }, result);
     }
 
-    [Fact]
-    public void GetGroupsForSection_MailboxPermissionsOnPrem_NeitherExists_ReturnsEmpty()
+    [Theory]
+    [InlineData("MailboxPermissions")]
+    [InlineData("CalendarPermissions")]
+    [InlineData("MigrationCheck")]
+    [InlineData("MigrationCreate")]
+    [InlineData("MigrationManage")]
+    [InlineData("OutOfOffice")]
+    [InlineData("MailboxPermissionsOnPrem")]
+    public void GetGroupsForSection_NeitherExists_MutatingSection_ReturnsEmpty(string section)
     {
+        // Mutating modules are FailClosed: losing config/sectionaccess.json
+        // (which deploys have done before - commit 0021502) must deny access,
+        // never fall back to the global AllowedGroups.
         var service = CreateService();
-        var result = service.GetGroupsForSection("MailboxPermissionsOnPrem");
+        var result = service.GetGroupsForSection(section);
 
         Assert.Empty(result);
     }

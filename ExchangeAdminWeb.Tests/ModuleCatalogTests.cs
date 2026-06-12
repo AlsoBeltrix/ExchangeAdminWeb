@@ -300,6 +300,35 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_MutatingModulePermissions_AreFailClosed()
+    {
+        // Fail-closed means: when section access has no source for a module,
+        // access is denied instead of falling back to the global AllowedGroups.
+        // Only genuinely read-only modules may rely on the legacy fallback.
+        // Deploys have purged runtime config before (commit 0021502), so a
+        // missing sectionaccess.json must never open up mutating modules.
+        var readOnlyAllowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "DelegationReport",
+            "RecipientLookup"
+        };
+
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule && !m.IsConfigOnly))
+        {
+            if (readOnlyAllowlist.Contains(module.Id))
+                continue;
+
+            Assert.True(module.MainPermission.FailClosed,
+                $"Module '{module.Id}' main permission '{module.MainPermission.PolicyAlias}' must be FailClosed");
+            foreach (var granular in module.GranularPermissions)
+            {
+                Assert.True(granular.FailClosed,
+                    $"Module '{module.Id}' granular permission '{granular.PolicyAlias}' must be FailClosed");
+            }
+        }
+    }
+
+    [Fact]
     public void Catalog_NoCyclicDependencies()
     {
         // If there were cycles, ModuleCatalog constructor would have thrown.

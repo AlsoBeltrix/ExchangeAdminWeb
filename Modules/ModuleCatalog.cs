@@ -125,9 +125,9 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "MailboxPermissions"),
+            MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by mailbox permission operations", Required: false),
@@ -145,9 +145,9 @@ public sealed class ModuleCatalog
             SortOrder = 200,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "CalendarPermissions"),
+            MainPermission = new("Access", "CalendarPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by calendar permission operations", Required: false)
@@ -164,10 +164,10 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.1.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "MigrationCheck"),
-            GranularPermissions = [new("Create", "MigrationCreate"), new("Manage", "MigrationManage")],
+            MainPermission = new("Access", "MigrationCheck", FailClosed: true),
+            GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
             ConfigFields = [
                 new("HybridEndpoint", "Hybrid Endpoint", "Migration endpoint name", DefaultValue: "hybrid1"),
                 new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
@@ -240,9 +240,9 @@ public sealed class ModuleCatalog
             SortOrder = 700,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "OutOfOffice")
+            MainPermission = new("Access", "OutOfOffice", FailClosed: true)
         },
         new()
         {
