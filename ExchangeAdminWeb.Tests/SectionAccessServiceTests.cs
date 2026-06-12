@@ -231,4 +231,48 @@ public class SectionAccessServiceTests : IDisposable
         Assert.Equal(new[] { "GroupA", "GroupB" }, result["MailboxPermissions"]);
         Assert.Equal(new[] { "GroupC" }, result["CalendarPermissions"]);
     }
+
+    // --- Corrupt-fragment probe (blank-render-save trap, incident fix #3) ---
+    // Admin pages refuse to save over a fragment this probe flags: a save in that
+    // state replaces the whole file and wipes every module's groups.
+
+    [Fact]
+    public void IsFragmentCorrupt_NoFile_ReturnsFalse()
+    {
+        Assert.False(CreateService().IsFragmentCorrupt());
+    }
+
+    [Fact]
+    public void IsFragmentCorrupt_ValidFragment_ReturnsFalse()
+    {
+        var fragment = new System.Text.Json.Nodes.JsonObject
+        {
+            ["Security"] = new System.Text.Json.Nodes.JsonObject
+            {
+                ["SectionAccess"] = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["MailboxPermissions"] = new System.Text.Json.Nodes.JsonArray("GroupA")
+                }
+            }
+        };
+        WriteFragmentFile(fragment.ToJsonString());
+
+        Assert.False(CreateService().IsFragmentCorrupt());
+    }
+
+    [Fact]
+    public void IsFragmentCorrupt_InvalidJson_ReturnsTrue()
+    {
+        WriteFragmentFile("{ this is not valid json !!!");
+
+        Assert.True(CreateService().IsFragmentCorrupt());
+    }
+
+    [Fact]
+    public void IsFragmentCorrupt_MissingSectionAccessNode_ReturnsTrue()
+    {
+        WriteFragmentFile("""{ "Security": { } }""");
+
+        Assert.True(CreateService().IsFragmentCorrupt());
+    }
 }

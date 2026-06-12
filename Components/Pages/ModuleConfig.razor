@@ -58,10 +58,16 @@
                 <strong>Module Status</strong>
                 @if (isGlobalAdmin)
                 {
-                    <button class="btn btn-primary btn-sm" @onclick="SaveModuleEnablementAsync" disabled="@saving">Save Status</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveModuleEnablementAsync" disabled="@(saving || enablementStoreCorrupt)">Save Status</button>
                 }
             </div>
             <div class="card-body">
+                @if (enablementStoreCorrupt)
+                {
+                    <div class="alert alert-danger py-2 mb-2">
+                        <small><strong>Module enablement store is corrupt</strong> — config\modules-enabled.json cannot be read, so the state shown below is the fallback, not the stored state. Saving is disabled until the file is fixed or restored.</small>
+                    </div>
+                }
                 <div class="form-check form-switch mb-2">
                     <input class="form-check-input" type="checkbox" id="module-enabled"
                            checked="@moduleEnabled"
@@ -98,9 +104,27 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <strong>Section Access</strong>
-                <button class="btn btn-primary btn-sm" @onclick="SaveSectionAccessAsync" disabled="@saving">Save Access</button>
+                <button class="btn btn-primary btn-sm" @onclick="SaveSectionAccessAsync" disabled="@(saving || sectionAccessCorrupt)">Save Access</button>
             </div>
             <div class="card-body">
+                @if (sectionAccessCorrupt)
+                {
+                    <div class="alert alert-danger mb-0">
+                        <strong>Section access store is corrupt.</strong>
+                        config\sectionaccess.json exists but cannot be read, so the group lists cannot
+                        be shown and saving is disabled — saving now would replace the whole fragment,
+                        wiping every module's groups. Fix or restore the file (deploy backups:
+                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                    </div>
+                }
+                else
+                {
+                @if (sectionAccessUnconfigured)
+                {
+                    <div class="alert alert-info py-2 mb-2">
+                        <small>Section access has never been configured on this server (no config\sectionaccess.json and no legacy appsettings block). Saving here creates the fragment and starts enforcing these lists for all fail-closed modules.</small>
+                    </div>
+                }
                 <p class="text-muted mb-3"><small>AD groups allowed to use this module. If empty, access is denied for fail-closed modules or inherits base groups.</small></p>
                 <table class="table table-sm align-middle mb-0">
                     <thead>
@@ -145,6 +169,7 @@
                         }
                     </tbody>
                 </table>
+                }
             </div>
         </div>
     }
@@ -155,9 +180,21 @@
         <div class="card mb-4">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <strong>Configuration</strong>
-                <button class="btn btn-primary btn-sm" @onclick="SaveConfigAsync" disabled="@saving">Save Configuration</button>
+                <button class="btn btn-primary btn-sm" @onclick="SaveConfigAsync" disabled="@(saving || moduleConfigCorrupt)">Save Configuration</button>
             </div>
             <div class="card-body">
+                @if (moduleConfigCorrupt)
+                {
+                    <div class="alert alert-danger mb-0">
+                        <strong>Module configuration is corrupt.</strong>
+                        config\module-config-@(module.Id).json exists but cannot be read, so the stored
+                        values cannot be shown and saving is disabled — saving now would overwrite them
+                        with the blank fields below. Fix or restore the file (deploy backups:
+                        ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                    </div>
+                }
+                else
+                {
                 @if (!ModuleConfigSvc.IsModuleConfigured(module.Id))
                 {
                     <div class="alert alert-warning py-2 mb-3">
@@ -280,6 +317,7 @@
                         </div>
                     }
                 </div>
+                }
             </div>
         </div>
     }
@@ -434,6 +472,10 @@
 
     private string? loadedModuleId;
     private bool moduleEnabled;
+    private bool enablementStoreCorrupt;
+    private bool moduleConfigCorrupt;
+    private bool sectionAccessCorrupt;
+    private bool sectionAccessUnconfigured;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -479,6 +521,11 @@
     {
         if (module == null) return;
 
+        enablementStoreCorrupt = Enablement.IsStoreCorrupt();
+        moduleConfigCorrupt = ModuleConfigSvc.IsModuleCorrupt(module.Id);
+        sectionAccessCorrupt = SectionAccess.IsFragmentCorrupt();
+        sectionAccessUnconfigured = !SectionAccess.IsSectionAccessConfigured();
+
         currentConfigState = ModuleConfigSvc.GetModuleConfig(module.Id);
         moduleEnabled = Enablement.IsModuleRawEnabled(module.Id);
         moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
@@ -523,6 +570,14 @@
             if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module.Id, user))
             {
                 statusMessage = "You are not authorized to configure this module.";
+                statusIsError = true;
+                return;
+            }
+
+            if (ModuleConfigSvc.IsModuleCorrupt(module.Id))
+            {
+                moduleConfigCorrupt = true;
+                statusMessage = "Refusing to save: this module's config file is corrupt and saving would overwrite it with the rendered fallback values. Fix or restore config\\module-config-" + module.Id + ".json first.";
                 statusIsError = true;
                 return;
             }
@@ -574,6 +629,14 @@
                 return;
             }
 
+            if (Enablement.IsStoreCorrupt())
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
+                statusIsError = true;
+                return;
+            }
+
             var enablement = Enablement.GetAllEnablement();
             var previous = enablement.GetValueOrDefault(module.Id, module.EnabledByDefault);
             enablement[module.Id] = moduleEnabled;
@@ -621,6 +684,14 @@
             if (!authResult.Succeeded)
             {
                 statusMessage = "Only global admins can change section access.";
+                statusIsError = true;
+                return;
+            }
+
+            if (SectionAccess.IsFragmentCorrupt())
+            {
+                sectionAccessCorrupt = true;
+                statusMessage = "Refusing to save: config\\sectionaccess.json is corrupt and saving would replace it, wiping every module's groups. Fix or restore the file first.";
                 statusIsError = true;
                 return;
             }

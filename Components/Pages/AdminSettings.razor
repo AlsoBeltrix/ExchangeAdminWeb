@@ -48,9 +48,21 @@
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Module Enablement</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveEnablement" disabled="@saving">Save Enablement</button>
+            <button class="btn btn-primary btn-sm" @onclick="SaveEnablement" disabled="@(saving || enablementStoreCorrupt)">Save Enablement</button>
         </div>
         <div class="card-body">
+            @if (enablementStoreCorrupt)
+            {
+                <div class="alert alert-danger mb-0">
+                    <strong>Module enablement store is corrupt.</strong>
+                    config\modules-enabled.json exists but cannot be read, so the real enablement
+                    state cannot be shown and saving is disabled — saving now would overwrite the
+                    stored state with the all-disabled fallback. Fix or restore the file (deploy
+                    backups: ConfigBackups\config.&lt;timestamp&gt;.bak), then reload this page.
+                </div>
+            }
+            else
+            {
             <div class="row g-2">
                 @foreach (var module in Catalog.GetOrdered().Where(m => !m.IsConfigOnly))
                 {
@@ -75,6 +87,7 @@
                     </div>
                 }
             </div>
+            }
         </div>
     </div>
 
@@ -229,6 +242,7 @@
     private bool statusIsError;
 
     private Dictionary<string, bool> moduleEnablement = new();
+    private bool enablementStoreCorrupt;
     private string selectedLogLevel = "None";
 
     private List<string> ppUsers = new();
@@ -252,6 +266,7 @@
             return;
         }
 
+        enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleEnablement = Enablement.GetAllEnablement();
         selectedLogLevel = ExtendedLog.CurrentLevel;
         LoadProtectedPrincipals();
@@ -271,6 +286,14 @@
             if (!authResult.Succeeded)
             {
                 statusMessage = "Authorization check failed.";
+                statusIsError = true;
+                return;
+            }
+
+            if (Enablement.IsStoreCorrupt())
+            {
+                enablementStoreCorrupt = true;
+                statusMessage = "Refusing to save: the enablement store is corrupt and saving would overwrite it with fallback state. Fix or restore config\\modules-enabled.json first.";
                 statusIsError = true;
                 return;
             }

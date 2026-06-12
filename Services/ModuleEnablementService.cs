@@ -89,6 +89,24 @@ public class ModuleEnablementService
         return result;
     }
 
+    /// <summary>
+    /// True when modules-enabled.json exists but cannot be parsed. Admin pages use this
+    /// to show an explicit error and refuse to save instead of rendering the all-disabled
+    /// fallback as blank editable state (blank-render-save trap, incident 2026-06-12).
+    /// </summary>
+    public bool IsStoreCorrupt()
+    {
+        if (!File.Exists(_configFilePath)) return false;
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(_configFilePath)) == null;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     public void SaveEnablement(Dictionary<string, bool> enablement)
     {
         lock (_writeLock)

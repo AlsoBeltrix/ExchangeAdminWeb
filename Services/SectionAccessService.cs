@@ -79,6 +79,26 @@ public class SectionAccessService
         return legacySection.Exists() && legacySection.GetChildren().Any();
     }
 
+    /// <summary>
+    /// True when config/sectionaccess.json exists but cannot be parsed or lacks the
+    /// Security:SectionAccess node. Runtime reads fail closed in that state; admin pages
+    /// use this to show an explicit error and refuse to save instead of rendering blank
+    /// group lists that would wipe the fragment on save (incident 2026-06-12).
+    /// </summary>
+    public bool IsFragmentCorrupt()
+    {
+        if (!File.Exists(_configFilePath)) return false;
+        try
+        {
+            var doc = JsonNode.Parse(File.ReadAllText(_configFilePath));
+            return doc?["Security"]?["SectionAccess"] == null;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     private enum SectionAccessSource { None, Fragment, AppSettings }
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()

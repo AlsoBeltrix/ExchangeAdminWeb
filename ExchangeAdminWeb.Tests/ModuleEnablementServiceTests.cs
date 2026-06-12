@@ -410,6 +410,32 @@ public class ModuleEnablementServiceTests : IDisposable
         Assert.Equal(corrupt, File.ReadAllText(_configFilePath));
     }
 
+    // --- Corrupt-store probe (blank-render-save trap, incident fix #3) ---
+    // Admin pages refuse to render/save enablement when this probe flags the store:
+    // the read fallback is all-disabled, and saving it would persist that state.
+
+    [Fact]
+    public void IsStoreCorrupt_NoFile_ReturnsFalse()
+    {
+        Assert.False(CreateService().IsStoreCorrupt());
+    }
+
+    [Fact]
+    public void IsStoreCorrupt_ValidFile_ReturnsFalse()
+    {
+        WriteEnablementFile(new Dictionary<string, bool> { ["ExchangeOnline"] = true });
+
+        Assert.False(CreateService().IsStoreCorrupt());
+    }
+
+    [Fact]
+    public void IsStoreCorrupt_CorruptFile_ReturnsTrue()
+    {
+        WriteRawFile("{ this is not valid json !!!");
+
+        Assert.True(CreateService().IsStoreCorrupt());
+    }
+
     [Fact]
     public void Startup_ExistingExchangeOnlineKey_PreservedAndFileUntouched()
     {
