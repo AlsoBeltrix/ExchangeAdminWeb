@@ -101,7 +101,9 @@
             var escaped = term.Replace("'", "''");
             var filter = $"Name -like '*{escaped}*' -or PrimarySmtpAddress -like '*{escaped}*'";
 
-            var pooled = await ExoPool.BorrowAsync();
+            // Short wait: an autocomplete keystroke must not queue for minutes
+            // behind mutation operations; on a busy pool it just shows no results.
+            var pooled = await ExoPool.BorrowAsync(TimeSpan.FromSeconds(5));
             try
             {
                 var tracker = new ExchangeAdminWeb.Services.ExchangeServiceBase.ConnectionErrorTracker();

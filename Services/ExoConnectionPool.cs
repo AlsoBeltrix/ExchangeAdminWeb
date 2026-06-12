@@ -81,7 +81,15 @@ public sealed class ExoConnectionPool : IDisposable
         return (appId, organization, certSubject);
     }
 
-    public async Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
+    public Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
+        => BorrowAsync(TimeSpan.FromMinutes(2), ct);
+
+    /// <summary>
+    /// Borrow with a caller-chosen wait: interactive read paths (autocomplete)
+    /// should give up quickly instead of queueing keystrokes for minutes behind
+    /// mutation operations.
+    /// </summary>
+    public async Task<PooledRunspace> BorrowAsync(TimeSpan waitTimeout, CancellationToken ct = default)
     {
         if (!_enablement.IsModuleEnabled("ExchangeOnline"))
             throw new InvalidOperationException("Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.");
@@ -91,7 +99,7 @@ public sealed class ExoConnectionPool : IDisposable
             throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization on the Exchange Online config page.");
 
         _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = org });
-        if (!await _slots.WaitAsync(TimeSpan.FromMinutes(2), ct))
+        if (!await _slots.WaitAsync(waitTimeout, ct))
         {
             _operationTrace.Step("ExoPoolSlotRequested", "Failed", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["reason"] = "Pool busy" });
             throw new InvalidOperationException("Exchange service is busy. Please try again shortly.");

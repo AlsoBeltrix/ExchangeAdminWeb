@@ -87,6 +87,14 @@ public sealed class ADDirectorySearchService
             {
                 return ExecuteSearch(term.Trim(), objectKind, maxResults);
             }
+            catch
+            {
+                // A failed search may leave the persistent runspace in a broken
+                // state; drop it so the next search builds a fresh one.
+                _searchRunspace?.Dispose();
+                _searchRunspace = null;
+                throw;
+            }
             finally
             {
                 _runspaceLock.Release();
@@ -99,25 +107,37 @@ public sealed class ADDirectorySearchService
         }
     }
 
+    // Reused across searches (created and accessed only while _runspaceLock is
+    // held). Building a runspace and importing the ActiveDirectory module per
+    // query cost seconds under the global lock, serializing every user's
+    // autocomplete keystrokes behind module imports.
+    private Runspace? _searchRunspace;
+
+    private Runspace GetOrCreateRunspace()
+    {
+        if (_searchRunspace is { RunspaceStateInfo.State: RunspaceState.Opened })
+            return _searchRunspace;
+
+        _searchRunspace?.Dispose();
+
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        iss.ImportPSModule("ActiveDirectory");
+
+        var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        _searchRunspace = runspace;
+        return runspace;
+    }
+
     private List<ADSearchResult> ExecuteSearch(string term, string objectKind, int maxResults)
     {
         var escaped = ProtectedPrincipalService.EscapeLdapFilter(term);
         var results = new List<ADSearchResult>();
 
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-
-        using var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-
+        var runspace = GetOrCreateRunspace();
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
-
-        ps.AddCommand("Import-Module")
-          .AddParameter("Name", "ActiveDirectory")
-          .AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
 
         if (objectKind is "User" or "Any")
         {
