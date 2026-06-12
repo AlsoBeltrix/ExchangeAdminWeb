@@ -77,6 +77,11 @@ Describe 'deploy.ps1' {
         $importIdx | Should -BeLessThan $firstIisIdx
     }
 
+    It 'imports WebAdministration exactly once (the guarded top-of-script import)' {
+        ([regex]::Matches($s.Text, 'Import-Module WebAdministration')).Count | Should -Be 1
+        $s.Text | Should -Match 'Get-PSDrive -Name IIS' -Because 'the import must keep its IIS:-drive availability guard (PS7 loads the module without the provider)'
+    }
+
     It 'excludes runtime config from every robocopy mirror (regression: commit 0021502)' {
         $arrays = @(Get-RobocopyArgumentList $s)
         $arrays.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths mirror with robocopy'

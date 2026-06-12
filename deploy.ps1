@@ -143,8 +143,6 @@ Write-Host "  Publish : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  App     : $ParentSite/$AppAlias" -ForegroundColor DarkGray
 Write-Host ""
 
-Import-Module WebAdministration -ErrorAction Stop
-
 # --- Collect & validate config (fresh install only) ---
 
 if (-not $isUpgrade) {
