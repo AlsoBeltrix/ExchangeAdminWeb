@@ -17,7 +17,8 @@ public class PermissionValidatorTests
         var configData = new Dictionary<string, string?>
         {
             ["Security:PreventSelfGrant"] = preventSelfGrant.ToString(),
-            ["Delinea:SecretServerUrl"] = "https://fake.local"
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = Path.Combine(Path.GetTempPath(), "eaw-test-logs")
         };
 
         if (excludedUsers is not null)

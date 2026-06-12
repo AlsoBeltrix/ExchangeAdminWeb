@@ -26,7 +26,8 @@ public class LicensingUpdatesServiceTests : IDisposable
     {
         var configData = new Dictionary<string, string?>
         {
-            ["Delinea:SecretServerUrl"] = "https://fake.local"
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = _tempDir
         };
 
         var config = new ConfigurationBuilder()

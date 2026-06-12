@@ -31,7 +31,8 @@ public class ProtectedPrincipalServiceTests : IDisposable
     {
         var configData = new Dictionary<string, string?>
         {
-            ["Delinea:SecretServerUrl"] = "https://fake.local"
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = _tempDir
         };
 
         if (configOverrides != null)

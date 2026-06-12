@@ -137,6 +137,7 @@ public class TestAccountPoolServiceTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = _tempDir,
                 ["Email:SmtpHost"] = "localhost"
             })
             .Build();
