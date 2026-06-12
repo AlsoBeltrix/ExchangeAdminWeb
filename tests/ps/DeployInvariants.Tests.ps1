@@ -187,7 +187,22 @@ Describe 'tools/deploy-pipeline.ps1' {
         $s.Errors | Should -BeNullOrEmpty
     }
 
-    # Exit-code semantics (the current -ge 8 check applied to a PowerShell child
-    # script) are a known defect; tests for the corrected behavior land with
-    # docs/ProdReadiness-Plan.md tasks 11-12.
+    It 'exposes a -PlanOnly switch' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'PlanOnly'
+    }
+
+    It 'never applies robocopy exit-code thresholds to PowerShell child scripts' {
+        # deploy.ps1 / promote-dev-to-prod.ps1 signal failure by throwing; an
+        # exit-code threshold here silently swallowed `exit 1` failures (and a
+        # successful run leaves robocopy residue in $LASTEXITCODE anyway).
+        $s.Text | Should -Not -Match '\$LASTEXITCODE\s+-ge\s+8'
+    }
+
+    It 'asserts the prod apply/consent switches only outside -PlanOnly' {
+        # With -PlanOnly the promote script must run its native dry run, so the
+        # pipeline may not hardcode Apply / IUnderstandThisOverwritesProd.
+        $assignment = [regex]::Match($s.Text, '(?s)if \(-not \$PlanOnly\) \{.*?IUnderstandThisOverwritesProd.*?\}')
+        $assignment.Success | Should -BeTrue
+        ([regex]::Matches($s.Text, 'IUnderstandThisOverwritesProd')).Count | Should -Be 1 -Because 'the consent switch must not be asserted anywhere else'
+    }
 }

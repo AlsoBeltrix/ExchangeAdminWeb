@@ -23,6 +23,11 @@
 .EXAMPLE
     .\deploy-pipeline.ps1 -Prod
     # Promote current dev to prod. Does not rebuild - uses what's already deployed in dev.
+
+.EXAMPLE
+    .\deploy-pipeline.ps1 -Prod -PlanOnly
+    # DRY RUN of the prod promotion: prints what promote-dev-to-prod.ps1 would do
+    # without touching prod. Always available before a real -Prod run.
 #>
 
 [CmdletBinding()]
@@ -30,6 +35,7 @@ param(
     [switch]$Dev,
     [switch]$Prod,
     [switch]$AllowDirty,
+    [switch]$PlanOnly,
 
     [string]$DevPath       = "D:\inetpub\ExchangeAdminWebDev",
     [string]$ProdPath      = "D:\inetpub\ExchangeAdminWeb",
@@ -68,23 +74,29 @@ if ($Dev) {
     Write-Host "=== Build and deploy to dev ===" -ForegroundColor Magenta
     Write-Host ""
 
-    & $deployScript `
-        -ParentSite "Default Web Site" `
-        -AppAlias "ExchangeAdminWebDev" `
-        -AppPoolName $DevAppPool `
-        -PublishPath $DevPath `
-        -PathBase $DevPathBase `
-        -LogRoot $LogRoot `
-        -NonInteractive
-
-    if ($LASTEXITCODE -ge 8) {
-        throw "Dev deployment failed with exit code $LASTEXITCODE"
+    if ($PlanOnly) {
+        Write-Host "PLAN  Would run: deploy.ps1 -ParentSite 'Default Web Site' -AppAlias ExchangeAdminWebDev -AppPoolName $DevAppPool -PublishPath $DevPath -PathBase $DevPathBase -LogRoot $LogRoot -NonInteractive" -ForegroundColor DarkGray
+        Write-Warn "deploy.ps1 has no native plan mode yet; -PlanOnly skips the dev deploy entirely."
     }
+    else {
+        # deploy.ps1 signals failure by throwing (Write-Fail). Do not gate on
+        # $LASTEXITCODE here: after a successful run it holds the last native
+        # command's exit code (robocopy returns 1-3 on success), so any
+        # exit-code comparison misclassifies script-to-script invocation.
+        & $deployScript `
+            -ParentSite "Default Web Site" `
+            -AppAlias "ExchangeAdminWebDev" `
+            -AppPoolName $DevAppPool `
+            -PublishPath $DevPath `
+            -PathBase $DevPathBase `
+            -LogRoot $LogRoot `
+            -NonInteractive
 
-    Write-Host ""
-    Write-Ok "Dev deployment complete at $DevPath"
-    Write-Host "Validate: https://<server>$DevPathBase" -ForegroundColor Cyan
-    Write-Host "When validated, run: .\deploy-pipeline.ps1 -Prod" -ForegroundColor DarkGray
+        Write-Host ""
+        Write-Ok "Dev deployment complete at $DevPath"
+        Write-Host "Validate: https://<server>$DevPathBase" -ForegroundColor Cyan
+        Write-Host "When validated, run: .\deploy-pipeline.ps1 -Prod" -ForegroundColor DarkGray
+    }
 }
 
 if ($Prod) {
@@ -146,22 +158,31 @@ if ($Prod) {
         ProdPathBase         = $ProdPathBase
         BackupRoot           = $BackupRoot
         BackupRetention      = $BackupRetention
-        Apply                = $true
-        IUnderstandThisOverwritesProd = $true
+    }
+
+    # Auto-assert the apply/consent switches only for a real promotion. With
+    # -PlanOnly, promote-dev-to-prod.ps1 runs its native DRY RUN and prints the
+    # plan without touching prod.
+    if (-not $PlanOnly) {
+        $promoteArgs["Apply"] = $true
+        $promoteArgs["IUnderstandThisOverwritesProd"] = $true
     }
 
     if ($CopyAppSettings) {
         $promoteArgs["CopyAppSettings"] = $true
     }
 
+    # promote-dev-to-prod.ps1 signals failure by throwing; no exit-code check
+    # (see the -Dev branch note on $LASTEXITCODE residue).
     & $promoteScript @promoteArgs
 
-    if ($LASTEXITCODE -ge 8) {
-        throw "Prod promotion failed with exit code $LASTEXITCODE"
-    }
-
     Write-Host ""
-    Write-Ok "Prod deployment complete at $ProdPath"
-    Write-Host "Validate: https://<server>$ProdPathBase" -ForegroundColor Cyan
-    Write-Host "Module configs and operational settings promoted from dev. appsettings.json preserved with PathBase patched." -ForegroundColor DarkGray
+    if ($PlanOnly) {
+        Write-Ok "Prod promotion DRY RUN complete. Re-run with -Prod (without -PlanOnly) to apply."
+    }
+    else {
+        Write-Ok "Prod deployment complete at $ProdPath"
+        Write-Host "Validate: https://<server>$ProdPathBase" -ForegroundColor Cyan
+        Write-Host "Module configs and operational settings promoted from dev. appsettings.json preserved with PathBase patched." -ForegroundColor DarkGray
+    }
 }
