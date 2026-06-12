@@ -41,6 +41,20 @@ repo facts change.
 - deploy.ps1 still lacks a native -PlanOnly (deferred with owner visibility; plan
   review log round 5). deploy-pipeline -PlanOnly covers the prod dry-run requirement.
 
+## Queued work (owner-requested 2026-06-12)
+
+- **Module developer guide review**: drift-check `docs/AdminModuleDeveloperGuide.md`
+  (and the `docs/AdminModuleSpec.md` version header) against current code before the
+  week of 2026-06-15 — Michael will farm out new-module development and the guide must
+  stand alone. Recent invalidation risks: FailClosed permissions, enablement semantics
+  (no startup writes as of 2.3.7), fragment-based section access.
+- **Module packaging/import**: a way to package modules and import them cleanly into
+  the main app, preferably through the UI; if recompile is unavoidable that trade-off
+  goes back to Michael. Needs a `docs/ModulePackaging-Plan.md` and approval before any
+  implementation (modules are currently compiled in: descriptor in
+  `Modules/ModuleCatalog.cs` + razor pages, so runtime import implies assembly loading
+  vs a source-drop + rebuild pipeline — open architecture question for the plan).
+
 ## Blockers
 
 - Prod freeze (weekend of 2026-06-13): no prod deploys until Michael runs them.
