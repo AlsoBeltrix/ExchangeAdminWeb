@@ -1218,7 +1218,18 @@
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+        {
+            batchActionResult = PermissionResult.Fail("Authorization denied.");
+            try
+            {
+                Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch_Denied", "ClearCompleted", false, ticket, errorDetail: "MigrationManage authorization denied");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for RemoveMigrationBatch denial");
+            }
             return;
+        }
 
         if (migrationBatches == null) return;
 
@@ -1227,6 +1238,9 @@
         batchActionResult = null;
         var removed = 0;
         var errors = new List<string>();
+        // Audit-write failures are warnings, never operation failures: an audit
+        // failure must not make an already-completed removal look failed.
+        var auditWarnings = new List<string>();
 
         try
         {
@@ -1237,28 +1251,29 @@
             foreach (var batch in toRemove)
             {
                 var result = await MigrationSvc.RemoveMigrationBatchAsync(batch.BatchName);
+                try
+                {
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName,
+                        result.Success, ticket, errorDetail: result.Success ? null : result.Message);
+                }
+                catch (Exception ex)
+                {
+                    auditWarnings.Add($"{batch.BatchName}: audit logging failed: {ex.Message}");
+                }
+
                 if (result.Success)
-                {
                     removed++;
-                    try
-                    {
-                        Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName, true, ticket);
-                    }
-                    catch (Exception ex)
-                    {
-                        errors.Add($"{batch.BatchName}: removed but audit logging failed: {ex.Message}");
-                    }
-                }
                 else
-                {
                     errors.Add($"{batch.BatchName}: {result.Message}");
-                }
             }
 
+            var warningSuffix = auditWarnings.Count > 0
+                ? $" (warning - {string.Join("; ", auditWarnings)})"
+                : "";
             if (errors.Count == 0)
-                batchActionResult = new PermissionResult { Success = true, Message = $"Removed {removed} completed/empty batch(es)." };
+                batchActionResult = new PermissionResult { Success = true, Message = $"Removed {removed} completed/empty batch(es).{warningSuffix}" };
             else
-                batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}");
+                batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}{warningSuffix}");
 
             try
             {
