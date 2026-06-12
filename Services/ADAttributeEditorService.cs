@@ -561,16 +561,28 @@ public class ADAttributeEditorService
         ps.Commands.Clear();
 
         if (reReadResult.Count == 0)
-            return new(false, "Target object no longer exists or could not be re-read.", null);
+        {
+            const string notFoundMsg = "Target object no longer exists or could not be re-read.";
+            LogAudit(target, [], performedBy, ip, ticket, false, notFoundMsg);
+            return new(false, notFoundMsg, null);
+        }
 
         var reReadUser = reReadResult[0];
         var reReadGuid = reReadUser.Properties["ObjectGUID"]?.Value?.ToString();
         if (!string.IsNullOrEmpty(target.ObjectGuid) && !string.Equals(reReadGuid, target.ObjectGuid, StringComparison.OrdinalIgnoreCase))
-            return new(false, "Bound-object mismatch: the resolved object no longer matches the lookup snapshot.", null);
+        {
+            const string mismatchMsg = "Bound-object mismatch: the resolved object no longer matches the lookup snapshot.";
+            LogAudit(target, [], performedBy, ip, ticket, false, mismatchMsg);
+            return new(false, mismatchMsg, null);
+        }
 
         var reReadDn = reReadUser.Properties["DistinguishedName"]?.Value?.ToString();
         if (!IsWithinSearchBases(reReadDn, GetConfiguredSearchBases()))
-            return new(false, "Target is outside the configured search base boundaries. The account may have been moved since lookup.", null);
+        {
+            const string boundaryMsg = "Target is outside the configured search base boundaries. The account may have been moved since lookup.";
+            LogAudit(target, [], performedBy, ip, ticket, false, boundaryMsg);
+            return new(false, boundaryMsg, null);
+        }
 
         var currentValues = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var attr in allowlist)
@@ -598,7 +610,22 @@ public class ADAttributeEditorService
           .AddParameter("ErrorAction", "Stop");
         if (replace.Count > 0) ps.AddParameter("Replace", replace);
         if (clear.Count > 0) ps.AddParameter("Clear", clear.ToArray());
-        ps.Invoke();
+
+        // -ErrorAction Stop makes real Set-ADUser failures (access denied,
+        // constraint violation, unreachable DC) THROW from Invoke() - they never
+        // reach the HadErrors branch below. Catch, audit, and return a failed
+        // result; a failed mutation with no audit record violates the
+        // Constitution's audit invariant.
+        try
+        {
+            ps.Invoke();
+        }
+        catch (Exception ex)
+        {
+            var thrownMsg = ex.InnerException?.Message ?? ex.Message;
+            LogAudit(target, changes, performedBy, ip, ticket, false, thrownMsg);
+            return new(false, thrownMsg, null);
+        }
         ps.Commands.Clear();
 
         if (ps.HadErrors)

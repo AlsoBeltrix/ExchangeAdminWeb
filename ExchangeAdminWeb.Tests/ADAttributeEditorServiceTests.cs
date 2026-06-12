@@ -505,4 +505,43 @@ public class ADAttributeEditorServiceTests : IDisposable
         // The prefix itself should be denied (starts with the prefix)
         Assert.True(ADAttributeEditorService.IsDenylisted(attributeName));
     }
+
+    // --- Failure-path auditing (source-level guard) ---
+
+    [Fact]
+    public void PerformSave_ThrownSetAdUserFailure_IsAudited()
+    {
+        // Set-ADUser runs with -ErrorAction Stop, so real failures THROW from
+        // ps.Invoke() and bypass the HadErrors branch. PerformSave opens a real
+        // runspace requiring the ActiveDirectory module, so it cannot be unit-
+        // hosted; this source-level guard (same approach as
+        // PageAuthorizationRecheckTests) fails if the catch-and-audit around the
+        // Set-ADUser invoke is ever removed, which would recreate the
+        // unaudited-failure dead branch.
+        var source = ReadServiceSource("ADAttributeEditorService.cs");
+        var start = source.IndexOf("private AttributeSaveResult PerformSave", StringComparison.Ordinal);
+        Assert.True(start >= 0, "PerformSave not found");
+        var setAdUser = source.IndexOf("AddCommand(\"Set-ADUser\")", start, StringComparison.Ordinal);
+        Assert.True(setAdUser >= 0, "Set-ADUser command not found in PerformSave");
+
+        var afterSetAdUser = source[setAdUser..];
+        var catchIdx = afterSetAdUser.IndexOf("catch (Exception ex)", StringComparison.Ordinal);
+        Assert.True(catchIdx >= 0, "Set-ADUser invoke is no longer wrapped in try/catch");
+        Assert.Contains("LogAudit(target, changes, performedBy, ip, ticket, false",
+            afterSetAdUser[catchIdx..afterSetAdUser.IndexOf("ps.Commands.Clear()", catchIdx, StringComparison.Ordinal)]);
+    }
+
+    private static string ReadServiceSource(string fileName)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var path = Path.Combine(dir.FullName, "Services", fileName);
+            if (File.Exists(path))
+                return File.ReadAllText(path);
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not locate Services/{fileName} from test base directory.");
+    }
 }

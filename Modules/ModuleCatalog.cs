@@ -465,7 +465,7 @@ public sealed class ModuleCatalog
             SortOrder = 170,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.1",
+            Version = "1.3.2",
             MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
             GranularPermissions = [
                 new("Level1", "ADAttributeEditorLevel1", FailClosed: true),
