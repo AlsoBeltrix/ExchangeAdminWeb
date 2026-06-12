@@ -387,7 +387,7 @@ if ($isUpgrade) {
             $StagingPath, $PublishPath,
             '/MIR',
             '/XF', 'appsettings*.json',
-            '/XD', (Join-Path $PublishPath 'logs'), (Join-Path $PublishPath 'config'),
+            '/XD', 'logs', 'config',
             '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
         )
         & robocopy @robocopyArgs
@@ -525,7 +525,7 @@ if ($isUpgrade) {
             $StagingPath, $PublishPath,
             '/MIR',
             '/XF', 'appsettings*.json',
-            '/XD', (Join-Path $PublishPath 'logs'), (Join-Path $PublishPath 'config'),
+            '/XD', 'logs', 'config',
             '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
         )
         & robocopy @robocopyArgs
