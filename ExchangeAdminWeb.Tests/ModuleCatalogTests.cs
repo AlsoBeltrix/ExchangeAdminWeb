@@ -329,6 +329,18 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_ConferenceRooms_HasNoOnPremCredentialField()
+    {
+        // On-prem Exchange is decommissioned (ProdReadiness plan Q1/AC14). The
+        // OnPremDelineaSecretId field was retired - it was also never read by any
+        // code (ModuleCredentialService reads "DelineaSecretId"), so reintroducing
+        // it would resurrect a dead, misleading config field.
+        var module = _catalog.GetById("ConferenceRooms");
+        Assert.NotNull(module);
+        Assert.DoesNotContain(module.ConfigFields, f => f.Key == "OnPremDelineaSecretId");
+    }
+
+    [Fact]
     public void Catalog_NoCyclicDependencies()
     {
         // If there were cycles, ModuleCatalog constructor would have thrown.

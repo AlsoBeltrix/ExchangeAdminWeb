@@ -325,11 +325,10 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.5",
+            Version = "2.0.6",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [
-                new("OnPremDelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server secret for on-prem Exchange (Set-RemoteMailbox). Leave blank if cloud-only."),
                 new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. room-admins@example.com)"),
                 new("ExecConfCoordinatorsGroup", "Exec Conf Coordinators Group", "Group for executive conference coordinators (e.g. exec-coordinators@example.com)"),
                 new("ConfExecAdminsGroup", "Conf Exec Admins Group", "Executive conference admins group (e.g. exec-admins@example.com)"),

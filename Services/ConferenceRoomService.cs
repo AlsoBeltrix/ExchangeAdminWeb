@@ -1062,99 +1062,24 @@ public class ConferenceRoomService : ExchangeServiceBase
         }
     }
 
-    private async Task SetRemoteMailboxAsync(string roomEmail, string customAttr9, string? mailTip, RoomOperationResult result, bool required = false)
+    // On-prem Exchange is being decommissioned (owner decision 2026-06-12; see
+    // docs/ProdReadiness-Plan.md Q1/AC14) and all conference rooms are cloud
+    // mailboxes. The live Set-RemoteMailbox path was retired rather than repaired:
+    // its credential lookup never worked anyway (the catalog exposed
+    // OnPremDelineaSecretId, which no code read). A cloud-mastered room skips this
+    // step as success; an on-prem mastered room (cloud write rejected) fails
+    // explicitly so the failure is visible and audited with the operation result.
+    private Task SetRemoteMailboxAsync(string roomEmail, string customAttr9, string? mailTip, RoomOperationResult result, bool required = false)
     {
-        if (string.IsNullOrWhiteSpace(_onPremServerUri))
+        result.Steps.Add(new RoomOperationStep
         {
-            // Normally on-prem is optional (cloud write already set the attribute). But when
-            // the cloud write was deferred because the room is on-prem mastered, skipping here
-            // means the attribute is written NOWHERE — that must fail, not report success.
-            result.Steps.Add(new RoomOperationStep
-            {
-                Stage = "Set-RemoteMailbox",
-                Success = OnPremSkipCountsAsSuccess(required),
-                Error = required
-                    ? "Room is on-prem mastered (cloud write rejected) but on-prem is not configured — CustomAttribute9/MailTip could not be written anywhere."
-                    : "Skipped — on-prem not configured"
-            });
-            return;
-        }
-
-        var creds = await GetModuleCredentialsAsync("Set-RemoteMailbox");
-        if (creds is null)
-        {
-            result.Steps.Add(new RoomOperationStep
-            {
-                Stage = "Set-RemoteMailbox",
-                Success = false,
-                Error = "On-prem credentials unavailable from Delinea"
-            });
-            return;
-        }
-
-        _operationTrace?.Step("SetRemoteMailbox", backend: "OnPremExchange", command: "Set-RemoteMailbox", target: roomEmail);
-
-        try
-        {
-            await ThrottledAsync(() => Task.Run<bool>(() =>
-            {
-                var iss = InitialSessionState.CreateDefault();
-                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-                using var runspace = RunspaceFactory.CreateRunspace(iss);
-                runspace.Open();
-                using var ps = PowerShell.Create();
-                ps.Runspace = runspace;
-
-                try
-                {
-                    ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
-
-                    var scriptText = mailTip != null
-                        ? "param($Identity, $Attr9, $Tip) Set-RemoteMailbox -Identity $Identity -CustomAttribute9 $Attr9 -MailTip $Tip -ErrorAction Stop"
-                        : "param($Identity, $Attr9) Set-RemoteMailbox -Identity $Identity -CustomAttribute9 $Attr9 -ErrorAction Stop";
-
-                    var scriptBlock = ScriptBlock.Create(scriptText);
-                    var args = mailTip != null
-                        ? new object[] { roomEmail, customAttr9, mailTip }
-                        : new object[] { roomEmail, customAttr9 };
-
-                    ps.AddCommand("Invoke-Command")
-                      .AddParameter("Session", ps.Runspace.SessionStateProxy.GetVariable("onpremSession"))
-                      .AddParameter("ScriptBlock", scriptBlock)
-                      .AddParameter("ArgumentList", args);
-                    Invoke(ps);
-
-                    _logger.LogInformation("Set-RemoteMailbox succeeded for {Room}: CustomAttribute9={Attr9}", roomEmail, customAttr9);
-                    return true;
-                }
-                finally
-                {
-                    try
-                    {
-                        ps.Commands.Clear();
-                        var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
-                        if (session != null)
-                        {
-                            ps.AddCommand("Remove-PSSession").AddParameter("Session", session);
-                            ps.Invoke();
-                        }
-                    }
-                    catch { }
-                }
-            }));
-
-            result.Steps.Add(new RoomOperationStep { Stage = "Set-RemoteMailbox (on-prem)", Success = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Set-RemoteMailbox failed for {Room} — cloud attributes are set, on-prem may be stale", roomEmail);
-            result.Steps.Add(new RoomOperationStep
-            {
-                Stage = "Set-RemoteMailbox (on-prem)",
-                Success = false,
-                Error = ex.Message
-            });
-        }
+            Stage = "Set-RemoteMailbox",
+            Success = OnPremSkipCountsAsSuccess(required),
+            Error = required
+                ? $"Room {roomEmail} is on-prem mastered (cloud write rejected), but on-prem Exchange is decommissioned - CustomAttribute9/MailTip could not be written. Migrate the room mailbox to Exchange Online."
+                : "Skipped - on-prem Exchange decommissioned"
+        });
+        return Task.CompletedTask;
     }
 
     // -------------------------------------------------------------------------
