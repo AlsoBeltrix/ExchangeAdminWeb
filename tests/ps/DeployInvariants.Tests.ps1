@@ -129,6 +129,27 @@ Describe 'deploy.ps1' {
         $cleaning.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths stage a publish containing live appsettings.json'
     }
 
+    It 'defaults to the DEV site, never prod (incident fix #6)' {
+        # Bare .\deploy.ps1 used to target the prod alias/pool/path while the
+        # docs called it "the dev deploy". Prod is reached only via the promote
+        # pipeline.
+        $defaults = @{}
+        foreach ($p in $s.Ast.ParamBlock.Parameters) {
+            if ($p.DefaultValue -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                $defaults[$p.Name.VariablePath.UserPath] = $p.DefaultValue.Value
+            }
+        }
+        $defaults['AppAlias'] | Should -Be 'ExchangeAdminWebDev'
+        $defaults['AppPoolName'] | Should -Be 'ExchangeAdminWebDev'
+        $defaults['PublishPath'] | Should -Be 'D:\inetpub\ExchangeAdminWebDev'
+    }
+
+    It 'refuses a fresh install without explicit consent (incident fix #6)' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'ConfirmFreshInstall'
+        $s.Text | Should -Match '-not \$isUpgrade -and -not \$Force -and -not \$ConfirmFreshInstall' `
+            -Because 'an unexpected INSTALL usually means the target parameters are wrong'
+    }
+
     It 'backs up the whole runtime config directory before the upgrade mirror (incident fix #4)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

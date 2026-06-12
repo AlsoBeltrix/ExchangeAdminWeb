@@ -1,12 +1,16 @@
 #Requires -RunAsAdministrator
 
 param(
+    # Defaults target the DEV site: this script is the ADI dev deploy (AGENTS.md).
+    # Before the 2026-06-12 incident the defaults silently targeted the PROD
+    # alias/pool/path. Prod is reached only via tools/deploy-pipeline.ps1 -Prod
+    # (promote), never by this script's defaults.
     [string]$ParentSite          = "Default Web Site",
-    [string]$AppAlias            = "ExchangeAdminWeb",
-    [string]$AppPoolName         = "ExchangeAdminWeb",
+    [string]$AppAlias            = "ExchangeAdminWebDev",
+    [string]$AppPoolName         = "ExchangeAdminWebDev",
     [string]$ServiceAccount,
     [securestring]$ServiceAccountPassword,
-    [string]$PublishPath         = "D:\inetpub\ExchangeAdminWeb",
+    [string]$PublishPath         = "D:\inetpub\ExchangeAdminWebDev",
     [string]$LogRoot             = "E:\WWWOutput",
     [string]$CertSubject         = "CN=EXO-Automation",
 
@@ -26,6 +30,7 @@ param(
     [string]$HybridEndpoint      = "hybrid1",
 
     [switch]$Force,
+    [switch]$ConfirmFreshInstall,
     [switch]$NonInteractive
 )
 
@@ -141,6 +146,13 @@ if ($Force -and (Test-Path $configPath)) {
 }
 
 $mode = if ($isUpgrade) { "UPGRADE" } else { "INSTALL" }
+
+# A fresh install must be deliberate: an unexpected INSTALL usually means the
+# target parameters point at the wrong site (the 2026-06-12 incident's attempt #1
+# nearly fresh-installed over an existing deployment). -Force is its own consent.
+if (-not $isUpgrade -and -not $Force -and -not $ConfirmFreshInstall) {
+    Write-Fail "No existing deployment at $PublishPath (no appsettings.json) -- this would be a FRESH INSTALL creating IIS app '$ParentSite/$AppAlias'. Re-run with -ConfirmFreshInstall if intended, or check -PublishPath/-AppAlias. Generic installs: tools/Install-ExchangeAdminWeb.ps1."
+}
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb - Deploy ($mode)" -ForegroundColor Magenta
