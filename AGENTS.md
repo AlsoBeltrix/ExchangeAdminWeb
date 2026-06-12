@@ -58,8 +58,12 @@ should win. Do not silently choose whichever source is convenient.
 
 ## Commands
 
-- Build: `dotnet build -c Release`
-- Test: `dotnet test` (xUnit v3 + NSubstitute, in `ExchangeAdminWeb.Tests/`)
+- Build: `dotnet build ExchangeAdminWeb.slnx -c Release`
+- Test: `dotnet test ExchangeAdminWeb.slnx` (xUnit v3 + NSubstitute, in
+  `ExchangeAdminWeb.Tests/`). Always target the solution: bare `dotnet test` from the
+  repo root resolves only the web csproj and silently runs zero tests.
+- Non-Windows dev machines: append `-p:EnableWindowsTargeting=true` to build/test
+  (the app targets `net10.0-windows`).
 - Format check: `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore`
 - PowerShell lint: `Invoke-ScriptAnalyzer -Path . -Recurse`
 - PowerShell tests: `Invoke-Pester tests/ps` (when present)

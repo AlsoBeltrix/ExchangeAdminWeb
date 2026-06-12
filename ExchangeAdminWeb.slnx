@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ExchangeAdminWeb.csproj" />
+  <Project Path="ExchangeAdminWeb.Tests/ExchangeAdminWeb.Tests.csproj" />
+</Solution>
