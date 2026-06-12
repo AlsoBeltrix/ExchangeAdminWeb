@@ -409,3 +409,10 @@ infrastructure; module versions per touched module (rule fires independently).
   service). Deploy hold can lift once Michael accepts these findings; prod deploy of
   the FailClosed change stays gated on the §Deploy-notes alias check (prod's fragment
   already covers the six aliases with non-empty groups).
+- 2026-06-12, round 9: Michael accepted the round-8 diagnostic findings. Deploy hold
+  lifted for dev; prod is frozen for the weekend (no prod deploys until Michael runs
+  them after the freeze). Scope approved: implement incident fixes #3-#7 against dev
+  with normal governance (one fix per commit, tests with each). Fix #8 is closed by
+  the diagnostics (mechanism identified; guarded by `c473fba`). Remaining items
+  Michael owns: task-20 manual UI verification in dev after this batch, and the
+  post-freeze prod deploy with the §Deploy-notes alias check.

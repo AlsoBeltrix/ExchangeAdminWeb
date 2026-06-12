@@ -20,9 +20,10 @@ repo facts change.
   reduced to read-only `WarnIfExchangeOnlineUnset`; enablement is written only by
   `SaveEnablement`; startup-no-write tests added. Fix #2 shipped earlier (round 7) as
   hardening; its suspected causal role is refuted. Fixes #3-#8 await owner scheduling.
-- **Deploy hold**: lift pending Michael's acceptance of the diagnostic findings (plan
-  review log round 8). Prod deploy of the FailClosed change stays gated on the
-  §Deploy-notes alias check below (prod's fragment already covers the six aliases).
+- **Deploy hold lifted for dev** (Michael accepted the round-8 findings; round 9).
+  **Prod is frozen for the weekend of 2026-06-13** — no prod deploys until Michael runs
+  them post-freeze with the §Deploy-notes alias check below (prod's fragment already
+  covers the six aliases). Incident fixes #3-#7 approved for implementation against dev.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and CI-green
   (now 408/408 xUnit local, 24/24 Pester). Task 20 (manual UI verification) is
   unblocked once Michael confirms. Phase 4 waits behind incident-fix scheduling.
@@ -42,10 +43,9 @@ repo facts change.
 
 ## Blockers
 
-- Michael to accept the incident diagnostic findings and the fix-#1 implementation
-  (plan review log round 8) — lifts the deploy hold.
-- Incident fixes #3-#8 need owner approval/scheduling before implementation (plan
-  review log round 6; #8's mechanism is identified and guarded by `c473fba`).
+- Prod freeze (weekend of 2026-06-13): no prod deploys until Michael runs them.
+- Task 20 (manual UI verification) needs ~15 minutes of Michael's time in dev after
+  the incident-fix batch lands.
 
 ## Deploy notes (before the FailClosed change reaches prod)
 
