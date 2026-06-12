@@ -68,6 +68,15 @@ Describe 'deploy.ps1' {
         $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
     }
 
+    It 'imports WebAdministration before touching the IIS: drive' {
+        # Without the import, Test-Path IIS:\AppPools\... silently returns false
+        # and an upgrade wrongly demands a ServiceAccount for the existing pool.
+        $importIdx = $s.Text.IndexOf('Import-Module WebAdministration')
+        $firstIisIdx = $s.Text.IndexOf('IIS:\')
+        $importIdx | Should -BeGreaterOrEqual 0
+        $importIdx | Should -BeLessThan $firstIisIdx
+    }
+
     It 'excludes runtime config from every robocopy mirror (regression: commit 0021502)' {
         $arrays = @(Get-RobocopyArgumentList $s)
         $arrays.Count | Should -BeGreaterOrEqual 2 -Because 'both the upgrade and fresh-install paths mirror with robocopy'

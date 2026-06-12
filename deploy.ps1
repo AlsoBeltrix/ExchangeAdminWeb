@@ -31,6 +31,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# The IIS: drive exists only after WebAdministration loads, and referencing an
+# unknown drive does NOT auto-load the module. Without this import, the
+# existing-app-pool Test-Path check silently returned false when the script was
+# run directly, so upgrades wrongly demanded a ServiceAccount instead of
+# reusing the pool's existing identity.
+Import-Module WebAdministration -ErrorAction Stop
+if (-not (Get-PSDrive -Name IIS -ErrorAction SilentlyContinue)) {
+    Write-Host "  X  The IIS: drive is unavailable after importing WebAdministration." -ForegroundColor Red
+    throw "Run this script in Windows PowerShell 5.1 on the IIS server - the WebAdministration provider does not load under PowerShell 7."
+}
+
 # --- Helpers ---
 
 function Write-Step    { param($m) Write-Host ">>> $m" -ForegroundColor Cyan }
