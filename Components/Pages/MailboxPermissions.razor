@@ -285,11 +285,32 @@
         onPremTarget = null;
     }
 
+    private async Task<bool> ReauthorizeAsync()
+    {
+        // Re-check authorization immediately before the write: a user removed
+        // from the section group (or whose module was disabled) mid-session
+        // must not keep mutating over the live circuit.
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "MailboxPermissions");
+        if (!authCheck.Succeeded)
+        {
+            result = PermissionResult.Fail("Authorization denied.");
+            return false;
+        }
+        return true;
+    }
+
     private async Task SubmitSingle()
     {
         isLoading = true;
         result = null;
         await Task.Yield();
+
+        if (!await ReauthorizeAsync())
+        {
+            isLoading = false;
+            return;
+        }
 
         var target = targetMailbox.Trim();
         var user = affectedUser.Trim();
@@ -446,6 +467,12 @@
         isLoading = true;
         bulkResult = null;
         await Task.Yield();
+
+        if (!await ReauthorizeAsync())
+        {
+            isLoading = false;
+            return;
+        }
 
         try
         {
