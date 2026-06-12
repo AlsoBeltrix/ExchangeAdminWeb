@@ -5,46 +5,41 @@ repo facts change.
 
 ## Now
 
-- App version `2.3.5` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). A base-version
-  bump to 2.3.6 is owed at the end of the current remediation batch (shared-infra
-  changes landed; see plan §5 versioning note).
+- App version `2.3.6` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **Active work stream:** `docs/ProdReadiness-Plan.md` (Status: Approved) — prod-release
   remediation of the 2026-06-12 multi-agent review. Findings register:
   `docs/ProdReadinessReview-2026-06-12.md`.
-- **Phase 1 (verification) complete, Phase 2 (security) complete** — 11 local commits
-  ahead of `origin/master`, awaiting owner push (this machine's GitHub auth is the
-  owner's personal account `roethlar`; the repo needs the corporate account):
-  - Plan + findings register.
-  - `ExchangeAdminWeb.slnx` added — bare `dotnet test` previously ran ZERO tests (no
-    solution file); CI and AGENTS.md commands now target the solution.
-  - Cross-platform fix for the audit write-failure test (Z:\ was Windows-only).
-  - `tests/ps/DeployInvariants.Tests.ps1` (18 static Pester tests) + CI hardening
-    (Pester fails on missing dir, -SkipPublisherCheck, dotnet format step).
-  - FailClosed flipped on legacy mutating permissions (MailboxPermissions,
-    CalendarPermissions, Migration×3, OutOfOffice); read-only allowlist pinned by test.
-  - Pre-write authorization re-checks: MailboxPermissions + CalendarPermissions
-    cloud/bulk paths, AdminEventLog ExecuteUndo.
-  - ProtectedPrincipalService fails closed on corrupt MailboxPermissions config.
-  - ConferenceRooms CEO/restricted permission-removal failures now surface (2.0.5).
-  - GroupAuthorizationHandler direct tests (7 scenarios).
-- **Next: Phase 3** (deploy pipeline truth, audit gaps, ClientInfo IP, UI
-  responsiveness) then Phase 4 (docs sweep, backlog). Tasks in plan §7.
+- **Phases 1–3 complete and pushed; CI green** (405/405 xUnit on windows-latest,
+  23/23 Pester, format + PSScriptAnalyzer). Highlights: real test execution via
+  `ExchangeAdminWeb.slnx` (bare `dotnet test` previously ran ZERO tests); Pester
+  invariant suite in `tests/ps/`; FailClosed backport to legacy mutating modules;
+  pre-write auth re-checks (MailboxPermissions/CalendarPermissions cloud+bulk,
+  AdminEventLog undo); protected-principal corrupt-config fail-closed; CEO-room
+  permission-removal surfacing; deploy.ps1 Write-Fail throws + staging cleanup in
+  finally; deploy-pipeline failure masking fixed + -PlanOnly prod dry run;
+  ADAttributeEditor/Migration failure audits; Graph status surfacing (MFA blanket
+  success fixed); per-circuit audit IP via ClientInfoCircuitHandler; UI freeze fixes
+  (fire-and-forget handlers, EXO connect off dispatcher, autocomplete contention);
+  ConferenceRooms on-prem path retired (on-prem Exchange decommissioning, plan Q1).
+- **Open:** plan task 20 — owner manually verifies in dev that buttons respond on
+  first click (AC13) after deploying this batch. Then Phase 4 (docs drift sweep,
+  register backlog incl. the hardcoded `E:\WWWOutput` Audit:LogRoot default).
 
 ## Findings
 
-- CI exists at `.github/workflows/ci.yml` but has NEVER been observed running with a
-  nonzero test count. First push must confirm ≥392 tests execute and that a failing
-  test fails the run (AC1). Until then treat verification as local-only.
+- CI is real now: a failing test fails the run (observed: run 27425132329 failed on
+  38 Windows-only harness failures, fixed in aeed8f2). Trust CI.
 - On macOS, a missing Windows COM DLL can nondeterministically drop xUnit test
-  collections (total count varies, e.g. 301 vs 392); windows-latest CI is unaffected.
-  Trust failure lists, not totals, on local macOS runs.
+  collections (total count varies); windows-latest CI is unaffected. Trust failure
+  lists, not totals, on local macOS runs.
 - Local macOS commands need `-p:EnableWindowsTargeting=true` and (for Pester)
   `pwsh` installed as a dotnet global tool with `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec`.
+- deploy.ps1 still lacks a native -PlanOnly (deferred with owner visibility; plan
+  review log round 5). deploy-pipeline -PlanOnly covers the prod dry-run requirement.
 
 ## Blockers
 
-- Push to `origin/master` requires the owner's corporate GitHub credentials (gh on
-  this machine is logged in as `roethlar`, which got 403; no SSH key registered).
+- None. (Pushes from this machine work since the owner fixed GitHub auth.)
 
 ## Deploy notes (before the FailClosed change reaches prod)
 
