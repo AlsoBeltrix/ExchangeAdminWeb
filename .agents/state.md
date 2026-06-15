@@ -69,11 +69,17 @@ repo facts change.
   Microsoft.Data.Sqlite vs EF Core, OnPremExchange:ServerUri stays in appsettings). No
   implementation until the plan flips to Approved.
 
-- **Module developer guide review**: drift-check `docs/AdminModuleDeveloperGuide.md`
-  (and the `docs/AdminModuleSpec.md` version header) against current code before the
-  week of 2026-06-15 — Michael will farm out new-module development and the guide must
-  stand alone. Recent invalidation risks: FailClosed permissions, enablement semantics
-  (no startup writes as of 2.3.7), fragment-based section access.
+- **Module developer guide — full audit & rewrite** (not just a drift-check):
+  `docs/AdminModuleDeveloperGuide.md` + `docs/AdminModuleSpec.md` version header have
+  drifted on more than config — FailClosed permissions, enablement semantics (no startup
+  writes as of 2.3.7), descriptor surface, two-rule versioning, auth wiring,
+  `validate-module-package.ps1`. Michael will farm out new-module development, so the guide
+  must stand alone for a developer with no chat context. **Owner direction (2026-06-15):
+  do the full rewrite AFTER the SQLite config swap lands** so it documents the final
+  DB-backed world, not a moving target — captured as Phase E2 in
+  `docs/SqliteConfigStore-Plan.md`. A pre-swap drift pass is fine if Michael needs to
+  hand something off sooner, but the authoritative rewrite is gated on the swap. Coordinate
+  with the module packaging plan so guide and plan agree on authoring→validate→install.
 - **Module packaging/import**: a way to package modules and import them cleanly into
   the main app, preferably through the UI; if recompile is unavoidable that trade-off
   goes back to Michael. Needs a `docs/ModulePackaging-Plan.md` and approval before any

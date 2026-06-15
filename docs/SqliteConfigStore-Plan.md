@@ -333,15 +333,54 @@ a **flag on the existing promote script**, not a new file.
   the larger retirement under Option B) and add the promote `-Refresh` (prod→dev)
   non-destructive invariant. Keep the appsettings non-rewrite and
   dev-default/fresh-install-consent invariants.
-- **Docs:** update `ProjectConstitution.md` (the "deploys never overwrite runtime config"
-  invariant now reads "runtime config lives in the out-of-target DB"; config-promotion
-  dev-wins now describes the DB merge; backup expectations; the no-startup-writes rule
-  amended for non-destructive seeding), `AGENTS.md` (Architectural Invariants 2 & 3),
-  `AdminModuleSpec.md` + `AdminModuleDeveloperGuide.md` (module config & section access are
-  DB-backed; new-module authors get a row, not a file), `.agents/state.md`,
+- **Docs (config-swap-specific edits):** update `ProjectConstitution.md` (the "deploys never
+  overwrite runtime config" invariant now reads "runtime config lives in the SQLite store";
+  config-promotion dev-wins now describes the DB merge; backup expectations; the
+  no-startup-writes rule amended for non-destructive seeding), `AGENTS.md` (Architectural
+  Invariants 2 & 3), `AdminModuleSpec.md` version header + the module-config/section-access
+  sections (DB-backed; a new module gets a row, not a file), `.agents/state.md`,
   `.agents/decisions.md`, and the relevant `README.md` config/deploy sections.
 - **AC:** full local verification green at the new version (xUnit + Pester); the
   revert-the-fix proof for at least the fail-closed enablement and section-access tests.
+
+### Phase E2 — Full module developer guide audit & rewrite (after the config swap lands)
+The config migration is **not** the only thing that has drifted away from
+`docs/AdminModuleDeveloperGuide.md` (and the `AdminModuleSpec.md` it leans on). Patching
+only the config bits would leave a guide that is wrong in other places — and the owner is
+about to **farm out new-module development** against it, so it must stand alone for a
+developer with no chat context. Do a **full audit and rewrite once the config swap is
+complete** (so the guide describes the final DB-backed world, not a moving target), not a
+piecemeal patch.
+
+Scope of the audit (verify every claim against current code, not memory — this is a
+`drift` pass per AGENTS.md, settled by reading files):
+- **FailClosed permissions** — the guide predates the `MainPermission`/`GranularPermissions`
+  `FailClosed` model (commits through `f7df81a`); confirm it documents that mutating-module
+  permissions are fail-closed and what that means for a new module's section access.
+- **Enablement semantics** — no startup writes (2.3.7), DependsOn cascade, EnabledByDefault,
+  system modules; and post-swap, startup self-registration (a new module's row is seeded).
+- **Config & section access are DB-backed** — new authors get a row via `ModuleConfigService`
+  / the new `IConfigStore`, not a `module-config-*.json` they hand-author; update or retire
+  the `config/module-config-ConferenceRooms.example.json` sample referenced by the guide.
+- **Module descriptor surface** — `ModuleCatalog` fields actually in use today (Version,
+  IsConfigOnly, IsSystemModule, DependsOn, ConfigFields, policy aliases, icon CSS), checked
+  against the live catalog.
+- **The two-rule versioning model** (base app vs per-module `Version`) and when each fires.
+- **Authorization wiring** — the page `[Authorize(Policy=...)]` / dynamic-alias pattern and
+  the `PageAuthorizationRecheckTests` contract a new page must satisfy.
+- **Testing expectations** — new Services require xUnit coverage; what a module's test
+  baseline looks like now.
+- **Packaging/validation** — `tools/validate-module-package.ps1` exists and gates contributed
+  modules; the guide should point at it. (Note: this overlaps the separate
+  `docs/ModulePackaging-Plan.md` work — coordinate so the guide and that plan agree on the
+  authoring→validate→install flow rather than contradicting each other.)
+- Cross-check the `AdminModuleSpec.md` version header against the csproj version and fix
+  drift (AGENTS.md authority-order item 6).
+- **AC:** a developer outside this codebase can build a new module end-to-end (descriptor →
+  page → auth → config row → tests → validate) from the guide alone, and every command/
+  path/field in it resolves against the then-current repo. Tracked separately as the
+  queued "module developer guide review" item in `.agents/state.md`; this plan records that
+  it must become a **full rewrite gated on the config swap**, not just a config touch-up.
 
 ### Phase F — (Optional / future) runtime-editable appsettings
 Move `Email:*`, `ServiceNow:*`, `ExtendedLog:*`, `Audit:*` (and possibly the
@@ -608,3 +647,10 @@ location that §3b now rejects. This conditional list supersedes it.)
   under a shared DB (§5B.2), and `OrdinalIgnoreCase` keys needing `COLLATE NOCASE` (§5B.3).
   §9 now separates the three **Phase-A-blocking** decisions (location, library,
   cache model) from the deferrable ones. Status remains Draft.
+- 2026-06-15, round 3 (Draft, owner request): added **Phase E2 — full module developer
+  guide audit & rewrite**, gated on the config swap completing. Owner note: the config
+  change is not the only drift affecting new modules (FailClosed permissions, enablement
+  semantics, descriptor surface, two-rule versioning, auth wiring, validate-module-package),
+  so the guide gets a full rewrite once the DB world is final rather than a config-only
+  patch. Cross-referenced with the queued guide-review item in `.agents/state.md` and the
+  separate module packaging plan. Status remains Draft.
