@@ -87,6 +87,31 @@ repo facts change.
   `Modules/ModuleCatalog.cs` + razor pages, so runtime import implies assembly loading
   vs a source-drop + rebuild pipeline — open architecture question for the plan).
 
+- **Remove the TestAccountPool module entirely** (owner direction 2026-06-15: never
+  activated, no one will miss it). Do this as its own work item next run, **one focused
+  change**, build + test green before done. It is also the app's **only** `AddHostedService`
+  — a self-running timer that mutates AD unattended (`"System"/"BackgroundWorker"`, no
+  ticket/actor), which is the architectural oddity that prompted the removal. Touchpoints
+  to delete/prune (mapped 2026-06-15):
+  - `Services/TestAccountPoolService.cs`, `Services/TestAccountPoolCleanupWorker.cs`,
+    `Components/Pages/TestAccountPool.razor`, `ExchangeAdminWeb.Tests/TestAccountPoolServiceTests.cs`
+  - `Program.cs` lines ~84-85: the `AddScoped<TestAccountPoolService>` and
+    `AddHostedService<TestAccountPoolCleanupWorker>` registrations.
+  - `Modules/ModuleCatalog.cs`: the `Id = "TestAccountPool"` descriptor (~line 385).
+  - `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs`: any case referencing the module
+    (the fail-closed/versioning sweeps enumerate the catalog — confirm they pass after
+    removal, no hardcoded count of modules).
+  - `tools/Install-ExchangeAdminWeb.ps1`, `appsettings.json.sample`, `README.md`: drop
+    TestAccountPool config seeding / docs references.
+  - Leave the historical docs alone (`docs/Incident-*`, `docs/ProdReadiness*`) — they are
+    history, not current state. **`docs/SqliteConfigStore-Plan.md`**: drop TestAccountPool
+    from the §5B.1 example list and Phase B/E module-test lists once removed (or note it as
+    removed) — and removing the app's only HostedService **simplifies §5B.1**, so revisit
+    that hazard's framing (the scoped consumers `ADAttributeEditorService` remain, so the
+    connection-factory constraint still stands, just with a smaller blast radius).
+  - Base app version bump (module removal is an app-wide change). Audit log keeps any
+    historical `TestAccountPool_*` entries — do not scrub those.
+
 ## Blockers
 
 - Prod freeze (weekend of 2026-06-13): no prod deploys until Michael runs them.
