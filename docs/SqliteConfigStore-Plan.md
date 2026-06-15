@@ -132,21 +132,35 @@ The repo has **no** existing data-access stack (verified: no EF Core, no
 **Recommendation: start with `Microsoft.Data.Sqlite` + thin repos.** Revisit EF only if the
 module-packaging plan needs relational depth. Either way, enable **WAL mode** and a busy
 timeout; the app is single-writer (one pool) with a few concurrent admin readers, which is
-SQLite's ideal envelope.
+SQLite's ideal envelope. **Critical lifetime constraint (see §5B.1): do not register a
+single shared `SqliteConnection`/`DbContext` as a Singleton** — config consumers are a mix
+of Singleton, Scoped, and a HostedService, so use a connection **factory** (open-per-op) or
+scoped connection behind the `IConfigStore` abstraction (§5A).
 
 ### 3b. Database location and identity
 
-- **Outside the deploy target**, per the decision. Proposed:
-  `<Audit:LogRoot>\ExchangeAdminWeb\data\exchangeadmin.db` (i.e. under `E:\WWWOutput\...`,
-  the same volume already used for logs/backups and already ACL-granted to the pool
-  identity). One DB per environment — dev and prod each have their own, exactly as they
-  have separate `config/` today.
-- A **new bootstrap key** `ConfigStore:DatabasePath` (or a connection string) in
-  `appsettings.json`, defaulted from `Audit:LogRoot` when absent so existing installs need
-  no manual edit.
-- Install/deploy scripts grant the pool identity `(M)` on the `data\` directory (replacing
-  the retired `config\` grant). The directory, being outside the publish path, is
-  structurally immune to robocopy.
+**CORRECTION (owner, 2026-06-15): the DB must NOT live under `Audit:LogRoot`.** That tree
+holds log files and is **regularly pruned** to keep it from growing without bound — it is
+not a home for vital configuration. An earlier draft proposed it; that was wrong. Vital
+config must live somewhere **persistent (never pruned), surviving deploys, ACL'd to the
+pool identity**. Two viable homes:
+
+- **Option A — keep it where config already lives: `<PublishPath>\config\exchangeadmin.db`.**
+  That directory is already the persistent, non-pruned home for exactly this data, already
+  ACL-granted, and already protected from deploys by the existing robocopy `/XD config`
+  exclusion. The DB is just one more file in it. Smallest change. **Cost:** we *keep* the
+  `/XD config` exclusion rather than retiring it (it already works), so §7's "retire the
+  robocopy config exclusion" item is withdrawn under this option.
+- **Option B — a dedicated data dir outside the publish path**, e.g.
+  `C:\ProgramData\ExchangeAdminWeb\<env>\exchangeadmin.db`. Fully decouples config from the
+  deploy target; needs a new ACL grant and a new managed path, but lets the `config\`
+  directory (and its robocopy exclusion) eventually go away entirely.
+
+**Recommendation: Option A** — the data already lives safely in `config\`; the DB should
+too. No relocation, no new path, no new appsettings knob. The path is **derived** from
+`PublishPath`/content root, not hardcoded and not a new setting. One DB per environment
+(dev and prod each have their own, exactly as they have separate `config\` today). **Open
+question for Michael in §9.**
 
 ### 3c. Schema sketch (illustrative — finalized at implementation)
 
@@ -225,12 +239,21 @@ Each phase is independently committable; tests land with the code that needs the
 rule). Phases A–C are the core; D–E make it operable; F is optional/future.
 
 ### Phase A — Infrastructure
-- Add `Microsoft.Data.Sqlite`; connection factory (WAL, busy timeout) registered in DI.
-- Versioned migration runner (`PRAGMA user_version`) that creates the schema idempotently.
-- DB path bootstrap key + default-from-LogRoot; create `data\` dir; **no** behavior change
-  to any service yet.
-- **AC:** fresh app start creates the DB and schema; second start is a no-op; unit tests
-  for the migration runner (v0→vN idempotent, re-runnable).
+- Add `Microsoft.Data.Sqlite`; a connection **factory** (WAL, busy timeout) — **not** a
+  shared Singleton connection (§5B.1).
+- Introduce the internal **`IConfigStore`** abstraction (§5A): open connection, run in a
+  transaction, typed get/set. `ModuleConfigService` and the six cross-cutting services will
+  all sit on it so connection/transaction/collation handling lives in **one** place.
+- Versioned migration runner (`PRAGMA user_version`) that creates the schema idempotently,
+  with `COLLATE NOCASE` on every text key column (§5B.3).
+- DB path **derived** from the content root / `PublishPath` (Option A, §3b) — no new
+  appsettings key, not hardcoded; create the dir if missing; **no** behavior change to any
+  service yet.
+- Decide the cache-invalidation model (§5B.2): recommend a `schema_meta` change-token that
+  readers check, replacing per-instance TTL drift.
+- **AC:** fresh app start creates the DB and schema; second start is a no-op; mixed-case key
+  round-trips (NOCASE) pass; unit tests for the migration runner (v0→vN idempotent,
+  re-runnable) and for the factory under concurrent scoped + hosted access.
 - **Version:** base app bump (shared infrastructure).
 
 ### Phase B — Repositories + service cutover (the bulk)
@@ -264,28 +287,37 @@ Per store, in this suggested order (lowest blast radius first):
   DB still fails closed.
 
 ### Phase D — Ops scripts
-- `deploy.ps1`: **retire** robocopy `/XD config`, the pre-deploy config snapshot, the
-  post-deploy drift check, and the `config\` ACL grant (replace with a `data\` grant);
-  **keep** appsettings backup; **rewrite** config-reconciliation warnings to query the DB
-  (e.g. "section_access empty for fail-closed alias X"); **add** a lightweight post-deploy
-  DB health check (DB opens, schema at expected version, tables readable).
+**Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
+`tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline
+already does install and dev→prod copy; the migration only swaps files→DB underneath it.
+The single genuinely new capability is the **prod→dev** direction ("vice-versa"), which is
+a **flag on the existing promote script**, not a new file.
+
+- `deploy.ps1`: **keep** appsettings backup; **rewrite** config-reconciliation warnings to
+  query the DB (e.g. "section_access empty for fail-closed alias X"); **add** a lightweight
+  post-deploy DB health check (DB opens, schema at expected version, `PRAGMA integrity_check`
+  passes). Under DB Option A (§3b) the `config\` robocopy exclusion, ACL grant, pre-deploy
+  config snapshot, and post-deploy drift check **stay** (config/ still exists, now holding
+  the DB) — the snapshot/backup just covers the DB file via online backup, not a raw copy.
+  Under Option B those would be retired and replaced with a `data\` ACL. (Which set of
+  retirements applies depends on the §3b decision — that is why §7 is now conditional.)
 - `tools/promote-dev-to-prod.ps1`: **rewrite** the dev-wins fragment merge into a
-  table-level dev-wins DB merge; **keep** appsettings `PathBase` patching and the
-  backup/rollback (extend the snapshot to include a `VACUUM INTO` copy of the prod DB).
+  table-level dev-wins DB merge (dev→prod, the existing direction); **keep** appsettings
+  `PathBase` patching and the backup/rollback (extend the pre-promotion snapshot to a
+  `VACUUM INTO` consistent copy of prod's DB, integrity-checked). **Add a `-Refresh`
+  (prod→dev) switch** — the owner's "vice-versa": copy prod's config DB into dev to
+  reproduce prod state, backup-first, never touches appsettings/PathBase. Promotion must
+  **not** run against a live DB — preserve the existing pool-stop (§5B.4).
 - `tools/Install-ExchangeAdminWeb.ps1`: **rewrite** JSON seeding into DB seeding (or rely on
-  the app's startup self-registration and seed only what must exist pre-first-run);
-  **retire** the `config\` exclusion/ACL, **add** `data\` ACL.
+  the app's startup self-registration and seed only what must exist pre-first-run). Config
+  ACL/exclusion follows the §3b decision.
 - `tools/deploy-pipeline.ps1`: structure unchanged; `-PlanOnly` now narrates DB operations.
-- **NEW tool: `tools/copy-config.ps1`** — the owner's prod↔dev request. Two directions:
-  - `-Promote` (dev→prod): table-level **dev-wins** merge (the promote semantics, but on
-    the DB), atomic, backup-first.
-  - `-Refresh` (prod→dev): full copy of prod's config DB into dev (for reproducing prod
-    state in dev), backup-first, never touches appsettings/PathBase.
-  - Implemented via `VACUUM INTO` snapshots + an attach-and-merge script; `-PlanOnly`
-    supported per the ops-script invariant.
+- **Operator repair path (§5B.7):** ship documented `sqlite3` recipes (or a tiny CLI) so an
+  operator can inspect/repair the DB in an incident — the JSON world's one real virtue was
+  "open it in Notepad," and that must not be silently lost.
 - **AC:** Pester coverage for each script's new invariants; `-PlanOnly` paths print, don't
-  act; a dev→prod promote followed by prod read shows dev's values; refresh is
-  non-destructive to prod.
+  act; a dev→prod promote followed by prod read shows dev's values; `-Refresh` is
+  non-destructive to prod; the post-deploy DB health check fails loud on a bad/locked DB.
 
 ### Phase E — Tests + docs sweep
 - **Rewrite** service tests against SQLite (`ModuleEnablementServiceTests`,
@@ -296,10 +328,11 @@ Per store, in this suggested order (lowest blast radius first):
   `TestAccountPoolServiceTests`, `EmergencyDisableServiceTests`).
 - **Keep unchanged** (storage-agnostic, in-memory contracts): `ModuleCatalogTests`,
   `PageAuthorizationRecheckTests`, `ConferenceRoomConfigPreflightTests`.
-- **Rewrite** `tests/ps/DeployInvariants.Tests.ps1`: drop the now-obsolete file-based
-  invariants (robocopy `/XD config`, config backup-before-mirror, drift check) and add the
-  DB-based ones (DB outside deploy target, health check present, copy-config dev-wins).
-  Keep the appsettings non-rewrite and dev-default/fresh-install-consent invariants.
+- **Rewrite** `tests/ps/DeployInvariants.Tests.ps1`: per the §3b/§7 decision, retarget the
+  config-protection invariants to the DB (DB present + integrity-checked under Option A; or
+  the larger retirement under Option B) and add the promote `-Refresh` (prod→dev)
+  non-destructive invariant. Keep the appsettings non-rewrite and
+  dev-default/fresh-install-consent invariants.
 - **Docs:** update `ProjectConstitution.md` (the "deploys never overwrite runtime config"
   invariant now reads "runtime config lives in the out-of-target DB"; config-promotion
   dev-wins now describes the DB merge; backup expectations; the no-startup-writes rule
@@ -319,6 +352,129 @@ relocation is its own deferred decision (§9).
 
 ---
 
+## 5A. Consumer architecture — how config is read/written today (call graph)
+
+The original touchpoint audit produced a flat *file* inventory but did not map how
+consumers relate to the stores. That structure is what determines how large the migration
+actually is, so it is recorded here from a call-site grep (verified, not inferred).
+
+**Per-module config is already funnelled through one shared service.** All ~17 feature
+modules read/write their config exclusively via `ModuleConfigService`
+(`GetValue(moduleId,key)`, `GetModuleConfig(moduleId)`, `SaveModuleConfig(moduleId,dict)`):
+ConferenceRooms, Comms10k, Migration, MfaReset, M365GroupManagement, NamedLocations,
+GroupManagement, TestAccountPool, LicensingUpdates, DhcpAuthorization, ExoConnectionPool,
+ModuleCredentialService, PermissionValidator, MigrationTargetDatabaseSelector, etc. **None
+of them touch a file directly.** Swapping `ModuleConfigService`'s internals moves all 17 at
+once with zero per-module work.
+
+**The six cross-cutting stores each hand-roll their own I/O** (duplicated
+temp-file+`File.Replace`+`JsonSerializer`, not a shared helper): `ModuleEnablementService`,
+`SectionAccessService`, `ProtectedPrincipalService`, `ADAttributeEditorService`,
+`ModuleAdminService`, `ExtendedLogService`.
+
+**Implication:** the migration is **1 shared swap + 6 dedicated swaps, not 23**. It also
+means this is the right moment to put the six behind a single small store/connection
+abstraction so reads/writes happen in *one* place rather than seven — the same duplication
+is precisely why the incident's atomic-write/corrupt-file bug had to be fixed in multiple
+services instead of one. **Design note for Phase A:** introduce one internal
+`IConfigStore` (open connection, transaction, typed get/set) that `ModuleConfigService` and
+the six services all sit on; do not let each repository re-implement connection/transaction
+handling.
+
+## 5B. Non-obvious hazards (the dimension the file audit missed)
+
+These are behavior/relationship hazards a file listing cannot surface. Each is grounded in
+current code and must be addressed by the implementation.
+
+1. **Service lifetime vs. a shared connection.** DI registrations are **mixed**: most config
+   services are `Singleton` (`ModuleConfigService`, `ModuleEnablementService`,
+   `SectionAccessService`, `ProtectedPrincipalService`, `ModuleAdminService`,
+   `ExtendedLogService`) but two consumers that *write* module config are **`Scoped`** —
+   `ADAttributeEditorService` and `TestAccountPoolService` — and there is a **`HostedService`**
+   (`TestAccountPoolCleanupWorker`) holding a `ModuleConfigService` and using
+   `IServiceScopeFactory.CreateScope()`. *Hazard:* a SQLite connection or `DbContext` is
+   **not safe to register as a single shared Singleton across scoped + hosted consumers.*
+   *Mitigation:* use a connection **factory** (open-per-operation, short-lived) or a scoped
+   connection — never one long-lived shared `SqliteConnection`. This is an explicit Phase A
+   design constraint, not an afterthought.
+
+2. **In-process cache invalidation is per-instance and will silently drift.**
+   `ProtectedPrincipalService` and `ADAttributeEditorService` cache with a 30 s TTL and
+   invalidate **their own** in-memory field on save. Today that is fine because each is one
+   object writing through itself. With a shared DB, a write through a **different** path
+   (the new prod→dev refresh tool, a future second writer, or a manual DB edit) will not
+   invalidate these caches — stale config can persist up to 30 s, and `SectionAccessService`
+   caches **until save with no TTL at all**, so an out-of-band write is invisible until a
+   pool restart. *Mitigation:* the plan must state the invalidation model explicitly —
+   either keep caches and accept the 30 s/restart staleness window (document it), or add a
+   cheap DB change-token (e.g. a `schema_meta` version bumped on every write that readers
+   check). Recommend the change-token; it also makes the corrupt-store probes cheap.
+
+3. **Case-insensitive keys must become a DB collation, or matches break.** Module IDs and
+   config keys are compared with `StringComparer.OrdinalIgnoreCase` throughout
+   (`ModuleConfigService`, `ModuleEnablementService`; 140 `OrdinalIgnoreCase` uses across the
+   service layer). SQLite text PRIMARY KEYs are **case-sensitive by default** (`BINARY`
+   collation). *Hazard:* `"exchangeonline"` and `"ExchangeOnline"` would become two rows,
+   silently breaking enablement/cascade lookups that today treat them as one. *Mitigation:*
+   declare `COLLATE NOCASE` on every text key column that backs an ID/alias/key, and add a
+   test that inserts mixed-case and reads back via the other casing.
+
+4. **Concurrent-writer model changes shape.** Today each service serializes its own writes
+   with an in-process `_writeLock`/`lock`. That lock is **per-store and in-process only**.
+   With one DB file and a write tool (`promote`/`refresh`) potentially running **while the
+   app is up**, the locking story is now cross-process. *Mitigation:* WAL + busy-timeout
+   covers app-internal concurrency; the ops tools must take the app offline or use a proper
+   transaction, and the plan must say which. (The current promote stops the pool; preserve
+   that — do not promote into a live DB.)
+
+5. **Cross-store atomicity that doesn't exist today, now possible — and now an obligation.**
+   A few operations write two stores in sequence (e.g. AdminSettings saves enablement *and*
+   protected principals; ExchangeOnline config save drains the EXO pool *after* writing).
+   Today a crash between them leaves a half-applied state silently. SQLite gives us real
+   transactions; the plan should identify which multi-store saves should become **single
+   transactions** rather than blindly porting them as two writes. (Don't over-apply — the
+   EXO pool drain is a side-effect, not a DB write, and must stay outside the transaction.)
+
+6. **Migration importer fidelity edge cases.** The JSON→row import must preserve quirks the
+   file format tolerated: empty-string vs. absent key (some services treat `""` and missing
+   differently — e.g. `MaskIfSecret` shows `(empty)`), `null` arrays normalized to empty,
+   the `MigrationTargetDatabaseSelector` value that may be a JSON **array or a CSV string**,
+   and module-config values that are secrets (must not be logged during import). *Mitigation:*
+   the importer is covered by round-trip tests (file → import → read via the new repo equals
+   the old file read) per in-scope store, including the empty/null/CSV cases.
+
+7. **External and human writers exist outside the app.** `Install-ExchangeAdminWeb.ps1`
+   seeds config files and `promote-dev-to-prod.ps1` merges them; operators have also
+   hand-edited JSON during incidents (and the dev recovery copied prod files in by hand).
+   After migration, **none of that works** — you cannot hand-edit a row with a text editor,
+   and the install/promote scripts must speak SQLite. *Mitigation:* (a) ship a tiny
+   read/write CLI or documented `sqlite3` recipes so an operator can inspect/repair the DB
+   in an incident (the file format's one genuine virtue was "open it in Notepad"); (b)
+   ensure the install/promote rewrites land **before** any environment is DB-only, or an
+   operator is stranded.
+
+8. **`appsettings.json.sample` and the ConferenceRooms `.example.json` are documentation
+   surfaces.** `appsettings.json.sample` (tracked) documents the config shape for installers;
+   `config/module-config-ConferenceRooms.example.json` shows module-config shape. After
+   migration these still describe *bootstrap* appsettings (fine) but the module-config
+   example becomes misleading (there is no file to copy). *Mitigation:* update/retire the
+   `.example.json` and the sample's config-fragment guidance in the Phase E docs sweep
+   (the audit's docs dimension did not flag these two sample files specifically).
+
+9. **Backup/restore is now a single point of failure.** Today 20 files mean a corrupt one
+   loses one store; the deploy backs up the whole `config/` dir. One DB file means one
+   corruption (or one bad `VACUUM`) can lose **everything**. *Mitigation:* the deploy DB
+   snapshot must use the online backup API / `VACUUM INTO` (consistent copy, not a raw file
+   copy of a live WAL DB), be integrity-checked (`PRAGMA integrity_check`) after creation,
+   and retained like the appsettings backups. This raises the bar above the file world, not
+   just matches it.
+
+These nine are now first-class plan content; items 1–4 are **Phase A design constraints**
+(they shape the connection/cache/collation model before any store moves), 5–6 are **Phase B
+per-store obligations**, and 7–9 are **Phase D/E** (ops + docs).
+
+---
+
 ## 6. Risks and mitigations
 
 1. **Behavior drift in cache/fail-mode semantics.** Four cache patterns and four fail-modes
@@ -332,36 +488,51 @@ relocation is its own deferred decision (§9).
    reads existing files first and archives (not deletes); documented manual rollback;
    prove on dev before prod.
 4. **SQLite file locking under IIS app-pool recycles / overlapped shutdown.** *Mitigation:*
-   WAL + busy timeout; the single-writer model; health check on startup; the DB lives on
-   the same already-proven `E:` volume as logs.
+   WAL + busy timeout; the single-writer model; startup health check; the DB lives in the
+   persistent, non-pruned `config\` dir (§3b Option A), not the pruned log tree.
 5. **`MigrationTargetDatabaseSelector` static parse chain** (module config → appsettings
    array → appsettings CSV). *Mitigation:* preserve the full fallback chain; add a test for
    each form before refactor.
-6. **Backup/restore story changes shape.** ConfigBackups currently holds appsettings + a
-   `config/` snapshot. *Mitigation:* keep appsettings backups; replace the `config/`
-   snapshot with a `VACUUM INTO` DB snapshot in deploy and copy-config; document restore.
+6. **Backup/restore story changes shape — now a single point of failure (§5B.9).**
+   ConfigBackups currently holds appsettings + a `config/` snapshot. *Mitigation:* keep
+   appsettings backups; back up the DB via online backup / `VACUUM INTO` (consistent, not a
+   raw copy of a live WAL DB), `PRAGMA integrity_check` after, in both deploy and the
+   promote/`-Refresh` paths; document restore.
 7. **Module packaging plan coupling.** *Mitigation:* the `module_*` tables and startup
    seeding are designed as the seam the packaging plan will use; we don't pre-build it, but
    we don't paint it into a corner either.
 
 ---
 
-## 7. What gets retired (incident hardening made obsolete-by-design)
+## 7. What gets retired — **conditional on the §3b location decision**
 
-Per the decision's requirement to enumerate this explicitly. Once Phases B–D land and the
-importer has run everywhere:
+The earlier draft assumed the DB would live outside `config\` and therefore retired the
+whole `config\` deploy-protection apparatus. With **Option A (DB stays in `config\`,
+recommended)** most of that protection is still doing real work — it now guards the DB file
+— so the retirement list shrinks. The honest accounting:
 
-- robocopy `/XD config` exclusion in `deploy.ps1`, `promote-dev-to-prod.ps1`,
-  `Install-ExchangeAdminWeb.ps1` (incident fix history / commit 0021502 regression anchor).
-- `config/`-directory backup before deploy (incident fix #4) — **kept for appsettings only**.
-- pre-deploy config snapshot + post-deploy drift check (incident fix #5), including the
-  `extended-log-level.txt` drift exclusion.
-- `config\` folder ACL grant (replaced by `data\` grant).
-- The corresponding Pester invariants in `DeployInvariants.Tests.ps1`.
+**Under Option A (recommended):**
+- **Kept** (still protecting `config\`, which now holds the DB): robocopy `/XD config`
+  exclusion; the `config\` ACL grant; the pre-deploy snapshot and post-deploy drift check
+  (retargeted to verify the DB came through intact — via integrity check, not file diff).
+- **Changed:** the `extended-log-level.txt` drift exclusion goes away (that file moves into
+  the DB / `app_setting`, so the every-startup rewrite that forced the exclusion is gone —
+  this also resolves the standing `ExtendedLogService` cleanup note).
+- **Genuinely retired:** the per-fragment corrupt-JSON *parse* guards inside the services
+  (replaced by DB integrity/transaction semantics); the JSON-merge logic in promote
+  (replaced by table-level merge).
 
-**Explicitly kept:** the admin-page refuse-to-save-on-corrupt guards (incident fix #3,
-retargeted to DB probes); deploy.ps1 dev-default + fresh-install-consent (incident fix #6);
+**Under Option B (DB outside the publish path):** additionally retire the `/XD config`
+exclusion, the `config\` ACL (replaced by a `data\` grant), and the config-dir snapshot —
+the full list the earlier draft claimed. This is the only scenario where that larger
+retirement is correct.
+
+**Explicitly kept either way:** the admin-page refuse-to-save-on-corrupt guards (incident
+fix #3, retargeted to DB probes); deploy.ps1 dev-default + fresh-install-consent (fix #6);
 appsettings non-rewrite + appsettings backups; the no-*destructive*-startup-write rule.
+
+(The earlier draft's flat "retire it all" list was wrong for Option A — it assumed a
+location that §3b now rejects. This conditional list supersedes it.)
 
 ---
 
@@ -372,10 +543,11 @@ appsettings non-rewrite + appsettings backups; the no-*destructive*-startup-writ
   loss (proven on dev first).
 - Every preserved cache pattern and fail-mode has a passing parity test; fail-closed paths
   pass the revert-the-fix proof.
-- `tools/copy-config.ps1` supports dev→prod (dev-wins merge) and prod→dev (full refresh),
-  both with `-PlanOnly` and backup-first.
-- Deploy no longer references `config/` for runtime state; the retired invariants are gone
-  and replaced by a DB health check; Pester reflects the new invariants.
+- `promote-dev-to-prod.ps1` does dev→prod (dev-wins, existing direction) and the new
+  `-Refresh` prod→dev (non-destructive to prod), both with `-PlanOnly` and backup-first; no
+  new copy tool is introduced.
+- Deploy verifies the DB came through intact (integrity check) rather than diffing config
+  files; Pester reflects the new invariants per the §3b decision.
 - Startup self-registers missing module rows non-destructively and writes nothing else;
   decision 2026-06-12 is updated to record the relaxation.
 - Docs (Constitution, AGENTS, module spec/guide, state, decisions, README) match the new
@@ -384,7 +556,19 @@ appsettings non-rewrite + appsettings backups; the no-*destructive*-startup-writ
 
 ---
 
-## 9. Deferred decisions (need an owner call, not blocking Phase A–E)
+## 9. Open questions for Michael
+
+**Blocking Phase A (must decide before infrastructure work):**
+
+- **DB location (§3b):** Option A (DB in `config\`, recommended — smallest change, keeps the
+  proven deploy protection) vs Option B (dedicated dir outside the publish path). This
+  decision drives §7's retirement list and the install/deploy ACL changes.
+- **Data-access library (§3a):** `Microsoft.Data.Sqlite` + thin repos (recommended) vs EF
+  Core. Affects the `IConfigStore` shape and the migration-runner mechanism.
+- **Cache-invalidation model (§5B.2):** accept the documented 30 s/restart staleness window,
+  or add the `schema_meta` change-token (recommended). Affects the read path of every store.
+
+**Not blocking Phase A–E (can decide later):**
 
 - **Audit + operation-trace JSONL → SQLite?** Big upside (queryable audit, config *change
   history* — this incident's forensics would have been a `SELECT`), but high volume and a
@@ -394,14 +578,33 @@ appsettings non-rewrite + appsettings backups; the no-*destructive*-startup-writ
   ServiceNow/Audit in appsettings?
 - **`OnPremExchange:ServerUri`**: confirm it stays in appsettings (no module-config home
   today; read by ~six services). Recommended: stays.
-- **Data-access library**: confirm `Microsoft.Data.Sqlite` + thin repos vs EF Core (§3a).
 
 ---
 
 ## 10. Review log
 
 - 2026-06-15, round 1 (Draft): Plan created from the six-dimension touchpoint audit + critic.
-  Decision 2026-06-12 (SQLite over SQL Express) is the parent. Open questions consolidated
-  in §9 for Michael. No implementation until Status flips to Approved. Recommendations
-  carried into the plan: Microsoft.Data.Sqlite + thin repos; DB under `E:\WWWOutput\...\data`;
-  import-once-then-archive cutover; audit JSONL and runtime-editable appsettings deferred.
+  Decision 2026-06-12 (SQLite over SQL Express) is the parent. Recommendations carried in:
+  Microsoft.Data.Sqlite + thin repos; import-once-then-archive cutover; audit JSONL and
+  runtime-editable appsettings deferred.
+- 2026-06-15, round 2 (Draft, owner review): three corrections from Michael, plus the
+  dimension the round-1 audit missed.
+  (1) **DB location:** round 1 put the DB under `Audit:LogRoot` — wrong, that tree is pruned
+  and is not a home for vital config. §3b rewritten: DB lives in the persistent `config\`
+  dir (Option A, recommended) or a dedicated dir (Option B); path is derived, not a new
+  appsettings key, not hardcoded.
+  (2) **No new copy tool:** round 1 invented `copy-config.ps1` parallel to the existing
+  pipeline. Removed. Install and dev→prod copy stay in `Install-ExchangeAdminWeb.ps1` /
+  `promote-dev-to-prod.ps1` (files→DB underneath); the only new capability, prod→dev, is a
+  `-Refresh` flag on the promote script.
+  (3) **§7 retirement list was wrong for Option A** (it assumed the rejected location);
+  now conditional on §3b.
+  (4) **Missing dimension — consumer call graph (§5A) + non-obvious hazards (§5B):** the
+  round-1 audit produced a flat file list and never mapped how consumers relate. Added from
+  call-site greps: per-module config funnels through one shared `ModuleConfigService` (1
+  swap moves ~17 modules) while six cross-cutting services hand-roll duplicate I/O (→ one
+  `IConfigStore` abstraction). Nine non-obvious hazards now first-class, the load-bearing
+  ones being mixed DI lifetimes vs a shared connection (§5B.1), per-instance cache drift
+  under a shared DB (§5B.2), and `OrdinalIgnoreCase` keys needing `COLLATE NOCASE` (§5B.3).
+  §9 now separates the three **Phase-A-blocking** decisions (location, library,
+  cache model) from the deferrable ones. Status remains Draft.
