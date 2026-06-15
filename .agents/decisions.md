@@ -27,7 +27,7 @@ engineering authority.
 ### 2026-06-12 - Runtime config and operational data move to SQLite
 
 Status: Active (direction approved by Michael; implementation gated on approval of
-`docs/SqliteConfigStore-Plan.md`)
+`docs/SqliteConfigStore-Plan.md`, drafted 2026-06-15, Status: Draft)
 
 Decision:
 The scattered JSON fragments under `config/` (and runtime-editable operational state

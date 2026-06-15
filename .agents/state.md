@@ -62,6 +62,12 @@ repo facts change.
   packaging item below (module manifest table). Much of this week's deploy hardening
   (config backups, drift check, corrupt-store guards) becomes obsolete-by-design if
   this lands; plan should say what gets retired.
+  **PLAN DRAFTED: `docs/SqliteConfigStore-Plan.md` (Status: Draft, awaiting Michael's
+  review).** Decided: SQLite over SQL Express (decision 2026-06-12). Built from a
+  six-dimension touchpoint audit + critic. Open questions for Michael consolidated in
+  the plan's §9 (audit JSONL deferral, Phase F runtime-editable appsettings,
+  Microsoft.Data.Sqlite vs EF Core, OnPremExchange:ServerUri stays in appsettings). No
+  implementation until the plan flips to Approved.
 
 - **Module developer guide review**: drift-check `docs/AdminModuleDeveloperGuide.md`
   (and the `docs/AdminModuleSpec.md` version header) against current code before the
