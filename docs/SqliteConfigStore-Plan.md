@@ -325,7 +325,9 @@ a **flag on the existing promote script**, not a new file.
   `ADAttributeEditorServiceTests`, `GroupAuthorizationHandlerTests` helpers, plus the
   per-module service tests that call `SaveModuleConfig`:
   `MigrationTargetDatabaseSelectorTests`, `LicensingUpdatesServiceTests`,
-  `TestAccountPoolServiceTests`, `EmergencyDisableServiceTests`).
+  `EmergencyDisableServiceTests`). (`TestAccountPoolServiceTests` is **not** in this list —
+  that module and its tests are being removed before this work begins; see the queued
+  TestAccountPool removal in `.agents/state.md`.)
 - **Keep unchanged** (storage-agnostic, in-memory contracts): `ModuleCatalogTests`,
   `PageAuthorizationRecheckTests`, `ConferenceRoomConfigPreflightTests`.
 - **Rewrite** `tests/ps/DeployInvariants.Tests.ps1`: per the §3b/§7 decision, retarget the
@@ -397,14 +399,14 @@ The original touchpoint audit produced a flat *file* inventory but did not map h
 consumers relate to the stores. That structure is what determines how large the migration
 actually is, so it is recorded here from a call-site grep (verified, not inferred).
 
-**Per-module config is already funnelled through one shared service.** All ~17 feature
-modules read/write their config exclusively via `ModuleConfigService`
+**Per-module config is already funnelled through one shared service.** Every feature
+module reads/writes its config exclusively via `ModuleConfigService`
 (`GetValue(moduleId,key)`, `GetModuleConfig(moduleId)`, `SaveModuleConfig(moduleId,dict)`):
 ConferenceRooms, Comms10k, Migration, MfaReset, M365GroupManagement, NamedLocations,
-GroupManagement, TestAccountPool, LicensingUpdates, DhcpAuthorization, ExoConnectionPool,
+GroupManagement, LicensingUpdates, DhcpAuthorization, ExoConnectionPool,
 ModuleCredentialService, PermissionValidator, MigrationTargetDatabaseSelector, etc. **None
-of them touch a file directly.** Swapping `ModuleConfigService`'s internals moves all 17 at
-once with zero per-module work.
+of them touch a file directly.** Swapping `ModuleConfigService`'s internals moves them all
+at once with zero per-module work.
 
 **The six cross-cutting stores each hand-roll their own I/O** (duplicated
 temp-file+`File.Replace`+`JsonSerializer`, not a shared helper): `ModuleEnablementService`,
@@ -428,14 +430,18 @@ current code and must be addressed by the implementation.
 1. **Service lifetime vs. a shared connection.** DI registrations are **mixed**: most config
    services are `Singleton` (`ModuleConfigService`, `ModuleEnablementService`,
    `SectionAccessService`, `ProtectedPrincipalService`, `ModuleAdminService`,
-   `ExtendedLogService`) but two consumers that *write* module config are **`Scoped`** —
-   `ADAttributeEditorService` and `TestAccountPoolService` — and there is a **`HostedService`**
-   (`TestAccountPoolCleanupWorker`) holding a `ModuleConfigService` and using
-   `IServiceScopeFactory.CreateScope()`. *Hazard:* a SQLite connection or `DbContext` is
-   **not safe to register as a single shared Singleton across scoped + hosted consumers.*
-   *Mitigation:* use a connection **factory** (open-per-operation, short-lived) or a scoped
-   connection — never one long-lived shared `SqliteConnection`. This is an explicit Phase A
-   design constraint, not an afterthought.
+   `ExtendedLogService`) while several consumers that do config I/O are **`Scoped`** — e.g.
+   `ADAttributeEditorService` (Scoped; writes its own allowlist store) and the Scoped
+   feature services that read module config per request (`GroupManagementService`,
+   `MigrationService`, etc.). *Hazard:* a SQLite connection or `DbContext` is **not safe to
+   register as a single shared Singleton across Singleton + Scoped consumers.** *Mitigation:* use a connection **factory**
+   (open-per-operation, short-lived) or a scoped connection — never one long-lived shared
+   `SqliteConnection`. This is an explicit Phase A design constraint, not an afterthought.
+   (Note: the app's *only* `AddHostedService` — `TestAccountPoolCleanupWorker`, which read
+   config from a background timer — is being removed before this work starts, per the
+   queued TestAccountPool removal in `.agents/state.md`. That removes the background-thread
+   variant of this hazard; the Singleton-vs-Scoped constraint above still stands on its
+   own and the factory model handles both, so this section needs no rework once it lands.)
 
 2. **In-process cache invalidation is per-instance and will silently drift.**
    `ProtectedPrincipalService` and `ADAttributeEditorService` cache with a 30 s TTL and
@@ -654,3 +660,12 @@ location that §3b now rejects. This conditional list supersedes it.)
   so the guide gets a full rewrite once the DB world is final rather than a config-only
   patch. Cross-referenced with the queued guide-review item in `.agents/state.md` and the
   separate module packaging plan. Status remains Draft.
+- 2026-06-15, round 4 (Draft): removed forward references to the **TestAccountPool** module,
+  which is being deleted before this work starts (owner direction; queued in
+  `.agents/state.md`). Dropped it from the §5A per-module list and the §5B.1 lifetime
+  example, and from the Phase E test-rewrite list (its tests go with the module). Net effect
+  on the plan: §5B.1 is *smaller* — removing the app's only `AddHostedService` eliminates
+  the background-thread variant of the connection-lifetime hazard; the Singleton-vs-Scoped
+  constraint and the connection-factory mitigation are unchanged. Historical docs
+  (Incident-*, ProdReadiness*) intentionally keep their TestAccountPool references — they
+  record history; only this forward-looking plan was scrubbed. Status remains Draft.
