@@ -5,6 +5,37 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-17 - Credentials live in the deployment's PAM solution, not hardcoded to Delinea
+
+Status: Active
+
+Decision:
+The Constitution's Credential Isolation rule is generalized: every password or privileged
+credential (now explicitly including SMTP and ServiceNow service passwords, not only
+directory/Exchange/Graph secrets) must come from the deployment's PAM/secret-management
+solution and must never sit as plaintext in `appsettings.json` or other config files.
+Delinea Secret Server remains the only backend implemented today, and the existing field
+names (`DelineaSecretId`, `GraphDelineaSecretId`) stay, but code and docs must not treat
+Secret Server as the only *possible* backend. A future deployment may add another (e.g.
+CyberArk) or a Windows-protected/encrypted store.
+
+Scope guard:
+Do NOT build a new PAM integration (CyberArk etc.) speculatively. Do keep the
+credential-resolution seam generic enough that adding a backend later does not require
+touching every module. This is a principle/wording change, not an implementation task.
+
+Reason:
+Owner direction 2026-06-17. The current deployment configures neither an SMTP nor a
+ServiceNow password, so there is no live plaintext exposure today; this records the
+intended rule so future deployments and future developers do not hardcode Delinea or
+park secrets in config files. Resolves the ProdReadiness `[creds]` medium findings as a
+posture decision rather than a code change.
+
+Supersedes:
+The Constitution's prior absolute "must come from Delinea Secret Server" phrasing in
+§Credential Isolation, which is now the "only backend implemented today" rather than the
+only permitted backend.
+
 ### 2026-06-10 - Adopt the standard `.agents/` governance layout
 
 Status: Active

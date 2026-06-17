@@ -34,12 +34,24 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 ### Credential Isolation
 
-- Privileged credentials must come from Delinea Secret Server unless the operation is explicitly read-only and approved for ambient Windows identity.
-- Module credentials are per-module. Do not borrow another module's Delinea secret.
+- Every password or privileged credential the app uses must come from the deployment's
+  PAM (privileged-access / secret-management) solution — never stored as plaintext in
+  `appsettings.json` or other config files. This includes service-integration passwords
+  such as SMTP and ServiceNow, not only directory/Exchange/Graph secrets. The only
+  exception is an operation that is explicitly read-only and approved for ambient
+  Windows identity.
+- The PAM backend is a deployment choice, not a hardcoded assumption. **Delinea Secret
+  Server is the only backend implemented today**, and the concrete field names below
+  (`DelineaSecretId`, `GraphDelineaSecretId`) reflect that. Code and docs must not assume
+  Secret Server is the *only possible* backend — a future deployment may add another
+  (e.g. CyberArk) or, at minimum, a Windows-protected/encrypted store. Do not build a new
+  PAM integration speculatively; do keep the credential-resolution seam generic enough
+  that adding one does not require touching every module.
+- Module credentials are per-module. Do not borrow another module's secret.
 - Graph modules use per-module Graph app credentials. Use `GraphDelineaSecretId` for Graph app secrets.
 - AD/on-prem modules use per-module AD or on-prem Exchange secrets. Use `DelineaSecretId` for those credentials.
 - Shared infrastructure credentials, such as protected-principal directory-read access, must be explicitly named and scoped. Do not hide them in unrelated module config.
-- Never log secret values, OAuth response bodies, bearer tokens, passwords, certificate private-key details, or raw Delinea auth responses.
+- Never log secret values, OAuth response bodies, bearer tokens, passwords, certificate private-key details, or raw PAM/Secret Server auth responses.
 
 ### Configuration
 
