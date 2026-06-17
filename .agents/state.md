@@ -35,10 +35,10 @@ repo facts change.
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-**NEXT ACTION:** resume the ProdReadiness AC16 PowerShell false-success batch at item 2 —
-**promote-dev-to-prod rollback message** (`tools/promote-dev-to-prod.ps1`), one fix/commit
-with Pester in `tests/ps/`, proven non-vacuous. Then item 3 (`test-delinea.ps1` secret
-printing), then finding-3 doc cleanup, risk-accepts, and the §10 close-out.
+**NEXT ACTION:** resume the ProdReadiness AC16 PowerShell false-success batch at item 3 —
+**`test-delinea.ps1` secret-printing hardening**, one fix/commit with Pester in `tests/ps/`,
+proven non-vacuous. Then finding-3 doc cleanup, risk-accepts, and the §10 close-out.
+(Item 2, the promote-dev-to-prod rollback message, is DONE — commit 3afd771.)
 (An out-of-stream bug, CR-1 Room Finder, was implemented this session — see Queued work;
 it is NOT part of the 2.3.9 ProdReadiness batch and does not gate it.)
 
@@ -80,8 +80,8 @@ Phase 4 is the only open ProdReadiness work. AC15 (docs/state drift sweep) is do
 
 **Remaining AC16:**
 - PowerShell false-success batch (each one fix/commit, each needs Pester in `tests/ps/`):
-  ~~icacls exit codes~~ DONE; promote-dev-to-prod rollback message; `test-delinea.ps1`
-  secret-printing hardening.
+  ~~icacls exit codes~~ DONE; ~~promote-dev-to-prod rollback message~~ DONE (commit 3afd771);
+  `test-delinea.ps1` secret-printing hardening.
 - Finding 3 ([creds] SMTP/ServiceNow plaintext) is RESOLVED BY DECISION (2026-06-17,
   `.agents/decisions.md`) — NOT a code change. Residual doc cleanup only: plan task 24 is
   still Delinea-specific and contradicts the generalized "deployment PAM" decision; and
