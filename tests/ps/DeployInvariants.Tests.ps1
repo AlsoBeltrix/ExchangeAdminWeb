@@ -55,6 +55,30 @@ BeforeAll {
                 $node.Name -eq $Name
             }, $true)
     }
+
+    function Test-IcaclsCallsAreChecked {
+        # Every icacls invocation must be guarded: the text immediately following the call
+        # (up to the next ~150 chars) must reference $LASTEXITCODE. A bare "icacls ... |
+        # Out-Null" followed by Write-Success/Write-Ok fails this. A simple count of
+        # "$LASTEXITCODE -ne 0" vs icacls calls does NOT work (dotnet publish also checks
+        # the var, and the Set-AclChecked helper's own icacls would balance the tally),
+        # which is why this checks each call site structurally.
+        param($Script)
+        $calls = $Script.Ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'icacls'
+            }, $true)
+        $unguarded = foreach ($call in $calls) {
+            $tail = $Script.Text.Substring(
+                $call.Extent.EndOffset,
+                [Math]::Min(150, $Script.Text.Length - $call.Extent.EndOffset))
+            if ($tail -notmatch '\$LASTEXITCODE') {
+                "line $($call.Extent.StartLineNumber): $($call.Extent.Text)"
+            }
+        }
+        [pscustomobject]@{ Count = $calls.Count; Unguarded = @($unguarded) }
+    }
 }
 
 Describe 'deploy.ps1' {
@@ -111,6 +135,24 @@ Describe 'deploy.ps1' {
 
     It 'fails on dotnet publish errors' {
         $s.Text | Should -Match 'dotnet publish failed'
+    }
+
+    It 'checks the native exit code after every icacls invocation' {
+        # icacls is a native exe: $ErrorActionPreference="Stop" does not catch its
+        # failures and "| Out-Null" hides the error text, so an unchecked grant fails
+        # silently and the next Write-Success lies. Each icacls call site must be guarded
+        # by a $LASTEXITCODE check (icacls returns 0 on success). Bare folder grants are
+        # routed through Set-AclChecked, whose own icacls is guarded inline.
+        $result = Test-IcaclsCallsAreChecked $s
+        $result.Count | Should -BeGreaterThan 0
+        $result.Unguarded | Should -BeNullOrEmpty -Because "every icacls call must be followed by a `$LASTEXITCODE check; unguarded: $($result.Unguarded -join '; ')"
+    }
+
+    It 'routes icacls through a checked helper that throws on failure' {
+        $fn = Find-FunctionDefinition $s 'Set-AclChecked'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '\$LASTEXITCODE\s+-ne\s+0'
+        $fn.Extent.Text | Should -Match 'Write-Fail'
     }
 
     It 'Write-Fail throws (repo error model, not exit)' {
@@ -228,6 +270,15 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         $fn | Should -Not -BeNullOrEmpty
         $fn.Find({ param($node) $node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) |
             Should -Not -BeNullOrEmpty
+    }
+
+    It 'checks the native exit code after every icacls invocation' {
+        # Same native-exe trap as deploy.ps1: icacls failures are silent under
+        # ErrorActionPreference=Stop + "| Out-Null". Every call site must guard on
+        # $LASTEXITCODE (icacls returns 0 on success).
+        $result = Test-IcaclsCallsAreChecked $s
+        $result.Count | Should -BeGreaterThan 0
+        $result.Unguarded | Should -BeNullOrEmpty -Because "every icacls call must be followed by a `$LASTEXITCODE check; unguarded: $($result.Unguarded -join '; ')"
     }
 }
 

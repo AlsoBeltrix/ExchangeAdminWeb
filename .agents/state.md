@@ -63,13 +63,18 @@ medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
   keeps `Get-ADGroupMember` by design (preview/export, separate concern). No automated test:
   inline live-AD runspace with no injection seam, and §2 forbids a testability refactor —
   manual-verification-only.
+- icacls native exit codes now checked in `deploy.ps1` (via a `Set-AclChecked` helper) and
+  `tools/Install-ExchangeAdminWeb.ps1` (inline). Failed ACL grants were silent
+  (`icacls | Out-Null`, native exe so ErrorActionPreference doesn't catch) and falsely
+  reported success. Three static-AST Pester tests guard each call site; proven non-vacuous.
+  No app version bump (ops-script-only).
 - Module version bumps applied per touched module (GroupManagement 2.0.1, MailboxPermissions
   1.0.2, ADAttributeEditor 1.3.4, Comms10k 1.0.1).
 
 **Remaining AC16:**
 - PowerShell false-success batch (each one fix/commit, each needs Pester in `tests/ps/`):
-  icacls exit codes unchecked in `deploy.ps1`/`Install-ExchangeAdminWeb.ps1`;
-  promote-dev-to-prod rollback message; `test-delinea.ps1` secret-printing hardening.
+  ~~icacls exit codes~~ DONE; promote-dev-to-prod rollback message; `test-delinea.ps1`
+  secret-printing hardening.
 - Finding 3 ([creds] SMTP/ServiceNow plaintext) is RESOLVED BY DECISION (2026-06-17,
   `.agents/decisions.md`) — NOT a code change. Residual doc cleanup only: plan task 24 is
   still Delinea-specific and contradicts the generalized "deployment PAM" decision; and

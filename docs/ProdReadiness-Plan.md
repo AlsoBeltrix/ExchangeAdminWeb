@@ -446,3 +446,22 @@ infrastructure; module versions per touched module (rule fires independently).
   message, test-delinea secret printing — each with Pester); finding-3 doc cleanup
   (plan task 24 + appsettings.json.sample, per the 2026-06-17 PAM decision); risk-accepts
   for SSL-off and SQLite-obsoleted config findings; then the §10 close-out.
+- 2026-06-17, round 12 (Phase 4 / AC16, PowerShell false-success batch, item 1 of 3):
+  **icacls native exit codes are now checked.** `deploy.ps1` and
+  `tools/Install-ExchangeAdminWeb.ps1` both ran `icacls ... | Out-Null` with no exit-code
+  check; icacls is a native exe, so `$ErrorActionPreference="Stop"` does not catch its
+  failure and `| Out-Null` hid the error — a failed ACL grant printed nothing and the next
+  Write-Success/Write-Ok falsely reported success. `deploy.ps1` gained a `Set-AclChecked`
+  helper (throws via Write-Fail on `$LASTEXITCODE -ne 0`; icacls returns 0 on success) and
+  all four call sites route through it (the cert-key grant stays inside its existing
+  best-effort try/catch, which now downgrades a real failure to a warning instead of
+  silently lying). The installer's two sites (both already inside `Invoke-PlanOrAction`, so
+  PlanOnly is respected) gained inline `$LASTEXITCODE -ne 0 → Write-Fail` checks. Pester:
+  three new static AST tests in `tests/ps/DeployInvariants.Tests.ps1` assert each icacls
+  call site is followed by a `$LASTEXITCODE` check (a structural per-call check — a naive
+  count of `-ne 0` vs icacls calls is vacuous because dotnet-publish also checks the var and
+  the helper's own icacls balances the tally; the first draft was caught being vacuous by
+  the revert proof and rewritten). Proven non-vacuous: reverting one call to bare
+  `icacls | Out-Null` failed exactly one test. No app version bump (ops-script-only change,
+  no deployed binaries change). Remaining false-success batch: promote-dev-to-prod rollback
+  message; test-delinea.ps1 secret printing.

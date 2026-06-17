@@ -187,7 +187,13 @@ function Set-DirectoryAcl {
         if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
             New-Item -ItemType Directory -Path $Path -Force | Out-Null
         }
+        # icacls is native: $ErrorActionPreference="Stop" won't catch its failure and
+        # "| Out-Null" hides the error, so an unchecked grant fails silently. Convert a
+        # nonzero exit to a throw (icacls returns 0 on success).
         & icacls $Path /grant "${Identity}:$Rights" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "icacls failed (exit $LASTEXITCODE) granting $Identity ${Rights} on $Path"
+        }
     }
 }
 
@@ -567,6 +573,9 @@ if ($CertSubject) {
             }
             if (Test-Path -LiteralPath $keyPath -PathType Leaf) {
                 & icacls $keyPath /grant "${appPoolIdentity}:(R)" | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Fail "icacls failed (exit $LASTEXITCODE) granting $appPoolIdentity (R) on $keyPath"
+                }
                 Write-Ok "Certificate private key ACL set"
             } else {
                 Write-Warn "Certificate private key file could not be located."

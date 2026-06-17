@@ -56,6 +56,18 @@ function Write-Warn    { param($m) Write-Host "  !  $m" -ForegroundColor Yellow 
 # under $ErrorActionPreference = "Stop" and must see failures as terminating errors.
 function Write-Fail    { param($m) Write-Host "  X  $m" -ForegroundColor Red; throw $m }
 
+# icacls is a native exe: $ErrorActionPreference = "Stop" does NOT catch its failures,
+# and "| Out-Null" discards the error text too, so a denied/failed grant printed nothing
+# and the next Write-Success falsely reported the ACL was set. Route every icacls call
+# through here so a nonzero exit becomes a terminating error (icacls returns 0 on success).
+function Set-AclChecked {
+    param([string]$Path, [string]$Identity, [string]$Rights)
+    & icacls $Path /grant "${Identity}:$Rights" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Fail "icacls failed (exit $LASTEXITCODE) granting $Identity ${Rights} on $Path"
+    }
+}
+
 function Start-AppPoolWithRetry {
     param([string]$Name, [int]$MaxAttempts = 5, [int]$DelaySeconds = 3)
     for ($i = 1; $i -le $MaxAttempts; $i++) {
@@ -301,7 +313,7 @@ if (-not $exoCert) {
             $keyPath = Join-Path "$env:ProgramData\Microsoft\Crypto\RSA\MachineKeys" $keyName
         }
         if (Test-Path $keyPath) {
-            icacls $keyPath /grant "${ServiceAccount}:(R)" | Out-Null
+            Set-AclChecked $keyPath $ServiceAccount "(R)"
             Write-Success "Certificate private key ACL set (thumbprint: $($exoCert.Thumbprint))"
         } else {
             Write-Warn "Private key file not found at expected location"
@@ -316,7 +328,7 @@ $auditLogFolder = Join-Path $LogRoot "ExchangeAdminWeb"
 if (-not (Test-Path $auditLogFolder)) {
     New-Item -ItemType Directory -Path $auditLogFolder -Force | Out-Null
 }
-icacls $auditLogFolder /grant "${ServiceAccount}:(OI)(CI)M" | Out-Null
+Set-AclChecked $auditLogFolder $ServiceAccount "(OI)(CI)M"
 Write-Success "Audit log folder ACL set: $auditLogFolder"
 
 # App log folder (Serilog)
@@ -324,7 +336,7 @@ $appLogFolder = Join-Path $PublishPath "logs"
 if (-not (Test-Path $appLogFolder)) {
     New-Item -ItemType Directory -Path $appLogFolder -Force | Out-Null
 }
-icacls $appLogFolder /grant "${ServiceAccount}:(OI)(CI)M" | Out-Null
+Set-AclChecked $appLogFolder $ServiceAccount "(OI)(CI)M"
 Write-Success "App log folder ACL set: $appLogFolder"
 
 # Config fragment folder (section access)
@@ -332,7 +344,7 @@ $configFolder = Join-Path $PublishPath "config"
 if (-not (Test-Path $configFolder)) {
     New-Item -ItemType Directory -Path $configFolder -Force | Out-Null
 }
-icacls $configFolder /grant "${ServiceAccount}:(OI)(CI)M" | Out-Null
+Set-AclChecked $configFolder $ServiceAccount "(OI)(CI)M"
 Write-Success "Config folder ACL set: $configFolder"
 
 # --- Ensure IIS auth settings (idempotent, runs on both upgrade and fresh) ---
