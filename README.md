@@ -137,10 +137,13 @@ Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV up
 Room mailbox metadata configuration and booking policy management.
 
 - Set room properties: city, building, capacity, floor label, timezone
-- Apply booking policy templates:
-  - **Standard** — Default room booking behavior
-  - **Workspace** — Hot-desk / workspace booking mode
-  - **Restricted** — Delegate-approved booking only
+- Apply booking policy templates (the `RoomType` enum in `Models/ConferenceRoomModels.cs`):
+  - **Standard** — Open auto-booking (AllBookInPolicy), 180-day window
+  - **Video** — Like Standard plus a video-room additional response
+  - **Restricted** — Delegate/group-gated booking (BookInPolicy), 180-day window, site-aware
+  - **Exception** — Restricted to an exception group, 1080-day window
+  - **CEO** — CEO-group only; always clears existing calendar permissions, 1080-day window
+  - **Executive** — Exec VP/admin groups, 1080-day window
 - CSV bulk upload for multi-room setup
 - Room list management (add/remove rooms from room lists)
 - Section access key: `ConferenceRooms`
@@ -303,13 +306,24 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
 
 ### 4. Deploy to IIS
 
-Run the deployment script in **elevated PowerShell**:
+**Generic / new environments — use the standalone product installer** in **elevated
+PowerShell**. It is environment-neutral, prompts for environment-specific values, and
+preserves existing `appsettings.json` and `config/` fragments on update:
+
+```powershell
+.\tools\Install-ExchangeAdminWeb.ps1            # interactive fresh install or update
+.\tools\Install-ExchangeAdminWeb.ps1 -PlanOnly  # dry run, no changes
+```
+
+**ADI environment only — `deploy.ps1`** is the ADI-specific deployment helper (it targets
+ADI aliases/app pools and the `ExchangeAdminWebDev` dev path). Do not use it in other
+environments; it is intentionally separate from the standalone installer.
 
 ```powershell
 .\deploy.ps1
 ```
 
-This script will:
+The deploy/install scripts will:
 - Stop the application pool
 - Build and publish the application
 - Create/configure the IIS application pool
@@ -595,21 +609,31 @@ Configure email notifications, group-based access control, self-grant prevention
 
 ```
 ExchangeAdminWeb/
+├── Modules/           # Descriptor-based module system (the architecture)
+│   ├── ModuleCatalog.cs        # All module descriptors (nav, auth, enablement)
+│   └── AdminModuleDescriptor.cs # Descriptor record contract
 ├── Components/         # Blazor components
-│   ├── Pages/         # Razor pages (Home, MailboxPermissions, CalendarPermissions)
+│   ├── Pages/         # One Razor page per module (MailboxPermissions, ConferenceRooms, ...)
 │   └── Layout/        # Layout components
+├── Authorization/     # Policy handlers and authorization wiring
+├── Middleware/        # Request pipeline middleware
 ├── Models/            # Data models and enums
-├── Services/          # Business logic
-│   ├── ExchangeService.cs      # PowerShell EXO operations
-│   ├── AuditService.cs         # JSONL business audit records
+├── Services/          # Per-feature services (one per module + shared infra)
+│   ├── AuditService.cs          # JSONL business audit records
 │   ├── OperationTraceService.cs # Correlated operation trace records
 │   ├── JsonlLogService.cs       # Shared JSONL writer
-│   ├── EmailService.cs         # SMTP notifications
-│   └── PermissionValidator.cs  # Security validation
-├── wwwroot/           # Static assets
+│   ├── ExoConnectionPool.cs     # Pooled Exchange Online connections
+│   ├── EmailService.cs          # SMTP notifications
+│   └── PermissionValidator.cs   # Security validation
+├── config/            # Runtime config fragments (preserved across deploys)
+├── tools/             # Standalone installer + ops scripts (Install-ExchangeAdminWeb.ps1)
+├── tests/ps/          # Pester tests for PowerShell
+├── docs/              # ProjectConstitution, specs, plans
+├── .agents/           # Agent guidance (state.md, decisions.md, repo-map.json)
+├── ExchangeAdminWeb.Tests/  # xUnit test project
 ├── Program.cs         # Application entry point
 ├── web.config         # IIS configuration
-└── deploy.ps1         # Deployment script
+└── deploy.ps1         # ADI-specific deploy helper (generic install: tools/Install-ExchangeAdminWeb.ps1)
 ```
 
 ### Tech Stack
