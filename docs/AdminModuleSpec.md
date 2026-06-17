@@ -1,6 +1,17 @@
 # Admin Module Specification
 
-Version: 1.1 (based on ExchangeAdminWeb v1.5.4 implementation)
+Version: 1.1 — PARTIALLY STALE against app 2.3.8 (was "based on v1.5.4")
+
+> **Drift warning.** This spec has not been fully re-verified since app v1.5.4 and
+> the app is now 2.3.8. Known gap: the `AdminModuleDescriptor` example below omits five
+> fields that exist in `Modules/AdminModuleDescriptor.cs` today — `Category`, `Version`,
+> `DependsOn`, `IsConfigOnly`, and `ConfigFields`. `Version` is the load-bearing one: a
+> module-scoped behavior change must bump the descriptor's `Version` (see
+> `docs/ProjectConstitution.md` §Deployment And Versioning); a descriptor written without
+> it silently defaults to `"1.0.0"`. A full audit and rewrite of this spec is scheduled as
+> Phase E2 in `docs/SqliteConfigStore-Plan.md` (gated on the SQLite config swap). Until
+> then, treat `Modules/AdminModuleDescriptor.cs` and `Modules/ModuleCatalog.cs` as the
+> authoritative descriptor contract, not the example below.
 
 ## Overview
 
