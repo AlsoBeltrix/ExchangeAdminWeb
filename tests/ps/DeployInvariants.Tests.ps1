@@ -330,6 +330,45 @@ Describe 'tools/promote-dev-to-prod.ps1' {
     }
 }
 
+Describe 'tools/test-delinea.ps1' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'tools/test-delinea.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop' {
+        $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+    }
+
+    It 'never prints raw Delinea auth response bodies (Constitution line 42)' {
+        # The token/secrets endpoints return secret-bearing bodies in $_.ErrorDetails.Message.
+        # Echoing them to the console leaks them into transcripts/CI logs. Failures must
+        # surface only an HTTP status/reason via Get-SafeHttpError.
+        $s.Text | Should -Not -Match 'ErrorDetails' `
+            -Because 'the raw Delinea auth response body must never reach the console'
+        Find-FunctionDefinition $s 'Get-SafeHttpError' | Should -Not -BeNullOrEmpty `
+            -Because 'failures must be reported through the sanitizing helper'
+    }
+
+    It 'takes the password as a SecureString, not a plain string' {
+        $param = $s.Ast.ParamBlock.Parameters |
+            Where-Object { $_.Name.VariablePath.UserPath -eq 'Password' }
+        $param | Should -Not -BeNullOrEmpty
+        $param.StaticType.Name | Should -Be 'SecureString' `
+            -Because 'a [string] password lands in PSReadLine history and the process command line'
+    }
+
+    It 'does not hardcode an environment-specific Secret Server endpoint' {
+        $s.Text | Should -Not -Match '(?i)secretserver\.ad\.analog\.com' `
+            -Because 'tools/ scripts are environment-neutral; ServerUrl is mandatory with no default'
+        $serverParam = $s.Ast.ParamBlock.Parameters |
+            Where-Object { $_.Name.VariablePath.UserPath -eq 'ServerUrl' }
+        $serverParam.DefaultValue | Should -BeNullOrEmpty `
+            -Because 'ServerUrl must be supplied by the operator, not defaulted to an internal host'
+    }
+}
+
 Describe 'tools/deploy-pipeline.ps1' {
     BeforeAll { $script:s = Get-ScriptUnderTest 'tools/deploy-pipeline.ps1' }
 
