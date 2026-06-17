@@ -1,9 +1,9 @@
 # Admin Module Specification
 
-Version: 1.1 — PARTIALLY STALE against app 2.3.8 (was "based on v1.5.4")
+Version: 1.1 — PARTIALLY STALE against app 2.3.9 (was "based on v1.5.4")
 
 > **Drift warning.** This spec has not been fully re-verified since app v1.5.4 and
-> the app is now 2.3.8. Known gap: the `AdminModuleDescriptor` example below omits five
+> the app is now 2.3.9. Known gap: the `AdminModuleDescriptor` example below omits five
 > fields that exist in `Modules/AdminModuleDescriptor.cs` today — `Category`, `Version`,
 > `DependsOn`, `IsConfigOnly`, and `ConfigFields`. `Version` is the load-bearing one: a
 > module-scoped behavior change must bump the descriptor's `Version` (see
