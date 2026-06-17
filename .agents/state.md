@@ -29,11 +29,58 @@ repo facts change.
   deploy. Deploy holds fully lifted. **Dev has since advanced to 2.3.9** (the Phase-4
   batch below), so dev is now ahead of prod again; 2.3.9 is not yet deployed.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and signed
-  off. Local verification at 2.3.8: 415/415 xUnit, 30/30 Pester (Phase 4 work is at 2.3.9;
-  current suite 422/422 xUnit). **Task 20 (manual UI verification, AC13) PASSED 2026-06-17**
-  (Michael verified click-responsiveness in dev). Phase 3 is now fully verified; **Phase 4
-  (cleanup backlog, AC15-AC16) is in progress.** Findings register:
-  `docs/ProdReadinessReview-2026-06-12.md`.
+  off. **Task 20 (manual UI verification, AC13) PASSED 2026-06-17.** Phase 3 fully
+  verified; **Phase 4 (cleanup backlog, AC15-AC16) is in progress.** Findings register:
+  `docs/ProdReadinessReview-2026-06-12.md`. Current local suite: 427/427 xUnit at 2.3.9.
+
+## Active work — Phase 4 / AC16 (resume here)
+
+Phase 4 is the only open work. AC15 (docs/state drift sweep) is done. AC16 (remaining
+medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
+
+**Done this batch (all at app 2.3.9, dev-only, not in prod):**
+- Deny-by-default fallback policy is now a true deny-all assertion (runtime-verified the
+  Blazor framework endpoints still serve).
+- `SectionAccessService.BuildFailClosedSet` no longer swallows exceptions (fail-closed).
+- `SectionAccessService` cache now invalidates on fragment file change (fixes the
+  repaired-config-still-renders-blank trap; also makes on-disk edits take effect without
+  restart).
+- GroupManagement protected-principal check moved into the service (was UI-only, '@'-gated).
+- MailboxPermissions cloud Add/Remove now report partial success per right.
+- AD attribute allowlist save fails closed over a corrupt store (mirrors Section Access).
+- Module version bumps applied per touched module (GroupManagement 2.0.1, MailboxPermissions
+  1.0.2, ADAttributeEditor 1.3.3).
+
+**IN-PROGRESS — Comms10k pre-count, awaiting one owner decision (NEXT ACTION):**
+- `Services/Comms10kService.cs` `ExecuteReplaceAsync` (~line 198) runs `Get-ADGroupMember`
+  with `-ErrorAction Stop` OUTSIDE the try (try starts ~line 206) purely to compute
+  `initialCount` for the "(was M)" success message. That cmdlet hits the ADWS
+  `MaxGroupOrMemberEntries` 5000 cap and THROWS on the module's large DL (hard-coded to one
+  ~tens-of-thousands group), so the pre-count crashes the replace before it runs. The
+  replace itself (`Set-ADGroup -Replace member=...`, ~line 208) is NOT capped and needs no
+  query. Fix = remove the pre-count or make it best-effort so it can never block the
+  replace. **Owner to choose: (a) drop the pre-count entirely (the "(was M)" number leaves
+  the message), or (b) keep "(was M)" but make the count best-effort (swallow its failure).**
+  No code committed for this yet. Note: `GetMembersAsync` (~line 64) has the SAME
+  `Get-ADGroupMember` pattern but that is the preview/export feature — leave it; it is a
+  separate concern, not this fix. Do NOT cap the module — its purpose is large tactical DLs.
+
+**Remaining AC16 after Comms10k:**
+- PowerShell false-success batch (each one fix/commit, each needs Pester in `tests/ps/`):
+  icacls exit codes unchecked in `deploy.ps1`/`Install-ExchangeAdminWeb.ps1`;
+  promote-dev-to-prod rollback message; `test-delinea.ps1` secret-printing hardening.
+- Finding 3 ([creds] SMTP/ServiceNow plaintext) is RESOLVED BY DECISION (2026-06-17,
+  `.agents/decisions.md`) — NOT a code change. Residual doc cleanup only: plan task 24 is
+  still Delinea-specific and contradicts the generalized "deployment PAM" decision; and
+  `appsettings.json.sample` should note these fields come from the deployment PAM in prod.
+- SSL-off finding: accepted-as-designed (non-finding).
+- SQLite-obsoleted config-file findings: risk-accept in plan §10.
+- **Close-out:** write all AC16 outcomes (fixes + risk-accepts + finding-3 doc cleanup)
+  into `docs/ProdReadiness-Plan.md` §10, then close Phase 4.
+
+**Two GPT review rounds this batch were addressed** (deny-all fallback, SectionAccess
+cache, allowlist fail-closed all came from them). Each fix shipped with a guard test proven
+non-vacuous via temporary revert.
 
 ## Findings
 
