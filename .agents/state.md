@@ -31,12 +31,19 @@ repo facts change.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and signed
   off. **Task 20 (manual UI verification, AC13) PASSED 2026-06-17.** Phase 3 fully
   verified; **Phase 4 (cleanup backlog, AC15-AC16) is in progress.** Findings register:
-  `docs/ProdReadinessReview-2026-06-12.md`. Current local suite: 427/427 xUnit at 2.3.9.
+  `docs/ProdReadinessReview-2026-06-12.md`. Current local suite: **467/467 xUnit at 2.3.9**.
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-Phase 4 is the only open work. AC15 (docs/state drift sweep) is done. AC16 (remaining
-medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
+**NEXT ACTION:** resume the ProdReadiness AC16 PowerShell false-success batch at item 2 —
+**promote-dev-to-prod rollback message** (`tools/promote-dev-to-prod.ps1`), one fix/commit
+with Pester in `tests/ps/`, proven non-vacuous. Then item 3 (`test-delinea.ps1` secret
+printing), then finding-3 doc cleanup, risk-accepts, and the §10 close-out.
+(An out-of-stream bug, CR-1 Room Finder, was implemented this session — see Queued work;
+it is NOT part of the 2.3.9 ProdReadiness batch and does not gate it.)
+
+Phase 4 is the only open ProdReadiness work. AC15 (docs/state drift sweep) is done. AC16
+(remaining medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
 
 **Done this batch (all at app 2.3.9, dev-only, not in prod):**
 - Deny-by-default fallback policy is now a true deny-all assertion (runtime-verified the
