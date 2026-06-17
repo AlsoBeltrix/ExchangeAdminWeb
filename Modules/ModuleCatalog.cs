@@ -264,7 +264,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.0",
+            Version = "2.0.1",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [

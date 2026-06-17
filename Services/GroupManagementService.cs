@@ -8,17 +8,63 @@ public class GroupManagementService
 {
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCredentialService _moduleCredentials;
+    private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly ILogger<GroupManagementService> _logger;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
     public GroupManagementService(
         ModuleConfigService moduleConfig,
         ModuleCredentialService moduleCredentials,
+        ProtectedPrincipalService protectedPrincipals,
         ILogger<GroupManagementService> logger)
     {
         _moduleConfig = moduleConfig;
         _moduleCredentials = moduleCredentials;
+        _protectedPrincipals = protectedPrincipals;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// In-service protected-principal gate, enforced immediately before the AD write
+    /// regardless of caller or identity format. The Blazor page also checks, but
+    /// "UI hiding is not security" (Constitution): a protected member supplied by
+    /// sAMAccountName or DOMAIN\user (no '@') bypassed the page's '@'-gated check, and
+    /// any non-page caller bypassed protection entirely. Fails closed when resolution
+    /// is Unavailable or Ambiguous, mirroring ADAttributeEditorService.SaveAsync.
+    /// Returns null when the member is clear to mutate, or a Fail result to abort.
+    /// </summary>
+    private async Task<PermissionResult?> CheckProtectedAsync(string member)
+    {
+        if (string.IsNullOrWhiteSpace(member))
+            return null;
+
+        try
+        {
+            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(member);
+            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
+                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? "Identity is ambiguous — matches multiple AD users."
+                    : "Protection check unavailable. Cannot verify if this member is protected.");
+            }
+
+            if (resolved != null)
+            {
+                var check = await _protectedPrincipals.CheckAsync(resolved);
+                if (check.CheckFailed)
+                    return PermissionResult.Fail($"Protection check failed: {check.Reason}");
+                if (check.IsProtected)
+                    return PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", member);
+            return PermissionResult.Fail($"Protection check error: {ex.Message}");
+        }
     }
 
     public async Task<List<GroupInfo>> SearchGroupsAsync(string searchTerm)
@@ -130,6 +176,10 @@ public class GroupManagementService
 
     public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string? samAccountName = null)
     {
+        var protectionDenial = await CheckProtectedAsync(member);
+        if (protectionDenial is not null)
+            return protectionDenial;
+
         var creds = await GetCredentialsAsync("on-prem AD group membership add");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
@@ -176,6 +226,10 @@ public class GroupManagementService
 
     public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string? samAccountName = null)
     {
+        var protectionDenial = await CheckProtectedAsync(member);
+        if (protectionDenial is not null)
+            return protectionDenial;
+
         var creds = await GetCredentialsAsync("on-prem AD group membership remove");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
