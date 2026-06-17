@@ -58,13 +58,20 @@ public sealed class ModuleCatalog
         options.AddPolicy("GroupPolicy", groupPolicy);
 
         // Fallback policy for endpoints that declare NO authorization metadata.
-        // Deny-by-default: require an authenticated user only. Do NOT reuse groupPolicy
-        // here — that would silently subject any undeclared endpoint (a future health
-        // check, download, or minimal API added without an [Authorize] attribute) to the
-        // legacy app-wide AllowedGroups group gate the Constitution removed. An endpoint
-        // that needs group/module gating must declare its own policy explicitly.
+        // True deny-by-default: an undeclared endpoint (a future health check, download,
+        // or minimal API added without an [Authorize] attribute) is blocked for EVERY
+        // user until it declares its own catalog-backed policy — not merely opened to any
+        // authenticated user. Do NOT reuse groupPolicy here either: that would silently
+        // subject undeclared endpoints to the legacy app-wide AllowedGroups gate the
+        // Constitution removed. An endpoint that needs access must declare its own policy.
+        //
+        // The Blazor component + SignalR hub endpoints are exempt because
+        // MapRazorComponents<App>().RequireAuthorization() (Program.cs) stamps the default
+        // policy onto them, so this fallback never applies to them. Static assets are
+        // served by UseStaticFiles() before UseAuthorization() and never reach this check.
         options.FallbackPolicy = new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
+            .RequireAssertion(_ => false)
             .Build();
 
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

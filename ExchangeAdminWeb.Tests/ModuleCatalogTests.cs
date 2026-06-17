@@ -122,12 +122,14 @@ public class ModuleCatalogTests
     }
 
     [Fact]
-    public void Catalog_FallbackPolicy_DeniesByDefault_WithoutGroupGate()
+    public async Task Catalog_FallbackPolicy_DeniesByDefault_WithoutGroupGate()
     {
         // Endpoints that declare no authorization metadata fall under FallbackPolicy.
-        // It must require an authenticated user, and it must NOT carry the legacy
-        // AllowedGroups group requirement (which would silently resurrect the removed
-        // app-wide group gate on any undeclared endpoint).
+        // True deny-by-default: the policy must DENY every principal (a failing
+        // assertion), not merely require authentication — so an undeclared endpoint is
+        // blocked for all users until it declares its own catalog-backed policy. It must
+        // also NOT carry the legacy AllowedGroups group requirement (which would silently
+        // resurrect the removed app-wide group gate on any undeclared endpoint).
         var options = new AuthorizationOptions();
         _catalog.ConfigureAuthorizationPolicies(options, new[] { "TestGroup" }, new[] { "AdminGroup" });
 
@@ -137,6 +139,19 @@ public class ModuleCatalogTests
         // Requires authentication (DenyAnonymousAuthorizationRequirement is what
         // RequireAuthenticatedUser adds).
         Assert.Contains(fallback!.Requirements, r => r is DenyAnonymousAuthorizationRequirement);
+
+        // Carries a deny-all assertion: evaluate it and confirm it fails even for a
+        // fully authenticated user. This is what makes the fallback true deny-by-default.
+        var assertion = fallback.Requirements.OfType<AssertionRequirement>().SingleOrDefault();
+        Assert.NotNull(assertion);
+
+        var authenticatedUser = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity(
+                new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "anyone") },
+                authenticationType: "Test"));
+        var ctx = new AuthorizationHandlerContext(new[] { assertion! }, authenticatedUser, resource: null);
+        await assertion!.HandleAsync(ctx);
+        Assert.False(ctx.HasSucceeded);
 
         // Does NOT inherit the AllowedGroups group gate.
         Assert.DoesNotContain(fallback.Requirements, r => r is GroupAuthorizationRequirement);
