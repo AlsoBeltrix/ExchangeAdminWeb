@@ -329,13 +329,24 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <strong>Editable Attributes</strong>
                 <div>
-                    <button class="btn btn-outline-primary btn-sm me-1" @onclick="AddAttribute" disabled="@saving">Add Attribute</button>
-                    <button class="btn btn-primary btn-sm" @onclick="SaveAllowlistAsync" disabled="@(saving || allowlistAttributes.Count == 0)">Save Allowlist</button>
+                    <button class="btn btn-outline-primary btn-sm me-1" @onclick="AddAttribute" disabled="@(saving || allowlistCorrupt)">Add Attribute</button>
+                    <button class="btn btn-primary btn-sm" @onclick="SaveAllowlistAsync" disabled="@(saving || allowlistCorrupt || allowlistAttributes.Count == 0)">Save Allowlist</button>
                 </div>
             </div>
             <div class="card-body">
                 <p class="text-muted mb-3"><small>Configure which AD attributes users can edit. Attributes on the hard denylist (security-sensitive attributes like userAccountControl, memberOf, etc.) are automatically blocked.</small></p>
 
+                @if (allowlistCorrupt)
+                {
+                    <div class="alert alert-danger mb-3">
+                        <strong>Attribute allowlist store is corrupt.</strong>
+                        config\ad-editable-attributes.json exists but cannot be read, so the
+                        attribute list cannot be shown and saving is disabled — saving now would
+                        replace the whole file, discarding every configured attribute. Fix or
+                        restore the file (deploy backups: ConfigBackups\config.&lt;timestamp&gt;.bak),
+                        then reload this page.
+                    </div>
+                }
                 @if (allowlistError != null)
                 {
                     <div class="alert alert-danger py-2">@allowlistError</div>
@@ -822,16 +833,20 @@
     private List<AllowlistRow> allowlistAttributes = new();
     private string? allowlistError;
     private bool allowlistSaved;
+    private bool allowlistCorrupt;
 
     private void LoadAllowlist()
     {
         var list = AttrEditorService.GetAllowlist();
         if (list == null)
         {
+            allowlistCorrupt = true;
             allowlistError = "Allowlist config is corrupt. Fix or delete config/ad-editable-attributes.json.";
             allowlistAttributes = new();
             return;
         }
+
+        allowlistCorrupt = false;
 
         allowlistAttributes = list.Select(a => new AllowlistRow
         {
@@ -888,6 +903,17 @@
             if (!adminResult.Succeeded && !ModuleAdmin.IsModuleAdmin(module!.Id, user))
             {
                 allowlistError = "You are not authorized to save the attribute allowlist.";
+                return;
+            }
+
+            // Re-check corruption immediately before the write (UI hiding is not security:
+            // the disabled buttons can be bypassed, and the file may have become corrupt
+            // since the page loaded). Saving over a corrupt store would discard whatever
+            // it currently holds — fail closed instead, matching the Section Access card.
+            if (AttrEditorService.GetAllowlist() == null)
+            {
+                allowlistCorrupt = true;
+                allowlistError = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
                 return;
             }
 

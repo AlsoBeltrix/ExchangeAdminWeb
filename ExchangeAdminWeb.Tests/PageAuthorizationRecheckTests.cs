@@ -30,6 +30,24 @@ public class PageAuthorizationRecheckTests
         Assert.Contains("AuthorizeAsync(authState.User, \"UndoAuditedActions\")", body);
     }
 
+    [Fact]
+    public void ModuleConfig_SaveAllowlist_RechecksCorruptionBeforeWrite()
+    {
+        // The corrupt-config fail-closed rule: a corrupt ad-editable-attributes.json must
+        // not be overwritten from the UI. The disabled buttons are UI only; the authoritative
+        // gate is a re-check immediately before AttrEditorService.SaveAllowlist. This guard
+        // fails if that recheck (GetAllowlist() == null -> abort) is removed, or if the
+        // recheck no longer precedes the save call.
+        var body = GetMethodBody("ModuleConfig.razor", "SaveAllowlistAsync");
+
+        var recheck = body.IndexOf("AttrEditorService.GetAllowlist() == null", StringComparison.Ordinal);
+        Assert.True(recheck >= 0, "SaveAllowlistAsync no longer rechecks corruption before saving");
+
+        var save = body.IndexOf("AttrEditorService.SaveAllowlist(", StringComparison.Ordinal);
+        Assert.True(save >= 0, "SaveAllowlist call not found");
+        Assert.True(recheck < save, "corruption recheck must precede the SaveAllowlist write");
+    }
+
     private static string GetMethodBody(string pageFile, string methodName)
     {
         var path = Path.Combine(GetPagesDirectory(), pageFile);
