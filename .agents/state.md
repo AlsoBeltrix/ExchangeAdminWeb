@@ -163,6 +163,41 @@ non-vacuous via temporary revert.
   - Base app version bump (module removal is an app-wide change). Audit log keeps any
     historical `TestAccountPool_*` entries — do not scrub those.
 
+## Queued work — group management (owner-requested 2026-06-17)
+
+Not part of the ProdReadiness work stream; queued for after it (or whenever Michael
+schedules). Items 1 and 2 are bug fixes; item 3 is a new module needing its own plan.
+
+- **GM-1 (bug): GroupManagement search is too fuzzy.** Searching for an exact group
+  (owner's example: "IAM" → the IAM group) returns dozens of fuzzy matches instead of the
+  intended group. Tighten the AD group search so an exact/near-exact name ranks first and
+  the fuzzy fan-out is reduced. Scope is the on-prem AD GroupManagement module search path
+  (not yet code-located — needs investigation of how that module queries AD). Owner has not
+  specified exact ranking rules; confirm desired behavior before implementing.
+
+- **GM-2 (bug): M365 group management does not work at all.** It finds no groups regardless
+  of search term. Root-cause unknown — could be the Graph query, auth/scope, or result
+  mapping. Needs investigation before any fix; treat as a real defect, not a tuning issue.
+
+- **GM-3 (new module, needs its own plan — DECIDE LATER): self-service group management.**
+  Owner direction, to be planned separately (`docs/SelfServiceGroupManagement-Plan.md` or
+  similar; nothing built until approved). Requirements as stated by owner 2026-06-17:
+  - Likely a **separate module**, not a change to the existing GroupManagement module.
+  - **Do NOT preload** the groups a user can modify on page load — owner expects that to be
+    very slow. Instead provide an explicit **"show the groups I manage" button** with a
+    warning that it can take a long time to load.
+  - Provide a **search field** for a specific group, like the AD GroupManagement module, but
+    with the GM-1 fuzzy fixes applied, AND **restricted to only groups the user manages**
+    (direct/first-order ownership or via group-based management permissions). Groups the
+    user does not manage must not appear in results.
+  - **Must reject any modification** to a group the user does not manage (enforce at the
+    service/authorization layer, not just UI — UI hiding is not security; cf. the
+    corrupt-store and re-check patterns already in this app).
+  - Open questions for the plan: how "manages" is determined (managedBy/owner attribute vs
+    a permissions model), on-prem vs M365 vs both, and how to make the "groups I manage"
+    lookup tolerable (it is the expensive path the owner flagged). Depends on GM-1/GM-2
+    being understood first, since it reuses the search path.
+
 ## Blockers
 
 - None. (Prod freeze ended; 2.3.8 shipped to prod 2026-06-17. Task 20 PASSED.)
