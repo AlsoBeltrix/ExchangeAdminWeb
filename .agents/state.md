@@ -5,7 +5,9 @@ repo facts change.
 
 ## Now
 
-- App version `2.3.8` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.9` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`) — dev-ahead
+  Phase-4 batch (security/correctness backlog). **Prod is still on `2.3.8`**; 2.3.9 has
+  not been deployed.
 - **INCIDENT DIAGNOSED — see Diagnostic Results in
   `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
   proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,
@@ -22,14 +24,16 @@ repo facts change.
   config/ dir. #5: post-deploy config drift check warns loudly. #6: deploy.ps1 defaults
   target dev, fresh installs need -ConfirmFreshInstall. #7: duplicate import removed.
   #8: closed by diagnostics. Remaining: owner sign-off + task-20 manual verification.
-- **2.3.8 is deployed to prod (2026-06-17). Dev and prod are at the same revision.**
-  Prod freeze over; the FailClosed change and all incident fixes #1-#8 are now in prod.
-  The §Deploy-notes alias check applied to this deploy. Deploy holds fully lifted.
+- **2.3.8 was deployed to prod (2026-06-17).** Prod freeze over; the FailClosed change
+  and all incident fixes #1-#8 are in prod. The §Deploy-notes alias check applied to that
+  deploy. Deploy holds fully lifted. **Dev has since advanced to 2.3.9** (the Phase-4
+  batch below), so dev is now ahead of prod again; 2.3.9 is not yet deployed.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and signed
-  off. Local verification at 2.3.8: 415/415 xUnit, 30/30 Pester. **Task 20 (manual UI
-  verification, AC13) PASSED 2026-06-17** (Michael verified click-responsiveness in dev).
-  Phase 3 is now fully verified; **Phase 4 is unblocked and is the next work item.**
-  Findings register: `docs/ProdReadinessReview-2026-06-12.md`.
+  off. Local verification at 2.3.8: 415/415 xUnit, 30/30 Pester (Phase 4 work is at 2.3.9;
+  current suite 422/422 xUnit). **Task 20 (manual UI verification, AC13) PASSED 2026-06-17**
+  (Michael verified click-responsiveness in dev). Phase 3 is now fully verified; **Phase 4
+  (cleanup backlog, AC15-AC16) is in progress.** Findings register:
+  `docs/ProdReadinessReview-2026-06-12.md`.
 
 ## Findings
 
