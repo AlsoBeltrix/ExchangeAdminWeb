@@ -8,6 +8,7 @@ public class SectionAccessService
 {
     private readonly IConfiguration _config;
     private readonly ILogger<SectionAccessService> _logger;
+    private readonly Modules.ModuleCatalog _catalog;
     private readonly string _configDir;
     private readonly string _configFilePath;
     private readonly string[] _allowedGroups;
@@ -17,10 +18,11 @@ public class SectionAccessService
 
     private sealed record CachedAccess(Dictionary<string, string[]> Data, SectionAccessSource Source);
 
-    public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env)
+    public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env, Modules.ModuleCatalog catalog)
     {
         _config = config;
         _logger = logger;
+        _catalog = catalog;
         _configDir = Path.Combine(env.ContentRootPath, "config");
         _configFilePath = Path.Combine(_configDir, "sectionaccess.json");
 
@@ -39,19 +41,20 @@ public class SectionAccessService
 
     private HashSet<string> BuildFailClosedSet()
     {
+        // Do NOT swallow exceptions here. This set is the list of sections that must
+        // deny access when section-access config is absent (GetGroupsForSection). An
+        // empty/partial set would silently downgrade those sections to the
+        // AllowedGroups fallback — fail-OPEN — which is the opposite of the intent.
+        // Let any failure propagate and abort startup rather than serve a permissive
+        // catalog. The catalog is the injected DI singleton, not a fresh instance.
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
+        foreach (var module in _catalog.GetAll())
         {
-            var catalog = new Modules.ModuleCatalog();
-            foreach (var module in catalog.GetAll())
-            {
-                if (module.MainPermission.FailClosed)
-                    set.Add(module.MainPermission.PolicyAlias);
-                foreach (var gp in module.GranularPermissions.Where(p => p.FailClosed))
-                    set.Add(gp.PolicyAlias);
-            }
+            if (module.MainPermission.FailClosed)
+                set.Add(module.MainPermission.PolicyAlias);
+            foreach (var gp in module.GranularPermissions.Where(p => p.FailClosed))
+                set.Add(gp.PolicyAlias);
         }
-        catch { }
         return set;
     }
 

@@ -52,7 +52,7 @@ public class SectionAccessServiceTests : IDisposable
 
         var logger = Substitute.For<ILogger<SectionAccessService>>();
 
-        return new SectionAccessService(config, logger, env);
+        return new SectionAccessService(config, logger, env, new ExchangeAdminWeb.Modules.ModuleCatalog());
     }
 
     private void WriteFragmentFile(string json)

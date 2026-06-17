@@ -48,7 +48,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var catalog = new ModuleCatalog();
-        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env);
+        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog);
         var moduleConfig = new ModuleConfigService(catalog, env, Substitute.For<ILogger<ModuleConfigService>>());
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, config, Substitute.For<ILogger<ModuleEnablementService>>());
 
