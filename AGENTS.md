@@ -119,9 +119,13 @@ Use the repo's automated verification recorded in `.agents/repo-map.json`.
 
 - For code changes, run the current automated verification before claiming completion:
   `dotnet build -c Release` then `dotnet test`. Run `dotnet format --verify-no-changes`
-  and `git diff --check HEAD` where practical. Verification is local-only: there is no
-  working CI (`ci.yml` is misplaced in the repo root — see `.agents/state.md` Findings),
-  so do not assume any check runs automatically on push or PR.
+  and `git diff --check HEAD` where practical. CI exists and runs:
+  `.github/workflows/ci.yml` triggers on push to `master` and on every PR, with a
+  `build-test` job (build, format check, `dotnet test` on the solution, test-result
+  upload) and a `powershell` job (PSScriptAnalyzer + Pester) — both on `windows-latest`.
+  It has been observed failing on real test failures (see `.agents/state.md` Findings),
+  so CI is a trustworthy signal. Still run local verification before claiming completion;
+  treat CI as an additional gate, not a replacement.
 - When a change ships with a new test, prove the test guards it: temporarily revert the
   change, confirm the test fails, restore it, confirm everything passes. A test that
   passes with its fix reverted is vacuous.
