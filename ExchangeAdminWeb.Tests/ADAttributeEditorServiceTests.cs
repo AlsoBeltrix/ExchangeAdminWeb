@@ -416,6 +416,71 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal(2, reloaded!.Count);
     }
 
+    // --- Disk-fresh corruption gate (IsAllowlistCorrupt) ---
+
+    [Fact]
+    public void IsAllowlistCorrupt_ValidThenCorruptedWithinTtl_DetectsCorruptionWhileCacheStaysValid()
+    {
+        // The pre-save gate bug (GPT finding 1): GetAllowlist serves a valid list from the
+        // 30s cache, so if the file became corrupt after a valid load, a cache-based gate
+        // would pass and let SaveAllowlist overwrite the corrupt store. IsAllowlistCorrupt
+        // must read disk fresh and catch it. This test fails if the gate ever consults the
+        // cache instead of disk.
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true }
+            }
+        });
+
+        var service = CreateService();
+
+        // Prime the cache with a valid load.
+        var first = service.GetAllowlist();
+        Assert.NotNull(first);
+        Assert.Single(first!);
+
+        // Corrupt the file directly, simulating an operator/promote clobber within the TTL.
+        WriteRawAllowlistConfig("{ this is not valid json");
+
+        // The cache still hands back the stale-but-valid list (this is expected for the
+        // runtime read path)...
+        var stillCached = service.GetAllowlist();
+        Assert.NotNull(stillCached);
+        Assert.Single(stillCached!);
+
+        // ...but the disk-fresh gate must see the corruption and report it.
+        Assert.True(service.IsAllowlistCorrupt(),
+            "IsAllowlistCorrupt must read disk fresh and detect corruption the cache masks");
+    }
+
+    [Fact]
+    public void IsAllowlistCorrupt_ValidFile_ReturnsFalse()
+    {
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true }
+            }
+        });
+
+        var service = CreateService();
+        Assert.False(service.IsAllowlistCorrupt());
+    }
+
+    [Fact]
+    public void IsAllowlistCorrupt_NoFile_ReturnsFalse()
+    {
+        // No config file is a valid "nothing allowlisted" state, not corruption.
+        var configPath = Path.Combine(_configDir, "ad-editable-attributes.json");
+        if (File.Exists(configPath)) File.Delete(configPath);
+
+        var service = CreateService();
+        Assert.False(service.IsAllowlistCorrupt());
+    }
+
     // --- DefaultSearchBase Enforcement (Conceptual) ---
 
     [Fact]

@@ -36,11 +36,14 @@ public class PageAuthorizationRecheckTests
         // The corrupt-config fail-closed rule: a corrupt ad-editable-attributes.json must
         // not be overwritten from the UI. The disabled buttons are UI only; the authoritative
         // gate is a re-check immediately before AttrEditorService.SaveAllowlist. This guard
-        // fails if that recheck (GetAllowlist() == null -> abort) is removed, or if the
-        // recheck no longer precedes the save call.
+        // fails if that recheck (IsAllowlistCorrupt() -> abort) is removed, or if the
+        // recheck no longer precedes the save call. The gate must call IsAllowlistCorrupt
+        // (disk-fresh), not GetAllowlist (cached): see
+        // ADAttributeEditorServiceTests.IsAllowlistCorrupt_* for the behavioral proof that
+        // the disk-fresh check catches corruption a cached GetAllowlist would miss.
         var body = GetMethodBody("ModuleConfig.razor", "SaveAllowlistAsync");
 
-        var recheck = body.IndexOf("AttrEditorService.GetAllowlist() == null", StringComparison.Ordinal);
+        var recheck = body.IndexOf("AttrEditorService.IsAllowlistCorrupt()", StringComparison.Ordinal);
         Assert.True(recheck >= 0, "SaveAllowlistAsync no longer rechecks corruption before saving");
 
         var save = body.IndexOf("AttrEditorService.SaveAllowlist(", StringComparison.Ordinal);

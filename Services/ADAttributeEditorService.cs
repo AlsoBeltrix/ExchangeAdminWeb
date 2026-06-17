@@ -107,16 +107,45 @@ public class ADAttributeEditorService
                 return _cachedAllowlist;
         }
 
-        var configPath = Path.Combine(_env.ContentRootPath, "config", "ad-editable-attributes.json");
-        if (!File.Exists(configPath))
+        var loaded = LoadAllowlistFromDisk();
+
+        // Only cache a successful load. A corrupt store (null) is never cached, so a
+        // file that became corrupt is re-read on every call rather than masked by a
+        // stale entry — but a valid load that is later followed by on-disk corruption
+        // is still served from cache for the TTL, which is why the pre-save gate must
+        // use IsAllowlistCorrupt (disk-fresh), not GetAllowlist (cached).
+        if (loaded != null)
         {
             lock (_allowlistLock)
             {
-                _cachedAllowlist = [];
+                _cachedAllowlist = loaded;
                 _allowlistLoadedAt = DateTime.UtcNow;
             }
-            return [];
         }
+        return loaded;
+    }
+
+    /// <summary>
+    /// True when config/ad-editable-attributes.json exists but cannot be parsed or fails
+    /// validation. Reads disk fresh on every call — it does NOT consult the 30-second
+    /// cache — so admin pages can use it as the authoritative pre-save corruption gate.
+    /// GetAllowlist() can return a stale-but-valid cached list for up to the TTL after the
+    /// file becomes corrupt; saving over the file in that window would discard whatever it
+    /// currently holds. This gate observes the actual disk state instead. Mirrors
+    /// SectionAccessService.IsFragmentCorrupt (incident 2026-06-12 corrupt-store class).
+    /// </summary>
+    public bool IsAllowlistCorrupt() => LoadAllowlistFromDisk() == null;
+
+    /// <summary>
+    /// Reads and validates the allowlist from disk with no caching. Returns an empty list
+    /// when no config file exists (a valid "nothing allowlisted" state) and null when the
+    /// file exists but is unparseable or fails validation (the fail-closed/corrupt state).
+    /// </summary>
+    private List<EditableAttribute>? LoadAllowlistFromDisk()
+    {
+        var configPath = Path.Combine(_env.ContentRootPath, "config", "ad-editable-attributes.json");
+        if (!File.Exists(configPath))
+            return [];
 
         try
         {
@@ -159,11 +188,6 @@ public class ADAttributeEditorService
                     attr.MaxLength, attr.Pattern, attr.Level > 0 ? attr.Level : 1));
             }
 
-            lock (_allowlistLock)
-            {
-                _cachedAllowlist = validated;
-                _allowlistLoadedAt = DateTime.UtcNow;
-            }
             return validated;
         }
         catch (Exception ex)

@@ -910,7 +910,10 @@
             // the disabled buttons can be bypassed, and the file may have become corrupt
             // since the page loaded). Saving over a corrupt store would discard whatever
             // it currently holds — fail closed instead, matching the Section Access card.
-            if (AttrEditorService.GetAllowlist() == null)
+            // Must use IsAllowlistCorrupt (reads disk fresh), NOT GetAllowlist: the latter
+            // can return a stale-but-valid cached list for up to 30s after the file became
+            // corrupt, which would let this gate pass and overwrite the corrupt store.
+            if (AttrEditorService.IsAllowlistCorrupt())
             {
                 allowlistCorrupt = true;
                 allowlistError = "Allowlist store is corrupt; refusing to save over it. Fix or restore config/ad-editable-attributes.json, then reload this page.";
