@@ -421,3 +421,28 @@ infrastructure; module versions per touched module (rule fires independently).
   2.3.8 in dev — and reports **UI responsiveness PASS**. This was the last open gate on
   Phase 3 sign-off; Phase 3 is now verified complete. Phase 4 is unblocked. Remaining
   owner-owned item is the post-freeze prod deploy with the §Deploy-notes alias check.
+- 2026-06-17, round 11 (Phase 4 / AC16 in progress): two register mediums fixed, one
+  commit each, at app 2.3.9 (dev-only, not yet in prod):
+  (a) **AD attribute allowlist pre-save corruption gate read disk fresh.** The gate in
+  `ModuleConfig.razor` SaveAllowlistAsync used the cached `GetAllowlist()`, so a file that
+  went corrupt within the 30s TTL after a valid load could still be overwritten. Added
+  `ADAttributeEditorService.IsAllowlistCorrupt()` (disk-fresh, no cache), mirroring
+  `SectionAccessService.IsFragmentCorrupt`; gate now calls it. Behavioral test proven
+  non-vacuous via temporary revert. ADAttributeEditor 1.3.3 → 1.3.4. (Surfaced by a GPT
+  review round on the prior batch; logged here so AC16's medium-findings work stays in one
+  place.)
+  (b) **Comms10k pre-count no longer hits the ADWS 5000-member cap** (register medium:
+  "Comms10k ADWS 5000-member ceiling"). `ExecuteReplaceAsync` computed the "(was M)" count
+  with `Get-ADGroupMember`, which expands members and throws past `MaxGroupOrMemberEntries`
+  (default 5000) — crashing the replace on the large tactical DL the module exists to serve.
+  Swapped to `(Get-ADGroup -Properties member).member.Count`, which reads the raw linked
+  attribute via range retrieval and is not capped (owner verified live: ~6800-member group
+  counts correctly). Direct-member count, which matches the flat DN list the replace writes.
+  Comms10k 1.0.0 → 1.0.1. No automated test: the service runs live AD PowerShell in an
+  inline runspace with no injection seam, and §2 forbids a testability refactor outside the
+  named finding — AD behavior is manual-verification-only. `GetMembersAsync` keeps the same
+  `Get-ADGroupMember` pattern by design (preview/export feature, separate concern).
+  Remaining AC16: PowerShell false-success batch (icacls exit codes, promote rollback
+  message, test-delinea secret printing — each with Pester); finding-3 doc cleanup
+  (plan task 24 + appsettings.json.sample, per the 2026-06-17 PAM decision); risk-accepts
+  for SSL-off and SQLite-obsoleted config findings; then the §10 close-out.

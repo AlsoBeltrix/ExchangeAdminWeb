@@ -194,14 +194,28 @@ public class Comms10kService
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
-            // Get initial count
-            ps.AddCommand("Get-ADGroupMember")
+            // Get initial count for the "(was M)" success message. Read the raw `member`
+            // linked attribute via Get-ADGroup -Properties member, NOT Get-ADGroupMember:
+            // Get-ADGroupMember expands each member into a full object and is bound by the
+            // ADWS MaxGroupOrMemberEntries cap (default 5000), so it throws on this module's
+            // large tactical DLs and would crash the replace before it runs. The `member`
+            // attribute is returned via range retrieval and is not subject to that cap
+            // (verified live: a ~6800-member group counts correctly). This counts direct
+            // members only, which is the right comparison since the replace below writes a
+            // flat DN list.
+            ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", group)
+              .AddParameter("Properties", "member")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            var initialMembers = ps.Invoke();
+            var groupResult = ps.Invoke();
             ps.Commands.Clear();
-            var initialCount = initialMembers.Count;
+            var initialCount = 0;
+            if (groupResult.Count > 0 &&
+                groupResult[0].Properties["member"]?.Value is System.Collections.ICollection members)
+            {
+                initialCount = members.Count;
+            }
 
             try
             {

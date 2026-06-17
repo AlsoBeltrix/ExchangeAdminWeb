@@ -54,28 +54,19 @@ medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
   went corrupt within the 30s TTL after a valid load could still be overwritten. Behavioral
   test added (valid load → corrupt file → cache still valid but gate detects corruption),
   proven non-vacuous via temporary revert to the cached call.
+- Comms10k pre-count no longer hits the ADWS 5000-member cap. `ExecuteReplaceAsync`
+  computed the "(was M)" count with `Get-ADGroupMember`, which expands members and throws
+  past `MaxGroupOrMemberEntries` (default 5000), crashing the replace on the large tactical
+  DL the module exists to serve. Swapped to `(Get-ADGroup -Properties member).member.Count`
+  (raw linked attribute via range retrieval, not capped; owner verified live ~6800 members).
+  Direct-member count, which matches the flat DN list the replace writes. `GetMembersAsync`
+  keeps `Get-ADGroupMember` by design (preview/export, separate concern). No automated test:
+  inline live-AD runspace with no injection seam, and §2 forbids a testability refactor —
+  manual-verification-only.
 - Module version bumps applied per touched module (GroupManagement 2.0.1, MailboxPermissions
-  1.0.2, ADAttributeEditor 1.3.4).
+  1.0.2, ADAttributeEditor 1.3.4, Comms10k 1.0.1).
 
-**DECIDED — Comms10k pre-count fix (pending implementation):**
-- `Services/Comms10kService.cs` `ExecuteReplaceAsync` (~line 198) runs `Get-ADGroupMember`
-  with `-ErrorAction Stop` OUTSIDE the try (try starts ~line 206) purely to compute
-  `initialCount` for the "(was M)" success message. `Get-ADGroupMember` is bound by the ADWS
-  `MaxGroupOrMemberEntries` 5000 cap (it expands each member into a full object) and THROWS
-  on the module's large DL, so the pre-count crashes the replace before it runs. The replace
-  itself (`Set-ADGroup -Replace member=...`, ~line 208) is a write — not capped, no read-back.
-  **DECISION (owner, 2026-06-17): option (c) — replace the pre-count with
-  `(Get-ADGroup -Identity <group> -Properties member).member.Count`.** That reads the raw
-  `member` linked attribute via range retrieval, which is NOT bound by the 5000 cap (owner
-  verified live: comms-10k returned 6840), so the accurate "(was M)" count is kept and the
-  pre-count can no longer crash. Caveat accepted by owner: `.member` is direct-member count
-  only (no nested expansion), which is the right comparison since the replace writes a flat
-  DN list. Earlier options (a)/(b) and the premise "both enumeration paths hit the cap" are
-  superseded — only `Get-ADGroupMember` hits it. No code committed yet. Note: `GetMembersAsync`
-  (~line 64) has the SAME `Get-ADGroupMember` pattern but is the preview/export feature —
-  leave it; separate concern. Do NOT cap the module — its purpose is large tactical DLs.
-
-**Remaining AC16 after Comms10k:**
+**Remaining AC16:**
 - PowerShell false-success batch (each one fix/commit, each needs Pester in `tests/ps/`):
   icacls exit codes unchecked in `deploy.ps1`/`Install-ExchangeAdminWeb.ps1`;
   promote-dev-to-prod rollback message; `test-delinea.ps1` secret-printing hardening.
