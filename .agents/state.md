@@ -203,6 +203,29 @@ schedules). Items 1 and 2 are bug fixes; item 3 is a new module needing its own 
     lookup tolerable (it is the expensive path the owner flagged). Depends on GM-1/GM-2
     being understood first, since it reuses the search path.
 
+## Queued work — Conference Rooms (owner-requested 2026-06-17)
+
+Not part of the ProdReadiness work stream; queued for approval/implementation when Michael
+schedules it.
+
+- **CR-1 (bug): Room Finder Apply failed all rows — IMPLEMENTED IN DEV 2026-06-17, pending
+  live verification.** Bug report: `D:\BugReports\roomfinder`. **Root cause (confirmed from
+  the operation trace + live tenant reproduction, NOT the draft's original guess):** the
+  failure was at **Set-User (Step 2)**, not Set-Place. City/State/Country are on-prem-AD-
+  mastered and dir-synced, so EXO `Set-User` rejects them ("being synchronized from your
+  on-premises organization"); `-ErrorAction Stop` made it fatal per row. The legacy
+  `SetupRoomFinder.ps1` worked because it set those via on-prem `Set-User`, not EXO.
+  **Fix:** write City(`l`)/State(`st`)/Country(`c`/`co`/`countryCode`) on the on-prem object
+  via `Set-ADUser`, resolved by userPrincipalName (==email here; assert exactly one) and
+  written by objectGUID. Country triple needs the ISO numeric .NET can't supply, so a new
+  hardcoded `Services/IsoCountryCodes.cs` (249 entries, integrity-tested) provides it; `co`
+  uses `RegionInfo.EnglishName` to match existing rooms. AD cred from PAM via a new
+  ConferenceRooms `DelineaSecretId` ConfigField. Module 2.0.6 → 2.0.7. 467 tests green;
+  guard tests proven non-vacuous. Plan: `docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md`
+  (Status: Implemented in dev). **Owner TODO before it works in prod:** configure the
+  ConferenceRooms AD `DelineaSecretId` in the deployed instance, then live-verify apply.
+  This fix is NOT part of the ProdReadiness 2.3.9 batch — separate module change.
+
 ## Blockers
 
 - None. (Prod freeze ended; 2.3.8 shipped to prod 2026-06-17. Task 20 PASSED.)

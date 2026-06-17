@@ -341,10 +341,11 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.6",
+            Version = "2.0.7",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the on-prem AD credential used to write dir-synced room attributes (City/State/Country) via Set-ADUser during Room Finder apply"),
                 new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. room-admins@example.com)"),
                 new("ExecConfCoordinatorsGroup", "Exec Conf Coordinators Group", "Group for executive conference coordinators (e.g. exec-coordinators@example.com)"),
                 new("ConfExecAdminsGroup", "Conf Exec Admins Group", "Executive conference admins group (e.g. exec-admins@example.com)"),

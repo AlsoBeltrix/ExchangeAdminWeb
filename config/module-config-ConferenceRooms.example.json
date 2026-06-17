@@ -1,5 +1,7 @@
 {
   "_comment": "EXAMPLE schema for the Conference Rooms module config. Copy to module-config-ConferenceRooms.json in the deployed instance's config/ directory and replace placeholders with your environment's real groups/OU/contacts (or set them via the Module Config admin page). Real values are deploy-only and not stored in source control. RestrictedMailTip/ExecMailTip are optional and omitted here.",
+  "_comment_DelineaSecretId": "Secret Server ID for the on-prem AD credential used to write dir-synced room attributes (City/State/Country) via Set-ADUser during Room Finder apply. Comes from the deployment PAM; never a plaintext credential here. Required only if Room Finder apply is used.",
+  "DelineaSecretId": "0",
   "DefaultArbiterGroup": "room-admins@example.com",
   "ExecConfCoordinatorsGroup": "exec-coordinators@example.com",
   "ConfExecAdminsGroup": "exec-admins@example.com",

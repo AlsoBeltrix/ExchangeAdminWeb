@@ -127,6 +127,82 @@ public class ConferenceRoomService : ExchangeServiceBase
     public static string BuildRoomListName(string building) => $"{building.Trim()} Conference Rooms";
     public static string BuildLegacyRoomListName(string key) => $"RoomList-{key.Trim()}";
 
+    // -------------------------------------------------------------------------
+    // Room Finder synced-attribute mapping (City/State/Country → on-prem AD)
+    // -------------------------------------------------------------------------
+    // City, StateOrProvince and CountryOrRegion are on-prem-AD-mastered and dir-synced, so
+    // EXO Set-User rejects them ("being synchronized from your on-premises organization").
+    // They are written on-prem with Set-ADUser instead. EXO Set-User -CountryOrRegion wrote
+    // THREE AD attributes as a unit — c (alpha-2), co (English name), countryCode (ISO
+    // numeric) — so the replacement must set all three to match existing rooms. See
+    // docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md.
+
+    /// <summary>
+    /// Maps an ISO 3166-1 alpha-2 country code (as Shaun's CSV provides, e.g. "IE") to the
+    /// three AD country attributes EXO's Set-User -CountryOrRegion wrote as a unit:
+    /// c (alpha-2, uppercased), co (English short name from RegionInfo, matching existing
+    /// room objects), and countryCode (ISO 3166-1 numeric, from the static IsoCountryCodes
+    /// table since .NET cannot supply it). Returns null for blank input (nothing to write).
+    /// Throws ArgumentException for a non-blank value that is not a recognized alpha-2 code,
+    /// so the row fails closed rather than writing a partial/inconsistent country.
+    /// </summary>
+    public static (string c, string co, int countryCode)? BuildCountryAttributes(string? countryOrRegion)
+    {
+        if (string.IsNullOrWhiteSpace(countryOrRegion))
+            return null;
+
+        var alpha2 = countryOrRegion.Trim().ToUpperInvariant();
+        var numeric = IsoCountryCodes.GetNumeric(alpha2);
+        if (numeric is null)
+            throw new ArgumentException(
+                $"'{countryOrRegion}' is not a recognized ISO 3166-1 alpha-2 country code. " +
+                $"Use the two-letter code (e.g. IE, US, GB). If this is a new country, add it to IsoCountryCodes.cs.",
+                nameof(countryOrRegion));
+
+        string co;
+        try
+        {
+            co = new System.Globalization.RegionInfo(alpha2).EnglishName;
+        }
+        catch (ArgumentException)
+        {
+            // In the IsoCountryCodes table but unknown to this runtime's RegionInfo
+            // (extremely unlikely). Fail closed rather than write c/countryCode without co.
+            throw new ArgumentException(
+                $"Country '{alpha2}' has no display name on this system; cannot set the 'co' attribute.",
+                nameof(countryOrRegion));
+        }
+
+        return (alpha2, co, numeric.Value);
+    }
+
+    /// <summary>
+    /// Builds the AD attribute set to write via Set-ADUser for a Room Finder row's synced
+    /// location fields: l (City), st (StateOrProvince), and the c/co/countryCode country
+    /// triple. Blank fields are omitted (not written as empty). Returns an empty dictionary
+    /// when nothing is set, so the caller can skip the Set-ADUser call entirely rather than
+    /// invoking it with no attributes. Throws ArgumentException for an unmappable country.
+    /// </summary>
+    public static Dictionary<string, object> BuildSyncedUserAttributes(string? city, string? state, string? countryOrRegion)
+    {
+        var attrs = new Dictionary<string, object>(StringComparer.Ordinal);
+
+        if (!string.IsNullOrWhiteSpace(city))
+            attrs["l"] = city.Trim();
+        if (!string.IsNullOrWhiteSpace(state))
+            attrs["st"] = state.Trim();
+
+        var country = BuildCountryAttributes(countryOrRegion);
+        if (country is not null)
+        {
+            attrs["c"] = country.Value.c;
+            attrs["co"] = country.Value.co;
+            attrs["countryCode"] = country.Value.countryCode;
+        }
+
+        return attrs;
+    }
+
     // True when an EXO write was rejected because the object is mastered on-premises
     // (DirSync'd) and must be written via Set-RemoteMailbox instead. Pure + static so the
     // classification is unit-testable. The two phrases are EXO's stable wording for this
@@ -278,13 +354,14 @@ public class ConferenceRoomService : ExchangeServiceBase
             return result;
         }
 
-        var opResult = await RunAsync((ps, tracker) =>
+        // Step 1: Set-Place (EXO) — Building/Capacity/Floor/devices are NOT dir-synced, so
+        // EXO accepts them. City is intentionally NOT sent here; it is a synced attribute
+        // written on-prem in Step 2.
+        var placeResult = await RunAsync((ps, tracker) =>
         {
-            // Step 1: Set-Place
             _operationTrace?.Step("SetPlace", backend: "EXO", command: "Set-Place", target: roomEmail);
             var placeCmd = ps.AddCommand("Set-Place")
               .AddParameter("Identity", roomEmail)
-              .AddParameter("City", city)
               .AddParameter("Building", building)
               .AddParameter("Capacity", capacity)
               .AddParameter("Floor", floor)
@@ -297,22 +374,33 @@ public class ConferenceRoomService : ExchangeServiceBase
                 placeCmd.AddParameter("VideoDeviceName", videoDevice);
             Invoke(ps, tracker);
             result.Steps.Add(new RoomOperationStep { Stage = "Set-Place", Success = true });
+        });
 
-            // Step 2: Set-User (country, state, city)
-            _operationTrace?.Step("SetUser", backend: "EXO", command: "Set-User", target: roomEmail);
-            ps.AddCommand("Set-User")
-              .AddParameter("Identity", roomEmail)
-              .AddParameter("City", city)
-              .AddParameter("ErrorAction", "Stop");
-            if (!string.IsNullOrWhiteSpace(countryOrRegion))
-                ps.AddParameter("CountryOrRegion", countryOrRegion);
-            if (!string.IsNullOrWhiteSpace(state))
-                ps.AddParameter("StateOrProvince", state);
-            Invoke(ps, tracker);
-            result.Steps.Add(new RoomOperationStep { Stage = "Set-User", Success = true });
+        if (!placeResult.Success)
+        {
+            result.Success = false;
+            result.Message = placeResult.Message;
+            result.Steps.Add(new RoomOperationStep { Stage = "Set-Place", Success = false, Error = placeResult.Message });
+            return result;
+        }
 
-            // Step 3: Timezone + WorkDays
-            if (!string.IsNullOrWhiteSpace(timezone))
+        // Step 2: Set-ADUser (on-prem AD) — City/State/Country are dir-synced AD attributes
+        // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
+        _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: roomEmail);
+        var adError = await SetSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
+        if (adError != null)
+        {
+            result.Success = false;
+            result.Message = adError;
+            result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = false, Error = adError });
+            return result;
+        }
+        result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = true });
+
+        // Step 3: Timezone + WorkDays (EXO) — mailbox regional config is not synced.
+        if (!string.IsNullOrWhiteSpace(timezone))
+        {
+            var tzResult = await RunAsync((ps, tracker) =>
             {
                 _operationTrace?.Step("SetTimezone", backend: "EXO", command: "Set-MailboxRegionalConfiguration", target: roomEmail);
                 ps.AddCommand("Set-MailboxRegionalConfiguration")
@@ -328,15 +416,15 @@ public class ConferenceRoomService : ExchangeServiceBase
                   .AddParameter("ErrorAction", "Stop");
                 Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = "Set-Timezone/WorkDays", Success = true });
-            }
-        });
+            });
 
-        if (!opResult.Success)
-        {
-            result.Success = false;
-            result.Message = opResult.Message;
-            result.Steps.Add(new RoomOperationStep { Stage = "Metadata", Success = false, Error = opResult.Message });
-            return result;
+            if (!tzResult.Success)
+            {
+                result.Success = false;
+                result.Message = tzResult.Message;
+                result.Steps.Add(new RoomOperationStep { Stage = "Set-Timezone/WorkDays", Success = false, Error = tzResult.Message });
+                return result;
+            }
         }
 
         // Step 4: Room list — keyed on building (the room list IS the building; city is
@@ -359,7 +447,9 @@ public class ConferenceRoomService : ExchangeServiceBase
         }
 
         result.Success = true;
-        result.Message = "Room metadata and room list configured.";
+        result.Message = string.IsNullOrWhiteSpace(city) && string.IsNullOrWhiteSpace(state) && string.IsNullOrWhiteSpace(countryOrRegion)
+            ? "Room metadata and room list configured."
+            : "Room metadata and room list configured. City/State/Country were written on-prem and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min).";
         return result;
     }
 
@@ -1080,6 +1170,109 @@ public class ConferenceRoomService : ExchangeServiceBase
                 : "Skipped - on-prem Exchange decommissioned"
         });
         return Task.CompletedTask;
+    }
+
+    // Writes the dir-synced location attributes (City/State/Country) on the on-prem AD
+    // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
+    // ("being synchronized from your on-premises organization") — the root cause of the
+    // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
+    // Returns null on success; a non-null string is the failure message for the row.
+    // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
+    // the EXO pool. Resolves the object by userPrincipalName (== email in this environment,
+    // forest-unique), asserts EXACTLY ONE match, and writes by the returned objectGUID so the
+    // mutation targets an immutable identity and can never hit the wrong object.
+    private async Task<string?> SetSyncedAttributesViaAdAsync(string roomEmail, string city, string state, string countryOrRegion)
+    {
+        Dictionary<string, object> attrs;
+        try
+        {
+            attrs = BuildSyncedUserAttributes(city, state, countryOrRegion);
+        }
+        catch (ArgumentException ex)
+        {
+            return ex.Message; // unmappable country — fail the row closed
+        }
+
+        if (attrs.Count == 0)
+            return null; // nothing synced to write for this row
+
+        var creds = await GetModuleCredentialsAsync($"Set-ADUser synced attributes for {roomEmail}");
+        if (creds is null)
+            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                ps.Commands.Clear();
+
+                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var upn = roomEmail.Replace("'", "''");
+
+                // Resolve by UPN; assert exactly one object.
+                ps.AddCommand("Get-ADUser")
+                  .AddParameter("Filter", $"UserPrincipalName -eq '{upn}'")
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                var found = ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? $"AD lookup failed for {roomEmail}.";
+                ps.Commands.Clear();
+
+                if (found.Count == 0)
+                    return $"No AD object found with userPrincipalName '{roomEmail}'. City/State/Country not written.";
+                if (found.Count > 1)
+                    return $"Multiple AD objects ({found.Count}) match userPrincipalName '{roomEmail}'. Refusing to write to avoid the wrong object.";
+
+                var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
+                if (objectGuid is null)
+                    return $"Resolved AD object for '{roomEmail}' has no ObjectGUID; refusing to write.";
+
+                // Write by objectGUID (immutable identity), not by UPN.
+                ps.AddCommand("Set-ADUser")
+                  .AddParameter("Identity", objectGuid.ToString())
+                  .AddParameter("Replace", new System.Collections.Hashtable(attrs))
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? $"Set-ADUser failed for {roomEmail}.";
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Set-ADUser synced-attribute write failed for {Room}", roomEmail);
+                return $"Failed to write City/State/Country on the AD object: {ex.Message}";
+            }
+        });
+    }
+
+    private static string? FirstError(PowerShell ps) =>
+        ps.Streams.Error.Select(e => e.Exception?.Message ?? e.ToString())
+          .FirstOrDefault(m => !string.IsNullOrWhiteSpace(m));
+
+    private static PSCredential CreateAdCredential(string username, string password, string domain)
+    {
+        var fullUsername = username.Contains('\\') || username.Contains('@')
+            ? username
+            : $"{domain}\\{username}";
+        var securePassword = new System.Security.SecureString();
+        foreach (var c in password)
+            securePassword.AppendChar(c);
+        securePassword.MakeReadOnly();
+        return new PSCredential(fullUsername, securePassword);
     }
 
     // -------------------------------------------------------------------------
