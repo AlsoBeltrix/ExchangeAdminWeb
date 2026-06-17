@@ -35,17 +35,21 @@ repo facts change.
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-**NEXT ACTION:** AC16 code + finding-3 doc cleanup are COMPLETE (icacls 060fc7f; promote
-rollback message 3afd771; test-delinea secret printing 5b6b74a; finding-3 doc cleanup
-12d8413). Only the §10 close-out remains, all doc-only: write the risk-accepts (SSL-off
-accepted-as-designed non-finding; SQLite-obsoleted config-file findings) and the full AC16
-outcomes (all fixes + the finding-3 decision resolution) into `docs/ProdReadiness-Plan.md`
-§10, then flip Phase 4 / AC16 to complete and close the work stream.
+**NEXT ACTION:** ProdReadiness work stream is COMPLETE — `docs/ProdReadiness-Plan.md`
+Status flipped to **Implemented** (close-out in §10 round 17, commit a5ab6aa). All AC1–AC16
+met; every AC16-scoped register medium is a fix or a recorded risk-accept (SSL-off
+accepted-as-designed; GetGraphClientAsync superseded by per-module GraphTokenClient;
+PSCredential DRY-only deferred; config case-sensitivity + last-write-wins obsoleted-by-SQLite).
+No ProdReadiness work remains. The only open item is owner-operational: **deploy app 2.3.9 to
+prod** (dev is ahead; 2.3.8 shipped 2026-06-17) — run the §Deploy-notes alias check first.
+Next agent should pick from Queued work (TestAccountPool removal is the cleanest single change;
+GM-1/GM-2 bugs; or the SQLite/module-packaging plans awaiting Michael's review).
 (An out-of-stream bug, CR-1 Room Finder, was implemented this session — see Queued work;
 it is NOT part of the 2.3.9 ProdReadiness batch and does not gate it.)
 
-Phase 4 is the only open ProdReadiness work. AC15 (docs/state drift sweep) is done. AC16
-(remaining medium findings, one fix per commit or risk-accept in plan §10) is mid-flight.
+**ProdReadiness Phase 4 / AC16 is CLOSED (2026-06-17, commit a5ab6aa).** Plan Status flipped
+to Implemented; close-out and risk-accept register in `docs/ProdReadiness-Plan.md` §10
+round 17. AC15 (docs/state drift) and AC16 (register mediums) both complete; all AC1–AC16 met.
 
 **Done this batch (all at app 2.3.9, dev-only, not in prod):**
 - Deny-by-default fallback policy is now a true deny-all assertion (runtime-verified the
@@ -80,18 +84,18 @@ Phase 4 is the only open ProdReadiness work. AC15 (docs/state drift sweep) is do
 - Module version bumps applied per touched module (GroupManagement 2.0.1, MailboxPermissions
   1.0.2, ADAttributeEditor 1.3.4, Comms10k 1.0.1).
 
-**Remaining AC16:**
-- PowerShell false-success batch (each one fix/commit, each needs Pester in `tests/ps/`):
-  ~~icacls exit codes~~ DONE; ~~promote-dev-to-prod rollback message~~ DONE (3afd771);
-  ~~`test-delinea.ps1` secret-printing hardening~~ DONE (5b6b74a). **Batch complete.**
-- Finding 3 ([creds] SMTP/ServiceNow plaintext) is RESOLVED BY DECISION (2026-06-17,
-  `.agents/decisions.md`) — NOT a code change. **Doc cleanup DONE (12d8413):** plan task 24
-  restated as resolved-by-decision (was Delinea-specific); `appsettings.json.sample` now
-  annotates SmtpPassword/ServiceNow Password as PAM-sourced in prod.
-- SSL-off finding: accepted-as-designed (non-finding).
-- SQLite-obsoleted config-file findings: risk-accept in plan §10.
-- **Close-out:** write all AC16 outcomes (fixes + risk-accepts + finding-3 doc cleanup)
-  into `docs/ProdReadiness-Plan.md` §10, then close Phase 4.
+**AC16 — ALL DONE (close-out plan §10 round 17, commit a5ab6aa):**
+- PowerShell false-success batch: ~~icacls exit codes~~ (060fc7f); ~~promote rollback
+  message~~ (3afd771); ~~test-delinea secret printing~~ (5b6b74a). Complete.
+- Audit category misfiling: ~~EmergencyDisable/LicensingUpdates/Comms10k file under own
+  categories~~ (a5ab6aa), with AdminEventLog filter options + module bumps + non-vacuous
+  source-scan tests.
+- Finding 3 ([creds] SMTP/ServiceNow plaintext): RESOLVED BY DECISION 2026-06-17; doc
+  cleanup DONE (12d8413).
+- Risk-accepted in plan §10 round 17: SSL-off (accepted-as-designed; cleartext-password path
+  is TestAccountPool's, queued for removal); GetGraphClientAsync 5-copy consolidation
+  (superseded by per-module GraphTokenClient, 7ba76a9); PSCredential 8-copy factory (DRY-only,
+  deferred); config case-sensitivity + last-write-wins (obsoleted-by-SQLite-swap).
 
 **Two GPT review rounds this batch were addressed** (deny-all fallback, SectionAccess
 cache, allowlist fail-closed all came from them). Each fix shipped with a guard test proven

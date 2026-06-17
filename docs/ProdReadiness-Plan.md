@@ -1,8 +1,8 @@
 # ProdReadiness Plan
 
-Status: Approved
+Status: Implemented
 Owner: Michael
-Last verified against code: commit 0021502 / 2026-06-12
+Last verified against code: commit a5ab6aa / 2026-06-17 (AC16 close-out; see §10 round 17)
 
 <!-- Sections marked [YOU] are written or approved by Michael, in plain language.
      Sections marked [MODEL] are drafted by the model and only skimmed by Michael.
@@ -471,3 +471,105 @@ infrastructure; module versions per touched module (rule fires independently).
   `icacls | Out-Null` failed exactly one test. No app version bump (ops-script-only change,
   no deployed binaries change). Remaining false-success batch: promote-dev-to-prod rollback
   message; test-delinea.ps1 secret printing.
+- 2026-06-17, round 13 (Phase 4 / AC16, PowerShell false-success batch, item 2 of 3):
+  **promote-dev-to-prod rollback message no longer lies on a failed rollback.** The
+  closing `throw` asserted "Prod has been restored from backup" unconditionally, even when
+  the rollback robocopy failed (exit ≥ 8), the rollback `catch` fired, or no backup existed
+  — a Success-aggregation failure (the operator's last line claimed a clean restore that may
+  not have happened). Added `$rolledBack`, set only in the rollback robocopy success branch;
+  the final throw now reports "restored from backup" only when that flag is set, and
+  "automatic rollback did not complete — restore manually" otherwise. One static Pester guard
+  in `tests/ps/`, proven non-vacuous via revert to the unconditional throw. No app version
+  bump (ops-script-only). Commit 3afd771.
+- 2026-06-17, round 14 (Phase 4 / AC16, PowerShell false-success batch, item 3 of 3 — batch
+  complete): **test-delinea.ps1 no longer leaks raw Delinea auth responses.** It echoed
+  `$_.ErrorDetails.Message` (the raw HTTP body from the oauth2/token and secrets endpoints)
+  to the console on failure — exactly the "raw Delinea auth responses" Constitution line 42
+  forbids, and console output lands in transcripts/CI logs. Same file took the password as a
+  plain `[string]` (PSReadLine history + process command line), hardcoded the internal ADI
+  Secret Server host as the default `ServerUrl` in an environment-neutral `tools/` script, and
+  never set `$ErrorActionPreference = "Stop"`. Fix: failures report only HTTP status/reason via
+  a `Get-SafeHttpError` helper (never the body; falls back to the exception message only when
+  there is no HTTP response); `-Password` is `[securestring]` flattened to plaintext only at
+  request-build time in a helper that zero-frees the BSTR; `-ServerUrl` is mandatory with no
+  default. Four static Pester guards in `tests/ps/`, each proven non-vacuous via targeted
+  revert. No app version bump (ops-script-only). Commit 5b6b74a.
+- 2026-06-17, round 15 (Phase 4 / AC16, finding-3 doc cleanup): the plaintext SMTP/ServiceNow
+  password finding ([creds], task 24/Q4) was **resolved by decision 2026-06-17**
+  (`.agents/decisions.md`): the Constitution's Credential Isolation rule is generalized so
+  every privileged credential — explicitly including SMTP and ServiceNow service passwords —
+  comes from the deployment's PAM (Delinea today, not hardcoded), never plaintext in
+  `appsettings.json`. This deployment configures neither password (open relay, no creds), so
+  there is no live exposure and no code change. Residual doc cleanup only: task 24 restated as
+  resolved-by-decision (was Delinea-specific, contradicting the generalized rule);
+  `appsettings.json.sample` annotates `SmtpPassword`/ServiceNow `Password` as PAM-sourced in
+  prod (existing `_Note` sibling-key convention; still valid JSON). Docs-only, no app version
+  bump. Commit 12d8413.
+- 2026-06-17, round 16 (Phase 4 / AC16, audit category misfiling — last code finding):
+  **EmergencyDisable, LicensingUpdates, and Comms10k now file audit events under their own
+  categories.** They borrowed category-hardcoding helpers — `LogMigrationAction` →
+  "MigrationAction" (EmergencyDisable account disables; all six Comms10k_Replace sites) and
+  `LogLookupAction` → "Lookup" (LicensingUpdates AD attribute *writes*) — so a security-critical
+  disable filed as a migration, license mutations filed as read-only lookups, and a compliance
+  query by category missed them. Each now uses the generic `LogModuleAction` with its own module
+  category; `AdminEventLog`'s filter gains EmergencyDisable/LicensingUpdates/Comms10k options
+  (MigrationAction/Lookup stay for real migrations/lookups). Module bumps: EmergencyDisable
+  1.0.2→1.0.3, LicensingUpdates 1.0.0→1.0.1, Comms10k 1.0.1→1.0.2, AdminEventLog 1.0.1→1.0.2.
+  No base app version bump — `AuditService` itself is unchanged; only per-module call sites.
+  New `AuditCategoryFilingTests` source-scans each call site (sites run live AD/Blazor with no
+  injection seam; §2 forbids a testability refactor outside a named finding), proven non-vacuous
+  via revert. 471/471 xUnit green. Commit a5ab6aa.
+- 2026-06-17, round 17 (Phase 4 / AC16 CLOSE-OUT — work stream complete). Every AC16-scoped
+  register medium (plan §7 list) is now dispositioned as a fix or a recorded risk-accept:
+
+  **Fixed (one commit each, tests proven non-vacuous):**
+  - AD attribute allowlist pre-save corruption gate reads disk fresh — a4686c8 (round 11)
+  - Comms10k ADWS 5000-member ceiling — 0f904c3 (round 11)
+  - `ModuleConfigService` atomic legacy migration — cdf0153 (earlier; corrupt-save guard +
+    atomic write)
+  - icacls native exit codes — 060fc7f (round 12)
+  - promote-dev-to-prod rollback message — 3afd771 (round 13)
+  - test-delinea.ps1 secret printing — 5b6b74a (round 14)
+  - audit category misfiling — a5ab6aa (round 16)
+  - Plus the GPT-review hardening folded into this batch: deny-all fallback policy,
+    `SectionAccessService` fail-closed `BuildFailClosedSet` + cache invalidation on file change,
+    GroupManagement protected-principal check moved into the service, MailboxPermissions
+    per-right partial-success reporting (all dev-only at 2.3.9).
+
+  **Resolved by decision (not code):**
+  - Plaintext SMTP/ServiceNow secrets ([creds]/Q4) — PAM credential decision 2026-06-17 +
+    doc cleanup 12d8413 (round 15).
+
+  **Risk-accepted (deferred, with rationale):**
+  1. **SSL-off / opportunistic STARTTLS ([creds], review line 426)** — accepted as designed.
+     Our SMTP relay is internal and credential-less (Q4: open relay, EmailService defaults
+     `SmtpUsername`/`SmtpPassword` to empty), so no SMTP-auth secret transits the wire. The
+     one cleartext-secret path the finding names — `SendTestAccountPasswordAsync` emailing a
+     live test-account password — belongs to the TestAccountPool module, which is queued for
+     **full removal** (state.md Queued work), retiring that path entirely. Revisit only if a
+     future deployment introduces an authenticated relay.
+  2. **GetGraphClientAsync helper (5 copies), review line 398** — risk-accepted as
+     **superseded by architecture**. The finding's "consolidate to one shared factory"
+     contradicts the deliberate per-module `GraphTokenClient` design adopted in commit
+     7ba76a9 ("Replace GraphClientService with per-module GraphTokenClient"). The
+     Graph→AD `DelineaSecretId` *fallback* sub-issue is harmless today (the three modules
+     declare only `GraphDelineaSecretId`) and is bounded by the same per-module catalog;
+     a one-time config migration (not a permanent runtime fallback) is the right fix if/when
+     any of them gains an AD secret. Not worth a speculative refactor pre-release.
+  3. **PSCredential factory (8+ copies), review line 398(1)** — risk-accepted as a
+     **DRY-only refactor with no behavior change**. Each copy builds the same
+     `new PSCredential(user, secureString)`; consolidating is hygiene, not correctness, and
+     touching every AD service pre-release adds risk without changing behavior. Deferred.
+  4. **Config-file-mechanism findings — case-sensitivity mismatch on `ReadModuleConfig`'s
+     success path (review line 378) and whole-file last-write-wins module-config saves
+     (review line 386)** — risk-accepted as **obsoleted-by-design by the SQLite config swap**
+     (decision 2026-06-12; `docs/SqliteConfigStore-Plan.md`). Both are artifacts of JSON-file
+     storage: a transactional single-writer DB retires the case-comparer drift and the
+     whole-file-overwrite race structurally. Fixing the JSON paths now is throwaway work the
+     swap will delete. If the swap is shelved, these return to the active backlog.
+
+  **Status:** AC15 (docs/state drift) and AC16 (register mediums) are complete; all of
+  AC1–AC16 are met. Phase 4 is closed and the ProdReadiness work stream is **Implemented**.
+  The only remaining item is owner-owned and operational, not a plan task: the prod deploy of
+  app **2.3.9** (dev is ahead of prod; 2.3.8 shipped to prod 2026-06-17). The §Deploy-notes
+  alias check still applies to that deploy.
