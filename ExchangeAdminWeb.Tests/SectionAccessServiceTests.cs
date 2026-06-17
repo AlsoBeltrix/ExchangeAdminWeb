@@ -115,6 +115,61 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
+    public void GetGroupsForSection_CorruptThenRepairedOnDisk_ReflectsRepair_NoStaleEmptyCache()
+    {
+        // Reproduces the blank-render-save trap (incident 2026-06-12): the first read
+        // sees a corrupt fragment and caches an empty result; after an operator restores
+        // the file on disk, a later read must reflect the repair instead of serving the
+        // stale empty cache (which would let the admin page render "no groups" and save
+        // over the restored file).
+        WriteFragmentFile("{ this is not valid json !!!");
+        var service = CreateService();
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // caches empty
+
+        // Operator restores a valid fragment. Force a distinct last-write time so the
+        // change is unambiguous regardless of filesystem timestamp resolution.
+        var fragment = new JsonObject
+        {
+            ["Security"] = new JsonObject
+            {
+                ["SectionAccess"] = new JsonObject
+                {
+                    ["MailboxPermissions"] = JsonSerializer.SerializeToNode(new[] { "GroupA", "GroupB" })
+                }
+            }
+        };
+        File.WriteAllText(_configFilePath, fragment.ToJsonString());
+        File.SetLastWriteTimeUtc(_configFilePath, DateTime.UtcNow.AddSeconds(5));
+
+        var result = service.GetGroupsForSection("MailboxPermissions");
+        Assert.Equal(new[] { "GroupA", "GroupB" }, result);
+    }
+
+    [Fact]
+    public void GetGroupsForSection_AbsentThenCreatedOnDisk_ReflectsNewFile()
+    {
+        // Same staleness class for absent -> created: a read with no fragment file caches
+        // the "None" result; once the file appears it must be picked up.
+        var service = CreateService();
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // fail-closed, caches None
+
+        var fragment = new JsonObject
+        {
+            ["Security"] = new JsonObject
+            {
+                ["SectionAccess"] = new JsonObject
+                {
+                    ["MailboxPermissions"] = JsonSerializer.SerializeToNode(new[] { "GroupA" })
+                }
+            }
+        };
+        WriteFragmentFile(fragment.ToJsonString());
+
+        var result = service.GetGroupsForSection("MailboxPermissions");
+        Assert.Equal(new[] { "GroupA" }, result);
+    }
+
+    [Fact]
     public void GetGroupsForSection_FragmentAbsentButLegacyAppSettings_ReturnsLegacyGroups()
     {
         var legacyConfig = new Dictionary<string, string?>

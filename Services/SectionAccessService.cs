@@ -16,7 +16,11 @@ public class SectionAccessService
     private readonly object _writeLock = new();
     private CachedAccess? _cache;
 
-    private sealed record CachedAccess(Dictionary<string, string[]> Data, SectionAccessSource Source);
+    private sealed record CachedAccess(
+        Dictionary<string, string[]> Data,
+        SectionAccessSource Source,
+        bool FileExisted,
+        DateTime? FileStamp);
 
     public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env, Modules.ModuleCatalog catalog)
     {
@@ -106,13 +110,37 @@ public class SectionAccessService
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()
     {
+        // The fragment file can change on disk underneath a running app: an operator
+        // restoring a corrupt/missing config (incident 2026-06-12), or promote-dev-to-prod
+        // merging it. Key the cache on the file's existence + last-write time so a stale
+        // entry — especially an empty one cached from a corrupt/missing first read — is
+        // dropped once the file is fixed, instead of being served until app-pool restart
+        // (which is what let a repaired store still render blank and be saved over).
+        var (exists, stamp) = GetFileState();
+
         var cached = _cache;
-        if (cached != null)
+        if (cached != null && cached.FileExisted == exists && cached.FileStamp == stamp)
             return (cached.Data, cached.Source);
 
         var result = ReadSectionAccessFromDisk();
-        _cache = new CachedAccess(result.data, result.source);
+        _cache = new CachedAccess(result.data, result.source, exists, stamp);
         return result;
+    }
+
+    private (bool exists, DateTime? stamp) GetFileState()
+    {
+        try
+        {
+            return File.Exists(_configFilePath)
+                ? (true, File.GetLastWriteTimeUtc(_configFilePath))
+                : (false, null);
+        }
+        catch
+        {
+            // If we cannot even stat the file, force a re-read (treat as changed) rather
+            // than trust a stale cache.
+            return (false, null);
+        }
     }
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccessFromDisk()
