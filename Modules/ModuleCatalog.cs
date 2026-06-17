@@ -56,7 +56,16 @@ public sealed class ModuleCatalog
             .AddRequirements(new GroupAuthorizationRequirement(allowedGroups))
             .Build();
         options.AddPolicy("GroupPolicy", groupPolicy);
-        options.FallbackPolicy = groupPolicy;
+
+        // Fallback policy for endpoints that declare NO authorization metadata.
+        // Deny-by-default: require an authenticated user only. Do NOT reuse groupPolicy
+        // here — that would silently subject any undeclared endpoint (a future health
+        // check, download, or minimal API added without an [Authorize] attribute) to the
+        // legacy app-wide AllowedGroups group gate the Constitution removed. An endpoint
+        // that needs group/module gating must declare its own policy explicitly.
+        options.FallbackPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
 
         var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

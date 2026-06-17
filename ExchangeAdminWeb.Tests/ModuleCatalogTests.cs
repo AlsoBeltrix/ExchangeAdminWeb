@@ -1,5 +1,7 @@
+using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Modules;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Infrastructure;
 using System.Text.RegularExpressions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -117,6 +119,27 @@ public class ModuleCatalogTests
 
         foreach (var name in expectedPolicies)
             Assert.NotNull(options.GetPolicy(name));
+    }
+
+    [Fact]
+    public void Catalog_FallbackPolicy_DeniesByDefault_WithoutGroupGate()
+    {
+        // Endpoints that declare no authorization metadata fall under FallbackPolicy.
+        // It must require an authenticated user, and it must NOT carry the legacy
+        // AllowedGroups group requirement (which would silently resurrect the removed
+        // app-wide group gate on any undeclared endpoint).
+        var options = new AuthorizationOptions();
+        _catalog.ConfigureAuthorizationPolicies(options, new[] { "TestGroup" }, new[] { "AdminGroup" });
+
+        var fallback = options.FallbackPolicy;
+        Assert.NotNull(fallback);
+
+        // Requires authentication (DenyAnonymousAuthorizationRequirement is what
+        // RequireAuthenticatedUser adds).
+        Assert.Contains(fallback!.Requirements, r => r is DenyAnonymousAuthorizationRequirement);
+
+        // Does NOT inherit the AllowedGroups group gate.
+        Assert.DoesNotContain(fallback.Requirements, r => r is GroupAuthorizationRequirement);
     }
 
     [Fact]
