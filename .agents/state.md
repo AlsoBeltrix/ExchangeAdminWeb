@@ -35,12 +35,12 @@ repo facts change.
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-**NEXT ACTION:** the AC16 PowerShell false-success batch is COMPLETE (icacls 060fc7f;
-promote rollback message 3afd771; test-delinea secret printing 5b6b74a — all with
-non-vacuous Pester). Remaining AC16 is doc-only + close-out, no more code: finding-3 doc
-cleanup (plan task 24 + `appsettings.json.sample` PAM note), the risk-accepts (SSL-off
-non-finding; SQLite-obsoleted config-file findings) into plan §10, then write all AC16
-outcomes into `docs/ProdReadiness-Plan.md` §10 and close Phase 4.
+**NEXT ACTION:** AC16 code + finding-3 doc cleanup are COMPLETE (icacls 060fc7f; promote
+rollback message 3afd771; test-delinea secret printing 5b6b74a; finding-3 doc cleanup
+12d8413). Only the §10 close-out remains, all doc-only: write the risk-accepts (SSL-off
+accepted-as-designed non-finding; SQLite-obsoleted config-file findings) and the full AC16
+outcomes (all fixes + the finding-3 decision resolution) into `docs/ProdReadiness-Plan.md`
+§10, then flip Phase 4 / AC16 to complete and close the work stream.
 (An out-of-stream bug, CR-1 Room Finder, was implemented this session — see Queued work;
 it is NOT part of the 2.3.9 ProdReadiness batch and does not gate it.)
 
@@ -85,9 +85,9 @@ Phase 4 is the only open ProdReadiness work. AC15 (docs/state drift sweep) is do
   ~~icacls exit codes~~ DONE; ~~promote-dev-to-prod rollback message~~ DONE (3afd771);
   ~~`test-delinea.ps1` secret-printing hardening~~ DONE (5b6b74a). **Batch complete.**
 - Finding 3 ([creds] SMTP/ServiceNow plaintext) is RESOLVED BY DECISION (2026-06-17,
-  `.agents/decisions.md`) — NOT a code change. Residual doc cleanup only: plan task 24 is
-  still Delinea-specific and contradicts the generalized "deployment PAM" decision; and
-  `appsettings.json.sample` should note these fields come from the deployment PAM in prod.
+  `.agents/decisions.md`) — NOT a code change. **Doc cleanup DONE (12d8413):** plan task 24
+  restated as resolved-by-decision (was Delinea-specific); `appsettings.json.sample` now
+  annotates SmtpPassword/ServiceNow Password as PAM-sourced in prod.
 - SSL-off finding: accepted-as-designed (non-finding).
 - SQLite-obsoleted config-file findings: risk-accept in plan §10.
 - **Close-out:** write all AC16 outcomes (fixes + risk-accepts + finding-3 doc cleanup)
