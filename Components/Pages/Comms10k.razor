@@ -308,7 +308,7 @@
                             ? $"Identity '{email}' is ambiguous — matches multiple AD users."
                             : $"Protection check unavailable for {email}.";
                         result = new Comms10kUpdateResult { Success = false, Message = reason };
-                        try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, reason); } catch { }
+                        try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, reason); } catch { }
                         return;
                     }
                     if (resolved != null)
@@ -317,7 +317,7 @@
                         if (protectionCheck.CheckFailed)
                         {
                             result = new Comms10kUpdateResult { Success = false, Message = $"Protection check failed for {email}: {protectionCheck.Reason}" };
-                            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection check failed for {email}: {protectionCheck.Reason}"); } catch { }
+                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, $"Protection check failed for {email}: {protectionCheck.Reason}"); } catch { }
                             return;
                         }
                         if (protectionCheck.IsProtected)
@@ -330,7 +330,7 @@
                 {
                     Logger.LogWarning(ex, "Protected principal check failed for {Email} — blocking replace as precaution", email);
                     result = new Comms10kUpdateResult { Success = false, Message = $"Protection check error for {email}: {ex.Message}" };
-                    try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protection check exception for {email}: {ex.Message}"); } catch { }
+                    try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, $"Protection check exception for {email}: {ex.Message}"); } catch { }
                     return;
                 }
             }
@@ -339,7 +339,7 @@
                 var blockedList = string.Join("; ", blockedPrincipals.Take(5));
                 var suffix = blockedPrincipals.Count > 5 ? $" and {blockedPrincipals.Count - 5} more" : "";
                 result = new Comms10kUpdateResult { Success = false, Message = $"Replace blocked — protected principal(s) in proposed list: {blockedList}{suffix}" };
-                try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "blocked", false, ticket, $"Protected principals: {blockedList}{suffix}"); } catch { }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, $"Protected principals: {blockedList}{suffix}"); } catch { }
                 return;
             }
 
@@ -347,8 +347,8 @@
 
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace",
-                    $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
+                Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace",
+                    "Comms10k", $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
                     result.Success ? null : result.Message);
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for Comms10k replace"); }
@@ -371,7 +371,7 @@
         catch (Exception ex)
         {
             result = new Comms10kUpdateResult { Success = false, Message = ex.Message };
-            try { Audit.LogMigrationAction(currentUser, clientIpAddress, "Comms10k_Replace", "attempted", false, ticket, ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "attempted", false, ticket, ex.Message); } catch { }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "Comms10k_Replace", false, ticket, new Dictionary<string, string> { ["Target Group"] = "Comms-10k" }, ex.Message); } catch { }
         }
         finally { isLoading = false; }

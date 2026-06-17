@@ -559,9 +559,10 @@ public class EmergencyDisableService
             .Select(s => $"{s.Step}={s.Status}")
             .ToArray();
 
-        _audit.LogMigrationAction(
+        _audit.LogModuleAction(
             performedBy,
             ip,
+            "EmergencyDisable",
             "EmergencyDisable",
             target.UserPrincipalName,
             success,

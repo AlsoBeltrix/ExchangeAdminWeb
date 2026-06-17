@@ -306,7 +306,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
@@ -390,7 +390,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -462,7 +462,7 @@ public sealed class ModuleCatalog
             SortOrder = 450,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -518,7 +518,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "EventLog", FailClosed: true),
             GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
         }

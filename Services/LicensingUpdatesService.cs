@@ -168,11 +168,12 @@ public class LicensingUpdatesService
         {
             try
             {
-                _audit.LogLookupAction(performedBy, ip, "LicensingUpdates_Update",
+                _audit.LogModuleAction(performedBy, ip, "LicensingUpdates_Update",
+                    "LicensingUpdates",
                     $"{row.UserPrincipalName ?? row.InputIdentity} [{row.Status}] {row.PreviousValue ?? "(empty)"} -> {row.NewValue ?? "(empty)"}",
                     row.Status == "Success" || row.Status == "Unchanged",
-                    errorDetail: row.Error,
-                    ticketNumber: ticket);
+                    ticketNumber: ticket,
+                    errorDetail: row.Error);
             }
             catch (Exception auditEx)
             {
