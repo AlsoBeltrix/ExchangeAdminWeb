@@ -307,6 +307,27 @@ Describe 'tools/promote-dev-to-prod.ps1' {
     It 'patches prod appsettings.json atomically via a temp file' {
         $s.Text | Should -Match 'appsettings\.promote\..*\.tmp'
     }
+
+    It 'only claims prod was restored from backup when rollback actually completed' {
+        # Success-aggregation trap: the closing throw used to assert "Prod has been
+        # restored from backup" unconditionally, even when the rollback robocopy failed
+        # (exit >= 8), the rollback catch fired, or no backup existed. The
+        # restored-from-backup claim must be gated on a flag set ONLY in the rollback
+        # success branch, and a distinct "restore manually" message must exist for the
+        # paths where rollback did not complete.
+        $fn = $s.Ast.Find({
+                param($node)
+                $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $node.Left.Extent.Text -match 'rolledBack'
+            }, $true)
+        $fn | Should -Not -BeNullOrEmpty -Because 'a flag must track whether rollback succeeded'
+
+        # The success message must be guarded by the rolledBack flag, not thrown blind.
+        $s.Text | Should -Match '(?s)if \(\$rolledBack\).*?Prod has been restored from backup' `
+            -Because 'the restored-from-backup claim must be conditional on rollback success'
+        $s.Text | Should -Match 'rollback did not complete' `
+            -Because 'paths where rollback failed/threw/had no backup need an honest message'
+    }
 }
 
 Describe 'tools/deploy-pipeline.ps1' {

@@ -454,6 +454,7 @@ Invoke-RobocopyChecked -Description "Backing up prod publish folder" -RobocopyAr
 Stop-AppPoolChecked -Name $ProdAppPoolName
 
 $promotionFailed = $false
+$rolledBack = $false
 try {
     Invoke-RobocopyChecked -Description "Promoting dev binaries to prod" -RobocopyArgs @(
         $dev, $prod,
@@ -515,6 +516,7 @@ try {
             if ($LASTEXITCODE -ge 8) {
                 Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE - prod may be in an inconsistent state" -ForegroundColor Red
             } else {
+                $rolledBack = $true
                 Write-Ok "Rolled back prod to pre-promotion state"
             }
         } catch {
@@ -528,7 +530,11 @@ try {
 }
 
 if ($promotionFailed) {
-    throw "Promotion failed and was rolled back. Prod has been restored from backup."
+    if ($rolledBack) {
+        throw "Promotion failed and was rolled back. Prod has been restored from backup."
+    } else {
+        throw "Promotion failed and automatic rollback did not complete. Prod may be in an inconsistent state - restore manually from $backup."
+    }
 }
 
 Remove-OldBackups -BackupRootPath $backupRootResolved -Retention $BackupRetention
