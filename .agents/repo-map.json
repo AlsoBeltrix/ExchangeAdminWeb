@@ -28,7 +28,7 @@
       "Invoke-ScriptAnalyzer -Path . -Recurse",
       "Invoke-Pester tests/ps"
     ],
-    "ci": "NONE ACTIVE. ci.yml exists in the repo root but GitHub Actions only runs workflows under .github/workflows/, which does not exist; the workflow has never run. It also targets branches:[main] while the repo branch is master. Verification is local-only until fixed.",
+    "ci": "ACTIVE: .github/workflows/ci.yml runs on push to master and on every PR. Job build-test (windows-latest): dotnet build -c Release, dotnet format --verify-no-changes, dotnet test on the solution, test-result upload. Job powershell (windows-latest): PSScriptAnalyzer (fails on Error) + Invoke-Pester tests/ps. Observed failing on real test failures, so CI is a trustworthy gate. Still run local verification before claiming completion; treat CI as an additional gate.",
     "policy": {
       "code_changes": "Run current automated verification before claiming completion.",
       "docs_only": "Code verification is not required unless docs affect setup, commands, runtime behavior, generated files, or user-visible behavior.",
