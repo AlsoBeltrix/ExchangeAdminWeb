@@ -141,7 +141,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],

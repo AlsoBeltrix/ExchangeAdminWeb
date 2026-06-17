@@ -15,78 +15,139 @@ public class MailboxPermissionService : ExchangeServiceBase
 
     public Task<PermissionResult> AddMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs, bool autoMapping)
     {
-        var permissions = new List<string>();
-        if (fullAccess) permissions.Add("FullAccess");
-        if (sendAs) permissions.Add("SendAs");
-
-        return RunAsync((ps, tracker) =>
+        // Each right is granted in its own try/catch and the successes/failures are
+        // aggregated, mirroring the on-prem methods below. The previous RunAsync shape
+        // reported the whole operation as a single Fail if SendAs threw after FullAccess
+        // had already been granted, hiding the applied grant from the bulk audit row and
+        // CSV report (and inviting a "retry" that re-runs both). Invoke(ps, tracker) still
+        // flags connection errors before throwing, so RunPooledQueryAsync discards a
+        // poisoned pooled connection even though the per-right catch swallows the error.
+        return RunPooledQueryAsync((ps, tracker) =>
         {
-            ValidateMailbox(ps, targetMailbox);
-            ValidateRecipient(ps, user);
+            try
+            {
+                ValidateMailbox(ps, targetMailbox);
+                ValidateRecipient(ps, user);
+            }
+            catch (Exception ex)
+            {
+                return PermissionResult.Fail(ex.Message);
+            }
+
+            var successes = new List<string>();
+            var failures = new List<string>();
 
             if (fullAccess)
             {
-                ps.AddCommand("Add-MailboxPermission")
-                  .AddParameter("Identity", targetMailbox)
-                  .AddParameter("User", user)
-                  .AddParameter("AccessRights", "FullAccess")
-                  .AddParameter("AutoMapping", autoMapping)
-                  .AddParameter("Confirm", false);
-                Invoke(ps, tracker);
+                try
+                {
+                    ps.AddCommand("Add-MailboxPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", "FullAccess")
+                      .AddParameter("AutoMapping", autoMapping)
+                      .AddParameter("Confirm", false);
+                    Invoke(ps, tracker);
+                    successes.Add("FullAccess");
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"FullAccess: {ex.Message}");
+                }
             }
 
             if (sendAs)
             {
-                ps.AddCommand("Add-RecipientPermission")
-                  .AddParameter("Identity", targetMailbox)
-                  .AddParameter("Trustee", user)
-                  .AddParameter("AccessRights", "SendAs")
-                  .AddParameter("Confirm", false);
-                Invoke(ps, tracker);
+                try
+                {
+                    ps.AddCommand("Add-RecipientPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Trustee", user)
+                      .AddParameter("AccessRights", "SendAs")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps, tracker);
+                    successes.Add("SendAs");
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"SendAs: {ex.Message}");
+                }
             }
-        }, () =>
-        {
-            var rights = string.Join(" and ", permissions);
+
+            if (failures.Count > 0 && successes.Count > 0)
+                return new PermissionResult { Success = false, Message = $"Partial: granted {string.Join(", ", successes)} on {targetMailbox}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+            if (failures.Count > 0)
+                return PermissionResult.Fail($"Failed on {targetMailbox}: {string.Join("; ", failures)}");
+
+            var rights = string.Join(" and ", successes);
             var message = $"{user} has been granted {rights} rights to {targetMailbox}";
             var detail = $"Users can access this mailbox in Outlook or at the following link:\nhttps://outlook.office.com/mail/{targetMailbox}/";
-            return (message, detail);
+            return new PermissionResult { Success = true, Message = message, Detail = detail };
         });
     }
 
     public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        var permissions = new List<string>();
-        if (fullAccess) permissions.Add("FullAccess");
-        if (sendAs) permissions.Add("SendAs");
-
-        return RunAsync((ps, tracker) =>
+        // Per-right try/catch with aggregation — see AddMailboxPermissionsAsync for why
+        // the previous single-Fail RunAsync shape lost partial-success information.
+        return RunPooledQueryAsync((ps, tracker) =>
         {
-            ValidateMailbox(ps, targetMailbox);
-            ValidateRecipient(ps, user);
+            try
+            {
+                ValidateMailbox(ps, targetMailbox);
+                ValidateRecipient(ps, user);
+            }
+            catch (Exception ex)
+            {
+                return PermissionResult.Fail(ex.Message);
+            }
+
+            var successes = new List<string>();
+            var failures = new List<string>();
 
             if (fullAccess)
             {
-                ps.AddCommand("Remove-MailboxPermission")
-                  .AddParameter("Identity", targetMailbox)
-                  .AddParameter("User", user)
-                  .AddParameter("AccessRights", "FullAccess")
-                  .AddParameter("Confirm", false);
-                Invoke(ps, tracker);
+                try
+                {
+                    ps.AddCommand("Remove-MailboxPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("User", user)
+                      .AddParameter("AccessRights", "FullAccess")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps, tracker);
+                    successes.Add("FullAccess");
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"FullAccess: {ex.Message}");
+                }
             }
 
             if (sendAs)
             {
-                ps.AddCommand("Remove-RecipientPermission")
-                  .AddParameter("Identity", targetMailbox)
-                  .AddParameter("Trustee", user)
-                  .AddParameter("AccessRights", "SendAs")
-                  .AddParameter("Confirm", false);
-                Invoke(ps, tracker);
+                try
+                {
+                    ps.AddCommand("Remove-RecipientPermission")
+                      .AddParameter("Identity", targetMailbox)
+                      .AddParameter("Trustee", user)
+                      .AddParameter("AccessRights", "SendAs")
+                      .AddParameter("Confirm", false);
+                    Invoke(ps, tracker);
+                    successes.Add("SendAs");
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"SendAs: {ex.Message}");
+                }
             }
-        }, () =>
-        {
-            var rights = string.Join(" and ", permissions);
-            return ($"{rights} rights removed for {user} on {targetMailbox}", null);
+
+            if (failures.Count > 0 && successes.Count > 0)
+                return new PermissionResult { Success = false, Message = $"Partial: removed {string.Join(", ", successes)} on {targetMailbox}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
+            if (failures.Count > 0)
+                return PermissionResult.Fail($"Failed on {targetMailbox}: {string.Join("; ", failures)}");
+
+            var rights = string.Join(" and ", successes);
+            return new PermissionResult { Success = true, Message = $"{rights} rights removed for {user} on {targetMailbox}" };
         });
     }
 
