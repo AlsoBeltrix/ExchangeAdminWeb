@@ -20,6 +20,7 @@
   "OperationTrace": {
     "Enabled": true
   },
+  "_EmailNote": "If your SMTP relay requires authentication, source SmtpPassword from the deployment's PAM/secret-management solution (Delinea Secret Server today) rather than storing a plaintext password in this file - see docs/ProjectConstitution.md Credential Isolation. Leave SmtpUsername/SmtpPassword blank for an open, credential-less relay.",
   "Email": {
     "SmtpHost": "smtp.yourcompany.com",
     "SmtpPort": 25,
@@ -67,6 +68,7 @@
       "UndoAuditedActions": ["DOMAIN\\Exchange-Admins"]
     }
   },
+  "_ServiceNowNote": "When ServiceNow:Enabled is true, source Password from the deployment's PAM/secret-management solution (Delinea Secret Server today) rather than storing a plaintext password in this file - see docs/ProjectConstitution.md Credential Isolation.",
   "ServiceNow": {
     "Enabled": false,
     "InstanceUrl": "https://yourinstance.service-now.com",

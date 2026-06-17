@@ -292,12 +292,18 @@ Phase 4 — cleanup backlog (pre-release per Q3)
 22. Docs/agent-state drift sweep (one commit per doc). (AC15)
 23. Register mediums, one per commit, severity order; risk-accept leftovers in §10.
     (AC16)
-24. Secrets-in-PAM (Q4 resolution): route the ServiceNow password through a Delinea
-    secret ID when `ServiceNow:Enabled` is true (plaintext appsettings value retained
-    only as legacy upgrade fallback per the Constitution); confirm and document that
-    SMTP runs credential-less against the open relay (EmailService already defaults
-    `SmtpUsername`/`SmtpPassword` to empty — verified `Services/EmailService.cs:28-29`).
-    (AC16)
+24. Secrets-in-PAM (Q4 resolution) — **RESOLVED BY DECISION 2026-06-17
+    (`.agents/decisions.md`), not a code change.** The Constitution's Credential
+    Isolation rule is generalized: every privileged credential — now explicitly
+    including the SMTP and ServiceNow service passwords — must come from the
+    deployment's PAM/secret-management solution (Delinea is the only backend
+    implemented today, but code and docs must not hardcode it), never as plaintext in
+    `appsettings.json`. This deployment configures neither an SMTP nor a ServiceNow
+    password (SMTP runs credential-less against the open relay; EmailService defaults
+    `SmtpUsername`/`SmtpPassword` to empty — `Services/EmailService.cs:28-29`), so
+    there is no live plaintext exposure to remediate today. No new PAM integration is
+    built speculatively (decision scope guard). Residual cleanup is doc-only:
+    `appsettings.json.sample` annotates these fields as PAM-sourced in production. (AC16)
 
 Version bumps: base app version once per phase batch that touches shared
 infrastructure; module versions per touched module (rule fires independently).
