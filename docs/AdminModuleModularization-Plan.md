@@ -1,5 +1,12 @@
 # Admin Module Modularization Plan
 
+Status: Implemented (history). Evidence: the descriptor-based module system this plan
+describes is live — `Modules/ModuleCatalog.cs`, `Modules/AdminModuleDescriptor.cs`, and
+21 modules driven by it. Header added retroactively 2026-06-17 from code presence (AC15
+drift sweep), not a fresh line-by-line plan-vs-code audit. The compiled-module-first
+assumption still holds; runtime external assembly loading remains a separate open item
+(see the queued module-packaging plan).
+
 ## Goal
 
 Modularize ExchangeAdminWeb so administration sections are described by a consistent module contract, can be enabled or disabled from the admin page, and can declare their own permissions. Existing sections should be adapted to the new format, and the project should publish a spec for future administration modules.

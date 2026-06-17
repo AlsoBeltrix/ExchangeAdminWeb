@@ -1,5 +1,13 @@
 # Future Modules Plan
 
+Status: Implemented (history). Evidence: the modules this backlog proposed now exist in
+`Modules/ModuleCatalog.cs` — Licensing Updates (`LicensingUpdates`), Emergency Disable
+(`EmergencyDisable`), Test Account Creator (`TestAccountPool`), and the Recipient
+Permissions Report enhancement (`RecipientLookup`/`DelegationReport`). Header added
+retroactively 2026-06-17 from catalog presence (AC15 drift sweep), not a fresh
+plan-vs-code audit. Note: `TestAccountPool` is queued for removal (owner direction; see
+`.agents/state.md`) — this plan is history and is not the authority for that decision.
+
 ## Overview
 
 This plan describes modules that should be built on the infrastructure established by the AD Attribute Editor implementation (v2.1.x). All future modules should reuse:

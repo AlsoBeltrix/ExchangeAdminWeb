@@ -1,5 +1,10 @@
 # AD Attribute Editor And Protected Principal Plan
 
+Status: Implemented (history). Evidence: `Services/ADAttributeEditorService.cs`,
+`Services/ProtectedPrincipalService.cs`, and the `ADAttributeEditor` descriptor in
+`Modules/ModuleCatalog.cs` are all present. Header added retroactively 2026-06-17 from
+catalog/service presence (AC15 drift sweep), not a fresh line-by-line plan-vs-code audit.
+
 ## Purpose
 
 Add an AD Attribute Editor module, but first extract protected-principal checks into shared infrastructure that future high-impact modules can reuse. The first release should prove the low-risk pattern for identity resolution, source-of-authority detection, allowlisted edits, diff preview, fail-closed protection checks, audit, and operation tracing.
