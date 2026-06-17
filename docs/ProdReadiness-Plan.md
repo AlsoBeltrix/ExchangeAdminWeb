@@ -285,6 +285,7 @@ Phase 3 — operational truth (release-gating)
 19. Autocomplete: stop borrowing mutation pool; AD search per-query runspace/lock fix.
     (AC13; may split into two commits)
 20. Manual verification with Michael in dev: click-responsiveness confirmed. (AC13)
+    — **DONE 2026-06-17: Michael verified 2.3.8 in dev, UI responsiveness PASS.**
 21. ConferenceRooms on-prem field + Set-RemoteMailbox retirement (Q1 resolved). (AC14)
 
 Phase 4 — cleanup backlog (pre-release per Q3)
@@ -416,3 +417,7 @@ infrastructure; module versions per touched module (rule fires independently).
   the diagnostics (mechanism identified; guarded by `c473fba`). Remaining items
   Michael owns: task-20 manual UI verification in dev after this batch, and the
   post-freeze prod deploy with the §Deploy-notes alias check.
+- 2026-06-17, round 10: Michael ran task 20 — manual UI verification of AC13 against
+  2.3.8 in dev — and reports **UI responsiveness PASS**. This was the last open gate on
+  Phase 3 sign-off; Phase 3 is now verified complete. Phase 4 is unblocked. Remaining
+  owner-owned item is the post-freeze prod deploy with the §Deploy-notes alias check.

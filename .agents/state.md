@@ -22,15 +22,14 @@ repo facts change.
   config/ dir. #5: post-deploy config drift check warns loudly. #6: deploy.ps1 defaults
   target dev, fresh installs need -ConfirmFreshInstall. #7: duplicate import removed.
   #8: closed by diagnostics. Remaining: owner sign-off + task-20 manual verification.
-- **Deploy hold lifted for dev** (Michael accepted the round-8 findings; round 9).
-  **Prod is frozen for the weekend of 2026-06-13** — no prod deploys until Michael runs
-  them post-freeze with the §Deploy-notes alias check below (prod's fragment already
-  covers the six aliases).
-- Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete. Local
-  verification at 2.3.8: 415/415 xUnit, 30/30 Pester. Task 20 (manual UI verification)
-  is ready for Michael, now also covering the new corrupt-store error states. Phase 4
-  is next once task 20 passes. Findings register:
-  `docs/ProdReadinessReview-2026-06-12.md`.
+- **2.3.8 is deployed to prod (2026-06-17). Dev and prod are at the same revision.**
+  Prod freeze over; the FailClosed change and all incident fixes #1-#8 are now in prod.
+  The §Deploy-notes alias check applied to this deploy. Deploy holds fully lifted.
+- Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and signed
+  off. Local verification at 2.3.8: 415/415 xUnit, 30/30 Pester. **Task 20 (manual UI
+  verification, AC13) PASSED 2026-06-17** (Michael verified click-responsiveness in dev).
+  Phase 3 is now fully verified; **Phase 4 is unblocked and is the next work item.**
+  Findings register: `docs/ProdReadinessReview-2026-06-12.md`.
 
 ## Findings
 
@@ -114,9 +113,7 @@ repo facts change.
 
 ## Blockers
 
-- Prod freeze (weekend of 2026-06-13): no prod deploys until Michael runs them.
-- Task 20 (manual UI verification) needs ~15 minutes of Michael's time in dev after
-  the incident-fix batch lands.
+- None. (Prod freeze ended; 2.3.8 shipped to prod 2026-06-17. Task 20 PASSED.)
 
 ## Deploy notes (before the FailClosed change reaches prod)
 
