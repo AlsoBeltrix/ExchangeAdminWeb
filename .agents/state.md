@@ -168,13 +168,25 @@ Owner's standing direction on the queue, given 2026-06-18:
     (incident regression guarded + revert-proven); no-ops on corrupt/unreadable store; codex P1
     fixed — a write failure (read-only ACL / lock) logs and continues, never aborts startup.
     Decision 2026-06-12 updated (relaxation now IN EFFECT). 508/508.
-  - **NEXT: Phase D — ops scripts.** Pay down the accumulated promotion debt (the running list
-    in `docs/SqliteConfigStore-Plan.md` Phase D): rewrite `promote-dev-to-prod.ps1` fragment
-    merges (extended-log/module-config/modules-enabled/section-access/protected-principals/
-    ad-attributes) as table merges; `-Refresh` (prod→dev) switch; `deploy.ps1` DB health check +
-    retarget/retire config-drift checks; `Install-ExchangeAdminWeb.ps1` DB seeding; operator
-    sqlite repair recipes; clean up the stale `sectionaccess.bak` artifact. Pester coverage in
-    `tests/ps/`. Then E (tests/docs sweep + gated module-guide rewrite).
+  - **Phase D IN PROGRESS — ops scripts.** Owner-approved all 3 buckets (deploy safety / config
+    promotion / install+repair) 2026-06-18. Owner's REAL process is `deploy-pipeline.ps1 -Dev`
+    (→ `deploy.ps1`) then `-Prod` (→ `promote-dev-to-prod.ps1`); has never run deploy.ps1 /
+    promote / Install directly. **Dependency: `sqlite3.exe` on PATH** (winget SQLite.SQLite,
+    installed on owner box 2026-06-18; declared in README + AGENTS). Backup policy: verified
+    online backup (VACUUM INTO + integrity_check), **abort deploy on integrity failure**.
+    - **D1 DONE (commits `a6741ad` + codex `a4d5cc7`, pushed; NO app version bump — ops scripts
+      only).** New shared `tools/SqliteConfigBackup.psm1` (Backup-SqliteConfigDb,
+      Test-SqliteConfigDbIntegrity; hard sqlite3 dependency, fail-fast). deploy.ps1: DB backed
+      up via verified online backup before mirror; DB triplet excluded from file-drift; **post-
+      deploy live-DB integrity check** added (absorbed the planned D4). Pester 45/45.
+    - **NEXT: D2 — promote-dev-to-prod.ps1.** (a) Use Backup-SqliteConfigDb for the
+      pre-promotion snapshot (currently raw copies config/). (b) Replace the now-broken
+      `$jsonConfigFiles` merge (copies archived JSONs that no longer exist) with **DB table
+      merges** (dev-wins) for module_config/module_enablement/section_access/protected_principal/
+      editable_attribute/attribute_legend/app_setting + presence markers. Promotion must run with
+      the prod pool stopped (it already stops it). Pester coverage.
+    - Then D3 (`-Refresh` prod→dev switch), D5 (Install-ExchangeAdminWeb.ps1 DB seeding +
+      operator sqlite repair recipes + stale `sectionaccess.bak` cleanup). (D4 folded into D1.)
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
