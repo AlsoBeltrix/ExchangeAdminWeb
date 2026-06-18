@@ -20,8 +20,8 @@ public class ConfigStoreMigratorTests
         // Every Phase A table must exist.
         foreach (var table in new[]
         {
-            "schema_meta", "module_enablement", "module_config", "section_access",
-            "module_admins", "protected_principal", "editable_attribute",
+            "schema_meta", "module_enablement", "module_config", "module_config_present",
+            "section_access", "module_admins", "protected_principal", "editable_attribute",
             "attribute_legend", "app_setting",
         })
         {

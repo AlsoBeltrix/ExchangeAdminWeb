@@ -87,6 +87,17 @@ public sealed class ConfigStoreMigrator
             value TEXT
         );
         """,
+
+        // v2 — module-config presence marker. Preserves the file world's semantics where an
+        // empty module-config-{Id}.json STILL counted as "configured" (HasModuleConfigFile=true)
+        // and therefore suppressed the legacy appsettings fallback. With per-row storage an empty
+        // module has no rows, so presence must be tracked separately or saving an empty config
+        // would silently re-enable the fallback (parity break found in B.3 review).
+        """
+        CREATE TABLE IF NOT EXISTS module_config_present (
+            module_id TEXT PRIMARY KEY COLLATE NOCASE
+        );
+        """,
     ];
 
     /// <summary>The schema version this build expects (the count of migration steps).</summary>

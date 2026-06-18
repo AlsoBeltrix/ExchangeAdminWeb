@@ -119,7 +119,10 @@ public class ModuleConfigService
                 try
                 {
                     var values = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file));
-                    if (values is { Count: > 0 })
+                    // Import even an empty {} file: in the file world its mere existence counted
+                    // as "configured" and suppressed the appsettings fallback, so it must mark
+                    // presence here too.
+                    if (values != null)
                         _repository.ImportModuleIfMissing(moduleId, values);
                 }
                 catch (Exception ex)

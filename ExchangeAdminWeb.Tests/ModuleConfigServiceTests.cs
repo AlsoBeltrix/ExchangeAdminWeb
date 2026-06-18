@@ -83,6 +83,22 @@ public class ModuleConfigServiceTests
     }
 
     [Fact]
+    public void HasModuleConfigFile_TrueAfterEmptySave_SuppressesFallback()
+    {
+        // Parity with the file world: an explicitly-saved EMPTY config still counts as
+        // "configured" (presence marker), so consumers that suppress the appsettings fallback
+        // when HasModuleConfigFile is true keep doing so. Without this, an empty save would
+        // silently re-enable the legacy fallback (B.3 review finding).
+        using var temp = new TempDir();
+        var service = CreateService(temp.Path);
+
+        service.SaveModuleConfig("Migration", new Dictionary<string, string>());
+
+        Assert.True(service.HasModuleConfigFile("Migration"));
+        Assert.Empty(service.GetModuleConfig("Migration"));
+    }
+
+    [Fact]
     public void IsModuleCorrupt_TrueWhenStoreUnreadable_ElseFalse()
     {
         using var temp = new TempDir();

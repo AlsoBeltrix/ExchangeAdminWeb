@@ -41,25 +41,29 @@ public sealed class ModuleConfigRepository
         }
     }
 
-    /// <summary>True if the module has at least one config row.</summary>
+    /// <summary>
+    /// True if the module has been configured — i.e. saved or imported at least once, even if
+    /// its config is empty. Backed by the presence marker, not row count, so an explicitly
+    /// empty config still suppresses the legacy appsettings fallback (file-world parity).
+    /// </summary>
     public bool HasModule(string moduleId)
     {
         return _store.Read(connection =>
         {
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1 FROM module_config WHERE module_id = $id LIMIT 1;";
+            command.CommandText = "SELECT 1 FROM module_config_present WHERE module_id = $id LIMIT 1;";
             command.Parameters.AddWithValue("$id", moduleId);
             return command.ExecuteScalar() is not null;
         });
     }
 
-    /// <summary>True if any module has at least one config row.</summary>
+    /// <summary>True if any module has been configured (presence marker exists).</summary>
     public bool HasAny()
     {
         return _store.Read(connection =>
         {
             using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1 FROM module_config LIMIT 1;";
+            command.CommandText = "SELECT 1 FROM module_config_present LIMIT 1;";
             return command.ExecuteScalar() is not null;
         });
     }
@@ -80,6 +84,7 @@ public sealed class ModuleConfigRepository
                 delete.ExecuteNonQuery();
             }
 
+            MarkPresent(connection, transaction, moduleId);
             InsertValues(connection, transaction, moduleId, values);
         });
     }
@@ -95,15 +100,26 @@ public sealed class ModuleConfigRepository
             using (var check = connection.CreateCommand())
             {
                 check.Transaction = transaction;
-                check.CommandText = "SELECT 1 FROM module_config WHERE module_id = $id LIMIT 1;";
+                check.CommandText = "SELECT 1 FROM module_config_present WHERE module_id = $id LIMIT 1;";
                 check.Parameters.AddWithValue("$id", moduleId);
                 if (check.ExecuteScalar() is not null)
                     return false;
             }
 
+            MarkPresent(connection, transaction, moduleId);
             InsertValues(connection, transaction, moduleId, values);
-            return values.Any(kvp => !string.IsNullOrWhiteSpace(kvp.Key));
+            return true;
         });
+    }
+
+    private static void MarkPresent(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            "INSERT INTO module_config_present (module_id) VALUES ($id) ON CONFLICT(module_id) DO NOTHING;";
+        command.Parameters.AddWithValue("$id", moduleId);
+        command.ExecuteNonQuery();
     }
 
     private static void InsertValues(SqliteConnection connection, SqliteTransaction transaction,
