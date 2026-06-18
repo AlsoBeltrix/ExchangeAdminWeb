@@ -14,6 +14,13 @@ public class ModuleEnablementService
     private readonly object _writeLock = new();
     private bool _startupCheckDone;
 
+    // Set when a legacy modules-enabled.json exists but cannot be parsed. We must NOT silently
+    // fall through to an empty (healthy) DB and let modules default to EnabledByDefault — that
+    // would downgrade the file world's fail-closed corrupt behavior during the upgrade window.
+    // The corrupt file stays on disk, so this re-trips on every startup until it is repaired or
+    // removed (an admin save is also blocked while it is set; see IsStoreCorrupt).
+    private readonly bool _legacyFileCorrupt;
+
     public ModuleEnablementService(
         ModuleCatalog catalog,
         IWebHostEnvironment env,
@@ -29,7 +36,7 @@ public class ModuleEnablementService
         _logger = logger;
 
         var legacyPath = Path.Combine(env.ContentRootPath, "config", "modules-enabled.json");
-        ImportLegacyIfPresent(legacyPath);
+        _legacyFileCorrupt = ImportLegacyIfPresent(legacyPath);
     }
 
     /// <summary>
@@ -98,9 +105,10 @@ public class ModuleEnablementService
     /// </summary>
     public bool IsStoreCorrupt()
     {
-        // Post-SQLite, "corrupt" means the store cannot be read at all (a DB-integrity
-        // failure), not an unparseable file. A healthy-but-empty store is NOT corrupt.
-        return !_repository.TryGetAll(out _);
+        // Corrupt if either the DB cannot be read (DB-integrity failure) OR an unparseable
+        // legacy modules-enabled.json is still present (upgrade window — must stay fail-closed
+        // until it is repaired/removed rather than fall through to an empty healthy DB).
+        return _legacyFileCorrupt || !_repository.TryGetAll(out _);
     }
 
     public void SaveEnablement(Dictionary<string, bool> enablement)
@@ -148,13 +156,14 @@ public class ModuleEnablementService
 
     private Dictionary<string, bool> ReadState()
     {
-        // FAIL-CLOSED: if the store cannot be read, return an explicit all-disabled map for
-        // every non-system module (NOT an empty map — empty would let modules fall back to
-        // EnabledByDefault). This preserves the file version's corrupt-store behavior.
-        if (_repository.TryGetAll(out var state))
+        // FAIL-CLOSED: if the store cannot be read, OR an unparseable legacy file is still
+        // present, return an explicit all-disabled map for every non-system module (NOT an empty
+        // map — empty would let modules fall back to EnabledByDefault). This preserves the file
+        // version's corrupt-store behavior, including during the upgrade window.
+        if (!_legacyFileCorrupt && _repository.TryGetAll(out var state))
             return state;
 
-        _logger.LogError("Module enablement store unreadable - all modules disabled until fixed");
+        _logger.LogError("Module enablement store unreadable or legacy file corrupt - all modules disabled until fixed");
         var disabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
             disabled[module.Id] = false;
@@ -162,15 +171,16 @@ public class ModuleEnablementService
     }
 
     // One-time import of legacy modules-enabled.json into module_enablement, then archive the
-    // file (SqliteConfigStore-Plan §4). Only fills if the table is empty (DB wins). An
-    // unparseable legacy file is left in place (not archived) so a corrupt file is not silently
-    // discarded.
-    private void ImportLegacyIfPresent(string legacyPath)
+    // file (SqliteConfigStore-Plan §4). Only fills if the table is empty (DB wins). Returns true
+    // if the legacy file exists but is unparseable: it is left in place (not archived) AND the
+    // service treats the store as corrupt (fail closed) until it is repaired/removed, so the
+    // upgrade window does not silently downgrade to EnabledByDefault.
+    private bool ImportLegacyIfPresent(string legacyPath)
     {
         try
         {
             if (!File.Exists(legacyPath))
-                return;
+                return false;
 
             Dictionary<string, bool>? legacy;
             try
@@ -179,18 +189,20 @@ public class ModuleEnablementService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Legacy modules-enabled.json is unparseable; leaving it in place, not importing");
-                return;
+                _logger.LogError(ex, "Legacy modules-enabled.json is unparseable; failing closed (all modules disabled) until it is repaired or removed");
+                return true;
             }
 
             if (legacy is { Count: > 0 })
                 _repository.ImportIfMissing(legacy);
 
             LegacyConfigImport.ArchiveFile(legacyPath, _logger);
+            return false;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to import legacy modules-enabled.json");
+            return false;
         }
     }
 }

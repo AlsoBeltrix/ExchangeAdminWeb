@@ -452,18 +452,25 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     [Fact]
-    public void Construction_UnparseableLegacyFile_LeftInPlace_NotImported()
+    public void Construction_UnparseableLegacyFile_LeftInPlace_NotImported_AndFailsClosed()
     {
         var configDir = Path.Combine(_tempDir, "config");
         Directory.CreateDirectory(configDir);
         var legacy = Path.Combine(configDir, "modules-enabled.json");
         File.WriteAllText(legacy, "{ not valid json");
 
-        CreateService();
+        var service = CreateService();
 
-        // A corrupt legacy file must not be silently discarded.
+        // A corrupt legacy file must not be silently discarded...
         Assert.True(File.Exists(legacy));
         Assert.Empty(Directory.GetFiles(configDir, "modules-enabled.json.imported-*"));
+
+        // ...and the upgrade window must stay FAIL-CLOSED: store reported corrupt, every
+        // non-system module disabled, NOT fallen back to EnabledByDefault against an empty DB.
+        Assert.True(service.IsStoreCorrupt());
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+            Assert.False(service.IsModuleEnabled(module.Id),
+                $"Expected '{module.Id}' disabled while legacy file is corrupt");
     }
 
     [Fact]
