@@ -239,6 +239,24 @@ Modules are rendered automatically by the catalog in:
 
 System modules are grouped separately with warning styling.
 
+### Module version display (REQUIRED)
+
+Every module page **must** display its descriptor `Version` next to the page heading,
+so a bug-report screenshot can identify exactly which module build is running. This is a
+**canonical, enforced rule**: a module page that does not show its version is
+non-conformant and is rejected by package validation (`tools/validate-module-package.ps1`).
+
+Use the shared `<ModuleVersion />` component (`Components/Shared/ModuleVersion.razor`),
+placed inside the page's heading element:
+
+```razor
+<h1 class="mb-4">My Module<ModuleVersion /></h1>
+```
+
+The component resolves the current module from the route via `ModuleCatalog.GetByRoute`
+and renders ` v{Version}` in a smaller, muted-but-visible font. Do **not** hand-roll the
+version lookup inline — use the component so the format stays uniform across all modules.
+
 ## Deployment
 
 New modules require an application publish and app pool restart. Module enablement (on/off) is controlled at runtime via the admin UI without restart.
@@ -252,13 +270,16 @@ The deploy script (`deploy.ps1`):
 
 1. Add descriptor to `ModuleCatalog.RegisterAll()`
 2. Create the page `.razor` file with `[Authorize(Policy = "...")]`
-3. Create the service class (if needed) inheriting `ExchangeServiceBase`
-4. Add audit logging for all mutating actions
-5. Test: build passes, existing tests pass
-6. Deploy to dev, verify:
+3. Add `<ModuleVersion />` inside the page heading (REQUIRED — see UI Rendering;
+   enforced by `tools/validate-module-package.ps1`)
+4. Create the service class (if needed) inheriting `ExchangeServiceBase`
+5. Add audit logging for all mutating actions
+6. Test: build passes, existing tests pass
+7. Deploy to dev, verify:
    - Module appears in nav/home when authorized
    - Module hidden when disabled
    - Direct URL denied when disabled
    - Section access configurable on module config page
+   - Module version shows next to the page heading
    - Audit entries created for actions
-7. Deploy to prod
+8. Deploy to prod

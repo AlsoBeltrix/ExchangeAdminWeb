@@ -1,0 +1,25 @@
+@inject NavigationManager Navigation
+@inject ExchangeAdminWeb.Modules.ModuleCatalog Catalog
+
+@if (_module is not null)
+{
+    <span class="module-version text-muted ms-2">v@_module.Version</span>
+}
+
+@code {
+    // Renders the current module's version next to its page heading, resolved from the
+    // route via ModuleCatalog. Placed beside the page <h1>/<h2> so bug-report screenshots
+    // can identify the running module build. Canonical rule: every module page must include
+    // this component (see docs/AdminModuleSpec.md / AdminModuleDeveloperGuide.md).
+    private ExchangeAdminWeb.Modules.AdminModuleDescriptor? _module;
+
+    protected override void OnInitialized()
+    {
+        var route = Navigation.ToBaseRelativePath(Navigation.Uri);
+        var queryIndex = route.IndexOf('?');
+        if (queryIndex >= 0)
+            route = route[..queryIndex];
+        route = route.Trim('/');
+        _module = Catalog.GetByRoute(route);
+    }
+}

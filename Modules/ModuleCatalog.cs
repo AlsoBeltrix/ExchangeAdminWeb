@@ -122,7 +122,7 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             IsConfigOnly = true,
-            Version = "1.0.0",
+            Version = "1.0.1",
             MainPermission = new("Access", "ExchangeOnline"),
             ConfigFields = [
                 new("AppId", "App Registration ID (GUID)", "Azure AD app registration for EXO PowerShell"),
@@ -141,7 +141,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
@@ -161,7 +161,7 @@ public sealed class ModuleCatalog
             SortOrder = 200,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "CalendarPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
@@ -180,7 +180,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.2",
+            Version = "1.1.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
@@ -205,7 +205,7 @@ public sealed class ModuleCatalog
             SortOrder = 400,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "DelegationReport")
         },
@@ -220,7 +220,7 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.1.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MessageTrace", FailClosed: true),
             ConfigFields = [
@@ -238,7 +238,7 @@ public sealed class ModuleCatalog
             SortOrder = 600,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "RecipientLookup"),
             ConfigFields = [
@@ -256,7 +256,7 @@ public sealed class ModuleCatalog
             SortOrder = 700,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "OutOfOffice", FailClosed: true)
         },
@@ -271,7 +271,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.2",
+            Version = "2.0.3",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -289,7 +289,7 @@ public sealed class ModuleCatalog
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
@@ -306,7 +306,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
@@ -324,7 +324,7 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
@@ -341,7 +341,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.10",
+            Version = "2.0.11",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [
@@ -372,7 +372,7 @@ public sealed class ModuleCatalog
             SortOrder = 790,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (requires Policy.ReadWrite.ConditionalAccess)")
@@ -389,7 +389,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.0.4",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -409,7 +409,7 @@ public sealed class ModuleCatalog
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.2",
+            Version = "1.2.3",
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
@@ -426,7 +426,7 @@ public sealed class ModuleCatalog
             SortOrder = 450,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -445,7 +445,7 @@ public sealed class ModuleCatalog
             SortOrder = 170,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.4",
+            Version = "1.3.5",
             MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
             GranularPermissions = [
                 new("Level1", "ADAttributeEditorLevel1", FailClosed: true),
@@ -468,7 +468,7 @@ public sealed class ModuleCatalog
             SortOrder = 900,
             EnabledByDefault = true,
             IsSystemModule = true,
-            Version = "1.0.0",
+            Version = "1.0.1",
             MainPermission = new("Access", "AdminSettings")
         },
         new()
@@ -482,7 +482,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "EventLog", FailClosed: true),
             GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
         }

@@ -163,6 +163,11 @@ compatibility failures:
 - Sidebar icon classes that do not exist in the host CSS.
 - Raw stack traces or empty catch blocks in production source.
 
+> **Pending check:** a check that the module page includes the required
+> `<ModuleVersion />` display (see Page Heading And Version Display) is queued but not
+> yet implemented in the validator. Until it lands, authors must add the component
+> manually; it is still a canonical requirement for integration review.
+
 Warnings are advisory by default. To make warnings fail the validation:
 
 ```powershell
@@ -403,6 +408,25 @@ Use granular policies for sub-actions when needed. Examples:
 - `ADAttributeEditorLevel1`
 - `ADAttributeEditorLevel2`
 - `ADAttributeEditorLevel3`
+
+### Page Heading And Version Display (REQUIRED)
+
+Every module page must display its descriptor `Version` next to the page heading,
+so a bug-report screenshot can identify which module build is running. Add the shared
+`<ModuleVersion />` component inside the heading element:
+
+```razor
+<h1 class="mb-4">My Module<ModuleVersion /></h1>
+```
+
+`<ModuleVersion />` (`Components/Shared/ModuleVersion.razor`) resolves the current module
+from the route via `ModuleCatalog.GetByRoute` and renders ` v{Version}` in a smaller,
+muted-but-visible font. It needs no parameters and no `@using` (it lives in the
+globally-imported `Components.Shared` namespace). Do not hand-roll the version lookup
+inline — use the component so every module's version reads identically.
+
+This is a **canonical rule, enforced by `tools/validate-module-package.ps1`**: a module
+page that omits the version display is non-conformant and is rejected at validation.
 
 ## Module Enablement
 

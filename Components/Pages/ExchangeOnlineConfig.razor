@@ -30,7 +30,7 @@
 }
 
 <div class="container-fluid">
-    <h1 class="mb-4">Exchange Online <small class="text-muted fs-6">v@(Catalog.GetById("ExchangeOnline")?.Version ?? "1.0.0") — Connection Configuration</small></h1>
+    <h1 class="mb-4">Exchange Online<ModuleVersion /> <small class="text-muted fs-6">— Connection Configuration</small></h1>
     <p class="text-muted mb-4">Certificate-based authentication for Exchange Online PowerShell. Required by all Exchange-dependent modules.</p>
 
     @if (!string.IsNullOrEmpty(statusMessage))

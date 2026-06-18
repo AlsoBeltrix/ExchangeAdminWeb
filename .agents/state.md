@@ -161,18 +161,22 @@ Owner's standing direction on the queue, given 2026-06-18:
 
 ## Queued work (owner-requested 2026-06-12)
 
-- **Show module version on every module page (owner-requested 2026-06-18).** No module
-  page currently displays its module `Version`, so bug-report screenshots can't identify
-  which build is running. Requirement is **app-wide**: every module page must show its
-  version (sourced from the descriptor `Version` in `Modules/ModuleCatalog.cs`).
-  - **Also a standing rule:** add this to the module creation guide
-    (`docs/AdminModuleDeveloperGuide.md`) and, if it's a binding contract item, the module
-    spec (`docs/AdminModuleSpec.md`) so every new module inherits the version display by
-    default.
-  - Not yet code-located. First step: investigate how module pages render their header/
-    chrome and whether a shared layout/component can carry the version label once for all
-    modules (preferred — single affordance over editing 20 pages). Confirm placement/format
-    with owner before implementing.
+- **Show module version on every module page (owner-requested 2026-06-18): DONE (app
+  2.3.11).** Shared `Components/Shared/ModuleVersion.razor` resolves the module from the
+  route (`ModuleCatalog.GetByRoute`) and renders ` v{Version}` next to the page heading in
+  a smaller muted font; added to all 20 module pages (ExchangeOnlineConfig's prior inline
+  version lookup normalized to the component). Canonical rule recorded in
+  `docs/AdminModuleSpec.md` (UI Rendering + checklist) and `docs/AdminModuleDeveloperGuide.md`
+  (Page Heading And Version Display). Per owner direction it is an **enforced** rule:
+  modules without the version display are non-conformant. Versioning: base app bump
+  (2.3.10→2.3.11) plus **every** module `Version` patch-bumped (owner direction — the
+  rendered output of every page changed).
+  - **REMAINING (queued with the module guide work, below): enforce it in the validator.**
+    `tools/validate-module-package.ps1` must add a check that a module page includes
+    `<ModuleVersion />` (or otherwise renders its descriptor `Version`), failing/ warning
+    on omission. The guide + spec already say the validator enforces this; until the check
+    ships, that claim is forward-looking (the guide's Package Validator section flags it as
+    a pending check). Needs Pester coverage in `tests/ps/`.
 
 - **Config storage rethink — database instead of JSON fragments** (decision DEFERRED to
   week of 2026-06-15; Michael will decide; needs a plan doc before any implementation).
@@ -208,6 +212,11 @@ Owner's standing direction on the queue, given 2026-06-18:
   `docs/SqliteConfigStore-Plan.md`. A pre-swap drift pass is fine if Michael needs to
   hand something off sooner, but the authoritative rewrite is gated on the swap. Coordinate
   with the module packaging plan so guide and plan agree on authoring→validate→install.
+  - **Includes (added 2026-06-18): validator enforcement of the module version display.**
+    `validate-module-package.ps1` must check that a module page renders its descriptor
+    `Version` (via `<ModuleVersion />`). The guide + spec already document this as enforced;
+    the validator check + its Pester coverage are the outstanding piece. See the "Show
+    module version on every module page — DONE / REMAINING" item above.
 - **Module packaging/import**: a way to package modules and import them cleanly into
   the main app, preferably through the UI; if recompile is unavoidable that trade-off
   goes back to Michael. Needs a `docs/ModulePackaging-Plan.md` and approval before any
