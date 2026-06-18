@@ -159,6 +159,20 @@ Owner's standing direction on the queue, given 2026-06-18:
   autonomously, one commit each, reviewed by `codex review --commit <sha>` with findings
   fixed before the next phase (no per-phase human sign-off, owner direction). Phase order:
   A infra → B per-store cutover → C startup seeding → D ops scripts → E tests/docs.
+  - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
+    `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
+    timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
+    schema, fail-fast if DB newer than build), `IConfigStore`/`SqliteConfigStore` (txn +
+    change-token), `ConfigChangeToken`. Wired in `Program.cs` (DB at
+    `config/exchangeadmin.db`, migrate at startup). 10 storage tests; 469/469 total. Codex
+    review found + fixed: shared-cache defeating WAL, and missing newer-DB guard. **No
+    existing service uses the store yet** — that is Phase B.
+  - **NEXT: Phase B** — move stores onto `IConfigStore` one at a time, lowest blast radius
+    first (plan §5 order): extended-log-level → module-admins → module-config → modules-
+    enabled → section-access → protected-principals → ad-editable-attributes. Each: repo +
+    service rewrite + importer (read legacy JSON, insert, archive `*.imported-<ts>`) +
+    parity tests pinning the exact cache/fail-mode, with the revert-the-fix proof on
+    fail-closed stores. Module versions bump for touched modules; base app bump.
 - **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
   + validator, rebuild-to-install, runtime upload deferred. `docs/ModulePackaging-Plan.md`
   still to be written before implementation.
