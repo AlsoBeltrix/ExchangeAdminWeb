@@ -170,7 +170,24 @@ public class ADAttributeEditorService
         if (!configured)
             return []; // nothing configured — valid empty allowlist
 
-        return ValidateRows(rows.Select(ToAllowlistEntry));
+        // Projecting rows can throw if a stored choices_json is malformed (operator/promote edit
+        // or partial corruption). That is a corrupt-store condition → return null (the documented
+        // fail-closed signal), never let it throw through callers as a 500.
+        // Projecting rows can throw if a stored choices_json is malformed (operator/promote edit
+        // or partial corruption). That is a corrupt-store condition → return null (the documented
+        // fail-closed signal), never let it throw through callers as a 500.
+        List<AttributeAllowlistEntry> entries;
+        try
+        {
+            entries = rows.Select(ToAllowlistEntry).ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ad-editable-attributes store has a malformed row (choices_json) — failing closed");
+            return null;
+        }
+
+        return ValidateRows(entries);
     }
 
     // Validation (denylist removal, contradictory flags, empty Choice list) — unchanged from the
@@ -318,15 +335,30 @@ public class ADAttributeEditorService
                                 a.Choices == null ? null : JsonSerializer.Serialize(a.Choices),
                                 a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level > 0 ? a.Level : 1))
                             .ToList();
-                        _repository.ImportAllowlistIfMissing(rows);
-                        LegacyConfigImport.ArchiveFile(allowlistPath, _logger);
+                        try
+                        {
+                            _repository.ImportAllowlistIfMissing(rows);
+                            LegacyConfigImport.ArchiveFile(allowlistPath, _logger);
+                        }
+                        catch (Exception ex)
+                        {
+                            // Valid file but the DB import could not be committed (e.g. SQLite
+                            // busy). Do NOT archive and do NOT leave the store looking
+                            // unconfigured — that would silently drop the existing allowlist
+                            // rules. Fail closed; the file stays for the next startup to retry.
+                            _logger.LogError(ex, "Failed to import legacy ad-editable-attributes.json into the store — failing closed until import succeeds");
+                            allowlistCorrupt = true;
+                        }
                     }
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy ad-editable-attributes.json");
+            // A valid file we could not even read must also fail closed (parse errors are handled
+            // above and already set allowlistCorrupt).
+            _logger.LogError(ex, "Failed to process legacy ad-editable-attributes.json — failing closed");
+            allowlistCorrupt = true;
         }
 
         // Legend (fail-open)

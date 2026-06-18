@@ -421,6 +421,64 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.Equal(2, reloaded!.Count);
     }
 
+    [Fact]
+    public void Construction_ValidLegacyFileButImportFails_FailsClosed()
+    {
+        // P2 (codex): a valid legacy allowlist file that cannot be committed to the DB (e.g.
+        // SQLite busy) must fail closed (null), NOT silently read as an empty allowlist.
+        _attrStore = new WriteFailsStore();
+        WriteAllowlistConfig(new
+        {
+            Attributes = new[]
+            {
+                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true }
+            }
+        });
+
+        var service = CreateService();
+
+        Assert.Null(service.GetAllowlist());
+        Assert.True(service.IsAllowlistCorrupt());
+        // File left in place for next-startup retry.
+        Assert.True(File.Exists(Path.Combine(_configDir, "ad-editable-attributes.json")));
+    }
+
+    [Fact]
+    public void GetAllowlist_MalformedStoredChoicesJson_ReturnsNull_DoesNotThrow()
+    {
+        // P2 (codex): a malformed choices_json row (operator/promote edit, partial corruption)
+        // must surface as the null corrupt signal, not throw through callers as a 500.
+        var service = CreateService(); // sets _attrStore
+        _attrStore!.Write((connection, tx) =>
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText =
+                "INSERT INTO editable_attribute (name, label, type, choices_json, required, allow_clear, level) " +
+                "VALUES ('department', 'Department', 'Choice', '{not valid json', 0, 0, 1);";
+            insert.ExecuteNonQuery();
+            using var mark = connection.CreateCommand();
+            mark.Transaction = tx;
+            mark.CommandText = "INSERT INTO editable_attribute_present (marker) VALUES (1) ON CONFLICT(marker) DO NOTHING;";
+            mark.ExecuteNonQuery();
+        });
+        service.InvalidateAllowlistCache();
+
+        Assert.Null(service.GetAllowlist());
+        Assert.True(service.IsAllowlistCorrupt());
+    }
+
+    // Reads succeed but writes throw — simulates SQLite busy during the one-time import.
+    private sealed class WriteFailsStore : ExchangeAdminWeb.Services.Storage.IConfigStore
+    {
+        private readonly ExchangeAdminWeb.Services.Storage.SqliteConfigStore _inner;
+        public WriteFailsStore() => _inner = TestConfigStore.Create(Path.Combine(Path.GetTempPath(), $"adwfs_{Guid.NewGuid():N}"));
+        public long GetChangeToken() => _inner.GetChangeToken();
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => _inner.Read(read);
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store busy");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store busy");
+    }
+
     // --- Disk-fresh corruption gate (IsAllowlistCorrupt) ---
 
     [Fact]
