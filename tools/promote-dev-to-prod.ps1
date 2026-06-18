@@ -325,8 +325,13 @@ try {
             } else {
                 Write-Plan "Replace prod config DB with a consistent copy of $devConfigDir\exchangeadmin.db (wholesale)"
             }
+        } elseif ($Apply) {
+            # All runtime config lives in the DB now. A missing dev DB means promotion would ship
+            # binaries with NO config promoted, leaving prod on stale/missing config — abort
+            # rather than report success. (Triggers the rollback in the surrounding catch.)
+            throw "Dev has no config DB at $devConfigDir\exchangeadmin.db — cannot promote config. Run -Dev with the current build first."
         } else {
-            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db — nothing to promote. (Run -Dev with the current build first.)"
+            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db — nothing to promote (dry run). Run -Dev with the current build first."
         }
     } else {
         Write-Warn "Skipping config promotion by request."
@@ -344,6 +349,21 @@ try {
             if ($LASTEXITCODE -ge 8) {
                 Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE - prod may be in an inconsistent state" -ForegroundColor Red
             } else {
+                # The robocopy above restores the config/ tree, but its copy of the live DB may be
+                # torn (WAL). If a VERIFIED DB backup was taken (Backup-SqliteConfigDb wrote
+                # $backup\exchangeadmin.<timestamp>.db), overlay it onto prod's config DB and
+                # integrity-check, so rollback restores a known-good DB rather than the raw copy.
+                $verifiedDb = Join-Path $backup "exchangeadmin.${timestamp}.db"
+                if (Test-Path -LiteralPath $verifiedDb -PathType Leaf) {
+                    $prodDb = Join-Path $prod "config\exchangeadmin.db"
+                    foreach ($suffix in '-wal', '-shm') {
+                        $side = "$prodDb$suffix"
+                        if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
+                    }
+                    Copy-Item -LiteralPath $verifiedDb -Destination $prodDb -Force
+                    Test-SqliteConfigDbIntegrity -DbPath $prodDb | Out-Null
+                    Write-Ok "Restored verified config DB from $verifiedDb"
+                }
                 $rolledBack = $true
                 Write-Ok "Rolled back prod to pre-promotion state"
             }

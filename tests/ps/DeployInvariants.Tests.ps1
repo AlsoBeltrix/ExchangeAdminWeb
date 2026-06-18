@@ -353,6 +353,25 @@ Describe 'tools/promote-dev-to-prod.ps1' {
             -Because 'the prod DB must be replaced only while its app pool is stopped'
     }
 
+    It 'rollback restores the VERIFIED DB backup, not just the raw robocopy copy (codex P1)' {
+        # The robocopy of config/ can capture a torn live WAL DB; rollback must overlay the
+        # verified backup (exchangeadmin.<timestamp>.db) onto prod and integrity-check it.
+        $rollbackBlock = [regex]::Match($s.Text, '(?s)Rolling back prod from backup.*?Rolled back prod').Value
+        $rollbackBlock | Should -Match 'exchangeadmin\.\$\{timestamp\}\.db' `
+            -Because 'rollback must consume the verified DB backup path'
+        $rollbackBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
+            -Because 'the restored DB must be integrity-checked'
+    }
+
+    It 'aborts apply (not just warns) when dev has no config DB (codex P2)' {
+        # In -Apply, a missing dev DB means no config is promoted; the script must throw rather
+        # than finish on the success banner with stale prod config.
+        $s.Text | Should -Match 'cannot promote config' `
+            -Because 'apply must abort when there is no dev config DB to promote'
+        $s.Text | Should -Match 'elseif \(\$Apply\)' `
+            -Because 'the abort is gated on apply mode (dry-run only warns)'
+    }
+
     It 'only claims prod was restored from backup when rollback actually completed' {
         # Success-aggregation trap: the closing throw used to assert "Prod has been
         # restored from backup" unconditionally, even when the rollback robocopy failed
