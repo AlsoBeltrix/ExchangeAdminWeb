@@ -151,10 +151,14 @@ Owner's standing direction on the queue, given 2026-06-18:
   pages) is independent and small — bundle it with whatever change next touches the module
   pages, or do it before the SQLite work. The *guide/spec rule* folds into the SQLite plan's
   Phase E2 module-guide rewrite.
-- **SQLite config store:** three design decisions resolved 2026-06-18 (see
-  `.agents/decisions.md`): DB in `config/` per-environment (no shared DB), plain
-  `Microsoft.Data.Sqlite` (no EF), add the change-token reload signal. **Still awaiting owner
-  go/no-go to execute the migration** — the plan stays Draft.
+- **SQLite config store: IN PROGRESS (owner go 2026-06-18).** Three design decisions
+  resolved (see `.agents/decisions.md`): DB in `config/` per-environment (no shared DB),
+  plain `Microsoft.Data.Sqlite` (no EF), change-token reload signal. Prod + dev both on
+  2.3.11 before start (clean baseline for the import-prove-on-dev model). Plan
+  `docs/SqliteConfigStore-Plan.md` now `In progress`. Cadence: phases implemented
+  autonomously, one commit each, reviewed by `codex review --commit <sha>` with findings
+  fixed before the next phase (no per-phase human sign-off, owner direction). Phase order:
+  A infra → B per-store cutover → C startup seeding → D ops scripts → E tests/docs.
 - **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
   + validator, rebuild-to-install, runtime upload deferred. `docs/ModulePackaging-Plan.md`
   still to be written before implementation.

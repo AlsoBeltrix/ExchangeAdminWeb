@@ -1,10 +1,21 @@
 # SQLite Config Store Migration — Plan
 
-Status: Draft (for Michael's review — 2026-06-15)
+Status: In progress (owner go 2026-06-18; implementation started at app 2.3.11)
 App version at drafting: 2.3.8 (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`)
 Authority: subordinate to `docs/ProjectConstitution.md` and `AGENTS.md`. Implements
 decision **2026-06-12 — Runtime config and operational data move to SQLite**
-(`.agents/decisions.md`). No implementation until this plan is marked `Approved`.
+(`.agents/decisions.md`).
+
+The three Phase-A-blocking open questions in §9 are **resolved** (owner decisions
+2026-06-18, recorded in `.agents/decisions.md`):
+- **DB location (§3b): Option A** — SQLite file lives in `config/`, one DB per environment;
+  no shared dev/prod DB. §7 retirement list resolves to the Option-A column.
+- **Data-access (§3a): `Microsoft.Data.Sqlite` + thin repositories.** No Entity Framework.
+- **Cache invalidation (§5B.2): the `schema_meta` change-token**, not accept-the-staleness.
+
+Implementation cadence (owner direction 2026-06-18): phases are implemented autonomously,
+one commit per phase; each commit is reviewed by `codex review --commit <sha>` and findings
+fixed before moving on, rather than per-phase human sign-off.
 
 Evidence base: the touchpoint inventory was produced by a fan-out audit over six
 dimensions (C# file I/O, appsettings reads, UI pages, ops scripts, tests, docs) plus a
