@@ -54,8 +54,11 @@ sqlite3 -header -column config\exchangeadmin.db "SELECT policy_alias, group_valu
 # Example: re-enable a module that was switched off
 sqlite3 config\exchangeadmin.db "UPDATE module_enablement SET enabled=1 WHERE module_id='MailboxPermissions';"
 
-# Example: grant a group access to a section (authorization — double-check the alias)
-sqlite3 config\exchangeadmin.db "INSERT OR IGNORE INTO section_access(policy_alias, group_value) VALUES ('MailboxPermissions','DOMAIN\\Exchange-Admins');"
+# Example: grant a group access to a section (authorization — double-check the alias).
+# IMPORTANT: section access is only read from the DB when the presence marker exists. If the
+# store was never configured (no marker), inserted rows are IGNORED and the app falls back /
+# fails closed. Always set the marker too (harmless if already present):
+sqlite3 config\exchangeadmin.db "INSERT OR IGNORE INTO section_access(policy_alias, group_value) VALUES ('MailboxPermissions','DOMAIN\\Exchange-Admins'); INSERT OR IGNORE INTO section_access_present(marker) VALUES (1);"
 
 # Example: set a scalar app setting
 sqlite3 config\exchangeadmin.db "INSERT INTO app_setting(key,value) VALUES('extended_log_level','Information') ON CONFLICT(key) DO UPDATE SET value=excluded.value;"

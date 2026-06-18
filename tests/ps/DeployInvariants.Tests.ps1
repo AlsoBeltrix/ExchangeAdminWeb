@@ -310,11 +310,13 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
             -Because 'the runtime DB inherits the config-dir ACL — no DB-specific grant needed'
     }
 
-    It 'still writes the section-access seed (consumed as first-run DB import seed)' {
+    It 'still writes the section-access seed file (consumed as first-run DB import seed)' {
         # Fresh installs get correct initial authorization via this seed, which the app imports
-        # into section_access on first start. The install script need not speak SQLite.
-        $s.Text | Should -Match 'New-SectionAccessSeed' `
-            -Because 'a fresh install must seed initial section-access (authorization)'
+        # into section_access on first start. Assert the actual WRITE call + path, not just the
+        # helper name (which also appears in the function definition), so removing the write is
+        # caught.
+        $s.Text | Should -Match 'Write-JsonFileIfMissing[^\r\n]*sectionaccess\.json[^\r\n]*New-SectionAccessSeed' `
+            -Because 'a fresh install must actually write the section-access (authorization) seed'
     }
 }
 
