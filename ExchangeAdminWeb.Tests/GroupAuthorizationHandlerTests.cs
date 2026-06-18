@@ -3,6 +3,7 @@ using System.Text.Json;
 using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -21,12 +22,16 @@ public class GroupAuthorizationHandlerTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly string _configDir;
+    private readonly SqliteConfigStore _store;
+    private readonly ModuleEnablementRepository _enablementRepo;
 
     public GroupAuthorizationHandlerTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"gah-test-{Guid.NewGuid():N}");
         _configDir = Path.Combine(_tempDir, "config");
         Directory.CreateDirectory(_configDir);
+        _store = TestConfigStore.Create(_tempDir);
+        _enablementRepo = new ModuleEnablementRepository(_store);
     }
 
     public void Dispose()
@@ -50,7 +55,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
         var catalog = new ModuleCatalog();
         var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog);
         var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
-        var enablement = new ModuleEnablementService(catalog, env, moduleConfig, config, Substitute.For<ILogger<ModuleEnablementService>>());
+        var enablement = new ModuleEnablementService(catalog, env, moduleConfig, new ModuleEnablementRepository(_store), config, Substitute.For<ILogger<ModuleEnablementService>>());
 
         return new GroupAuthorizationHandler(
             Substitute.For<ILogger<GroupAuthorizationHandler>>(), sectionAccess, catalog, enablement);
@@ -65,9 +70,8 @@ public class GroupAuthorizationHandlerTests : IDisposable
 
     private void WriteEnablement(Dictionary<string, bool> state)
     {
-        File.WriteAllText(
-            Path.Combine(_configDir, "modules-enabled.json"),
-            JsonSerializer.Serialize(state));
+        // Enablement now lives in the DB; seed the shared store the handler's service reads.
+        _enablementRepo.SaveAll(state);
     }
 
     private static ClaimsPrincipal MakeUser(params string[] roles)

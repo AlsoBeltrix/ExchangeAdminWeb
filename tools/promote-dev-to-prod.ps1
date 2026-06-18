@@ -471,6 +471,12 @@ try {
     Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase
 
     if (-not $SkipConfigFragments) {
+        # TRANSITIONAL (SQLite Phase B): these fragments are being moved into the SQLite config
+        # DB one at a time. modules-enabled.json moved in B.4 (app 2.3.16); after cutover it no
+        # longer exists at runtime, so its merge below silently no-ops and enablement does NOT
+        # promote until Phase D replaces these with module_enablement/section_access/etc. table
+        # merges. sectionaccess/protected-principals/ad-editable-attributes follow in B.5-B.7.
+        # See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
         $jsonConfigFiles = @(
             'sectionaccess.json',
             'modules-enabled.json',

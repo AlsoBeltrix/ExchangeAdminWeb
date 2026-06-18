@@ -1,12 +1,12 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
 public class ModuleEnablementService
 {
-    private readonly string _configFilePath;
+    private readonly ModuleEnablementRepository _repository;
     private readonly ModuleCatalog _catalog;
     private readonly ModuleConfigService _moduleConfig;
     private readonly IConfiguration _config;
@@ -18,16 +18,18 @@ public class ModuleEnablementService
         ModuleCatalog catalog,
         IWebHostEnvironment env,
         ModuleConfigService moduleConfig,
+        ModuleEnablementRepository repository,
         IConfiguration config,
         ILogger<ModuleEnablementService> logger)
     {
         _catalog = catalog;
         _moduleConfig = moduleConfig;
+        _repository = repository;
         _config = config;
         _logger = logger;
-        var configDir = Path.Combine(env.ContentRootPath, "config");
-        _configFilePath = Path.Combine(configDir, "modules-enabled.json");
-        Directory.CreateDirectory(configDir);
+
+        var legacyPath = Path.Combine(env.ContentRootPath, "config", "modules-enabled.json");
+        ImportLegacyIfPresent(legacyPath);
     }
 
     /// <summary>
@@ -96,15 +98,9 @@ public class ModuleEnablementService
     /// </summary>
     public bool IsStoreCorrupt()
     {
-        if (!File.Exists(_configFilePath)) return false;
-        try
-        {
-            return JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(_configFilePath)) == null;
-        }
-        catch
-        {
-            return true;
-        }
+        // Post-SQLite, "corrupt" means the store cannot be read at all (a DB-integrity
+        // failure), not an unparseable file. A healthy-but-empty store is NOT corrupt.
+        return !_repository.TryGetAll(out _);
     }
 
     public void SaveEnablement(Dictionary<string, bool> enablement)
@@ -120,30 +116,8 @@ public class ModuleEnablementService
                     toSave[module.Id] = module.EnabledByDefault;
             }
 
-            var configDir = Path.GetDirectoryName(_configFilePath)!;
-            var tempPath = Path.Combine(configDir, $"modules-enabled.{Guid.NewGuid():N}.tmp");
-
-            try
-            {
-                var json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(tempPath, json);
-
-                var validation = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(tempPath));
-                if (validation == null)
-                    throw new InvalidOperationException("Generated enablement file failed validation");
-
-                if (File.Exists(_configFilePath))
-                    File.Replace(tempPath, _configFilePath, null);
-                else
-                    File.Move(tempPath, _configFilePath);
-
-                _logger.LogInformation("Module enablement saved to {Path}", _configFilePath);
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                    try { File.Delete(tempPath); } catch { }
-            }
+            _repository.SaveAll(toSave);
+            _logger.LogInformation("Module enablement saved");
         }
     }
 
@@ -174,22 +148,49 @@ public class ModuleEnablementService
 
     private Dictionary<string, bool> ReadState()
     {
-        if (!File.Exists(_configFilePath))
-            return new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        // FAIL-CLOSED: if the store cannot be read, return an explicit all-disabled map for
+        // every non-system module (NOT an empty map — empty would let modules fall back to
+        // EnabledByDefault). This preserves the file version's corrupt-store behavior.
+        if (_repository.TryGetAll(out var state))
+            return state;
 
+        _logger.LogError("Module enablement store unreadable - all modules disabled until fixed");
+        var disabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+            disabled[module.Id] = false;
+        return disabled;
+    }
+
+    // One-time import of legacy modules-enabled.json into module_enablement, then archive the
+    // file (SqliteConfigStore-Plan §4). Only fills if the table is empty (DB wins). An
+    // unparseable legacy file is left in place (not archived) so a corrupt file is not silently
+    // discarded.
+    private void ImportLegacyIfPresent(string legacyPath)
+    {
         try
         {
-            var json = File.ReadAllText(_configFilePath);
-            return JsonSerializer.Deserialize<Dictionary<string, bool>>(json)
-                ?? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            if (!File.Exists(legacyPath))
+                return;
+
+            Dictionary<string, bool>? legacy;
+            try
+            {
+                legacy = JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(legacyPath));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Legacy modules-enabled.json is unparseable; leaving it in place, not importing");
+                return;
+            }
+
+            if (legacy is { Count: > 0 })
+                _repository.ImportIfMissing(legacy);
+
+            LegacyConfigImport.ArchiveFile(legacyPath, _logger);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Module enablement file corrupt - all modules disabled until fixed");
-            var disabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-            foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
-                disabled[module.Id] = false;
-            return disabled;
+            _logger.LogWarning(ex, "Failed to import legacy modules-enabled.json");
         }
     }
 }

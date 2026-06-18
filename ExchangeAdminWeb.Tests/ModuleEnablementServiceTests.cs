@@ -1,6 +1,6 @@
-using System.Text.Json;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -11,20 +11,18 @@ namespace ExchangeAdminWeb.Tests;
 public class ModuleEnablementServiceTests : IDisposable
 {
     private readonly string _tempDir;
-    private readonly string _configDir;
-    private readonly string _configFilePath;
     private readonly ModuleCatalog _catalog;
     private readonly IWebHostEnvironment _env;
     private readonly ILogger<ModuleEnablementService> _logger;
     private readonly ModuleConfigService _moduleConfig;
     private readonly IConfiguration _config;
+    private readonly SqliteConfigStore _store;
+    private readonly ModuleEnablementRepository _repository;
 
     public ModuleEnablementServiceTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"moduleenablement_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
-        _configDir = Path.Combine(_tempDir, "config");
-        _configFilePath = Path.Combine(_configDir, "modules-enabled.json");
 
         _catalog = new ModuleCatalog();
 
@@ -36,6 +34,10 @@ public class ModuleEnablementServiceTests : IDisposable
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
         _moduleConfig = new ModuleConfigService(_catalog, _env, TestConfigStore.CreateModuleConfig(_tempDir), moduleConfigLogger);
         _config = new ConfigurationBuilder().Build();
+
+        // One shared store/DB for the whole test so seeded state is visible to the service.
+        _store = TestConfigStore.Create(_tempDir);
+        _repository = new ModuleEnablementRepository(_store);
     }
 
     public void Dispose()
@@ -44,22 +46,22 @@ public class ModuleEnablementServiceTests : IDisposable
         catch { }
     }
 
-    private ModuleEnablementService CreateService()
+    private ModuleEnablementService CreateService(IConfigStore? store = null)
     {
-        return new ModuleEnablementService(_catalog, _env, _moduleConfig, _config, _logger);
+        return new ModuleEnablementService(_catalog, _env, _moduleConfig,
+            new ModuleEnablementRepository(store ?? _store), _config, _logger);
     }
 
-    private void WriteEnablementFile(Dictionary<string, bool> state)
-    {
-        Directory.CreateDirectory(_configDir);
-        var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(_configFilePath, json);
-    }
+    // Seeds enablement state into the shared store (the DB analogue of writing the file).
+    private void SeedEnablement(Dictionary<string, bool> state) => _repository.SaveAll(state);
 
-    private void WriteRawFile(string content)
+    // A store whose reads throw — the DB-integrity analogue of an unparseable file.
+    private sealed class UnreadableStore : IConfigStore
     {
-        Directory.CreateDirectory(_configDir);
-        File.WriteAllText(_configFilePath, content);
+        public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 
     [Fact]
@@ -98,7 +100,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["MailboxPermissions"] = false,
             ["Migration"] = true
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -107,17 +109,15 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     [Fact]
-    public void IsModuleEnabled_CorruptFile_ReturnsFalseForAllNonSystemModules()
+    public void IsModuleEnabled_CorruptStore_ReturnsFalseForAllNonSystemModules()
     {
-        WriteRawFile("{ this is not valid json !!!");
+        // Unreadable store == the file-world "corrupt file": fail closed, all non-system off.
+        var service = CreateService(new UnreadableStore());
 
-        var service = CreateService();
-
-        // All non-system modules should be disabled (fail-closed)
         foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
         {
             Assert.False(service.IsModuleEnabled(module.Id),
-                $"Expected module '{module.Id}' to be disabled when file is corrupt");
+                $"Expected module '{module.Id}' to be disabled when store is corrupt");
         }
     }
 
@@ -130,7 +130,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["Migration"] = true,
             ["MessageTrace"] = false
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
         var result = service.GetAllEnablement();
@@ -168,44 +168,35 @@ public class ModuleEnablementServiceTests : IDisposable
 
         service.SaveEnablement(enablement);
 
-        Assert.True(File.Exists(_configFilePath));
-
-        // Read back and verify it's valid JSON
-        var json = File.ReadAllText(_configFilePath);
-        var readBack = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
-        Assert.NotNull(readBack);
-        Assert.False(readBack!["CalendarPermissions"]);
+        // Read back from the store and verify it round-trips.
+        Assert.True(_repository.TryGetAll(out var readBack));
+        Assert.False(readBack["CalendarPermissions"]);
         Assert.True(readBack["MailboxPermissions"]);
     }
 
     [Fact]
-    public void SaveEnablement_AtomicWrite_FileExistsAfterSave()
+    public void SaveEnablement_SecondSave_OverwritesFirst()
     {
         var service = CreateService();
 
-        // First save to create the file
         var first = new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = true,
             ["CalendarPermissions"] = true
         };
         service.SaveEnablement(first);
-        Assert.True(File.Exists(_configFilePath));
+        Assert.True(_repository.TryGetAll(out var afterFirst));
+        Assert.True(afterFirst["MailboxPermissions"]);
 
-        // Second save exercises the File.Replace path (file already exists)
         var second = new Dictionary<string, bool>
         {
             ["MailboxPermissions"] = false,
             ["CalendarPermissions"] = false
         };
         service.SaveEnablement(second);
-        Assert.True(File.Exists(_configFilePath));
 
-        // Verify the second write took effect
-        var json = File.ReadAllText(_configFilePath);
-        var readBack = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
-        Assert.NotNull(readBack);
-        Assert.False(readBack!["MailboxPermissions"]);
+        Assert.True(_repository.TryGetAll(out var readBack));
+        Assert.False(readBack["MailboxPermissions"]);
         Assert.False(readBack["CalendarPermissions"]);
     }
 
@@ -218,7 +209,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["AdminSettings"] = false,
             ["AdminEventLog"] = false
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -261,7 +252,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["ExchangeOnline"] = false,
             ["MailboxPermissions"] = true
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -277,7 +268,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["ExchangeOnline"] = true,
             ["MailboxPermissions"] = true
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -293,7 +284,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["ExchangeOnline"] = true,
             ["MailboxPermissions"] = false
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -310,14 +301,14 @@ public class ModuleEnablementServiceTests : IDisposable
             ["ExchangeOnline"] = true,
             ["MailboxPermissions"] = true
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
         Assert.True(service.IsModuleEnabled("MailboxPermissions"));
 
         // Disable parent
         state["ExchangeOnline"] = false;
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service2 = CreateService();
         Assert.False(service2.IsModuleEnabled("MailboxPermissions"));
@@ -325,7 +316,7 @@ public class ModuleEnablementServiceTests : IDisposable
 
         // Re-enable parent
         state["ExchangeOnline"] = true;
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service3 = CreateService();
         Assert.True(service3.IsModuleEnabled("MailboxPermissions")); // child reactivated
@@ -339,7 +330,7 @@ public class ModuleEnablementServiceTests : IDisposable
             ["ExchangeOnline"] = false,
             ["MfaReset"] = true
         };
-        WriteEnablementFile(state);
+        SeedEnablement(state);
 
         var service = CreateService();
 
@@ -351,63 +342,57 @@ public class ModuleEnablementServiceTests : IDisposable
     // Enablement is written ONLY by SaveEnablement from Admin Settings.
 
     [Fact]
-    public void Startup_NoFile_ReadsDoNotCreateFile()
+    public void Startup_NoState_ReadsDoNotWriteAnything()
     {
+        var tokenBefore = _store.GetChangeToken();
         var service = CreateService();
 
         service.GetAllEnablement();
         service.IsModuleRawEnabled("MailboxPermissions");
 
-        Assert.False(File.Exists(_configFilePath));
+        // No write means the change token is unchanged and no rows were created.
+        Assert.Equal(tokenBefore, _store.GetChangeToken());
+        Assert.False(_repository.HasAny());
     }
 
     [Fact]
     public void Startup_MissingExchangeOnlineKey_NoExoConfig_DefaultsFalse_AndWritesNothing()
     {
-        var state = new Dictionary<string, bool>
-        {
-            ["MailboxPermissions"] = true
-        };
-        WriteEnablementFile(state);
-        var before = File.ReadAllText(_configFilePath);
+        SeedEnablement(new Dictionary<string, bool> { ["MailboxPermissions"] = true });
+        var tokenBefore = _store.GetChangeToken();
 
         var service = CreateService();
         var result = service.GetAllEnablement();
 
         Assert.False(result["ExchangeOnline"]); // EnabledByDefault = false
-        Assert.Equal(before, File.ReadAllText(_configFilePath));
+        Assert.Equal(tokenBefore, _store.GetChangeToken());
     }
 
     [Fact]
     public void Startup_MissingExchangeOnlineKey_WithExoConfig_DoesNotAutoEnable_AndWritesNothing()
     {
-        var state = new Dictionary<string, bool>
-        {
-            ["MailboxPermissions"] = true
-        };
-        WriteEnablementFile(state);
-        File.WriteAllText(Path.Combine(_configDir, "module-config-ExchangeOnline.json"),
-            """{ "AppId": "00000000-0000-0000-0000-000000000001" }""");
-        var before = File.ReadAllText(_configFilePath);
+        SeedEnablement(new Dictionary<string, bool> { ["MailboxPermissions"] = true });
+        _moduleConfig.SaveModuleConfig("ExchangeOnline",
+            new Dictionary<string, string> { ["AppId"] = "00000000-0000-0000-0000-000000000001" });
+        var tokenBefore = _store.GetChangeToken();
 
         var service = CreateService();
         var result = service.GetAllEnablement();
 
         Assert.False(result["ExchangeOnline"]); // no auto-enable: an admin must enable it explicitly
-        Assert.Equal(before, File.ReadAllText(_configFilePath));
+        Assert.Equal(tokenBefore, _store.GetChangeToken());
     }
 
     [Fact]
-    public void Startup_CorruptFile_ReadsDoNotRewriteFile()
+    public void Startup_CorruptStore_ReadsDoNotWrite()
     {
-        const string corrupt = "{ this is not valid json !!!";
-        WriteRawFile(corrupt);
+        // An unreadable store must not be written to by reads (no blind rewrite).
+        var unreadable = new UnreadableStore();
+        var service = CreateService(unreadable);
 
-        var service = CreateService();
+        // Reads against the corrupt store fail closed without throwing.
         service.GetAllEnablement();
-        service.IsModuleRawEnabled("MailboxPermissions");
-
-        Assert.Equal(corrupt, File.ReadAllText(_configFilePath));
+        Assert.False(service.IsModuleRawEnabled("MailboxPermissions"));
     }
 
     // --- Corrupt-store probe (blank-render-save trap, incident fix #3) ---
@@ -415,42 +400,86 @@ public class ModuleEnablementServiceTests : IDisposable
     // the read fallback is all-disabled, and saving it would persist that state.
 
     [Fact]
-    public void IsStoreCorrupt_NoFile_ReturnsFalse()
+    public void IsStoreCorrupt_EmptyStore_ReturnsFalse()
     {
         Assert.False(CreateService().IsStoreCorrupt());
     }
 
     [Fact]
-    public void IsStoreCorrupt_ValidFile_ReturnsFalse()
+    public void IsStoreCorrupt_PopulatedStore_ReturnsFalse()
     {
-        WriteEnablementFile(new Dictionary<string, bool> { ["ExchangeOnline"] = true });
+        SeedEnablement(new Dictionary<string, bool> { ["ExchangeOnline"] = true });
 
         Assert.False(CreateService().IsStoreCorrupt());
     }
 
     [Fact]
-    public void IsStoreCorrupt_CorruptFile_ReturnsTrue()
+    public void IsStoreCorrupt_UnreadableStore_ReturnsTrue()
     {
-        WriteRawFile("{ this is not valid json !!!");
-
-        Assert.True(CreateService().IsStoreCorrupt());
+        Assert.True(CreateService(new UnreadableStore()).IsStoreCorrupt());
     }
 
     [Fact]
-    public void Startup_ExistingExchangeOnlineKey_PreservedAndFileUntouched()
+    public void Construction_ImportsLegacyFile_ThenArchives()
     {
-        var state = new Dictionary<string, bool>
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        var legacy = Path.Combine(configDir, "modules-enabled.json");
+        File.WriteAllText(legacy, """{ "Migration": true, "MailboxPermissions": false }""");
+
+        var service = CreateService();
+
+        Assert.True(_repository.TryGetAll(out var state));
+        Assert.True(state["Migration"]);
+        Assert.False(state["MailboxPermissions"]);
+        Assert.False(File.Exists(legacy));
+        Assert.Single(Directory.GetFiles(configDir, "modules-enabled.json.imported-*"));
+    }
+
+    [Fact]
+    public void Construction_DbValueWins_OverLegacyFile()
+    {
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        SeedEnablement(new Dictionary<string, bool> { ["Migration"] = false }); // DB says false
+        File.WriteAllText(Path.Combine(configDir, "modules-enabled.json"),
+            """{ "Migration": true }"""); // file says true
+
+        CreateService(); // triggers import
+
+        Assert.True(_repository.TryGetAll(out var state));
+        Assert.False(state["Migration"]); // DB wins
+    }
+
+    [Fact]
+    public void Construction_UnparseableLegacyFile_LeftInPlace_NotImported()
+    {
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        var legacy = Path.Combine(configDir, "modules-enabled.json");
+        File.WriteAllText(legacy, "{ not valid json");
+
+        CreateService();
+
+        // A corrupt legacy file must not be silently discarded.
+        Assert.True(File.Exists(legacy));
+        Assert.Empty(Directory.GetFiles(configDir, "modules-enabled.json.imported-*"));
+    }
+
+    [Fact]
+    public void Startup_ExistingExchangeOnlineKey_PreservedAndNothingWritten()
+    {
+        SeedEnablement(new Dictionary<string, bool>
         {
             ["ExchangeOnline"] = true,
             ["MailboxPermissions"] = true
-        };
-        WriteEnablementFile(state);
-        var before = File.ReadAllText(_configFilePath);
+        });
+        var tokenBefore = _store.GetChangeToken();
 
         var service = CreateService();
         var result = service.GetAllEnablement();
 
         Assert.True(result["ExchangeOnline"]);
-        Assert.Equal(before, File.ReadAllText(_configFilePath));
+        Assert.Equal(tokenBefore, _store.GetChangeToken());
     }
 }

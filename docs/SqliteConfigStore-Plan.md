@@ -315,6 +315,10 @@ Per store, in this suggested order (lowest blast radius first):
 >   `module-config-*.json` (and the older single `module-config.json`) now merges files that
 >   no longer exist post-cutover; replace with a `module_config` table merge (dev-wins per
 >   module). After cutover those files are archived, so the current loop silently no-ops them.
+> - **modules-enabled.json** (B.4): in the `$jsonConfigFiles` merge list; post-cutover the
+>   file is gone so the merge no-ops. Replace with a `module_enablement` table merge. Note the
+>   importer leaves an *unparseable* legacy file in place (does not archive it), matching the
+>   "don't silently discard corrupt config" rule.
 
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline

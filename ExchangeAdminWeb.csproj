@@ -5,11 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <DefaultItemExcludes>$(DefaultItemExcludes);ExchangeAdminWeb.Tests\**</DefaultItemExcludes>
-    <VersionPrefix>2.3.15</VersionPrefix>
+    <VersionPrefix>2.3.16</VersionPrefix>
     <InformationalVersion>$(VersionPrefix)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>2.3.15.0</AssemblyVersion>
-    <FileVersion>2.3.15.0</FileVersion>
+    <AssemblyVersion>2.3.16.0</AssemblyVersion>
+    <FileVersion>2.3.16.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
