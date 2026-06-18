@@ -183,10 +183,18 @@ Owner's standing direction on the queue, given 2026-06-18:
     - **B.2 DONE (app 2.3.14, commit `5f6bb40`, codex-clean, pushed).** module-admins.json →
       `module_admins` (row-per-group) via new `ModuleAdminRepository`. Preserved silent
       fail-open + public API. 7 parity tests. No new promotion debt (not in promote list).
-    - **NEXT: B.3 — module-config-*.json → `module_config`** (`ModuleConfigService`; the
-      shared service ~17 modules funnel through — single biggest cutover; keep `ConfigSaved`
-      event and `IsModuleCorrupt`; fold the legacy `module-config.json` one-time migration in).
-      Then modules-enabled, section-access, protected-principals, ad-editable-attributes.
+    - **B.3 DONE (app 2.3.15, commits `0b618d8` + review `18550bd`, pushed).**
+      module-config-*.json (+ legacy single module-config.json) → `module_config` via new
+      `ModuleConfigRepository`. Shared `ModuleConfigService` (used by ~17 modules) public API
+      unchanged; `ConfigSaved` event preserved; `IsModuleCorrupt` redefined to DB-unreadable.
+      Migration **v2** added `module_config_present` so an empty-but-saved config still
+      suppresses the appsettings fallback (codex parity fix; revert-proven). Two corrupt-file
+      parity tests rewritten to unreadable-store; both fail-closed, revert-proven. 10 new
+      tests; 9 construction sites updated. 490/490.
+    - **NEXT: B.4 — modules-enabled.json → `module_enablement`** (`ModuleEnablementService`;
+      fail-closed all-disabled on corrupt, `IsStoreCorrupt`; this one needs the revert-the-fix
+      proof). Then section-access, protected-principals, ad-editable-attributes.
+    - **Schema is at user_version 2** (v1 Phase A tables; v2 module_config_present).
     - **Phase D promotion debt is accumulating** — see the running list in
       `docs/SqliteConfigStore-Plan.md` Phase D; each Phase B store adds an entry.
 - **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
