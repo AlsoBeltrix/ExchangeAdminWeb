@@ -1,5 +1,6 @@
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -48,9 +49,15 @@ public class MigrationTargetDatabaseSelectorTests : IDisposable
     [Fact]
     public void Resolve_FailsClosedWhenModuleConfigIsCorrupt()
     {
-        Directory.CreateDirectory(Path.Combine(_tempDir, "config"));
-        File.WriteAllText(Path.Combine(_tempDir, "config", "module-config.json"), "{not json");
-        var moduleConfig = CreateModuleConfig();
+        // Post-SQLite, "corrupt" means the config store cannot be read (a DB-integrity
+        // failure), not an unparseable JSON file. Simulate an unreadable store and assert the
+        // selector still fails closed (returns empty) rather than falling through.
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_tempDir);
+        Directory.CreateDirectory(_tempDir);
+        var moduleConfig = new ModuleConfigService(
+            new ModuleCatalog(), env, new ModuleConfigRepository(new UnreadableConfigStore()),
+            Substitute.For<ILogger<ModuleConfigService>>());
         var config = new ConfigurationBuilder().Build();
 
         var resolved = MigrationTargetDatabaseSelector.Resolve(moduleConfig, config);
@@ -63,7 +70,17 @@ public class MigrationTargetDatabaseSelectorTests : IDisposable
         Directory.CreateDirectory(_tempDir);
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(_tempDir);
-        return new ModuleConfigService(new ModuleCatalog(), env, Substitute.For<ILogger<ModuleConfigService>>());
+        return new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
+    }
+
+    // A config store whose reads always throw, standing in for a corrupt/unopenable DB so the
+    // corrupt-store guard (IsModuleCorrupt) trips.
+    private sealed class UnreadableConfigStore : ExchangeAdminWeb.Services.Storage.IConfigStore
+    {
+        public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 
     public void Dispose()

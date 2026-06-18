@@ -50,7 +50,7 @@ public class ADAttributeEditorServiceTests : IDisposable
 
         var catalog = new ModuleCatalog();
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(catalog, _env, moduleConfigLogger);
+        var moduleConfig = new ModuleConfigService(catalog, _env, TestConfigStore.CreateModuleConfig(_tempDir), moduleConfigLogger);
 
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());

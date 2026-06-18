@@ -41,7 +41,7 @@ public class PermissionValidatorTests
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(Path.GetTempPath());
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigLogger);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(Path.GetTempPath()), moduleConfigLogger);
 
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());

@@ -310,6 +310,11 @@ Per store, in this suggested order (lowest blast radius first):
 >   (now archived) file; replace with the `app_setting` row merge. Also retire the
 >   `deploy.ps1` `extended-log-level.txt` drift exclusion (the every-startup file rewrite is
 >   gone).
+> - **module-admins.json** (B.2): not in the promote fragment list; no debt.
+> - **module-config-*.json** (B.3): `promote-dev-to-prod.ps1` `Merge-JsonConfig` loop over
+>   `module-config-*.json` (and the older single `module-config.json`) now merges files that
+>   no longer exist post-cutover; replace with a `module_config` table merge (dev-wins per
+>   module). After cutover those files are archived, so the current loop silently no-ops them.
 
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline

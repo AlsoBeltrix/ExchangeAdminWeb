@@ -49,7 +49,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
 
         var catalog = new ModuleCatalog();
         var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog);
-        var moduleConfig = new ModuleConfigService(catalog, env, Substitute.For<ILogger<ModuleConfigService>>());
+        var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, config, Substitute.For<ILogger<ModuleEnablementService>>());
 
         return new GroupAuthorizationHandler(

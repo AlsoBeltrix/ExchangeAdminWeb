@@ -53,6 +53,7 @@ try
         ExchangeAdminWeb.Services.Storage.SqliteConfigStore>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.AppSettingRepository>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ModuleAdminRepository>();
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ModuleConfigRepository>();
 
     builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();

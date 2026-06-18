@@ -48,7 +48,7 @@ public class GroupManagementServiceTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var catalog = new ModuleCatalog();
-        var moduleConfig = new ModuleConfigService(catalog, env, Substitute.For<ILogger<ModuleConfigService>>());
+        var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
 
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());

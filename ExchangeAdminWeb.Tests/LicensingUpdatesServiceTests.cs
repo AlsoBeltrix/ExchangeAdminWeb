@@ -38,7 +38,7 @@ public class LicensingUpdatesServiceTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigLogger);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_tempDir), moduleConfigLogger);
 
         if (allowedTypes != null)
             moduleConfig.SaveModuleConfig("LicensingUpdates", new Dictionary<string, string> { ["AllowedLicenseTypes"] = allowedTypes });

@@ -27,7 +27,8 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
     private ProtectedPrincipalService CreateService(
         Dictionary<string, string?>? configOverrides = null,
-        string? protectedPrincipalsJson = null)
+        string? protectedPrincipalsJson = null,
+        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -47,7 +48,10 @@ public class ProtectedPrincipalServiceTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigLogger);
+        var moduleConfigRepo = moduleConfigStore != null
+            ? new ExchangeAdminWeb.Services.Storage.ModuleConfigRepository(moduleConfigStore)
+            : TestConfigStore.CreateModuleConfig(_tempDir);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigRepo, moduleConfigLogger);
 
         if (protectedPrincipalsJson != null)
             File.WriteAllText(Path.Combine(_configDir, "protected-principals.json"), protectedPrincipalsJson);
@@ -533,17 +537,22 @@ public class ProtectedPrincipalServiceTests : IDisposable
     [Fact]
     public async Task Check_CorruptMailboxPermissionsModuleConfig_FailsClosed()
     {
-        // The legacy ExcludedUsers protection list lives in the MailboxPermissions
-        // module config. A corrupt file must fail the check (deny the mutation),
-        // never silently drop the exclusions (fail open).
-        File.WriteAllText(
-            Path.Combine(_configDir, "module-config-MailboxPermissions.json"),
-            "{ this is not valid json");
-
-        var service = CreateService();
+        // The legacy ExcludedUsers protection list lives in the MailboxPermissions module
+        // config. Post-SQLite, "corrupt" means the config store cannot be read (a DB-integrity
+        // failure), not an unparseable JSON file. An unreadable store must fail the check (deny
+        // the mutation), never silently drop the exclusions (fail open).
+        var service = CreateService(moduleConfigStore: new ThrowingConfigStore());
         var result = await service.CheckAsync(MakePrincipal("excluded@contoso.com"));
 
         Assert.True(result.CheckFailed);
         Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class ThrowingConfigStore : ExchangeAdminWeb.Services.Storage.IConfigStore
+    {
+        public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 }

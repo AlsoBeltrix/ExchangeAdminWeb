@@ -20,4 +20,7 @@ internal static class TestConfigStore
 
     /// <summary>Creates an <see cref="AppSettingRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
     public static AppSettingRepository CreateAppSettings(string dir) => new(Create(dir));
+
+    /// <summary>Creates a <see cref="ModuleConfigRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
+    public static ModuleConfigRepository CreateModuleConfig(string dir) => new(Create(dir));
 }

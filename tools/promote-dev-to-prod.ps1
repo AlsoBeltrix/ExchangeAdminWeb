@@ -480,6 +480,11 @@ try {
         )
 
         # Promote per-module config files (dev values win - this is tested config)
+        # TRANSITIONAL (SQLite Phase B.3): module-config-*.json (and the older single
+        # module-config.json) were moved into the SQLite module_config table (app 2.3.15).
+        # After cutover these files no longer exist at runtime, so this loop matches nothing and
+        # per-module config does NOT promote until Phase D replaces it with a module_config
+        # table merge. See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
         $devConfigDir = Join-Path $dev "config"
         $prodConfigDir = Join-Path $prod "config"
         foreach ($moduleFile in Get-ChildItem -Path $devConfigDir -Filter "module-config-*.json" -ErrorAction SilentlyContinue) {

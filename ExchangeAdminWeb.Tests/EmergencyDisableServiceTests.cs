@@ -133,7 +133,7 @@ public class EmergencyDisableServiceTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var catalog = new ModuleCatalog();
-        var moduleConfig = new ModuleConfigService(catalog, env, Substitute.For<ILogger<ModuleConfigService>>());
+        var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
         var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var audit = new AuditService(jsonlLog, operationTrace);

@@ -34,7 +34,7 @@ public class ModuleEnablementServiceTests : IDisposable
         _logger = Substitute.For<ILogger<ModuleEnablementService>>();
 
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        _moduleConfig = new ModuleConfigService(_catalog, _env, moduleConfigLogger);
+        _moduleConfig = new ModuleConfigService(_catalog, _env, TestConfigStore.CreateModuleConfig(_tempDir), moduleConfigLogger);
         _config = new ConfigurationBuilder().Build();
     }
 
