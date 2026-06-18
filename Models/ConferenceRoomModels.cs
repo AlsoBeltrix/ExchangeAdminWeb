@@ -85,7 +85,11 @@ public class RoomTypePreviewRow
     public int RowIndex { get; set; }
     public string Email { get; set; } = "";
     public string DisplayName { get; set; } = "";
-    public RoomType Type { get; set; }
+    // Nullable: a preview row built for a parse/validation failure (skipped row,
+    // invalid type, missing timezone) has no type. Without nullability the enum
+    // defaulted to its first value, so failed rows rendered a phantom "Standard"
+    // in the preview while the Status column said the type was empty/invalid.
+    public RoomType? Type { get; set; }
     public string TimeZone { get; set; } = "";
     public string Site { get; set; } = "none";
     public string Arbiter { get; set; } = "";

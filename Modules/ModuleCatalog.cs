@@ -271,7 +271,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.1",
+            Version = "2.0.2",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -341,7 +341,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.0.7",
+            Version = "2.0.9",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [
@@ -397,41 +397,6 @@ public sealed class ModuleCatalog
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
                 new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
                 new("NotifySecurityTeam", "Security Team Email", "Email address for immediate notification on disable actions")
-            ]
-        },
-        new()
-        {
-            Id = "TestAccountPool",
-            DisplayName = "Test Account Pool",
-            Description = "Check out managed test accounts from on-premises AD and Entra ID test pools.",
-            Route = "test-account-pool",
-            IconCss = "bi bi-person-fill-nav-menu",
-            Category = "Identity & Access",
-            SortOrder = 745,
-            EnabledByDefault = false,
-            IsSystemModule = false,
-            Version = "1.0.1",
-            MainPermission = new("Access", "TestAccountPool", FailClosed: true),
-            GranularPermissions = [],
-            ConfigFields = [
-                new("OnPremPoolGroup", "On-Prem Test Account Group", "AD group containing managed on-premises or synced test accounts. Disabled accounts are available; enabled accounts are checked out.", Required: false, FieldType: ConfigFieldType.AdGroup),
-                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to enable, disable, expire, and reset test account passwords", Required: false),
-                new("OnPremCreateOU", "On-Prem Create OU", "Distinguished name of the OU where AD test accounts are created", Required: false, FieldType: ConfigFieldType.OU),
-                new("OnPremUPNSuffix", "On-Prem UPN Suffix", "UPN suffix for created AD test accounts, for example analog.com", Required: false),
-                new("OnPremExchangeOnlineGroup", "AD EXO Provisioning Group", "Optional AD group that grants Exchange Online licensing/provisioning for synced test accounts", Required: false, FieldType: ConfigFieldType.AdGroup),
-                new("OnPremTeamsGroup", "AD Teams Provisioning Group", "Optional AD group that grants Teams licensing/provisioning for synced test accounts", Required: false, FieldType: ConfigFieldType.AdGroup),
-                new("OnPremExchangeDelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the Exchange credential used to enable on-prem mailboxes", Required: false),
-                new("OnPremExchangeServerUri", "On-Prem Exchange PowerShell URI", "Exchange PowerShell endpoint for on-prem mailbox creation, for example http://server/PowerShell/", Required: false),
-                new("OnPremMailboxDatabase", "On-Prem Mailbox Database", "Optional mailbox database for on-prem mailbox creation. Leave blank to let Exchange choose.", Required: false),
-                new("EntraPoolGroupId", "Entra Test Account Group ID", "Entra group object ID containing cloud-only test accounts. Cloud-only accounts are inventory-only until a durable lease strategy is selected.", Required: false),
-                new("GraphDelineaSecretId", "Graph Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields for Entra pool inventory", Required: false),
-                new("EntraDomain", "Entra Domain", "UPN domain for cloud-only test accounts, for example contoso.onmicrosoft.com", Required: false),
-                new("EntraUsageLocation", "Entra Usage Location", "Optional two-letter usage location for cloud-only accounts, for example US", Required: false, DefaultValue: "US"),
-                new("EntraExchangeOnlineGroupId", "Entra EXO Provisioning Group ID", "Optional Entra group object ID that grants Exchange Online licensing/provisioning for cloud-only test accounts", Required: false),
-                new("EntraTeamsGroupId", "Entra Teams Provisioning Group ID", "Optional Entra group object ID that grants Teams licensing/provisioning for cloud-only test accounts", Required: false),
-                new("DefaultCheckoutHours", "Default Checkout Hours", "Default checkout duration for AD-backed accounts", Required: false, DefaultValue: "24"),
-                new("MaxCheckoutHours", "Maximum Checkout Hours", "Maximum allowed checkout duration for AD-backed accounts", Required: false, DefaultValue: "168"),
-                new("CleanupIntervalMinutes", "Cleanup Interval Minutes", "How often the background worker disables and resets expired AD-backed checkouts", Required: false, DefaultValue: "30")
             ]
         },
         new()

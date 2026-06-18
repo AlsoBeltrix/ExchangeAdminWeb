@@ -60,7 +60,6 @@
       "RecipientLookup": ["DOMAIN\\Exchange-Admins", "DOMAIN\\IT-Helpdesk"],
       "OutOfOffice": ["DOMAIN\\Exchange-Admins"],
       "EmergencyDisable": ["DOMAIN\\Exchange-Admins"],
-      "TestAccountPool": ["DOMAIN\\Exchange-Admins"],
       "MfaReset": ["DOMAIN\\Exchange-Admins"],
       "NamedLocations": ["DOMAIN\\Exchange-Admins"],
       "DhcpAuthorization": ["DOMAIN\\Exchange-Admins"],

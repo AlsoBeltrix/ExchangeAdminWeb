@@ -11,7 +11,6 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<GroupManagement> Logger
-@inject ProtectedPrincipalService ProtectedPrincipalService
 
 <PageTitle>Group Management</PageTitle>
 
@@ -266,45 +265,11 @@
                 return;
             }
 
-            // Protected principal check on the member being added
-            var memberIdentity = newMember.Trim();
-            if (memberIdentity.Contains('@'))
-            {
-                try
-                {
-                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(memberIdentity);
-                    if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
-                    {
-                        opResult = PermissionResult.Fail(resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                            ? "Identity is ambiguous — matches multiple AD users."
-                            : "Protection check unavailable. Cannot verify if this member is protected.");
-                        return;
-                    }
-                    if (resolved != null)
-                    {
-                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
-                        if (protectionCheck.CheckFailed)
-                        {
-                            opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = memberIdentity }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection check"); }
-                            return;
-                        }
-                        if (protectionCheck.IsProtected)
-                        {
-                            opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = memberIdentity }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember protection denial"); }
-                            return;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", memberIdentity);
-                    opResult = PermissionResult.Fail($"Protection check error: {ex.Message}");
-                    return;
-                }
-            }
-
+            // Protected-principal enforcement lives in GroupManagementService.AddMemberAsync
+            // (CheckProtectedAsync): it fails closed on Unavailable/Ambiguous resolution and
+            // covers non-'@' identities the old page gate missed. The page no longer
+            // pre-checks — that duplicated gate produced unaudited failed mutation attempts
+            // (2026-06-17 review). The single audited path below records every denial.
             opResult = await GroupService.AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), selectedGroup.SamAccountName);
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
@@ -350,44 +315,11 @@
                 return;
             }
 
-            // Protected principal check on the member being removed
-            if (!string.IsNullOrEmpty(member) && member.Contains('@'))
-            {
-                try
-                {
-                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(member);
-                    if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
-                    {
-                        opResult = PermissionResult.Fail(resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                            ? "Identity is ambiguous — matches multiple AD users."
-                            : "Protection check unavailable. Cannot verify if this member is protected.");
-                        return;
-                    }
-                    if (resolved != null)
-                    {
-                        var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
-                        if (protectionCheck.CheckFailed)
-                        {
-                            opResult = PermissionResult.Fail($"Protection check failed: {protectionCheck.Reason}");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Protection check failed: {protectionCheck.Reason}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection check"); }
-                            return;
-                        }
-                        if (protectionCheck.IsProtected)
-                        {
-                            opResult = PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
-                            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, false, ticket, $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember protection denial"); }
-                            return;
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", member);
-                    opResult = PermissionResult.Fail($"Protection check error: {ex.Message}");
-                    return;
-                }
-            }
-
+            // Protected-principal enforcement lives in GroupManagementService.RemoveMemberAsync
+            // (CheckProtectedAsync): it fails closed on Unavailable/Ambiguous resolution and
+            // covers non-'@' identities the old page gate missed. The page no longer
+            // pre-checks — that duplicated gate produced unaudited failed mutation attempts
+            // (2026-06-17 review). The single audited path below records every denial.
             opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, selectedGroup.SamAccountName);
 
             try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }

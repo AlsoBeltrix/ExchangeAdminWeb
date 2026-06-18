@@ -311,7 +311,6 @@ function Get-ConfigurablePolicyAliases {
         "MfaReset",
         "NamedLocations",
         "EmergencyDisable",
-        "TestAccountPool",
         "DhcpAuthorization",
         "EventLog",
         "UndoAuditedActions"
@@ -352,7 +351,6 @@ function New-ModuleEnablementSeed {
         MfaReset = $false
         NamedLocations = $false
         EmergencyDisable = $false
-        TestAccountPool = $false
         DhcpAuthorization = $false
         AdminEventLog = $true
     }

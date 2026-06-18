@@ -355,49 +355,6 @@ public class EmailService
         await SendEmailAsync(targetEmail, $"Your Auto-Reply Has Been {(isEnabled ? "Enabled" : "Disabled")}", body);
     }
 
-    public async Task SendTestAccountPasswordAsync(
-        string adminEmail,
-        string accountUpn,
-        string password,
-        DateTime expiresUtc,
-        string ticketNumber)
-    {
-        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
-        var subject = $"[Admin Portal] Test account checkout - {accountUpn}";
-        var body = $@"<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: Arial, sans-serif; color: #333; }}
-        .container {{ max-width: 640px; margin: 0 auto; padding: 20px; }}
-        .header {{ background: #0d6efd; color: white; padding: 16px; border-radius: 5px 5px 0 0; }}
-        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
-        .password {{ font-family: Consolas, monospace; font-size: 18px; background: white; padding: 12px; border: 1px solid #ccc; }}
-        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin-top: 15px; border-radius: 3px; }}
-    </style>
-</head>
-<body>
-    <div class=""container"">
-        <div class=""header"">
-            <h2>Test Account Checked Out</h2>
-        </div>
-        <div class=""content"">
-            <p><strong>Account:</strong> {h(accountUpn)}</p>
-            <p><strong>Ticket / reason:</strong> {h(ticketNumber)}</p>
-            <p><strong>Expires UTC:</strong> {expiresUtc:yyyy-MM-dd HH:mm:ss}</p>
-            <p><strong>Temporary password:</strong></p>
-            <div class=""password"">{h(password)}</div>
-            <div class=""warning"">
-                This password is not stored by the portal. Check the account back in when testing is complete.
-            </div>
-        </div>
-    </div>
-</body>
-</html>";
-
-        await SendEmailOrThrowAsync(adminEmail, subject, body);
-    }
-
     private async Task SendEmailAsync(string to, string subject, string htmlBody)
     {
         try

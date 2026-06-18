@@ -373,7 +373,7 @@
                                 <tr class="@(!row.RoomResolved ? "table-danger" : row.Warnings.Count > 0 ? "table-warning" : "")">
                                     <td>@row.RowIndex</td>
                                     <td><small>@row.Email</small></td>
-                                    <td><strong>@row.Type</strong></td>
+                                    <td><strong>@(row.Type?.ToString() ?? "—")</strong></td>
                                     <td>@(row.Site != "none" ? row.Site : "")</td>
                                     <td><small>@row.TimeZone</small></td>
                                     <td><small>@row.CustomAttribute9Tag</small></td>

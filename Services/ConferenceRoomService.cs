@@ -354,6 +354,20 @@ public class ConferenceRoomService : ExchangeServiceBase
             return result;
         }
 
+        // Preflight the AD step BEFORE any mutation. Set-Place (Step 1) commits EXO-side
+        // metadata; if the AD prerequisites for Step 2 are bad (unmappable country, missing/
+        // unavailable credential, no/ambiguous AD object) we must fail the row here so EXO is
+        // never partially written. Without this guard a bad-AD row was reported failed but had
+        // already committed Set-Place — the partial-apply defect from the 2026-06-17 review.
+        var adPreflightError = await PreflightSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
+        if (adPreflightError != null)
+        {
+            result.Success = false;
+            result.Message = adPreflightError;
+            result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser preflight (City/State/Country)", Success = false, Error = adPreflightError });
+            return result;
+        }
+
         // Step 1: Set-Place (EXO) — Building/Capacity/Floor/devices are NOT dir-synced, so
         // EXO accepts them. City is intentionally NOT sent here; it is a synced attribute
         // written on-prem in Step 2.
@@ -1181,6 +1195,63 @@ public class ConferenceRoomService : ExchangeServiceBase
     // the EXO pool. Resolves the object by userPrincipalName (== email in this environment,
     // forest-unique), asserts EXACTLY ONE match, and writes by the returned objectGUID so the
     // mutation targets an immutable identity and can never hit the wrong object.
+    // Pre-mutation validation for the AD step. Runs every check that can be made WITHOUT
+    // mutating anything — country mapping, credential availability, and resolving the AD
+    // object to exactly one ObjectGUID — so the caller can fail the row BEFORE the EXO
+    // Set-Place write commits. This is the all-or-nothing guard: without it, a row whose
+    // AD prerequisites are bad (unmappable country, missing/unavailable credential, no/
+    // ambiguous AD object) would already have committed EXO metadata before failing.
+    // Returns an error message to abort the row, or null when the AD write is expected to
+    // succeed. (Two-system writes can never be fully atomic; a genuine Set-ADUser failure
+    // after a passing preflight remains an inherent, accepted residual.)
+    private async Task<string?> PreflightSyncedAttributesViaAdAsync(string roomEmail, string city, string state, string countryOrRegion)
+    {
+        Dictionary<string, object> attrs;
+        try
+        {
+            attrs = BuildSyncedUserAttributes(city, state, countryOrRegion);
+        }
+        catch (ArgumentException ex)
+        {
+            return ex.Message; // unmappable country — fail the row closed
+        }
+
+        if (attrs.Count == 0)
+            return null; // nothing synced to write for this row — AD step will be a no-op
+
+        var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
+        if (creds is null)
+            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). City/State/Country could not be written.";
+
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                ps.Commands.Clear();
+
+                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var (resolveError, _) = ResolveAdObjectGuid(ps, roomEmail, credential);
+                return resolveError; // null = unique object resolved, AD write expected to succeed
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Set-ADUser preflight failed for {Room}", roomEmail);
+                return $"Failed to validate the AD object before writing: {ex.Message}";
+            }
+        });
+    }
+
     private async Task<string?> SetSyncedAttributesViaAdAsync(string roomEmail, string city, string state, string countryOrRegion)
     {
         Dictionary<string, object> attrs;
@@ -1218,30 +1289,14 @@ public class ConferenceRoomService : ExchangeServiceBase
                 ps.Commands.Clear();
 
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-                var upn = roomEmail.Replace("'", "''");
 
-                // Resolve by UPN; assert exactly one object.
-                ps.AddCommand("Get-ADUser")
-                  .AddParameter("Filter", $"UserPrincipalName -eq '{upn}'")
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "Stop");
-                var found = ps.Invoke();
-                if (ps.HadErrors)
-                    return FirstError(ps) ?? $"AD lookup failed for {roomEmail}.";
-                ps.Commands.Clear();
-
-                if (found.Count == 0)
-                    return $"No AD object found with userPrincipalName '{roomEmail}'. City/State/Country not written.";
-                if (found.Count > 1)
-                    return $"Multiple AD objects ({found.Count}) match userPrincipalName '{roomEmail}'. Refusing to write to avoid the wrong object.";
-
-                var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
-                if (objectGuid is null)
-                    return $"Resolved AD object for '{roomEmail}' has no ObjectGUID; refusing to write.";
+                var (resolveError, objectGuid) = ResolveAdObjectGuid(ps, roomEmail, credential);
+                if (resolveError != null)
+                    return resolveError;
 
                 // Write by objectGUID (immutable identity), not by UPN.
                 ps.AddCommand("Set-ADUser")
-                  .AddParameter("Identity", objectGuid.ToString())
+                  .AddParameter("Identity", objectGuid)
                   .AddParameter("Replace", new System.Collections.Hashtable(attrs))
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
@@ -1257,6 +1312,35 @@ public class ConferenceRoomService : ExchangeServiceBase
                 return $"Failed to write City/State/Country on the AD object: {ex.Message}";
             }
         });
+    }
+
+    // Resolve a room's AD object by userPrincipalName to exactly one immutable
+    // ObjectGUID. Shared by the pre-mutation preflight and the actual Set-ADUser write
+    // so the two can never disagree about which object (or whether one exists). Returns
+    // (errorMessage, null) on any failure, or (null, objectGuid) on a unique match.
+    // Assumes the ActiveDirectory module is already imported into the runspace.
+    private static (string? error, string? objectGuid) ResolveAdObjectGuid(PowerShell ps, string roomEmail, PSCredential credential)
+    {
+        var upn = roomEmail.Replace("'", "''");
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Filter", $"UserPrincipalName -eq '{upn}'")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (FirstError(ps) ?? $"AD lookup failed for {roomEmail}.", null);
+        ps.Commands.Clear();
+
+        if (found.Count == 0)
+            return ($"No AD object found with userPrincipalName '{roomEmail}'. City/State/Country not written.", null);
+        if (found.Count > 1)
+            return ($"Multiple AD objects ({found.Count}) match userPrincipalName '{roomEmail}'. Refusing to write to avoid the wrong object.", null);
+
+        var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
+        if (objectGuid is null)
+            return ($"Resolved AD object for '{roomEmail}' has no ObjectGUID; refusing to write.", null);
+
+        return (null, objectGuid.ToString());
     }
 
     private static string? FirstError(PowerShell ps) =>

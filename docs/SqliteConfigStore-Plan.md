@@ -326,8 +326,7 @@ a **flag on the existing promote script**, not a new file.
   per-module service tests that call `SaveModuleConfig`:
   `MigrationTargetDatabaseSelectorTests`, `LicensingUpdatesServiceTests`,
   `EmergencyDisableServiceTests`). (`TestAccountPoolServiceTests` is **not** in this list —
-  that module and its tests are being removed before this work begins; see the queued
-  TestAccountPool removal in `.agents/state.md`.)
+  that module and its tests were removed in app 2.3.10; see `.agents/decisions.md`.)
 - **Keep unchanged** (storage-agnostic, in-memory contracts): `ModuleCatalogTests`,
   `PageAuthorizationRecheckTests`, `ConferenceRoomConfigPreflightTests`.
 - **Rewrite** `tests/ps/DeployInvariants.Tests.ps1`: per the §3b/§7 decision, retarget the
@@ -437,11 +436,11 @@ current code and must be addressed by the implementation.
    register as a single shared Singleton across Singleton + Scoped consumers.** *Mitigation:* use a connection **factory**
    (open-per-operation, short-lived) or a scoped connection — never one long-lived shared
    `SqliteConnection`. This is an explicit Phase A design constraint, not an afterthought.
-   (Note: the app's *only* `AddHostedService` — `TestAccountPoolCleanupWorker`, which read
-   config from a background timer — is being removed before this work starts, per the
-   queued TestAccountPool removal in `.agents/state.md`. That removes the background-thread
-   variant of this hazard; the Singleton-vs-Scoped constraint above still stands on its
-   own and the factory model handles both, so this section needs no rework once it lands.)
+   (Note: the app's former *only* `AddHostedService` — `TestAccountPoolCleanupWorker`, which
+   read config from a background timer — was removed in app 2.3.10 with the TestAccountPool
+   module. That removed the background-thread variant of this hazard; the Singleton-vs-Scoped
+   constraint above still stands on its own and the factory model handles both, so this
+   section needs no rework.)
 
 2. **In-process cache invalidation is per-instance and will silently drift.**
    `ProtectedPrincipalService` and `ADAttributeEditorService` cache with a 30 s TTL and

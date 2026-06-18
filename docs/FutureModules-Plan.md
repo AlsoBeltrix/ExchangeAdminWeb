@@ -5,8 +5,8 @@ Status: Implemented (history). Evidence: the modules this backlog proposed now e
 (`EmergencyDisable`), Test Account Creator (`TestAccountPool`), and the Recipient
 Permissions Report enhancement (`RecipientLookup`/`DelegationReport`). Header added
 retroactively 2026-06-17 from catalog presence (AC15 drift sweep), not a fresh
-plan-vs-code audit. Note: `TestAccountPool` is queued for removal (owner direction; see
-`.agents/state.md`) — this plan is history and is not the authority for that decision.
+plan-vs-code audit. Note: `TestAccountPool` was removed in app 2.3.10 (owner direction; see
+`.agents/decisions.md`) — this plan is history and is not the authority for that decision.
 
 ## Overview
 

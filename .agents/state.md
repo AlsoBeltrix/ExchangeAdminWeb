@@ -5,9 +5,26 @@ repo facts change.
 
 ## Now
 
-- App version `2.3.9` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`) — dev-ahead
-  Phase-4 batch (security/correctness backlog). **Prod is still on `2.3.8`**; 2.3.9 has
-  not been deployed.
+- App version `2.3.10` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). **Prod is on
+  `2.3.8`.** Dev is ahead and **none of 2.3.9 / 2.3.10 is in prod.**
+- **All dev work is committed and pushed to `master`** (2026-06-18). Already deployed to dev
+  via `deploy.ps1` (deploy compiles the working tree, so this code has been live on dev since
+  before the commit). Four logical changes landed in a SINGLE batch commit (process note: they
+  should have been committed one-per-change as each landed — they were batched in error; see
+  governance note below):
+  1. **TestAccountPool module removal** → app `2.3.9`→`2.3.10`.
+  2. **CR-2: Conference Rooms preview phantom-type fix** → ConferenceRooms module → `2.0.8`.
+  3. **Finding 1 (review High): Room Finder AD preflight before Set-Place** → ConferenceRooms
+     → `2.0.9` (so the module is at `2.0.9`, covering both CR-2 and Finding 1).
+  4. **Finding 2 (review Medium): GroupManagement page protected-principal gate removed**,
+     enforcement now solely in `GroupManagementService` → GroupManagement `2.0.1`→`2.0.2`.
+- **NEXT ACTION: owner-operational only — deploy app `2.3.10` to prod** (run §Deploy-notes
+  alias check first). No engineering work pending in this stream.
+- **Governance note (owner, 2026-06-18):** commits were batched at end-of-session instead of
+  per-change. Owner intends to strengthen governance so changes are committed as they land.
+- `docs/CommitReview-2026-06-17.md` (was untracked; reviews committed range `f3f9eb7..dafc040`)
+  is now committed, with a Resolution section recording Findings 1 & 2 as fixed.
+- Current local suite: **459/459 xUnit at 2.3.10** (build clean, 0 warnings; format clean).
 - **INCIDENT DIAGNOSED — see Diagnostic Results in
   `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
   proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,
@@ -31,21 +48,23 @@ repo facts change.
 - Work stream: `docs/ProdReadiness-Plan.md` (Approved) — phases 1-3 complete and signed
   off. **Task 20 (manual UI verification, AC13) PASSED 2026-06-17.** Phase 3 fully
   verified; **Phase 4 (cleanup backlog, AC15-AC16) is in progress.** Findings register:
-  `docs/ProdReadinessReview-2026-06-12.md`. Current local suite: **467/467 xUnit at 2.3.9**.
+  `docs/ProdReadinessReview-2026-06-12.md`. (The ProdReadiness batch was 467/467 at 2.3.9;
+  current suite is now **459/459 at 2.3.10** after TestAccountPool removal + CR-2 — see §Now.)
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-**NEXT ACTION:** ProdReadiness work stream is COMPLETE — `docs/ProdReadiness-Plan.md`
-Status flipped to **Implemented** (close-out in §10 round 17, commit a5ab6aa). All AC1–AC16
-met; every AC16-scoped register medium is a fix or a recorded risk-accept (SSL-off
-accepted-as-designed; GetGraphClientAsync superseded by per-module GraphTokenClient;
-PSCredential DRY-only deferred; config case-sensitivity + last-write-wins obsoleted-by-SQLite).
-No ProdReadiness work remains. The only open item is owner-operational: **deploy app 2.3.9 to
-prod** (dev is ahead; 2.3.8 shipped 2026-06-17) — run the §Deploy-notes alias check first.
-Next agent should pick from Queued work (TestAccountPool removal is the cleanest single change;
-GM-1/GM-2 bugs; or the SQLite/module-packaging plans awaiting Michael's review).
-(An out-of-stream bug, CR-1 Room Finder, was implemented this session — see Queued work;
-it is NOT part of the 2.3.9 ProdReadiness batch and does not gate it.)
+**NEXT ACTION (authoritative pointer in §Now):** commit the two uncommitted working-tree
+changes — TestAccountPool removal, then CR-2 — one logical change per commit. They are
+already deployed to dev but not committed.
+
+ProdReadiness work stream is COMPLETE — `docs/ProdReadiness-Plan.md` Status **Implemented**
+(close-out §10 round 17, commit a5ab6aa). All AC1–AC16 met; every AC16-scoped register medium
+is a fix or recorded risk-accept (SSL-off accepted-as-designed; GetGraphClientAsync superseded
+by per-module GraphTokenClient; PSCredential DRY-only deferred; config case-sensitivity +
+last-write-wins obsoleted-by-SQLite). No ProdReadiness work remains. Open owner-operational
+items: **deploy app 2.3.10 to prod** (prod on 2.3.8; run §Deploy-notes alias check first) —
+timing is the owner's call. After the commits, remaining engineering candidates: GM-1/GM-2
+bugs, CR-1 live verification, or the SQLite/module-packaging plans awaiting Michael's review.
 
 **ProdReadiness Phase 4 / AC16 is CLOSED (2026-06-17, commit a5ab6aa).** Plan Status flipped
 to Implemented; close-out and risk-accept register in `docs/ProdReadiness-Plan.md` §10
@@ -156,30 +175,16 @@ non-vacuous via temporary revert.
   `Modules/ModuleCatalog.cs` + razor pages, so runtime import implies assembly loading
   vs a source-drop + rebuild pipeline — open architecture question for the plan).
 
-- **Remove the TestAccountPool module entirely** (owner direction 2026-06-15: never
-  activated, no one will miss it). Do this as its own work item next run, **one focused
-  change**, build + test green before done. It is also the app's **only** `AddHostedService`
-  — a self-running timer that mutates AD unattended (`"System"/"BackgroundWorker"`, no
-  ticket/actor), which is the architectural oddity that prompted the removal. Touchpoints
-  to delete/prune (mapped 2026-06-15):
-  - `Services/TestAccountPoolService.cs`, `Services/TestAccountPoolCleanupWorker.cs`,
-    `Components/Pages/TestAccountPool.razor`, `ExchangeAdminWeb.Tests/TestAccountPoolServiceTests.cs`
-  - `Program.cs` lines ~84-85: the `AddScoped<TestAccountPoolService>` and
-    `AddHostedService<TestAccountPoolCleanupWorker>` registrations.
-  - `Modules/ModuleCatalog.cs`: the `Id = "TestAccountPool"` descriptor (~line 385).
-  - `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs`: any case referencing the module
-    (the fail-closed/versioning sweeps enumerate the catalog — confirm they pass after
-    removal, no hardcoded count of modules).
-  - `tools/Install-ExchangeAdminWeb.ps1`, `appsettings.json.sample`, `README.md`: drop
-    TestAccountPool config seeding / docs references.
-  - Leave the historical docs alone (`docs/Incident-*`, `docs/ProdReadiness*`) — they are
-    history, not current state. **`docs/SqliteConfigStore-Plan.md`**: drop TestAccountPool
-    from the §5B.1 example list and Phase B/E module-test lists once removed (or note it as
-    removed) — and removing the app's only HostedService **simplifies §5B.1**, so revisit
-    that hazard's framing (the scoped consumers `ADAttributeEditorService` remain, so the
-    connection-factory constraint still stands, just with a smaller blast radius).
-  - Base app version bump (module removal is an app-wide change). Audit log keeps any
-    historical `TestAccountPool_*` entries — do not scrub those.
+- ~~**Remove the TestAccountPool module entirely**~~ **DONE 2026-06-17 (app 2.3.10).**
+  Deleted the service, cleanup worker, razor page, and service tests; removed the two
+  `Program.cs` registrations (including the app's only `AddHostedService`); removed the
+  catalog descriptor; removed the now-orphaned `EmailService.SendTestAccountPasswordAsync`;
+  pruned config seeds (`Install-ExchangeAdminWeb.ps1`, `appsettings.json.sample`) and the
+  `README.md` section; updated `ModuleCatalogTests` counts (modules 21→20, aliases 28→27);
+  bumped base app version 2.3.9→2.3.10. Forward-looking plan refs (`SqliteConfigStore-Plan.md`,
+  `FutureModules-Plan.md`) flipped to past-tense. Build + test green (458/458). Historical
+  docs (`Incident-*`, `ProdReadiness*`) keep their refs by design. Decision recorded in
+  `.agents/decisions.md`.
 
 ## Queued work — group management (owner-requested 2026-06-17)
 
@@ -238,6 +243,21 @@ schedules it.
   (Status: Implemented in dev). **Owner TODO before it works in prod:** configure the
   ConferenceRooms AD `DelineaSecretId` in the deployed instance, then live-verify apply.
   This fix is NOT part of the ProdReadiness 2.3.9 batch — separate module change.
+
+- **CR-2 (display fix): Set-Room-Type CSV preview showed phantom "Standard" — DONE IN DEV
+  2026-06-17 (uncommitted).** Surfaced when the owner uploaded a Room Finder buildings CSV
+  (`ADLKRF_Buildings.csv`, no `Type` column) into the "Set Room Type" uploader: all 86 rows
+  correctly failed with `Invalid room type: ''`, but the preview Type column rendered
+  "Standard" for every failed row. Root cause: `RoomTypePreviewRow.Type` was a non-nullable
+  `RoomType` enum, which defaults to its first value (`Standard`) when a failure branch never
+  sets it. Fix: `Type` is now `RoomType?`; the razor cell renders `@(row.Type?.ToString() ??
+  "—")`. Rows that genuinely parsed a type (incl. "Room not found" rows, which DID parse one
+  via `BuildTypePreview`) still display it. Files: `Models/ConferenceRoomModels.cs`,
+  `Components/Pages/ConferenceRooms.razor`. Module 2.0.7 → **2.0.8**. New guard test
+  `ConferenceRoomCsvParseTests.RoomTypePreviewRow_DefaultType_IsNull_NotPhantomStandard`,
+  proven non-vacuous (reverted nullability → failed with `Actual: Standard` → restored).
+  Behavior unchanged — the file-vs-uploader mismatch is still a real failure; this only stops
+  the preview misrepresenting it. Separate single change from CR-1; commit on its own.
 
 ## Blockers
 

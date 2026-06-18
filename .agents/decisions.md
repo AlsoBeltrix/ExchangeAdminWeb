@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-17 - TestAccountPool module removed
+
+Status: Active
+
+Decision:
+The TestAccountPool module is removed from the application as of app version `2.3.10`.
+Deleted: `Services/TestAccountPoolService.cs`, `Services/TestAccountPoolCleanupWorker.cs`,
+`Components/Pages/TestAccountPool.razor`, `ExchangeAdminWeb.Tests/TestAccountPoolServiceTests.cs`,
+the catalog descriptor in `Modules/ModuleCatalog.cs`, both `Program.cs` registrations, the
+orphaned `EmailService.SendTestAccountPasswordAsync` helper, and the config seeds/docs in
+`tools/Install-ExchangeAdminWeb.ps1`, `appsettings.json.sample`, and `README.md`.
+`ModuleCatalogTests` counts updated (modules 21→20, configurable aliases 28→27).
+
+Reason:
+Owner direction (2026-06-15): the module was never activated in any environment and is not
+wanted. It was also the application's only `AddHostedService` — a background timer
+(`TestAccountPoolCleanupWorker`) that mutated AD unattended under a synthetic
+`"System"/"BackgroundWorker"` actor with no ticket — which was the architectural oddity that
+prompted removal. Removing it also retires the background-thread variant of the
+connection-lifetime hazard tracked in `docs/SqliteConfigStore-Plan.md`.
+
+Notes:
+Historical audit-log entries (`TestAccountPool_*`) are intentionally NOT scrubbed. Historical
+docs (`docs/Incident-*`, `docs/ProdReadiness*`) keep their references as history. This entry is
+the authority for the removal; `docs/FutureModules-Plan.md` and `docs/SqliteConfigStore-Plan.md`
+point here.
+
 ### 2026-06-17 - Credentials live in the deployment's PAM solution, not hardcoded to Delinea
 
 Status: Active

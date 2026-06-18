@@ -157,17 +157,6 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
 - **Requires:** AD Delinea secret for account disable and Graph Delinea secret for session revocation
 - Section access key: `EmergencyDisable`
 
-### Test Account Pool (`/test-account-pool`)
-
-Check out managed test accounts from on-premises AD and Entra ID test pools.
-
-- Time-limited account checkout with automatic expiration and cleanup
-- On-prem AD accounts and Entra cloud-only accounts
-- Configurable checkout duration and maximum limits
-- Background worker automatically disables and resets expired checkouts
-- Optional Exchange Online and Teams provisioning group assignments
-- Section access key: `TestAccountPool`
-
 ### DHCP Authorization (`/dhcp-authorization`)
 
 Authorize or deauthorize DHCP servers in Active Directory.

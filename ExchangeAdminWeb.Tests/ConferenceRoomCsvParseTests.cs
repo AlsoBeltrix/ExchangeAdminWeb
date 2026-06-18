@@ -202,4 +202,18 @@ public class ConferenceRoomCsvParseTests
         Assert.True(row.Skipped);
         Assert.Contains("Missing identity", row.SkipReason);
     }
+
+    // ---- Preview-row type display -----------------------------------------
+
+    [Fact]
+    public void RoomTypePreviewRow_DefaultType_IsNull_NotPhantomStandard()
+    {
+        // A preview row built for a parse/validation failure leaves Type unset.
+        // It must read as "no type" (null), not the enum's first value (Standard),
+        // so failed rows render "—" instead of a misleading "Standard" while the
+        // Status column reports the type as empty/invalid.
+        var row = new RoomTypePreviewRow();
+
+        Assert.Null(row.Type);
+    }
 }
