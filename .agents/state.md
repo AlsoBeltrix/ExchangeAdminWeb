@@ -199,11 +199,21 @@ Owner's standing direction on the queue, given 2026-06-18:
       fail closed until the file is repaired/removed. Revert-proven on both the DB-corrupt and
       legacy-file-corrupt paths. `ModuleEnablementServiceTests` reworked off files onto the
       store. 493/493.
-    - **NEXT: B.5 — sectionaccess.json → `section_access`** (`SectionAccessService`; the
-      AUTHORIZATION store — fail-closed, cache-until-save, `IsFragmentCorrupt`, keep the
-      appsettings `Security:SectionAccess` fallback). Highest-stakes cutover; revert-proof the
-      fail-closed paths. Then protected-principals (B.6), ad-editable-attributes (B.7).
-    - **Schema is at user_version 2** (v1 Phase A tables; v2 module_config_present).
+    - **B.5 DONE (app 2.3.17, commits `5580732` + P2 review `40e511d`, pushed).**
+      sectionaccess.json → `section_access` (+ `section_access_present` marker, schema v3) via
+      new `SectionAccessRepository`. Three-source model preserved (Fragment/AppSettings/None);
+      presence marker keeps configured-empty as deny-all; change-token makes out-of-band writes
+      visible. Upgrade fail-closed for corrupt/missing-node legacy file. Codex caught a **P2**:
+      unguarded marker read could throw through authorization on partial schema damage — fixed
+      with `TryRead` (single guarded read of data + configured). Revert-proven on corrupt-file,
+      configured-empty parity, AND partial-damage paths. 497/497.
+    - **NEXT: B.6 — protected-principals.json → `protected_principal`** (`ProtectedPrincipalService`;
+      30s TTL cache, fail-closed, keep MailboxPermissions `ExcludedUsers` + appsettings
+      fallback). Then ad-editable-attributes (B.7, last store — null-on-corrupt for allowlist).
+    - **Schema is at user_version 3** (v1 Phase A; v2 module_config_present; v3 section_access_present).
+    - **Lesson (recurring):** every fail-closed store must stay fail-closed when (a) its legacy
+      file is corrupt during upgrade [B.4 class] and (b) the DB is partially damaged [B.5 class].
+      Check BOTH on B.6/B.7. Also: any presence-marker store needs configured-empty parity.
     - **Lesson:** codex has now caught a real parity/security issue on A, B.1, B.3, B.4 —
       the corrupt-legacy-file-during-upgrade class is the recurring trap; check it explicitly
       on B.5–B.7 (each fail-closed store must stay fail-closed when its legacy file is corrupt).
