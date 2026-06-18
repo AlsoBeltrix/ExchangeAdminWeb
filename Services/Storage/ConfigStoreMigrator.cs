@@ -98,6 +98,16 @@ public sealed class ConfigStoreMigrator
             module_id TEXT PRIMARY KEY COLLATE NOCASE
         );
         """,
+
+        // v3 — section-access presence marker. Same reasoning as v2 for the single section_access
+        // store: an admin who clears ALL access must still count as "configured" (the file-world
+        // Fragment source — everything denied), NOT fall back to the None source which grants
+        // read-only sections the AllowedGroups list. A single sentinel row marks "configured".
+        """
+        CREATE TABLE IF NOT EXISTS section_access_present (
+            marker INTEGER PRIMARY KEY
+        );
+        """,
     ];
 
     /// <summary>The schema version this build expects (the count of migration steps).</summary>

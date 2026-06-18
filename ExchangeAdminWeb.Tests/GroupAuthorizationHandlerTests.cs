@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
@@ -53,7 +52,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
         env.ContentRootPath.Returns(_tempDir);
 
         var catalog = new ModuleCatalog();
-        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog);
+        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog, new SectionAccessRepository(_store));
         var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, new ModuleEnablementRepository(_store), config, Substitute.For<ILogger<ModuleEnablementService>>());
 
@@ -63,9 +62,8 @@ public class GroupAuthorizationHandlerTests : IDisposable
 
     private void WriteSectionAccess(Dictionary<string, string[]> sections)
     {
-        File.WriteAllText(
-            Path.Combine(_configDir, "sectionaccess.json"),
-            JsonSerializer.Serialize(new { Security = new { SectionAccess = sections } }));
+        // Section access now lives in the DB; seed the shared store the handler's service reads.
+        new SectionAccessRepository(_store).SaveAll(sections);
     }
 
     private void WriteEnablement(Dictionary<string, bool> state)

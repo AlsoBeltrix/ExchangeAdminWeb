@@ -1,6 +1,6 @@
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -9,32 +9,31 @@ public class SectionAccessService
     private readonly IConfiguration _config;
     private readonly ILogger<SectionAccessService> _logger;
     private readonly Modules.ModuleCatalog _catalog;
-    private readonly string _configDir;
-    private readonly string _configFilePath;
+    private readonly SectionAccessRepository _repository;
     private readonly string[] _allowedGroups;
     private readonly string[] _adminGroups;
     private readonly object _writeLock = new();
-    private CachedAccess? _cache;
 
-    private sealed record CachedAccess(
-        Dictionary<string, string[]> Data,
-        SectionAccessSource Source,
-        bool FileExisted,
-        DateTime? FileStamp);
+    // Set when a legacy sectionaccess.json exists but is unparseable / lacks the
+    // Security:SectionAccess node, and the DB store is not yet configured. Like B.4, an
+    // unparseable authorization fragment must keep the store fail-closed during the upgrade
+    // window rather than fall through to the appsettings/AllowedGroups fallback. The corrupt
+    // file stays on disk, so this re-trips every startup until repaired/removed.
+    private readonly bool _legacyFileCorrupt;
 
-    public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env, Modules.ModuleCatalog catalog)
+    public SectionAccessService(IConfiguration config, ILogger<SectionAccessService> logger, IWebHostEnvironment env, Modules.ModuleCatalog catalog, SectionAccessRepository repository)
     {
         _config = config;
         _logger = logger;
         _catalog = catalog;
-        _configDir = Path.Combine(env.ContentRootPath, "config");
-        _configFilePath = Path.Combine(_configDir, "sectionaccess.json");
+        _repository = repository;
 
         _allowedGroups = config.GetSection("Security:AllowedGroups").Get<string[]>() ?? Array.Empty<string>();
         _adminGroups = config.GetSection("Security:AdminGroups").Get<string[]>() ?? Array.Empty<string>();
         _failClosedSections = BuildFailClosedSet();
 
-        Directory.CreateDirectory(_configDir);
+        var legacyPath = Path.Combine(env.ContentRootPath, "config", "sectionaccess.json");
+        _legacyFileCorrupt = ImportLegacyIfPresent(legacyPath);
     }
 
     public string[] GetAllowedGroups() => _allowedGroups;
@@ -79,7 +78,7 @@ public class SectionAccessService
 
     public bool IsSectionAccessConfigured()
     {
-        if (File.Exists(_configFilePath))
+        if (_repository.IsConfigured())
             return true;
 
         var legacySection = _config.GetSection("Security:SectionAccess");
@@ -87,88 +86,42 @@ public class SectionAccessService
     }
 
     /// <summary>
-    /// True when config/sectionaccess.json exists but cannot be parsed or lacks the
-    /// Security:SectionAccess node. Runtime reads fail closed in that state; admin pages
-    /// use this to show an explicit error and refuse to save instead of rendering blank
-    /// group lists that would wipe the fragment on save (incident 2026-06-12).
+    /// True when the section-access store cannot be read (DB-integrity failure) OR an
+    /// unparseable legacy sectionaccess.json is still present. Runtime reads fail closed in that
+    /// state; admin pages use this to show an explicit error and refuse to save instead of
+    /// rendering blank group lists that would wipe access on save (incident 2026-06-12).
     /// </summary>
     public bool IsFragmentCorrupt()
     {
-        if (!File.Exists(_configFilePath)) return false;
-        try
-        {
-            var doc = JsonNode.Parse(File.ReadAllText(_configFilePath));
-            return doc?["Security"]?["SectionAccess"] == null;
-        }
-        catch
-        {
+        if (_legacyFileCorrupt)
             return true;
-        }
+        return !_repository.TryGetAll(out _);
     }
 
     private enum SectionAccessSource { None, Fragment, AppSettings }
 
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()
     {
-        // The fragment file can change on disk underneath a running app: an operator
-        // restoring a corrupt/missing config (incident 2026-06-12), or promote-dev-to-prod
-        // merging it. Key the cache on the file's existence + last-write time so a stale
-        // entry — especially an empty one cached from a corrupt/missing first read — is
-        // dropped once the file is fixed, instead of being served until app-pool restart
-        // (which is what let a repaired store still render blank and be saved over).
-        var (exists, stamp) = GetFileState();
+        // FAIL-CLOSED: an unparseable legacy fragment still on disk keeps the store corrupt
+        // (empty Fragment source — everything denied) during the upgrade window, rather than
+        // falling through to the appsettings/AllowedGroups fallback.
+        if (_legacyFileCorrupt)
+            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
 
-        var cached = _cache;
-        if (cached != null && cached.FileExisted == exists && cached.FileStamp == stamp)
-            return (cached.Data, cached.Source);
-
-        var result = ReadSectionAccessFromDisk();
-        _cache = new CachedAccess(result.data, result.source, exists, stamp);
-        return result;
-    }
-
-    private (bool exists, DateTime? stamp) GetFileState()
-    {
-        try
+        // The DB store is the "fragment" source. It is read fresh each call (the change-token
+        // model makes out-of-band writes visible). If the store cannot be read at all, fail
+        // closed as an empty Fragment, never the permissive fallback. TryGetAll is the single
+        // read that can surface a DB-integrity failure, so check it first.
+        if (!_repository.TryGetAll(out var data))
         {
-            return File.Exists(_configFilePath)
-                ? (true, File.GetLastWriteTimeUtc(_configFilePath))
-                : (false, null);
-        }
-        catch
-        {
-            // If we cannot even stat the file, force a re-read (treat as changed) rather
-            // than trust a stale cache.
-            return (false, null);
-        }
-    }
-
-    private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccessFromDisk()
-    {
-        if (File.Exists(_configFilePath))
-        {
-            try
-            {
-                var json = File.ReadAllText(_configFilePath);
-                var doc = JsonNode.Parse(json);
-                var sectionAccess = doc?["Security"]?["SectionAccess"];
-                if (sectionAccess == null)
-                {
-                    _logger.LogError("Fragment file exists but Security:SectionAccess is missing — failing closed");
-                    return (new Dictionary<string, string[]>(), SectionAccessSource.Fragment);
-                }
-
-                var dict = sectionAccess.Deserialize<Dictionary<string, string[]?>>() ?? new();
-                var normalized = dict.ToDictionary(k => k.Key, k => k.Value ?? Array.Empty<string>());
-                return (normalized, SectionAccessSource.Fragment);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to read section access fragment at {Path} — failing closed", _configFilePath);
-                return (new Dictionary<string, string[]>(), SectionAccessSource.Fragment);
-            }
+            _logger.LogError("Section access store unreadable — failing closed");
+            return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
         }
 
+        if (_repository.IsConfigured())
+            return (data, SectionAccessSource.Fragment);
+
+        // Not configured in the DB: fall back to the legacy appsettings Security:SectionAccess.
         var legacySection = _config.GetSection("Security:SectionAccess");
         if (legacySection.Exists() && legacySection.GetChildren().Any())
         {
@@ -177,51 +130,57 @@ public class SectionAccessService
                 return (legacy, SectionAccessSource.AppSettings);
         }
 
-        return (new Dictionary<string, string[]>(), SectionAccessSource.None);
+        return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.None);
     }
 
     public void SaveSectionAccess(Dictionary<string, string[]> sectionAccess)
     {
         lock (_writeLock)
         {
-            var tempPath = Path.Combine(_configDir, $"sectionaccess.{Guid.NewGuid():N}.tmp");
-            var backupPath = Path.Combine(_configDir, "sectionaccess.bak");
+            _repository.SaveAll(sectionAccess);
+            _logger.LogInformation("SectionAccess config saved");
+        }
+    }
 
+    // One-time import of the legacy sectionaccess.json into section_access, then archive the
+    // file (SqliteConfigStore-Plan §4). Only fills if not yet configured (DB wins). Returns true
+    // if the legacy file exists but is unparseable / missing the Security:SectionAccess node: it
+    // is left in place (not archived) AND the store stays fail-closed until repaired/removed.
+    private bool ImportLegacyIfPresent(string legacyPath)
+    {
+        try
+        {
+            if (!File.Exists(legacyPath))
+                return false;
+
+            Dictionary<string, string[]> parsed;
             try
             {
-                var doc = new JsonObject
+                var doc = JsonNode.Parse(File.ReadAllText(legacyPath));
+                var sectionAccess = doc?["Security"]?["SectionAccess"];
+                if (sectionAccess == null)
                 {
-                    ["Security"] = new JsonObject
-                    {
-                        ["SectionAccess"] = JsonSerializer.SerializeToNode(sectionAccess)
-                    }
-                };
+                    _logger.LogError("Legacy sectionaccess.json exists but Security:SectionAccess is missing — failing closed until repaired/removed");
+                    return true;
+                }
 
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                };
-
-                File.WriteAllText(tempPath, doc.ToJsonString(options), System.Text.Encoding.UTF8);
-
-                var validation = JsonNode.Parse(File.ReadAllText(tempPath));
-                if (validation?["Security"]?["SectionAccess"] == null)
-                    throw new InvalidOperationException("Generated config failed validation");
-
-                if (File.Exists(_configFilePath))
-                    File.Replace(tempPath, _configFilePath, backupPath);
-                else
-                    File.Move(tempPath, _configFilePath);
-
-                _cache = null;
-                _logger.LogInformation("SectionAccess config saved to {Path}", _configFilePath);
+                var dict = sectionAccess.Deserialize<Dictionary<string, string[]?>>() ?? new();
+                parsed = dict.ToDictionary(k => k.Key, k => k.Value ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             }
-            finally
+            catch (Exception ex)
             {
-                if (File.Exists(tempPath))
-                    try { File.Delete(tempPath); } catch { }
+                _logger.LogError(ex, "Legacy sectionaccess.json is unparseable — failing closed until repaired/removed");
+                return true;
             }
+
+            _repository.ImportIfMissing(parsed);
+            LegacyConfigImport.ArchiveFile(legacyPath, _logger);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to import legacy sectionaccess.json");
+            return false;
         }
     }
 }

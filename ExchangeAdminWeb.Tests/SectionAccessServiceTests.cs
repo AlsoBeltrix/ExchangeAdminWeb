@@ -1,6 +1,5 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -12,14 +11,21 @@ public class SectionAccessServiceTests : IDisposable
 {
     private readonly string _tempDir;
     private readonly string _configDir;
-    private readonly string _configFilePath;
+    private readonly string _legacyFilePath;
+    private readonly SqliteConfigStore _store;
+    private readonly SectionAccessRepository _repository;
 
     public SectionAccessServiceTests()
     {
         _tempDir = Path.Combine(Path.GetTempPath(), $"sectionaccess_test_{Guid.NewGuid():N}");
         Directory.CreateDirectory(_tempDir);
         _configDir = Path.Combine(_tempDir, "config");
-        _configFilePath = Path.Combine(_configDir, "sectionaccess.json");
+        Directory.CreateDirectory(_configDir);
+        _legacyFilePath = Path.Combine(_configDir, "sectionaccess.json");
+
+        // One shared store/DB so seeded state is visible to the service under test.
+        _store = TestConfigStore.Create(_tempDir);
+        _repository = new SectionAccessRepository(_store);
     }
 
     public void Dispose()
@@ -28,7 +34,7 @@ public class SectionAccessServiceTests : IDisposable
         catch { }
     }
 
-    private SectionAccessService CreateService(Dictionary<string, string?>? extraConfig = null)
+    private SectionAccessService CreateService(Dictionary<string, string?>? extraConfig = null, IConfigStore? store = null)
     {
         var configEntries = new Dictionary<string, string?>
         {
@@ -52,29 +58,26 @@ public class SectionAccessServiceTests : IDisposable
 
         var logger = Substitute.For<ILogger<SectionAccessService>>();
 
-        return new SectionAccessService(config, logger, env, new ExchangeAdminWeb.Modules.ModuleCatalog());
+        return new SectionAccessService(config, logger, env, new ExchangeAdminWeb.Modules.ModuleCatalog(),
+            new SectionAccessRepository(store ?? _store));
     }
 
-    private void WriteFragmentFile(string json)
+    // Seeds section access into the shared store (the DB analogue of writing the fragment file).
+    private void SeedSectionAccess(Dictionary<string, string[]> sections) => _repository.SaveAll(sections);
+
+    // A store whose reads throw — the DB-integrity analogue of an unreadable fragment.
+    private sealed class UnreadableStore : IConfigStore
     {
-        Directory.CreateDirectory(_configDir);
-        File.WriteAllText(_configFilePath, json);
+        public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 
     [Fact]
-    public void GetGroupsForSection_FragmentExistsWithSection_ReturnsThoseGroups()
+    public void GetGroupsForSection_ConfiguredWithSection_ReturnsThoseGroups()
     {
-        var fragment = new JsonObject
-        {
-            ["Security"] = new JsonObject
-            {
-                ["SectionAccess"] = new JsonObject
-                {
-                    ["MailboxPermissions"] = JsonSerializer.SerializeToNode(new[] { "GroupA", "GroupB" })
-                }
-            }
-        };
-        WriteFragmentFile(fragment.ToJsonString());
+        SeedSectionAccess(new() { ["MailboxPermissions"] = new[] { "GroupA", "GroupB" } });
 
         var service = CreateService();
         var result = service.GetGroupsForSection("MailboxPermissions");
@@ -83,19 +86,9 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetGroupsForSection_FragmentExistsButSectionMissing_ReturnsEmptyArray()
+    public void GetGroupsForSection_ConfiguredButSectionMissing_ReturnsEmptyArray()
     {
-        var fragment = new JsonObject
-        {
-            ["Security"] = new JsonObject
-            {
-                ["SectionAccess"] = new JsonObject
-                {
-                    ["OtherSection"] = JsonSerializer.SerializeToNode(new[] { "GroupX" })
-                }
-            }
-        };
-        WriteFragmentFile(fragment.ToJsonString());
+        SeedSectionAccess(new() { ["OtherSection"] = new[] { "GroupX" } });
 
         var service = CreateService();
         var result = service.GetGroupsForSection("MailboxPermissions");
@@ -104,73 +97,33 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetGroupsForSection_FragmentHasCorruptJson_ReturnsEmptyArray()
+    public void GetGroupsForSection_StoreUnreadable_ReturnsEmptyArray_FailsClosed()
     {
-        WriteFragmentFile("{ this is not valid json !!!");
+        // Configure the real store, then point the service at an unreadable one: it must fail
+        // closed (empty), never the permissive fallback.
+        SeedSectionAccess(new() { ["MailboxPermissions"] = new[] { "GroupA" } });
+        var service = CreateService(store: new UnreadableStore());
 
-        var service = CreateService();
-        var result = service.GetGroupsForSection("MailboxPermissions");
-
-        Assert.Empty(result);
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
     }
 
     [Fact]
-    public void GetGroupsForSection_CorruptThenRepairedOnDisk_ReflectsRepair_NoStaleEmptyCache()
+    public void GetGroupsForSection_OutOfBandWrite_IsVisibleImmediately_NoStaleCache()
     {
-        // Reproduces the blank-render-save trap (incident 2026-06-12): the first read
-        // sees a corrupt fragment and caches an empty result; after an operator restores
-        // the file on disk, a later read must reflect the repair instead of serving the
-        // stale empty cache (which would let the admin page render "no groups" and save
-        // over the restored file).
-        WriteFragmentFile("{ this is not valid json !!!");
+        // The change-token model means every read is fresh: a write through a DIFFERENT
+        // repository instance (the prod->dev refresh tool, a second writer) is seen at once,
+        // without an app-pool restart. This replaces the old file-stamp staleness handling.
         var service = CreateService();
-        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // caches empty
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // not configured yet
 
-        // Operator restores a valid fragment. Force a distinct last-write time so the
-        // change is unambiguous regardless of filesystem timestamp resolution.
-        var fragment = new JsonObject
-        {
-            ["Security"] = new JsonObject
-            {
-                ["SectionAccess"] = new JsonObject
-                {
-                    ["MailboxPermissions"] = JsonSerializer.SerializeToNode(new[] { "GroupA", "GroupB" })
-                }
-            }
-        };
-        File.WriteAllText(_configFilePath, fragment.ToJsonString());
-        File.SetLastWriteTimeUtc(_configFilePath, DateTime.UtcNow.AddSeconds(5));
+        // Out-of-band write via a separate repository over the same store.
+        new SectionAccessRepository(_store).SaveAll(new Dictionary<string, string[]> { ["MailboxPermissions"] = new[] { "GroupA", "GroupB" } });
 
-        var result = service.GetGroupsForSection("MailboxPermissions");
-        Assert.Equal(new[] { "GroupA", "GroupB" }, result);
+        Assert.Equal(new[] { "GroupA", "GroupB" }, service.GetGroupsForSection("MailboxPermissions"));
     }
 
     [Fact]
-    public void GetGroupsForSection_AbsentThenCreatedOnDisk_ReflectsNewFile()
-    {
-        // Same staleness class for absent -> created: a read with no fragment file caches
-        // the "None" result; once the file appears it must be picked up.
-        var service = CreateService();
-        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // fail-closed, caches None
-
-        var fragment = new JsonObject
-        {
-            ["Security"] = new JsonObject
-            {
-                ["SectionAccess"] = new JsonObject
-                {
-                    ["MailboxPermissions"] = JsonSerializer.SerializeToNode(new[] { "GroupA" })
-                }
-            }
-        };
-        WriteFragmentFile(fragment.ToJsonString());
-
-        var result = service.GetGroupsForSection("MailboxPermissions");
-        Assert.Equal(new[] { "GroupA" }, result);
-    }
-
-    [Fact]
-    public void GetGroupsForSection_FragmentAbsentButLegacyAppSettings_ReturnsLegacyGroups()
+    public void GetGroupsForSection_NotConfiguredButLegacyAppSettings_ReturnsLegacyGroups()
     {
         var legacyConfig = new Dictionary<string, string?>
         {
@@ -205,9 +158,8 @@ public class SectionAccessServiceTests : IDisposable
     [InlineData("MailboxPermissionsOnPrem")]
     public void GetGroupsForSection_NeitherExists_MutatingSection_ReturnsEmpty(string section)
     {
-        // Mutating modules are FailClosed: losing config/sectionaccess.json
-        // (which deploys have done before - commit 0021502) must deny access,
-        // never fall back to the global AllowedGroups.
+        // Mutating modules are FailClosed: with no section-access config at all, they must deny
+        // access, never fall back to the global AllowedGroups.
         var service = CreateService();
         var result = service.GetGroupsForSection(section);
 
@@ -215,21 +167,33 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
-    public void IsSectionAccessConfigured_FragmentFileExists_ReturnsTrue()
+    public void GetGroupsForSection_ConfiguredEmpty_MutatingSection_DeniesNotFallsBack()
     {
-        var fragment = new JsonObject
-        {
-            ["Security"] = new JsonObject
-            {
-                ["SectionAccess"] = new JsonObject()
-            }
-        };
-        WriteFragmentFile(fragment.ToJsonString());
-
+        // An admin who clears ALL access (configured-but-empty) must deny mutating sections —
+        // the Fragment source, NOT the None source that would grant read-only AllowedGroups.
+        // Guards the same parity break the presence marker fixes in module-config (B.3).
+        SeedSectionAccess(new Dictionary<string, string[]>());
         var service = CreateService();
-        var result = service.IsSectionAccessConfigured();
 
-        Assert.True(result);
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
+        // And a read-only section must ALSO be empty now (configured-empty != unconfigured).
+        Assert.Empty(service.GetGroupsForSection("DelegationReport"));
+    }
+
+    [Fact]
+    public void IsSectionAccessConfigured_StoreConfigured_ReturnsTrue()
+    {
+        SeedSectionAccess(new() { ["MailboxPermissions"] = new[] { "GroupA" } });
+
+        Assert.True(CreateService().IsSectionAccessConfigured());
+    }
+
+    [Fact]
+    public void IsSectionAccessConfigured_ConfiguredEmpty_ReturnsTrue()
+    {
+        SeedSectionAccess(new Dictionary<string, string[]>());
+
+        Assert.True(CreateService().IsSectionAccessConfigured());
     }
 
     [Fact]
@@ -240,37 +204,11 @@ public class SectionAccessServiceTests : IDisposable
             ["Security:SectionAccess:SomeSection:0"] = "SomeGroup"
         };
 
-        var service = CreateService(legacyConfig);
-        var result = service.IsSectionAccessConfigured();
-
-        Assert.True(result);
+        Assert.True(CreateService(legacyConfig).IsSectionAccessConfigured());
     }
 
     [Fact]
-    public void SaveSectionAccess_WritesValidJson_FileExists()
-    {
-        var service = CreateService();
-        var data = new Dictionary<string, string[]>
-        {
-            ["MailboxPermissions"] = new[] { "GroupA", "GroupB" },
-            ["CalendarPermissions"] = new[] { "GroupC" }
-        };
-
-        service.SaveSectionAccess(data);
-
-        Assert.True(File.Exists(_configFilePath));
-
-        var json = File.ReadAllText(_configFilePath);
-        var doc = JsonNode.Parse(json);
-        Assert.NotNull(doc?["Security"]?["SectionAccess"]);
-
-        var mbxGroups = doc!["Security"]!["SectionAccess"]!["MailboxPermissions"]!
-            .Deserialize<string[]>();
-        Assert.Equal(new[] { "GroupA", "GroupB" }, mbxGroups);
-    }
-
-    [Fact]
-    public void GetSectionAccess_ReadsBackWhatWasSaved()
+    public void SaveSectionAccess_ReadsBackWhatWasSaved()
     {
         var service = CreateService();
         var data = new Dictionary<string, string[]>
@@ -287,47 +225,83 @@ public class SectionAccessServiceTests : IDisposable
         Assert.Equal(new[] { "GroupC" }, result["CalendarPermissions"]);
     }
 
-    // --- Corrupt-fragment probe (blank-render-save trap, incident fix #3) ---
-    // Admin pages refuse to save over a fragment this probe flags: a save in that
-    // state replaces the whole file and wipes every module's groups.
+    [Fact]
+    public void SaveSectionAccess_OverwritesWholeSet()
+    {
+        var service = CreateService();
+        service.SaveSectionAccess(new() { ["MailboxPermissions"] = new[] { "A" }, ["CalendarPermissions"] = new[] { "B" } });
+        service.SaveSectionAccess(new() { ["MailboxPermissions"] = new[] { "C" } });
+
+        var result = service.GetSectionAccess();
+        Assert.Equal(new[] { "C" }, result["MailboxPermissions"]);
+        Assert.False(result.ContainsKey("CalendarPermissions"));
+    }
+
+    // --- Legacy import (one-time, DB-wins, archive) ---
 
     [Fact]
-    public void IsFragmentCorrupt_NoFile_ReturnsFalse()
+    public void Construction_ImportsLegacyFragment_ThenArchives()
+    {
+        File.WriteAllText(_legacyFilePath,
+            """{ "Security": { "SectionAccess": { "MailboxPermissions": ["GroupA","GroupB"] } } }""");
+
+        var service = CreateService();
+
+        Assert.Equal(new[] { "GroupA", "GroupB" }, service.GetGroupsForSection("MailboxPermissions"));
+        Assert.False(File.Exists(_legacyFilePath));
+        Assert.Single(Directory.GetFiles(_configDir, "sectionaccess.json.imported-*"));
+    }
+
+    [Fact]
+    public void Construction_DbValueWins_OverLegacyFragment()
+    {
+        SeedSectionAccess(new() { ["MailboxPermissions"] = new[] { "FromDb" } });
+        File.WriteAllText(_legacyFilePath,
+            """{ "Security": { "SectionAccess": { "MailboxPermissions": ["FromFile"] } } }""");
+
+        var service = CreateService();
+
+        Assert.Equal(new[] { "FromDb" }, service.GetGroupsForSection("MailboxPermissions"));
+    }
+
+    // --- Corrupt probe (blank-render-save trap, incident fix #3) + upgrade fail-closed (B.4 class) ---
+
+    [Fact]
+    public void IsFragmentCorrupt_HealthyStore_ReturnsFalse()
     {
         Assert.False(CreateService().IsFragmentCorrupt());
     }
 
     [Fact]
-    public void IsFragmentCorrupt_ValidFragment_ReturnsFalse()
+    public void IsFragmentCorrupt_UnreadableStore_ReturnsTrue()
     {
-        var fragment = new System.Text.Json.Nodes.JsonObject
-        {
-            ["Security"] = new System.Text.Json.Nodes.JsonObject
-            {
-                ["SectionAccess"] = new System.Text.Json.Nodes.JsonObject
-                {
-                    ["MailboxPermissions"] = new System.Text.Json.Nodes.JsonArray("GroupA")
-                }
-            }
-        };
-        WriteFragmentFile(fragment.ToJsonString());
-
-        Assert.False(CreateService().IsFragmentCorrupt());
+        Assert.True(CreateService(store: new UnreadableStore()).IsFragmentCorrupt());
     }
 
     [Fact]
-    public void IsFragmentCorrupt_InvalidJson_ReturnsTrue()
+    public void Construction_UnparseableLegacyFile_LeftInPlace_FailsClosed()
     {
-        WriteFragmentFile("{ this is not valid json !!!");
+        File.WriteAllText(_legacyFilePath, "{ this is not valid json !!!");
 
-        Assert.True(CreateService().IsFragmentCorrupt());
+        var service = CreateService();
+
+        // Corrupt authorization fragment during upgrade must stay fail-closed, not fall back.
+        Assert.True(service.IsFragmentCorrupt());
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
+        Assert.Empty(service.GetGroupsForSection("DelegationReport")); // even read-only denied
+        Assert.True(File.Exists(_legacyFilePath)); // not archived
+        Assert.Empty(Directory.GetFiles(_configDir, "sectionaccess.json.imported-*"));
     }
 
     [Fact]
-    public void IsFragmentCorrupt_MissingSectionAccessNode_ReturnsTrue()
+    public void Construction_LegacyFileMissingSectionAccessNode_FailsClosed()
     {
-        WriteFragmentFile("""{ "Security": { } }""");
+        File.WriteAllText(_legacyFilePath, """{ "Security": { } }""");
 
-        Assert.True(CreateService().IsFragmentCorrupt());
+        var service = CreateService();
+
+        Assert.True(service.IsFragmentCorrupt());
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
+        Assert.True(File.Exists(_legacyFilePath)); // not archived
     }
 }

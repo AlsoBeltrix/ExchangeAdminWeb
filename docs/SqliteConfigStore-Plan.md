@@ -319,6 +319,10 @@ Per store, in this suggested order (lowest blast radius first):
 >   file is gone so the merge no-ops. Replace with a `module_enablement` table merge. Note the
 >   importer leaves an *unparseable* legacy file in place (does not archive it), matching the
 >   "don't silently discard corrupt config" rule.
+> - **sectionaccess.json** (B.5): in the `$jsonConfigFiles` merge list; post-cutover the file
+>   is gone so the merge no-ops. Replace with a `section_access` table merge (dev-wins),
+>   preserving the presence-marker distinction (configured-empty must promote as deny-all, not
+>   as "unconfigured"). Unparseable legacy file left in place + fail-closed, like B.4.
 
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline
