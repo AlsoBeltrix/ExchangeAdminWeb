@@ -108,6 +108,16 @@ public sealed class ConfigStoreMigrator
             marker INTEGER PRIMARY KEY
         );
         """,
+
+        // v4 — protected-principal presence marker. HasCentralConfig must distinguish "a
+        // protected-principals config exists" (even if all four lists are empty) from "never
+        // configured" (legacy ExcludedUsers fallback applies), exactly like the file world's
+        // File.Exists check. A single sentinel row marks "configured".
+        """
+        CREATE TABLE IF NOT EXISTS protected_principal_present (
+            marker INTEGER PRIMARY KEY
+        );
+        """,
     ];
 
     /// <summary>The schema version this build expects (the count of migration steps).</summary>

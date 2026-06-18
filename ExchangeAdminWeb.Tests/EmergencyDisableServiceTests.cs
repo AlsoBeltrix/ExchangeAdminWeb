@@ -144,7 +144,7 @@ public class EmergencyDisableServiceTests : IDisposable
         var extendedLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>());
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extendedLog, operationTrace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
-        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
 
         return new EmergencyDisableService(

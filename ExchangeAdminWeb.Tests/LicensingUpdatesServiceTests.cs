@@ -57,7 +57,7 @@ public class LicensingUpdatesServiceTests : IDisposable
             config, Substitute.For<ILogger<DelineaService>>(),
             new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>()),
             new OperationTraceService(config, new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>())));
-        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delineaService, protectedPrincipalLogger);
 
         var operationTrace = new OperationTraceService(config, new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()));
         var audit = new AuditService(new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()), operationTrace);

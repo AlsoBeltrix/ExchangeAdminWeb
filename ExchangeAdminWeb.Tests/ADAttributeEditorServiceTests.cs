@@ -59,7 +59,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var delineaService = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, operationTrace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delineaService, Substitute.For<ILogger<ModuleCredentialService>>());
-        var protectedPrincipalService = new ProtectedPrincipalService(_env, config, moduleConfig, delineaService, Substitute.For<ILogger<ProtectedPrincipalService>>());
+        var protectedPrincipalService = new ProtectedPrincipalService(_env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delineaService, Substitute.For<ILogger<ProtectedPrincipalService>>());
         var audit = new AuditService(jsonlLog, operationTrace);
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
 

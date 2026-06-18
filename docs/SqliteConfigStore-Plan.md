@@ -323,6 +323,10 @@ Per store, in this suggested order (lowest blast radius first):
 >   is gone so the merge no-ops. Replace with a `section_access` table merge (dev-wins),
 >   preserving the presence-marker distinction (configured-empty must promote as deny-all, not
 >   as "unconfigured"). Unparseable legacy file left in place + fail-closed, like B.4.
+> - **protected-principals.json** (B.6): in the `$jsonConfigFiles` merge list; post-cutover the
+>   file is gone so the merge no-ops. Replace with a `protected_principal` table merge (dev-wins,
+>   all four kinds), preserving the presence marker (configured-empty vs never). Unparseable
+>   legacy file left in place + fail-closed, like B.4/B.5.
 
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline

@@ -3,6 +3,7 @@ using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -40,6 +41,7 @@ public class ProtectedPrincipalService
     private readonly IWebHostEnvironment _env;
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly ProtectedPrincipalRepository _repository;
     private readonly DelineaService _delineaService;
     private readonly ILogger<ProtectedPrincipalService> _logger;
     private readonly object _cacheLock = new();
@@ -47,7 +49,13 @@ public class ProtectedPrincipalService
     private ProtectedPrincipalConfig? _cachedConfig;
     private DateTime _configLoadedAt = DateTime.MinValue;
     private bool _configCorrupt;
-    private string? _configFilePath;
+
+    // Set when a legacy protected-principals.json exists but is unparseable / lacks the
+    // ProtectedPrincipals node, and the DB store is not yet configured. Like the section-access
+    // store, a corrupt protection list must keep the store fail-closed during the upgrade window
+    // rather than silently un-protect principals. The corrupt file stays on disk, so this
+    // re-trips every startup until repaired/removed.
+    private readonly bool _legacyFileCorrupt;
 
     private static readonly TimeSpan ConfigCacheTtl = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CredentialFailureTtl = TimeSpan.FromSeconds(60);
@@ -60,21 +68,28 @@ public class ProtectedPrincipalService
         IWebHostEnvironment env,
         IConfiguration config,
         ModuleConfigService moduleConfig,
+        ProtectedPrincipalRepository repository,
         DelineaService delineaService,
         ILogger<ProtectedPrincipalService> logger)
     {
         _env = env;
         _config = config;
         _moduleConfig = moduleConfig;
+        _repository = repository;
         _delineaService = delineaService;
         _logger = logger;
-        _configFilePath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
+
+        var legacyPath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
+        _legacyFileCorrupt = ImportLegacyIfPresent(legacyPath);
     }
 
     public const string DirectoryReadSecretConfigKey = "DirectoryReadSecretId";
     public const string ProtectedPrincipalsModuleKey = "ProtectedPrincipals";
 
-    public bool HasCentralConfig => File.Exists(_configFilePath);
+    // True if a protected-principals config has been saved (presence marker). An unparseable
+    // legacy file also counts as "has config" so PermissionValidator routes through the
+    // (fail-closed) load path rather than skipping protection entirely.
+    public bool HasCentralConfig => _legacyFileCorrupt || _repository.IsConfigured();
 
     public void InvalidateCache()
     {
@@ -129,55 +144,41 @@ public class ProtectedPrincipalService
         if (_moduleConfig.IsModuleCorrupt("MailboxPermissions"))
             return (null, [], "MailboxPermissions module configuration is corrupt - protected-principal exclusions unavailable. Contact your administrator.");
 
+        // FAIL-CLOSED: an unparseable legacy file still on disk keeps the store corrupt during
+        // the upgrade window rather than silently un-protecting principals.
+        if (_legacyFileCorrupt)
+            return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
+
         lock (_cacheLock)
         {
             if (_cachedConfig != null && DateTime.UtcNow - _configLoadedAt < ConfigCacheTtl && !_configCorrupt)
                 return (_cachedConfig, GetLegacyExclusions(), null);
         }
 
-        ProtectedPrincipalConfig? config = null;
-        var configPath = _configFilePath!;
-
-        if (File.Exists(configPath))
+        // Read the four lists + configured flag in one guarded operation. A read failure (DB
+        // integrity / partial schema damage) fails closed, never silently empty.
+        if (!_repository.TryRead(out var data, out var configured))
         {
-            try
-            {
-                var json = File.ReadAllText(configPath);
-                var wrapper = JsonSerializer.Deserialize<ProtectedPrincipalsFileWrapper>(json, new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-                config = wrapper?.ProtectedPrincipals;
-
-                if (config == null)
-                {
-                    _logger.LogError("Protected-principals config exists but ProtectedPrincipals section is missing");
-                    lock (_cacheLock) { _configCorrupt = true; }
-                    return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
-                }
-
-                lock (_cacheLock)
-                {
-                    _cachedConfig = config;
-                    _configLoadedAt = DateTime.UtcNow;
-                    _configCorrupt = false;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to parse protected-principals.json — failing closed");
-                lock (_cacheLock) { _configCorrupt = true; }
-                return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
-            }
+            _logger.LogError("Protected-principals store unreadable — failing closed");
+            lock (_cacheLock) { _configCorrupt = true; }
+            return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
         }
-        else
-        {
-            lock (_cacheLock)
+
+        ProtectedPrincipalConfig? config = configured
+            ? new ProtectedPrincipalConfig
             {
-                _cachedConfig = null;
-                _configLoadedAt = DateTime.UtcNow;
-                _configCorrupt = false;
+                Users = data.Users,
+                Groups = data.Groups,
+                OrganizationalUnits = data.OrganizationalUnits,
+                SamAccountNamePatterns = data.SamAccountNamePatterns,
             }
+            : null;
+
+        lock (_cacheLock)
+        {
+            _cachedConfig = config;
+            _configLoadedAt = DateTime.UtcNow;
+            _configCorrupt = false;
         }
 
         return (config, GetLegacyExclusions(), null);
@@ -302,30 +303,59 @@ public class ProtectedPrincipalService
 
     public void SaveConfig(ProtectedPrincipalConfig config)
     {
-        var configDir = Path.GetDirectoryName(_configFilePath!)!;
-        Directory.CreateDirectory(configDir);
-
-        var wrapper = new ProtectedPrincipalsFileWrapper { ProtectedPrincipals = config };
-        var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var json = JsonSerializer.Serialize(wrapper, options);
-
-        var tempPath = Path.Combine(configDir, $"protected-principals.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            File.WriteAllText(tempPath, json);
-            if (File.Exists(_configFilePath))
-                File.Replace(tempPath, _configFilePath!, null);
-            else
-                File.Move(tempPath, _configFilePath!);
-        }
-        finally
-        {
-            if (File.Exists(tempPath))
-                try { File.Delete(tempPath); } catch { }
-        }
+        _repository.Save(new ProtectedPrincipalData(
+            config.Users ?? [],
+            config.Groups ?? [],
+            config.OrganizationalUnits ?? [],
+            config.SamAccountNamePatterns ?? []));
 
         InvalidateCache();
         _logger.LogInformation("Protected-principals config saved and cache invalidated");
+    }
+
+    // One-time import of the legacy protected-principals.json into protected_principal, then
+    // archive the file (SqliteConfigStore-Plan §4). Only fills if not yet configured (DB wins).
+    // Returns true if the legacy file exists but is unparseable / missing the ProtectedPrincipals
+    // node: it is left in place (not archived) AND the store stays fail-closed until repaired.
+    private bool ImportLegacyIfPresent(string legacyPath)
+    {
+        try
+        {
+            if (!File.Exists(legacyPath))
+                return false;
+
+            ProtectedPrincipalConfig? parsed;
+            try
+            {
+                var wrapper = JsonSerializer.Deserialize<ProtectedPrincipalsFileWrapper>(
+                    File.ReadAllText(legacyPath),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                parsed = wrapper?.ProtectedPrincipals;
+                if (parsed == null)
+                {
+                    _logger.LogError("Legacy protected-principals.json exists but ProtectedPrincipals node is missing — failing closed until repaired/removed");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Legacy protected-principals.json is unparseable — failing closed until repaired/removed");
+                return true;
+            }
+
+            _repository.ImportIfMissing(new ProtectedPrincipalData(
+                parsed.Users ?? [],
+                parsed.Groups ?? [],
+                parsed.OrganizationalUnits ?? [],
+                parsed.SamAccountNamePatterns ?? []));
+            LegacyConfigImport.ArchiveFile(legacyPath, _logger);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to import legacy protected-principals.json");
+            return false;
+        }
     }
 
     public int? GetDirectoryReadSecretId()

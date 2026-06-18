@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -28,7 +29,8 @@ public class ProtectedPrincipalServiceTests : IDisposable
     private ProtectedPrincipalService CreateService(
         Dictionary<string, string?>? configOverrides = null,
         string? protectedPrincipalsJson = null,
-        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null)
+        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null,
+        ExchangeAdminWeb.Services.Storage.IConfigStore? protectedStore = null)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -64,7 +66,13 @@ public class ProtectedPrincipalServiceTests : IDisposable
         var delineaService = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, operationTrace);
 
         var logger = Substitute.For<ILogger<ProtectedPrincipalService>>();
-        return new ProtectedPrincipalService(env, config, moduleConfig, delineaService, logger);
+        // The service imports any legacy protected-principals.json (written above) into this
+        // repo's DB at construction, then reads back from it — same store throughout. Tests can
+        // inject a custom store (e.g. an unreadable one) to exercise DB-integrity failure.
+        var ppRepo = protectedStore != null
+            ? new ProtectedPrincipalRepository(protectedStore)
+            : TestConfigStore.CreateProtectedPrincipal(_tempDir);
+        return new ProtectedPrincipalService(env, config, moduleConfig, ppRepo, delineaService, logger);
     }
 
     private static ResolvedDirectoryPrincipal MakePrincipal(
@@ -485,6 +493,47 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.NotNull(cfg2);
         Assert.Contains("updated@contoso.com", cfg2!.Users);
         Assert.DoesNotContain("original@contoso.com", cfg2.Users);
+    }
+
+    [Fact]
+    public void HasCentralConfig_TrueAfterEmptySave_NotJustFileExistence()
+    {
+        // Parity with the file world's File.Exists: an explicitly-saved EMPTY config still counts
+        // as "has central config" (presence marker), so PermissionValidator routes through the
+        // central-config path rather than treating it as absent.
+        var service = CreateService();
+        Assert.False(service.HasCentralConfig);
+
+        service.SaveConfig(new ProtectedPrincipalConfig
+        {
+            Users = [],
+            Groups = [],
+            OrganizationalUnits = [],
+            SamAccountNamePatterns = []
+        });
+
+        Assert.True(service.HasCentralConfig);
+    }
+
+    [Fact]
+    public async Task Check_StoreUnreadable_FailsClosed()
+    {
+        // A DB-integrity failure on the protected-principals store must fail closed (never
+        // silently un-protect), like the corrupt-file path.
+        var service = CreateService(protectedStore: new UnreadableConfigStore());
+
+        var result = await service.CheckAsync(MakePrincipal());
+
+        Assert.True(result.CheckFailed);
+        Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class UnreadableConfigStore : ExchangeAdminWeb.Services.Storage.IConfigStore
+    {
+        public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 
     // --- Domain\user format match ---

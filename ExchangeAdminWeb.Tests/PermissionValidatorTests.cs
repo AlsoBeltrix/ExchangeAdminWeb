@@ -53,7 +53,7 @@ public class PermissionValidatorTests
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var delineaService = new DelineaService(httpClientFactory, config, delineaLogger, extLog, operationTrace);
         var protectedPrincipalLogger = Substitute.For<ILogger<ProtectedPrincipalService>>();
-        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
+        var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(Path.GetTempPath()), delineaService, protectedPrincipalLogger);
 
         var enablementLogger = Substitute.For<ILogger<ModuleEnablementService>>();
         var enablement = new ModuleEnablementService(new ModuleCatalog(), env, moduleConfig, TestConfigStore.CreateModuleEnablement(Path.GetTempPath()), config, enablementLogger);

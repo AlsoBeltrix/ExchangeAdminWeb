@@ -26,4 +26,7 @@ internal static class TestConfigStore
 
     /// <summary>Creates a <see cref="ModuleEnablementRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
     public static ModuleEnablementRepository CreateModuleEnablement(string dir) => new(Create(dir));
+
+    /// <summary>Creates a <see cref="ProtectedPrincipalRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
+    public static ProtectedPrincipalRepository CreateProtectedPrincipal(string dir) => new(Create(dir));
 }

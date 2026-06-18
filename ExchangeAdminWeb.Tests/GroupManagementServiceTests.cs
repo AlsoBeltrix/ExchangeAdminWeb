@@ -57,7 +57,7 @@ public class GroupManagementServiceTests : IDisposable
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, operationTrace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
-        var protectedPrincipals = new ProtectedPrincipalService(env, config, moduleConfig, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
+        var protectedPrincipals = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
         return new GroupManagementService(
             moduleConfig, moduleCredentials, protectedPrincipals,
