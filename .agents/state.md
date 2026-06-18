@@ -235,6 +235,24 @@ Owner's standing direction on the queue, given 2026-06-18:
   + validator, rebuild-to-install, runtime upload deferred. `docs/ModulePackaging-Plan.md`
   still to be written before implementation.
 
+## Known issues (pre-existing, not SQLite-caused)
+
+- **MFA Reset (and possibly other modules) — stranded legacy config key.** The Graph app
+  Delinea secret was renamed `DelineaSecretId` → `GraphDelineaSecretId` in the catalog. The
+  `ModuleConfig` page only renders `GraphDelineaSecretId`, but `MfaResetService` reads
+  `GraphDelineaSecretId ?? DelineaSecretId`. Environments configured before the rename have the
+  value under the OLD key, so the page shows blank while the service still works via the
+  fallback. Confirmed blank in both prod (2.3.8, pre-SQLite) and dev → pre-existing, NOT caused
+  by the config migration. Owner re-saved secret 446 (the Graph app client secret) into the
+  affected modules in prod 2026-06-18; on reload the value persists — good enough for prod.
+  - **Verified the SQLite migration does NOT carry this forward:** the importer copies every
+    key verbatim (no catalog filtering), `ModuleConfigRepository.GetModule` returns all rows,
+    and `SaveModule` writes all provided keys — so the page's load-all/save-all round-trip still
+    preserves the unrendered legacy key, identical to the file-based behavior. Migration neither
+    fixes nor worsens it.
+  - **Proper fix (deferred, not requested now):** one-time key rename
+    `DelineaSecretId` → `GraphDelineaSecretId`, then retire the service-side fallback.
+
 ## Queued work (owner-requested 2026-06-12)
 
 - **Show module version on every module page (owner-requested 2026-06-18): DONE (app
