@@ -528,12 +528,41 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Construction_ValidLegacyFileButImportFails_FailsClosed()
+    {
+        // P1 (codex): a valid legacy file that cannot be committed to the DB (e.g. SQLite busy)
+        // must fail closed, NOT silently drop the rules by falling through to an unconfigured DB.
+        File.WriteAllText(Path.Combine(_configDir, "protected-principals.json"),
+            """{ "protectedPrincipals": { "users": ["ceo@contoso.com"] } }""");
+
+        var service = CreateService(protectedStore: new WriteFailsStore());
+
+        var result = await service.CheckAsync(MakePrincipal());
+        Assert.True(result.CheckFailed);
+        Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
+        // The file must remain for the next startup to retry (not archived).
+        Assert.True(File.Exists(Path.Combine(_configDir, "protected-principals.json")));
+    }
+
     private sealed class UnreadableConfigStore : ExchangeAdminWeb.Services.Storage.IConfigStore
     {
         public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
         public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => throw new InvalidOperationException("store unreadable");
         public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store unreadable");
         public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
+    }
+
+    // Reads succeed (returns empty/unconfigured) but writes throw — simulates SQLite busy during
+    // the one-time import.
+    private sealed class WriteFailsStore : ExchangeAdminWeb.Services.Storage.IConfigStore
+    {
+        private readonly ExchangeAdminWeb.Services.Storage.SqliteConfigStore _inner;
+        public WriteFailsStore() => _inner = TestConfigStore.Create(Path.Combine(Path.GetTempPath(), $"wfs_{Guid.NewGuid():N}"));
+        public long GetChangeToken() => _inner.GetChangeToken();
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => _inner.Read(read);
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store busy");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store busy");
     }
 
     // --- Domain\user format match ---

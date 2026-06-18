@@ -88,8 +88,23 @@ public class ProtectedPrincipalService
 
     // True if a protected-principals config has been saved (presence marker). An unparseable
     // legacy file also counts as "has config" so PermissionValidator routes through the
-    // (fail-closed) load path rather than skipping protection entirely.
-    public bool HasCentralConfig => _legacyFileCorrupt || _repository.IsConfigured();
+    // (fail-closed) load path rather than skipping protection entirely. A DB-integrity failure
+    // ALSO counts as "has config" (true) so the caller routes into LoadEffectiveConfig, which
+    // returns the controlled fail-closed error — never let this probe throw through to a 500.
+    public bool HasCentralConfig
+    {
+        get
+        {
+            if (_legacyFileCorrupt)
+                return true;
+            // TryRead never throws; if the store is unreadable it returns false with
+            // configured=false, but we must still route to the fail-closed load path, so treat
+            // an unreadable store as "has config".
+            if (!_repository.TryRead(out _, out var configured))
+                return true;
+            return configured;
+        }
+    }
 
     public void InvalidateCache()
     {
@@ -343,18 +358,33 @@ public class ProtectedPrincipalService
                 return true;
             }
 
-            _repository.ImportIfMissing(new ProtectedPrincipalData(
-                parsed.Users ?? [],
-                parsed.Groups ?? [],
-                parsed.OrganizationalUnits ?? [],
-                parsed.SamAccountNamePatterns ?? []));
+            try
+            {
+                _repository.ImportIfMissing(new ProtectedPrincipalData(
+                    parsed.Users ?? [],
+                    parsed.Groups ?? [],
+                    parsed.OrganizationalUnits ?? [],
+                    parsed.SamAccountNamePatterns ?? []));
+            }
+            catch (Exception ex)
+            {
+                // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
+                // Do NOT archive and do NOT fall through to an unconfigured DB — that would
+                // silently drop the protection rules. Fail closed; the file stays on disk so the
+                // next startup retries the import.
+                _logger.LogError(ex, "Failed to import legacy protected-principals.json into the store — failing closed until import succeeds");
+                return true;
+            }
+
             LegacyConfigImport.ArchiveFile(legacyPath, _logger);
             return false;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy protected-principals.json");
-            return false;
+            // Reached only if reading the file itself failed (not a parse error — those return
+            // true above). A valid file we could not even read must also fail closed.
+            _logger.LogError(ex, "Failed to process legacy protected-principals.json — failing closed");
+            return true;
         }
     }
 
