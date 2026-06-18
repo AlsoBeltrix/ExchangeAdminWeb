@@ -1,22 +1,22 @@
 using System.Security.Claims;
-using System.Text.Encodings.Web;
 using System.Text.Json;
-using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
 public class ModuleAdminService
 {
-    private readonly string _configFilePath;
+    private readonly ModuleAdminRepository _repository;
     private readonly ILogger<ModuleAdminService> _logger;
     private readonly object _writeLock = new();
 
-    public ModuleAdminService(IWebHostEnvironment env, ILogger<ModuleAdminService> logger)
+    public ModuleAdminService(IWebHostEnvironment env, ModuleAdminRepository repository, ILogger<ModuleAdminService> logger)
     {
         _logger = logger;
-        var configDir = Path.Combine(env.ContentRootPath, "config");
-        _configFilePath = Path.Combine(configDir, "module-admins.json");
-        Directory.CreateDirectory(configDir);
+        _repository = repository;
+
+        var legacyPath = Path.Combine(env.ContentRootPath, "config", "module-admins.json");
+        ImportLegacyIfPresent(legacyPath);
     }
 
     public bool IsModuleAdmin(string moduleId, ClaimsPrincipal user)
@@ -60,54 +60,46 @@ public class ModuleAdminService
     {
         lock (_writeLock)
         {
-            var config = ReadConfig();
-            config[moduleId] = groups;
-
-            var configDir = Path.GetDirectoryName(_configFilePath)!;
-            var tempPath = Path.Combine(configDir, $"module-admins.{Guid.NewGuid():N}.tmp");
-
-            try
-            {
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                };
-                var json = JsonSerializer.Serialize(config, options);
-                File.WriteAllText(tempPath, json);
-
-                if (File.Exists(_configFilePath))
-                    File.Replace(tempPath, _configFilePath, null);
-                else
-                    File.Move(tempPath, _configFilePath);
-
-                _logger.LogInformation("Module admins for {Module} saved", moduleId);
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                    try { File.Delete(tempPath); } catch { }
-            }
+            _repository.SetForModule(moduleId, groups);
+            _logger.LogInformation("Module admins for {Module} saved", moduleId);
         }
     }
 
     private Dictionary<string, string[]> ReadConfig()
     {
-        if (!File.Exists(_configFilePath))
-            return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
-
+        // Fail-open (silent): on any read error return an empty map, preserving the file
+        // version's behavior. With a DB this is effectively never hit, but the catch keeps the
+        // contract.
         try
         {
-            var json = File.ReadAllText(_configFilePath);
-            var result = JsonSerializer.Deserialize<Dictionary<string, string[]>>(json);
-            return result != null
-                ? new Dictionary<string, string[]>(result, StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            return _repository.GetAll();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Module admins config file corrupt at {Path}", _configFilePath);
+            _logger.LogError(ex, "Failed to read module admins from config store");
             return new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    // One-time import of the legacy module-admins.json into the module_admins table, then
+    // archive the file (SqliteConfigStore-Plan §4). Only fills modules absent from the DB.
+    private void ImportLegacyIfPresent(string legacyPath)
+    {
+        try
+        {
+            if (!File.Exists(legacyPath))
+                return;
+
+            var json = File.ReadAllText(legacyPath);
+            var legacy = JsonSerializer.Deserialize<Dictionary<string, string[]>>(json);
+            if (legacy is { Count: > 0 })
+                _repository.ImportIfMissing(legacy);
+
+            LegacyConfigImport.ArchiveFile(legacyPath, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to import legacy module-admins.json");
         }
     }
 }
