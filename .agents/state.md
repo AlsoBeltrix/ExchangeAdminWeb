@@ -180,8 +180,13 @@ Owner's standing direction on the queue, given 2026-06-18:
       8 ExtendedLogService call sites updated via `TestConfigStore` helper. 472/472. Codex
       finding (promote script no longer carries the level) handled as tracked Phase D debt,
       not a code fix — verified `Copy-FileChecked` skips the missing file safely.
-    - **NEXT: B.2 — module-admins.json → `module_admins`** (`ModuleAdminService`; simplest,
-      silent fail-open). Then module-config, modules-enabled, section-access, etc.
+    - **B.2 DONE (app 2.3.14, commit `5f6bb40`, codex-clean, pushed).** module-admins.json →
+      `module_admins` (row-per-group) via new `ModuleAdminRepository`. Preserved silent
+      fail-open + public API. 7 parity tests. No new promotion debt (not in promote list).
+    - **NEXT: B.3 — module-config-*.json → `module_config`** (`ModuleConfigService`; the
+      shared service ~17 modules funnel through — single biggest cutover; keep `ConfigSaved`
+      event and `IsModuleCorrupt`; fold the legacy `module-config.json` one-time migration in).
+      Then modules-enabled, section-access, protected-principals, ad-editable-attributes.
     - **Phase D promotion debt is accumulating** — see the running list in
       `docs/SqliteConfigStore-Plan.md` Phase D; each Phase B store adds an entry.
 - **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
