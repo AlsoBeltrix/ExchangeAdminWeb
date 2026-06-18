@@ -134,6 +134,9 @@ function Write-DeploymentManifest {
 $ProjectRoot = $PSScriptRoot
 $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 
+# Shared SQLite config-DB backup/integrity helpers (SqliteConfigStore-Plan Phase D).
+Import-Module (Join-Path $PSScriptRoot 'tools\SqliteConfigBackup.psm1') -Force
+
 if (-not $PathBase) { $PathBase = "/$AppAlias" }
 $PublishPath = $PublishPath.TrimEnd('\', '/')
 
@@ -418,12 +421,29 @@ if ($isUpgrade) {
     Write-Success "Config backed up to $BackupDir\$backupName"
 
     # The 2026-06-12 incident had no pre-deploy snapshot of config/, leaving the
-    # pre-incident enablement state unknowable. Back up the whole runtime config
-    # directory, retained alongside the appsettings backups.
+    # pre-incident enablement state unknowable. Back up the runtime config directory,
+    # retained alongside the appsettings backups.
+    #
+    # The config DB (config/exchangeadmin.db) is a LIVE SQLite database — a raw recursive
+    # Copy-Item of a live WAL DB can be torn/inconsistent, producing a worthless rollback
+    # snapshot. Back the DB up via a verified online backup (VACUUM INTO + integrity_check;
+    # SqliteConfigStore-Plan Phase D), then copy any remaining non-DB config files (e.g. legacy
+    # *.imported-* archives, samples) with a plain recursive copy.
     $runtimeConfigDir = Join-Path $PublishPath "config"
     if (Test-Path $runtimeConfigDir) {
         $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
-        Copy-Item $runtimeConfigDir $configDirBackup -Recurse
+        New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
+
+        # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
+        $dbBackup = Backup-SqliteConfigDb -ConfigDir $runtimeConfigDir -DestDir $configDirBackup -Timestamp $timestamp
+        if ($dbBackup) {
+            Write-Success "Config DB backed up (verified) to $dbBackup"
+        }
+
+        # Copy the rest of config/ (everything except the live DB triplet, which is handled above).
+        Get-ChildItem -LiteralPath $runtimeConfigDir -File |
+            Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
+            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
         Write-Success "Runtime config directory backed up to $configDirBackup"
     } else {
         $configDirBackup = $null
@@ -436,7 +456,11 @@ if ($isUpgrade) {
     # extended-log-level.txt is rewritten by the app on every startup
     # (ExtendedLogService.LoadLevel -> SetLevel), so it always differs across a
     # pool restart and would false-positive the drift check.
-    $driftCheckExclusions = @('extended-log-level.txt')
+    # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
+    # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
+    # meaningless for it — it is verified by PRAGMA integrity_check after deploy instead (see the
+    # post-deploy DB health check). Exclude it from the file-drift inventory.
+    $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
     $preConfigInventory = @{}
     if (Test-Path $runtimeConfigDir) {
         Get-ChildItem $runtimeConfigDir -File |

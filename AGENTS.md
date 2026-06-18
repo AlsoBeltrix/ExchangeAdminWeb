@@ -69,6 +69,10 @@ should win. Do not silently choose whichever source is convenient.
 - PowerShell tests: `Invoke-Pester tests/ps`
 - Dev deploy: `./deploy.ps1` (ADI-specific). Generic install:
   `tools/Install-ExchangeAdminWeb.ps1`.
+- Deploy-host dependency: `sqlite3.exe` must be on PATH (`winget install SQLite.SQLite`). The
+  deploy/promote scripts use it to make a verified online backup of `config/exchangeadmin.db`
+  before each deploy and fail fast if it is missing (see `tools/SqliteConfigBackup.psm1`). The
+  app bundles its own SQLite engine; this is a host dependency for the ops scripts only.
 
 ## Architectural Invariants
 

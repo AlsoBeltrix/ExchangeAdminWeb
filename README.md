@@ -195,6 +195,12 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - **.NET 10 SDK** and **ASP.NET Core 10 Runtime (Windows Hosting Bundle)**
 - **PowerShell 7.4+**
 - **ExchangeOnlineManagement PowerShell Module** (v3.7.0+ required for Get-MessageTraceV2)
+- **SQLite command-line tools (`sqlite3.exe` on PATH)** — required by the deploy/promote
+  scripts to make a verified, consistent online backup of the runtime config database
+  (`config/exchangeadmin.db`) before each deploy. Install with `winget install SQLite.SQLite`.
+  The deploy/promote scripts fail fast if `sqlite3` is not on PATH rather than fall back to an
+  unverified file copy. (The app itself bundles its own SQLite engine and does not need this;
+  it is a *deployment-host* dependency only.)
 
 ### Exchange Online Prerequisites
 - **Azure App Registration** with:

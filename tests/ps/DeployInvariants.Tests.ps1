@@ -192,17 +192,21 @@ Describe 'deploy.ps1' {
             -Because 'an unexpected INSTALL usually means the target parameters are wrong'
     }
 
-    It 'backs up the whole runtime config directory before the upgrade mirror (incident fix #4)' {
+    It 'backs up the runtime config directory before the upgrade mirror (incident fix #4)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
             '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
         ).Value
 
-        $upgradeBlock | Should -Match 'Copy-Item \$runtimeConfigDir \$configDirBackup -Recurse' `
-            -Because 'the 2026-06-12 incident had no pre-deploy snapshot of config/ to diagnose from'
+        # The live SQLite DB must be backed up via the verified online backup helper, NOT a raw
+        # recursive Copy-Item (a torn copy of a live WAL DB is a worthless rollback snapshot).
+        $upgradeBlock | Should -Match 'Backup-SqliteConfigDb' `
+            -Because 'the live config DB needs a consistent, integrity-verified backup (SQLite Phase D)'
+        $upgradeBlock | Should -Not -Match 'Copy-Item \$runtimeConfigDir \$configDirBackup -Recurse' `
+            -Because 'a raw recursive copy of a live WAL DB can be inconsistent — replaced by the online backup'
         $upgradeBlock | Should -Match 'config\.\$\{timestamp\}\.bak' `
             -Because 'the snapshot must be timestamped and retained like appsettings backups'
-        $upgradeBlock.IndexOf('Copy-Item $runtimeConfigDir') |
+        $upgradeBlock.IndexOf('Backup-SqliteConfigDb') |
             Should -BeLessThan $upgradeBlock.IndexOf('robocopy') `
             -Because 'the snapshot must be taken before any files change'
     }
