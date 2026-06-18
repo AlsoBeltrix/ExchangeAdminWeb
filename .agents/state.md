@@ -7,32 +7,34 @@ repo facts change.
 
 - App version `2.3.10` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). **Prod is on
   `2.3.8`.** Dev is ahead and **none of 2.3.9 / 2.3.10 is in prod.**
-- **Commit `bb94d17` (pushed to `master` 2026-06-18)** batched four changes (should have been
-  one-per-change; batched in error — see governance note): (1) TestAccountPool removal → app
-  `2.3.9`→`2.3.10`; (2) CR-2 preview phantom-type fix → ConferenceRooms `2.0.8`; (3) review
-  Finding 1 (Room Finder AD preflight before Set-Place) → ConferenceRooms `2.0.9`; (4) review
-  Finding 2 (GroupManagement page protected-principal gate removed, enforcement now solely in
-  the service) → GroupManagement `2.0.1`→`2.0.2`.
-- **UNCOMMITTED follow-up batch (Conference Rooms, 2026-06-18)** — done + verified locally,
-  NOT yet committed, NOT yet deployed (the dev box that produced the live test still runs
-  pre-`bb94d17` code). Two changes, ConferenceRooms `2.0.9`→`2.0.10`:
-  1. **RoomListOU removed — room lists now created cloud-side with no `-OrganizationalUnit`.**
-     The module creates room lists via EXO `New-DistributionGroup`; it was passing the on-prem
-     `RoomListOU` path, which EXO rejects ("organizational unit not found") — the cause of the
-     live all-rows-failed test. Removed the property, ConfigField, and example-config entry.
-     Decision recorded in `.agents/decisions.md` (cloud-only room lists, accepted).
-  2. **Partial-write now reported/audited** (`RoomOperationResult.Partial`, "PARTIAL" UI badge,
-     audit detail). Resolves the GPT follow-up finding that a half-applied row (EXO written,
-     later step failed) was reported as a plain "FAILED". Decision recorded.
-     Also corrected the false "accepted" claim in `docs/CommitReview-2026-06-17.md`.
-- **NEXT ACTION:** commit the follow-up batch (one ConferenceRooms commit), then push. Then the
-  only open item is owner-operational — **deploy app `2.3.10` to prod** (run §Deploy-notes alias
-  check first) and **redeploy dev** so it runs the committed code.
-- **Governance note (owner, 2026-06-18):** commits were batched at end-of-session instead of
-  per-change. Owner intends to strengthen governance so changes are committed as they land.
-- Current local suite: **459/459 xUnit at app 2.3.10 / ConferenceRooms 2.0.10** (build clean,
-  0 warnings; format clean). No automated test for the RoomListOU/partial paths (live
-  EXO/AD runspace, no injection seam; AGENTS.md §2) — manual-verification-only.
+- **`master` is at `8d4f0d6`, level with `origin/master`, working tree clean.** All work
+  below is committed and pushed; nothing uncommitted.
+- **Module versions now in source:** app `2.3.10`; ConferenceRooms `2.0.10`; GroupManagement
+  `2.0.2`. Other modules unchanged.
+- **NEXT ACTION (owner-operational only — agent cannot deploy; needs admin/app-pool recycle):**
+  1. **Redeploy DEV.** The dev box still runs pre-`bb94d17` code (the 2026-06-18 live Room
+     Finder test ran old bits — the AD step ordering proved it). Redeploy so dev runs `8d4f0d6`,
+     then re-test Room Finder apply end-to-end.
+  2. **Deploy app `2.3.10` to PROD** (prod is on `2.3.8`). Run the §Deploy-notes alias check
+     first.
+- **Two commits landed 2026-06-18** (both pushed):
+  - `bb94d17` — batched FOUR changes (batched in error; see governance note): TestAccountPool
+    removal (app `2.3.9`→`2.3.10`); CR-2 preview phantom-type fix; review Finding 1 (Room Finder
+    AD preflight before Set-Place); review Finding 2 (GroupManagement page protected-principal
+    gate removed, enforcement now solely in `GroupManagementService`, `2.0.1`→`2.0.2`).
+  - `8d4f0d6` — Conference Rooms follow-up (`2.0.9`→`2.0.10`): (a) **RoomListOU removed** — room
+    lists are created cloud-side via EXO `New-DistributionGroup` with NO `-OrganizationalUnit`
+    (it was passing an on-prem OU path EXO rejects — the cause of the live all-rows-failed test);
+    (b) **partial Room Finder applies now reported/audited** (`RoomOperationResult.Partial`,
+    "PARTIAL" UI badge) instead of bare "FAILED". Both decisions recorded in
+    `.agents/decisions.md`; false "accepted" claim in `docs/CommitReview-2026-06-17.md` corrected.
+- **Governance note (owner, 2026-06-18):** `bb94d17` batched four unrelated changes instead of
+  one-per-change as each landed. Owner intends to strengthen governance so changes are committed
+  as they land. Target the rule at preventing that batching.
+- Current local suite: **459/459 xUnit** (build clean, 0 warnings; format clean) at the versions
+  above. No automated test for the RoomListOU/partial-write paths or the Room Finder AD preflight
+  — all require a live EXO/AD runspace with no injection seam (AGENTS.md §2) —
+  manual-verification-only.
 - **INCIDENT DIAGNOSED — see Diagnostic Results in
   `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
   proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,
@@ -61,18 +63,15 @@ repo facts change.
 
 ## Active work — Phase 4 / AC16 (resume here)
 
-**NEXT ACTION (authoritative pointer in §Now):** commit the two uncommitted working-tree
-changes — TestAccountPool removal, then CR-2 — one logical change per commit. They are
-already deployed to dev but not committed.
+**NEXT ACTION lives in §Now** (redeploy dev + deploy 2.3.10 to prod; both owner-operational).
 
 ProdReadiness work stream is COMPLETE — `docs/ProdReadiness-Plan.md` Status **Implemented**
 (close-out §10 round 17, commit a5ab6aa). All AC1–AC16 met; every AC16-scoped register medium
 is a fix or recorded risk-accept (SSL-off accepted-as-designed; GetGraphClientAsync superseded
 by per-module GraphTokenClient; PSCredential DRY-only deferred; config case-sensitivity +
-last-write-wins obsoleted-by-SQLite). No ProdReadiness work remains. Open owner-operational
-items: **deploy app 2.3.10 to prod** (prod on 2.3.8; run §Deploy-notes alias check first) —
-timing is the owner's call. After the commits, remaining engineering candidates: GM-1/GM-2
-bugs, CR-1 live verification, or the SQLite/module-packaging plans awaiting Michael's review.
+last-write-wins obsoleted-by-SQLite). No ProdReadiness work remains. Remaining engineering
+candidates (not started): GM-1/GM-2 bugs, CR-1 live verification, or the SQLite/module-packaging
+plans awaiting Michael's review.
 
 **ProdReadiness Phase 4 / AC16 is CLOSED (2026-06-17, commit a5ab6aa).** Plan Status flipped
 to Implemented; close-out and risk-accept register in `docs/ProdReadiness-Plan.md` §10
@@ -234,38 +233,25 @@ schedules). Items 1 and 2 are bug fixes; item 3 is a new module needing its own 
 Not part of the ProdReadiness work stream; queued for approval/implementation when Michael
 schedules it.
 
-- **CR-1 (bug): Room Finder Apply failed all rows — IMPLEMENTED IN DEV 2026-06-17, pending
-  live verification.** Bug report: `D:\BugReports\roomfinder`. **Root cause (confirmed from
-  the operation trace + live tenant reproduction, NOT the draft's original guess):** the
-  failure was at **Set-User (Step 2)**, not Set-Place. City/State/Country are on-prem-AD-
-  mastered and dir-synced, so EXO `Set-User` rejects them ("being synchronized from your
-  on-premises organization"); `-ErrorAction Stop` made it fatal per row. The legacy
-  `SetupRoomFinder.ps1` worked because it set those via on-prem `Set-User`, not EXO.
-  **Fix:** write City(`l`)/State(`st`)/Country(`c`/`co`/`countryCode`) on the on-prem object
-  via `Set-ADUser`, resolved by userPrincipalName (==email here; assert exactly one) and
-  written by objectGUID. Country triple needs the ISO numeric .NET can't supply, so a new
-  hardcoded `Services/IsoCountryCodes.cs` (249 entries, integrity-tested) provides it; `co`
-  uses `RegionInfo.EnglishName` to match existing rooms. AD cred from PAM via a new
-  ConferenceRooms `DelineaSecretId` ConfigField. Module 2.0.6 → 2.0.7. 467 tests green;
-  guard tests proven non-vacuous. Plan: `docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md`
-  (Status: Implemented in dev). **Owner TODO before it works in prod:** configure the
-  ConferenceRooms AD `DelineaSecretId` in the deployed instance, then live-verify apply.
-  This fix is NOT part of the ProdReadiness 2.3.9 batch — separate module change.
+All Conference Rooms work below is COMMITTED + pushed (ConferenceRooms module `2.0.10`). The
+only thing outstanding is **live re-verification on dev after a redeploy** (see §Now NEXT
+ACTION) — the dev box still ran old code during the 2026-06-18 test.
 
-- **CR-2 (display fix): Set-Room-Type CSV preview showed phantom "Standard" — DONE IN DEV
-  2026-06-17 (uncommitted).** Surfaced when the owner uploaded a Room Finder buildings CSV
-  (`ADLKRF_Buildings.csv`, no `Type` column) into the "Set Room Type" uploader: all 86 rows
-  correctly failed with `Invalid room type: ''`, but the preview Type column rendered
-  "Standard" for every failed row. Root cause: `RoomTypePreviewRow.Type` was a non-nullable
-  `RoomType` enum, which defaults to its first value (`Standard`) when a failure branch never
-  sets it. Fix: `Type` is now `RoomType?`; the razor cell renders `@(row.Type?.ToString() ??
-  "—")`. Rows that genuinely parsed a type (incl. "Room not found" rows, which DID parse one
-  via `BuildTypePreview`) still display it. Files: `Models/ConferenceRoomModels.cs`,
-  `Components/Pages/ConferenceRooms.razor`. Module 2.0.7 → **2.0.8**. New guard test
-  `ConferenceRoomCsvParseTests.RoomTypePreviewRow_DefaultType_IsNull_NotPhantomStandard`,
-  proven non-vacuous (reverted nullability → failed with `Actual: Standard` → restored).
-  Behavior unchanged — the file-vs-uploader mismatch is still a real failure; this only stops
-  the preview misrepresenting it. Separate single change from CR-1; commit on its own.
+- **CR-1 (Room Finder apply — synced attributes): fixed.** City/State/Country are
+  on-prem-mastered/dir-synced, so EXO rejects them; the module now writes them on the on-prem
+  object via `Set-ADUser` (resolve by UPN → assert one → write by objectGUID; ISO numeric from
+  `Services/IsoCountryCodes.cs`). AD cred from PAM via ConferenceRooms `DelineaSecretId`.
+  Plan: `docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md`. **Owner TODO before prod:**
+  configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
+- **CR-1 follow-up — AD preflight (review Finding 1, commit `bb94d17`): fixed.** Non-mutating
+  AD checks run before `Set-Place` so a bad-AD row fails before any EXO write.
+- **CR-2 (Set-Room-Type preview phantom "Standard", commit `bb94d17`): fixed.** `RoomTypePreviewRow.Type`
+  is now `RoomType?`; failed rows render "—". Guard test proven non-vacuous. (This was a display
+  fix only — uploading a Room Finder CSV into the Set-Room-Type box is still a real mismatch.)
+- **CR-3 (RoomListOU + partial reporting, commit `8d4f0d6`): fixed.** Room lists created
+  cloud-side with no `-OrganizationalUnit` (the OU error that failed all rows in the live test);
+  `RoomListOU` config removed. Partial applies now reported/audited (`RoomOperationResult.Partial`).
+  Decisions in `.agents/decisions.md` (2026-06-18).
 
 ## Blockers
 
