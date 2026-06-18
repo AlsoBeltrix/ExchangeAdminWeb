@@ -139,7 +139,40 @@ non-vacuous via temporary revert.
 - deploy.ps1 still lacks a native -PlanOnly (deferred with owner visibility; plan
   review log round 5). deploy-pipeline -PlanOnly covers the prod dry-run requirement.
 
+## Owner prioritization (2026-06-18)
+
+Owner's standing direction on the queue, given 2026-06-18:
+
+- **Dev redeploy + Room Finder re-test (Now item 1): DONE.** No longer outstanding.
+- **Prod deploy of `2.3.10` (Now item 2): DEFERRED** until the work queue below is cleared
+  of current items. Do not push to prod until then. (Sub-TODO still stands: configure
+  ConferenceRooms AD `DelineaSecretId` in the deployed instance before CR-1 works in prod.)
+- **Module version display (queued below): sequencing.** The *code* (show version on all
+  pages) is independent and small — bundle it with whatever change next touches the module
+  pages, or do it before the SQLite work. The *guide/spec rule* folds into the SQLite plan's
+  Phase E2 module-guide rewrite.
+- **SQLite config store:** three design decisions resolved 2026-06-18 (see
+  `.agents/decisions.md`): DB in `config/` per-environment (no shared DB), plain
+  `Microsoft.Data.Sqlite` (no EF), add the change-token reload signal. **Still awaiting owner
+  go/no-go to execute the migration** — the plan stays Draft.
+- **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
+  + validator, rebuild-to-install, runtime upload deferred. `docs/ModulePackaging-Plan.md`
+  still to be written before implementation.
+
 ## Queued work (owner-requested 2026-06-12)
+
+- **Show module version on every module page (owner-requested 2026-06-18).** No module
+  page currently displays its module `Version`, so bug-report screenshots can't identify
+  which build is running. Requirement is **app-wide**: every module page must show its
+  version (sourced from the descriptor `Version` in `Modules/ModuleCatalog.cs`).
+  - **Also a standing rule:** add this to the module creation guide
+    (`docs/AdminModuleDeveloperGuide.md`) and, if it's a binding contract item, the module
+    spec (`docs/AdminModuleSpec.md`) so every new module inherits the version display by
+    default.
+  - Not yet code-located. First step: investigate how module pages render their header/
+    chrome and whether a shared layout/component can carry the version label once for all
+    modules (preferred — single affordance over editing 20 pages). Confirm placement/format
+    with owner before implementing.
 
 - **Config storage rethink — database instead of JSON fragments** (decision DEFERRED to
   week of 2026-06-15; Michael will decide; needs a plan doc before any implementation).
@@ -252,6 +285,9 @@ ACTION) — the dev box still ran old code during the 2026-06-18 test.
   cloud-side with no `-OrganizationalUnit` (the OU error that failed all rows in the live test);
   `RoomListOU` config removed. Partial applies now reported/audited (`RoomOperationResult.Partial`).
   Decisions in `.agents/decisions.md` (2026-06-18).
+- **(moved) Module version display is now app-wide — see "Show module version on every module
+  page" under Queued work below.** (Originated 2026-06-18 from the Conference Rooms page lacking
+  a version label.)
 
 ## Blockers
 

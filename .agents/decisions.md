@@ -5,6 +5,59 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-18 - SQLite config store: three design decisions resolved; module packaging direction set
+
+Status: Active
+
+These resolve the three Phase-A-blocking open questions in `docs/SqliteConfigStore-Plan.md`
+§9 and set the scope direction for the (not-yet-written) module packaging plan. The
+SQLite plan stays **Draft** — these decisions unblock it but the owner has not yet given a
+go/no-go to execute the migration. When the plan is next revised, fold these in and record
+them in its review log.
+
+1. **DB location (SqliteConfigStore-Plan §3b): Option A — the SQLite file lives in the
+   existing `config/` directory, one DB per environment (dev and prod each have their own).**
+   A single DB shared between dev and prod was considered and rejected: it would make dev
+   config changes instantly live in prod (removing the test-then-promote safety net), cannot
+   hold per-environment values (security groups, connection targets, `PathBase`), and a
+   network-shared single-file SQLite DB reintroduces exactly the file-locking/corruption
+   failure class the migration exists to kill. The "seamless config sync" goal is met instead
+   by the existing dev→prod promote plus the planned prod→dev `-Refresh` flag, not by a shared
+   file. This keeps the `config/` deploy protections (robocopy `/XD config`, ACL, snapshot)
+   doing real work; §7's conditional retirement list resolves to the Option-A column.
+
+2. **Data-access library (§3a): `Microsoft.Data.Sqlite` + thin hand-written repositories.
+   No Entity Framework.** The config data is key/value pairs and short lists with no
+   relational structure, so EF's ORM advantages buy nothing while adding a heavy dependency,
+   generated migration artifacts needing their own review, and behavior-hiding "magic" that
+   works against the Constitution's inspectable-behavior bias. Revisit only if module
+   packaging later makes the data model genuinely relational.
+
+3. **Cache-invalidation model (§5B.2): add a cheap DB change-token (the recommended
+   `schema_meta` counter), not the accept-the-staleness option.** Without it, an out-of-band
+   write (the prod→dev `-Refresh` tool, a manual DB edit) leaves the running app serving stale
+   cached config for up to 30 s — or, for section access, until an app restart — because the
+   writing path is no longer the same instance that holds the cache. The change-token lets
+   readers detect a change and refresh immediately, and also makes the corrupt-store probes
+   cheap.
+
+4. **Module packaging direction: modules are distributed as `.zip` packages with a
+   validation tool, but installation still requires a back-end rebuild. Runtime upload /
+   assembly loading is explicitly deferred.** Runtime `.zip`-upload-no-rebuild is the hardest
+   and riskiest version of the feature (Blazor pages/routes are compiled ahead of time, and it
+   means loading arbitrary code into a privileged Exchange/AD admin tool), and it solves a
+   problem the owner does not currently have — the owner is the only module author today, and
+   it was always a "nice to have for other deployments." "Modules are compiled extensions
+   installed by an administrator" is a defensible enterprise posture (cf. SharePoint `.wsp`,
+   Dynamics plugins, much of the Jenkins/Jira/Grafana ecosystem). Scope when the plan is
+   written: documented `.zip` package structure + `tools/validate-module-package.ps1` as the
+   gate; defer runtime upload until a real second deployment needs it. This sets the scope for
+   the future `docs/ModulePackaging-Plan.md`; that plan is still required before any
+   implementation.
+
+Reason:
+Owner decisions 2026-06-18 after a plain-English walkthrough of the four open questions.
+
 ### 2026-06-18 - Conference Rooms: cloud-only room lists, and partial-write is reported
 
 Status: Active
