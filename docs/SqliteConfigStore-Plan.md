@@ -327,6 +327,12 @@ Per store, in this suggested order (lowest blast radius first):
 >   file is gone so the merge no-ops. Replace with a `protected_principal` table merge (dev-wins,
 >   all four kinds), preserving the presence marker (configured-empty vs never). Unparseable
 >   legacy file left in place + fail-closed, like B.4/B.5.
+> - **ad-editable-attributes.json + ad-editable-attributes-legend.json** (B.7): both in the
+>   `$jsonConfigFiles` merge list; post-cutover gone so the merges no-op. Replace with
+>   `editable_attribute` / `attribute_legend` table merges (dev-wins). Allowlist is
+>   NULL-on-corrupt: an unparseable/invalid legacy file is left in place and fails closed
+>   (allowlist load returns null) until repaired. Legend is fail-open (unparseable → skipped,
+>   left in place). **This completes Phase B — all seven stores cut over.**
 
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline

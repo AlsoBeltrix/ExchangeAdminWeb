@@ -2,6 +2,7 @@ using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -70,6 +71,15 @@ public class ADAttributeEditorService
 
     private static readonly string[] HardDenylistPrefixes = ["lastLogon", "msDS-"];
 
+    private readonly AttributeEditorRepository _repository;
+
+    // Set when a legacy ad-editable-attributes.json exists but is unparseable / missing the
+    // Attributes section, and the DB allowlist is not yet configured. The allowlist's fail-closed
+    // signal is NULL (distinct from the valid empty []), so during the upgrade window a corrupt
+    // file must make the load return null until it is repaired/removed — never silently degrade
+    // to an empty allowlist. The file stays on disk, so this re-trips every startup.
+    private readonly bool _legacyAllowlistCorrupt;
+
     public ADAttributeEditorService(
         ModuleCredentialService moduleCredentials,
         ProtectedPrincipalService protectedPrincipalService,
@@ -77,6 +87,7 @@ public class ADAttributeEditorService
         AuditService audit,
         EmailService email,
         ModuleConfigService moduleConfig,
+        AttributeEditorRepository repository,
         IWebHostEnvironment env,
         ILogger<ADAttributeEditorService> logger)
     {
@@ -86,8 +97,11 @@ public class ADAttributeEditorService
         _audit = audit;
         _email = email;
         _moduleConfig = moduleConfig;
+        _repository = repository;
         _env = env;
         _logger = logger;
+
+        _legacyAllowlistCorrupt = ImportLegacyIfPresent();
     }
 
     public void InvalidateAllowlistCache()
@@ -137,65 +151,81 @@ public class ADAttributeEditorService
     public bool IsAllowlistCorrupt() => LoadAllowlistFromDisk() == null;
 
     /// <summary>
-    /// Reads and validates the allowlist from disk with no caching. Returns an empty list
-    /// when no config file exists (a valid "nothing allowlisted" state) and null when the
-    /// file exists but is unparseable or fails validation (the fail-closed/corrupt state).
+    /// Reads and validates the allowlist from the store with no caching. Returns an empty list
+    /// when nothing is configured (a valid "nothing allowlisted" state) and null when the store
+    /// is unreadable or its rows fail validation (the fail-closed/corrupt state).
     /// </summary>
     private List<EditableAttribute>? LoadAllowlistFromDisk()
     {
-        var configPath = Path.Combine(_env.ContentRootPath, "config", "ad-editable-attributes.json");
-        if (!File.Exists(configPath))
-            return [];
+        // Fail closed (null) if a corrupt legacy file is still on disk during the upgrade window.
+        if (_legacyAllowlistCorrupt)
+            return null;
 
-        try
+        if (!_repository.TryReadAllowlist(out var rows, out var configured))
         {
-            var json = File.ReadAllText(configPath);
-            var wrapper = JsonSerializer.Deserialize<AttributeAllowlistFile>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            _logger.LogError("ad-editable-attributes store unreadable — failing closed");
+            return null;
+        }
 
-            if (wrapper?.Attributes == null)
+        if (!configured)
+            return []; // nothing configured — valid empty allowlist
+
+        return ValidateRows(rows.Select(ToAllowlistEntry));
+    }
+
+    // Validation (denylist removal, contradictory flags, empty Choice list) — unchanged from the
+    // file world; returns null to fail closed, matching LoadAllowlistFromDisk's contract.
+    private List<EditableAttribute>? ValidateRows(IEnumerable<AttributeAllowlistEntry> entries)
+    {
+        var validated = new List<EditableAttribute>();
+        foreach (var attr in entries)
+        {
+            if (IsDenylisted(attr.Name))
             {
-                _logger.LogError("ad-editable-attributes.json exists but Attributes section is missing — failing closed");
+                _logger.LogWarning("Attribute {Name} is on the hard denylist and was removed from the allowlist", attr.Name);
+                continue;
+            }
+
+            if (attr.Required && attr.AllowClear)
+            {
+                _logger.LogError("Contradictory config for attribute {Name}: Required=true with AllowClear=true — failing closed", attr.Name);
                 return null;
             }
 
-            var validated = new List<EditableAttribute>();
-            foreach (var attr in wrapper.Attributes)
+            if (attr.Type == "Choice" && (attr.Choices == null || attr.Choices.Length == 0))
             {
-                if (IsDenylisted(attr.Name))
-                {
-                    _logger.LogWarning("Attribute {Name} is on the hard denylist and was removed from the allowlist", attr.Name);
-                    continue;
-                }
-
-                if (attr.Required && attr.AllowClear)
-                {
-                    _logger.LogError("Contradictory config for attribute {Name}: Required=true with AllowClear=true — failing closed", attr.Name);
-                    return null;
-                }
-
-                if (attr.Type == "Choice" && (attr.Choices == null || attr.Choices.Length == 0))
-                {
-                    _logger.LogError("Attribute {Name} is type Choice but has no Choices defined — failing closed", attr.Name);
-                    return null;
-                }
-
-                validated.Add(new EditableAttribute(
-                    attr.Name, attr.Label, attr.Type,
-                    attr.Choices, attr.Required, attr.AllowClear,
-                    attr.MaxLength, attr.Pattern, attr.Level > 0 ? attr.Level : 1));
+                _logger.LogError("Attribute {Name} is type Choice but has no Choices defined — failing closed", attr.Name);
+                return null;
             }
 
-            return validated;
+            validated.Add(new EditableAttribute(
+                attr.Name, attr.Label, attr.Type,
+                attr.Choices, attr.Required, attr.AllowClear,
+                attr.MaxLength, attr.Pattern, attr.Level > 0 ? attr.Level : 1));
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse ad-editable-attributes.json — failing closed");
-            return null;
-        }
+
+        return validated;
     }
+
+    private static AttributeAllowlistEntry ToAllowlistEntry(AttributeRow row) => new()
+    {
+        Name = row.Name,
+        Label = row.Label,
+        Type = row.Type,
+        Choices = string.IsNullOrEmpty(row.ChoicesJson)
+            ? null
+            : JsonSerializer.Deserialize<string[]>(row.ChoicesJson),
+        Required = row.Required,
+        AllowClear = row.AllowClear,
+        MaxLength = row.MaxLength,
+        Pattern = row.Pattern,
+        Level = row.Level
+    };
+
+    private static AttributeRow ToAllowlistRow(EditableAttribute a) => new(
+        a.Name, a.Label, a.Type,
+        a.Choices == null ? null : JsonSerializer.Serialize(a.Choices),
+        a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level > 0 ? a.Level : 1);
 
     public List<EditableAttribute>? GetAllowlistForLevel(int maxLevel)
     {
@@ -205,44 +235,7 @@ public class ADAttributeEditorService
 
     public void SaveAllowlist(List<EditableAttribute> attributes)
     {
-        var configDir = Path.Combine(_env.ContentRootPath, "config");
-        Directory.CreateDirectory(configDir);
-        var configPath = Path.Combine(configDir, "ad-editable-attributes.json");
-
-        var wrapper = new AttributeAllowlistFile
-        {
-            Attributes = attributes.Select(a => new AttributeAllowlistEntry
-            {
-                Name = a.Name,
-                Label = a.Label,
-                Type = a.Type,
-                Choices = a.Choices,
-                Required = a.Required,
-                AllowClear = a.AllowClear,
-                MaxLength = a.MaxLength,
-                Pattern = a.Pattern,
-                Level = a.Level
-            }).ToArray()
-        };
-
-        var options = new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-        var json = JsonSerializer.Serialize(wrapper, options);
-
-        var tempPath = Path.Combine(configDir, $"ad-editable-attributes.{Guid.NewGuid():N}.tmp");
-        try
-        {
-            File.WriteAllText(tempPath, json);
-            if (File.Exists(configPath))
-                File.Replace(tempPath, configPath, null);
-            else
-                File.Move(tempPath, configPath);
-        }
-        finally
-        {
-            if (File.Exists(tempPath))
-                try { File.Delete(tempPath); } catch { }
-        }
-
+        _repository.SaveAllowlist(attributes.Select(ToAllowlistRow).ToList());
         InvalidateAllowlistCache();
     }
 
@@ -254,42 +247,122 @@ public class ADAttributeEditorService
                 return _cachedLegend;
         }
 
-        var configPath = Path.Combine(_env.ContentRootPath, "config", "ad-editable-attributes-legend.json");
-        if (!File.Exists(configPath))
-        {
-            lock (_allowlistLock)
-            {
-                _cachedLegend = new();
-                _legendLoadedAt = DateTime.UtcNow;
-            }
-            return new();
-        }
+        // Legend is fail-open: the repository returns an empty map on any read failure.
+        var rows = _repository.ReadLegend();
+        var parsed = rows.ToDictionary(
+            outer => outer.Key,
+            outer => outer.Value.ToDictionary(
+                inner => inner.Key,
+                inner => new AttributeLegendEntry(inner.Value.Description, inner.Value.Note, inner.Value.Source),
+                StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
 
+        lock (_allowlistLock)
+        {
+            _cachedLegend = parsed;
+            _legendLoadedAt = DateTime.UtcNow;
+        }
+        return parsed;
+    }
+
+    // One-time import of legacy ad-editable-attributes(.legend).json into the store, then archive
+    // each file (SqliteConfigStore-Plan §4). DB wins (only imports if not already configured).
+    // Allowlist: an unparseable/invalid file is left in place and NOT marked configured, so the
+    // store stays at the empty/null-on-load fail-closed state until repaired — we do not import
+    // partial/garbage rows. Legend is fail-open: an unparseable legend is skipped (left in place).
+    private bool ImportLegacyIfPresent()
+    {
+        var configDir = Path.Combine(_env.ContentRootPath, "config");
+        var allowlistCorrupt = false;
+
+        // Allowlist
         try
         {
-            var json = File.ReadAllText(configPath);
-            var parsed = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, AttributeLegendEntry>>>(json, new JsonSerializerOptions
+            var allowlistPath = Path.Combine(configDir, "ad-editable-attributes.json");
+            if (File.Exists(allowlistPath) && !_repository.TryReadAllowlistConfigured())
             {
-                PropertyNameCaseInsensitive = true
-            }) ?? new();
+                AttributeAllowlistFile? wrapper = null;
+                var parseOk = true;
+                try
+                {
+                    wrapper = JsonSerializer.Deserialize<AttributeAllowlistFile>(
+                        File.ReadAllText(allowlistPath),
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Legacy ad-editable-attributes.json is unparseable — left in place, failing closed until repaired");
+                    parseOk = false;
+                    allowlistCorrupt = true;
+                }
 
-            lock (_allowlistLock)
-            {
-                _cachedLegend = parsed;
-                _legendLoadedAt = DateTime.UtcNow;
+                if (parseOk)
+                {
+                    if (wrapper?.Attributes == null)
+                    {
+                        _logger.LogError("Legacy ad-editable-attributes.json missing Attributes section — left in place, failing closed until repaired");
+                        allowlistCorrupt = true;
+                    }
+                    else if (ValidateRows(wrapper.Attributes) == null)
+                    {
+                        // Parseable but fails validation (denylist/contradictory/empty-Choice) — the
+                        // file world returned null here too. Leave the file, fail closed.
+                        _logger.LogError("Legacy ad-editable-attributes.json fails validation — left in place, failing closed until repaired");
+                        allowlistCorrupt = true;
+                    }
+                    else
+                    {
+                        var rows = wrapper.Attributes
+                            .Select(a => new AttributeRow(
+                                a.Name, a.Label, a.Type,
+                                a.Choices == null ? null : JsonSerializer.Serialize(a.Choices),
+                                a.Required, a.AllowClear, a.MaxLength, a.Pattern, a.Level > 0 ? a.Level : 1))
+                            .ToList();
+                        _repository.ImportAllowlistIfMissing(rows);
+                        LegacyConfigImport.ArchiveFile(allowlistPath, _logger);
+                    }
+                }
             }
-            return parsed;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to load ad-editable-attributes-legend.json — choices will display without descriptions");
-            lock (_allowlistLock)
-            {
-                _cachedLegend = new();
-                _legendLoadedAt = DateTime.UtcNow;
-            }
-            return new();
+            _logger.LogWarning(ex, "Failed to import legacy ad-editable-attributes.json");
         }
+
+        // Legend (fail-open)
+        try
+        {
+            var legendPath = Path.Combine(configDir, "ad-editable-attributes-legend.json");
+            if (File.Exists(legendPath) && !_repository.IsLegendConfigured())
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, AttributeLegendEntry>>>(
+                        File.ReadAllText(legendPath),
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (parsed != null)
+                    {
+                        var rows = parsed.ToDictionary(
+                            o => o.Key,
+                            o => o.Value.ToDictionary(
+                                i => i.Key,
+                                i => new AttributeLegendRow(i.Value.Description, i.Value.Note, i.Value.Source)));
+                        _repository.ImportLegendIfMissing(rows);
+                    }
+                    LegacyConfigImport.ArchiveFile(legendPath, _logger);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Legacy ad-editable-attributes-legend.json unparseable — left in place");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to import legacy ad-editable-attributes-legend.json");
+        }
+
+        return allowlistCorrupt;
     }
 
     public string[] GetEffectiveChoices(EditableAttribute attr)

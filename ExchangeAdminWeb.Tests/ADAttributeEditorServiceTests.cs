@@ -34,8 +34,16 @@ public class ADAttributeEditorServiceTests : IDisposable
         catch { }
     }
 
+    // Seeds the allowlist into the shared store the service reads (DB analogue of writing the
+    // file). Requires CreateService() to have been called first (which sets _attrStore).
+    private void SeedAllowlist(params ExchangeAdminWeb.Services.Storage.AttributeRow[] rows)
+        => new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).SaveAllowlist(rows);
+
     private ADAttributeEditorService CreateService()
     {
+        // Lazily create one shared store for the whole test so seeds/corruption made after
+        // construction are visible to the service (and survive InvalidateAllowlistCache).
+        _attrStore ??= TestConfigStore.Create(_tempDir);
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -63,8 +71,14 @@ public class ADAttributeEditorServiceTests : IDisposable
         var audit = new AuditService(jsonlLog, operationTrace);
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
 
-        return new ADAttributeEditorService(moduleCredentials, protectedPrincipalService, operationTrace, audit, email, moduleConfig, _env, _logger);
+        // Shared store so the importer (writes at construction) and reads use the same DB.
+        var attrRepo = _attrStore != null
+            ? new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore)
+            : TestConfigStore.CreateAttributeEditor(_tempDir);
+        return new ADAttributeEditorService(moduleCredentials, protectedPrincipalService, operationTrace, audit, email, moduleConfig, attrRepo, _env, _logger);
     }
+
+    private ExchangeAdminWeb.Services.Storage.IConfigStore? _attrStore;
 
     private void WriteAllowlistConfig(object config)
     {
@@ -380,36 +394,27 @@ public class ADAttributeEditorServiceTests : IDisposable
     [Fact]
     public void InvalidateAllowlistCache_ForcesReload()
     {
-        WriteAllowlistConfig(new
-        {
-            Attributes = new[]
-            {
-                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true }
-            }
-        });
-
         var service = CreateService();
+        SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
+            "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
 
         // Load initial
         var first = service.GetAllowlist();
         Assert.NotNull(first);
         Assert.Single(first!);
 
-        // Overwrite file directly (bypassing SaveAllowlist)
-        WriteAllowlistConfig(new
+        // Out-of-band write directly to the store (bypassing SaveAllowlist), adding a second row.
+        new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).SaveAllowlist(new[]
         {
-            Attributes = new[]
-            {
-                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true },
-                new { Name = "title", Label = "Title", Type = "String", Required = false, AllowClear = true }
-            }
+            new ExchangeAdminWeb.Services.Storage.AttributeRow("extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1),
+            new ExchangeAdminWeb.Services.Storage.AttributeRow("title", "Title", "String", null, false, true, null, null, 1),
         });
 
-        // Without invalidation, cache should return the old result
+        // Without invalidation, the 30s cache still returns the old result.
         var cached = service.GetAllowlist();
         Assert.Single(cached!);
 
-        // Invalidate and verify new result is loaded
+        // Invalidate and verify the new result is loaded.
         service.InvalidateAllowlistCache();
         var reloaded = service.GetAllowlist();
         Assert.NotNull(reloaded);
@@ -421,38 +426,37 @@ public class ADAttributeEditorServiceTests : IDisposable
     [Fact]
     public void IsAllowlistCorrupt_ValidThenCorruptedWithinTtl_DetectsCorruptionWhileCacheStaysValid()
     {
-        // The pre-save gate bug (GPT finding 1): GetAllowlist serves a valid list from the
-        // 30s cache, so if the file became corrupt after a valid load, a cache-based gate
-        // would pass and let SaveAllowlist overwrite the corrupt store. IsAllowlistCorrupt
-        // must read disk fresh and catch it. This test fails if the gate ever consults the
-        // cache instead of disk.
-        WriteAllowlistConfig(new
-        {
-            Attributes = new[]
-            {
-                new { Name = "extensionAttribute1", Label = "Extension 1", Type = "String", Required = false, AllowClear = true }
-            }
-        });
-
+        // The pre-save gate bug (GPT finding 1): GetAllowlist serves a valid list from the 30s
+        // cache, so if the store became corrupt after a valid load, a cache-based gate would pass
+        // and let SaveAllowlist overwrite the corrupt store. IsAllowlistCorrupt must read fresh
+        // and catch it. This test fails if the gate ever consults the cache instead of the store.
         var service = CreateService();
+        SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
+            "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
 
         // Prime the cache with a valid load.
         var first = service.GetAllowlist();
         Assert.NotNull(first);
         Assert.Single(first!);
 
-        // Corrupt the file directly, simulating an operator/promote clobber within the TTL.
-        WriteRawAllowlistConfig("{ this is not valid json");
+        // Corrupt the store directly within the TTL (drop the table — partial schema damage),
+        // simulating an operator/promote clobber.
+        _attrStore!.Write((connection, tx) =>
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DROP TABLE editable_attribute;";
+            cmd.ExecuteNonQuery();
+        });
 
-        // The cache still hands back the stale-but-valid list (this is expected for the
-        // runtime read path)...
+        // The cache still hands back the stale-but-valid list (expected for the runtime path)...
         var stillCached = service.GetAllowlist();
         Assert.NotNull(stillCached);
         Assert.Single(stillCached!);
 
-        // ...but the disk-fresh gate must see the corruption and report it.
+        // ...but the fresh gate must see the corruption and report it.
         Assert.True(service.IsAllowlistCorrupt(),
-            "IsAllowlistCorrupt must read disk fresh and detect corruption the cache masks");
+            "IsAllowlistCorrupt must read fresh and detect corruption the cache masks");
     }
 
     [Fact]
@@ -506,7 +510,7 @@ public class ADAttributeEditorServiceTests : IDisposable
     // --- SaveAllowlist Atomic Write ---
 
     [Fact]
-    public void SaveAllowlist_WritesAtomically_FileIsValid()
+    public void SaveAllowlist_PersistsAndReadsBack()
     {
         var service = CreateService();
         var attrs = new List<EditableAttribute>
@@ -516,14 +520,17 @@ public class ADAttributeEditorServiceTests : IDisposable
         };
 
         service.SaveAllowlist(attrs);
+        service.InvalidateAllowlistCache();
 
-        // Verify the file exists and contains valid JSON
-        var configPath = Path.Combine(_configDir, "ad-editable-attributes.json");
-        Assert.True(File.Exists(configPath));
-        var json = File.ReadAllText(configPath);
-        var doc = JsonDocument.Parse(json);
-        Assert.True(doc.RootElement.TryGetProperty("attributes", out var attrsElement));
-        Assert.Equal(2, attrsElement.GetArrayLength());
+        var loaded = service.GetAllowlist();
+        Assert.NotNull(loaded);
+        Assert.Equal(2, loaded!.Count);
+        var dept = loaded.Single(a => a.Name == "department");
+        Assert.Equal("Choice", dept.Type);
+        Assert.Equal(new[] { "IT", "HR" }, dept.Choices);
+        Assert.True(dept.Required);
+        var ext = loaded.Single(a => a.Name == "extensionAttribute1");
+        Assert.Equal(256, ext.MaxLength);
     }
 
     // --- SaveAllowlist Strips Denylisted Entries on Re-read ---

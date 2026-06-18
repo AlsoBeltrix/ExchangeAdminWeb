@@ -57,6 +57,7 @@ try
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ModuleEnablementRepository>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.SectionAccessRepository>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository>();
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.AttributeEditorRepository>();
 
     builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();

@@ -29,4 +29,7 @@ internal static class TestConfigStore
 
     /// <summary>Creates a <see cref="ProtectedPrincipalRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
     public static ProtectedPrincipalRepository CreateProtectedPrincipal(string dir) => new(Create(dir));
+
+    /// <summary>Creates an <see cref="AttributeEditorRepository"/> over a fresh DB under <paramref name="dir"/>.</summary>
+    public static AttributeEditorRepository CreateAttributeEditor(string dir) => new(Create(dir));
 }

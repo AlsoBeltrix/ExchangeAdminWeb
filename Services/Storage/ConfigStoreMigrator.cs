@@ -118,6 +118,18 @@ public sealed class ConfigStoreMigrator
             marker INTEGER PRIMARY KEY
         );
         """,
+
+        // v5 — AD-attribute-editor presence markers. The allowlist is NULL-on-corrupt but EMPTY
+        // when never configured; the marker lets an explicitly-empty allowlist read back as empty
+        // (not null). The legend marker drives one-time import. Both are single sentinel rows.
+        """
+        CREATE TABLE IF NOT EXISTS editable_attribute_present (
+            marker INTEGER PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS attribute_legend_present (
+            marker INTEGER PRIMARY KEY
+        );
+        """,
     ];
 
     /// <summary>The schema version this build expects (the count of migration steps).</summary>
