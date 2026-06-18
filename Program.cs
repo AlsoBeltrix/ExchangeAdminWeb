@@ -39,6 +39,19 @@ try
         .AddNegotiate();
 
     builder.Services.AddSingleton(catalog);
+
+    // Config store infrastructure (SqliteConfigStore-Plan Phase A). The DB lives in the
+    // persistent, deploy-excluded config/ directory (decision 2026-06-18, Option A), one per
+    // environment. The path is derived from the content root — not a new appsettings key and
+    // not hardcoded. The factory opens short-lived connections (never a shared singleton
+    // connection), so it is safe across the mix of Singleton/Scoped consumers. No existing
+    // service reads from the DB yet; Phase B moves the stores over one at a time.
+    var configDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin.db");
+    builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(configDbPath));
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.IConfigStore,
+        ExchangeAdminWeb.Services.Storage.SqliteConfigStore>();
+
     builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();
     builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
@@ -112,6 +125,16 @@ try
     builder.Services.AddScoped<UndoRegistry>();
 
     var app = builder.Build();
+
+    // Ensure the config database schema exists / is current before serving requests
+    // (SqliteConfigStore-Plan Phase A). Idempotent: a no-op once the DB is at the target
+    // version. Fail fast — a config store that cannot be opened/migrated is not a state we
+    // should serve in.
+    {
+        var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
+        var schemaVersion = migrator.Migrate();
+        Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);
+    }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');
     if (string.IsNullOrWhiteSpace(pathBase) || pathBase == "/")
