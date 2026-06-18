@@ -25,11 +25,15 @@ public sealed class SqliteConnectionFactory
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
 
+        // Default (private) cache, NOT shared cache: shared cache makes in-process connections
+        // share table locks, which surfaces SQLITE_LOCKED to readers instead of the WAL
+        // snapshot isolation we depend on (busy_timeout does not cover shared-cache table
+        // locks). Private cache + WAL gives the single-writer/multiple-reader behavior the plan
+        // assumes.
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
         }.ToString();
     }
 

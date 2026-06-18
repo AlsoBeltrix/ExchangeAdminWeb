@@ -92,6 +92,25 @@ public class ConfigStoreMigratorTests
         Assert.Throws<SqliteException>(() => dup.ExecuteNonQuery());
     }
 
+    [Fact]
+    public void Migrate_DatabaseNewerThanBuild_FailsFast()
+    {
+        using var temp = new TempDir();
+        var factory = new SqliteConnectionFactory(temp.DbPath);
+        new ConfigStoreMigrator(factory).Migrate();
+
+        // Simulate a database advanced by a newer build than this one.
+        using (var connection = factory.Open())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = $"PRAGMA user_version = {ConfigStoreMigrator.TargetVersion + 5};";
+            command.ExecuteNonQuery();
+        }
+
+        var ex = Assert.Throws<InvalidOperationException>(() => new ConfigStoreMigrator(factory).Migrate());
+        Assert.Contains("newer than this build", ex.Message);
+    }
+
     private static bool TableExists(SqliteConnectionFactory factory, string table)
     {
         using var connection = factory.Open();

@@ -104,6 +104,18 @@ public sealed class ConfigStoreMigrator
         using var connection = _factory.Open();
 
         var current = GetUserVersion(connection);
+
+        // Fail fast if the database was migrated by a NEWER build than this one (e.g. an
+        // environment rolled back after a later schema shipped). Silently skipping the loop
+        // would report "ready" against a schema this binary may not understand.
+        if (current > Migrations.Length)
+        {
+            throw new InvalidOperationException(
+                $"Config database schema version {current} is newer than this build supports " +
+                $"(max {Migrations.Length}). Deploy a build at or above the schema version, or " +
+                "restore a compatible database backup.");
+        }
+
         for (var version = current; version < Migrations.Length; version++)
         {
             using var transaction = connection.BeginTransaction();
