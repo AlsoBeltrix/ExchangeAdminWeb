@@ -159,13 +159,22 @@ Owner's standing direction on the queue, given 2026-06-18:
   autonomously, one commit each, reviewed by `codex review --commit <sha>` with findings
   fixed before the next phase (no per-phase human sign-off, owner direction). Phase order:
   A infra → B per-store cutover → C startup seeding → D ops scripts → E tests/docs.
-  **Phases A + B COMPLETE (app 2.3.19, schema v5). NEXT: Phase C — startup self-registration.**
-  Phase C: idempotent seed of missing `module_enablement` rows (to `EnabledByDefault`) and any
-  default settings, non-destructively (INSERT-if-missing); update decision 2026-06-12 to record
-  that non-destructive seeding is permitted while destructive startup writes stay banned; update
-  the `ModuleEnablementService` "startup writes nothing" tests to "no *destructive* write;
-  seeding inserts only missing rows". Then D (ops scripts — pay down the tracked promotion debt)
-  and E (tests/docs sweep + the gated module-guide rewrite).
+  A infra ✅ → B per-store cutover ✅ → **C startup seeding ✅** → D ops scripts → E tests/docs.
+  **Phases A + B + C COMPLETE (app 2.3.20, schema v5). Dev-validated through B.7. NEXT: Phase D.**
+  - **Phase C DONE (app 2.3.20, commits `18291d8` + P1 review `673ba88`, pushed).**
+    `ModuleEnablementService.SeedMissingModules()` runs at startup (Program.cs, after migrator):
+    non-destructive `INSERT ... ON CONFLICT DO NOTHING` for catalog non-system modules missing a
+    row, at `EnabledByDefault`. Reads-first (no-op seed bumps no change token); never overwrites
+    (incident regression guarded + revert-proven); no-ops on corrupt/unreadable store; codex P1
+    fixed — a write failure (read-only ACL / lock) logs and continues, never aborts startup.
+    Decision 2026-06-12 updated (relaxation now IN EFFECT). 508/508.
+  - **NEXT: Phase D — ops scripts.** Pay down the accumulated promotion debt (the running list
+    in `docs/SqliteConfigStore-Plan.md` Phase D): rewrite `promote-dev-to-prod.ps1` fragment
+    merges (extended-log/module-config/modules-enabled/section-access/protected-principals/
+    ad-attributes) as table merges; `-Refresh` (prod→dev) switch; `deploy.ps1` DB health check +
+    retarget/retire config-drift checks; `Install-ExchangeAdminWeb.ps1` DB seeding; operator
+    sqlite repair recipes; clean up the stale `sectionaccess.bak` artifact. Pester coverage in
+    `tests/ps/`. Then E (tests/docs sweep + gated module-guide rewrite).
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
