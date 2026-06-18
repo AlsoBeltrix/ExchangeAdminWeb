@@ -436,6 +436,29 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     [Fact]
+    public void SeedMissingModules_WriteFails_DoesNotThrow_DoesNotAbortStartup()
+    {
+        // Store reads fine (so TryGetAll passes) but the seed WRITE throws (read-only ACL /
+        // exclusive lock). Seeding is non-essential and must not abort startup.
+        var service = CreateService(new WriteFailsStore());
+
+        var seeded = service.SeedMissingModules();
+
+        Assert.Empty(seeded); // logged and swallowed, not thrown
+    }
+
+    // Reads succeed but writes throw — simulates a readable-but-unwritable store at startup.
+    private sealed class WriteFailsStore : IConfigStore
+    {
+        private readonly SqliteConfigStore _inner;
+        public WriteFailsStore() => _inner = TestConfigStore.Create(Path.Combine(Path.GetTempPath(), $"mewfs_{Guid.NewGuid():N}"));
+        public long GetChangeToken() => _inner.GetChangeToken();
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => _inner.Read(read);
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store busy");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store busy");
+    }
+
+    [Fact]
     public void Startup_MissingExchangeOnlineKey_NoExoConfig_DefaultsFalse_AndWritesNothing()
     {
         SeedEnablement(new Dictionary<string, bool> { ["MailboxPermissions"] = true });

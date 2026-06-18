@@ -67,10 +67,21 @@ public class ModuleEnablementService
         foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
             defaults[module.Id] = module.EnabledByDefault;
 
-        var seeded = _repository.SeedMissing(defaults);
-        if (seeded.Count > 0)
-            _logger.LogInformation("Seeded {Count} missing module enablement rows: {Modules}", seeded.Count, string.Join(", ", seeded));
-        return seeded;
+        try
+        {
+            var seeded = _repository.SeedMissing(defaults);
+            if (seeded.Count > 0)
+                _logger.LogInformation("Seeded {Count} missing module enablement rows: {Modules}", seeded.Count, string.Join(", ", seeded));
+            return seeded;
+        }
+        catch (Exception ex)
+        {
+            // Seeding is a non-essential convenience. A write failure here (read-only ACL,
+            // exclusive/WAL lock, etc.) must NOT abort app startup — log and move on; the
+            // fail-closed read paths handle whatever state the store is actually in.
+            _logger.LogError(ex, "Module enablement seeding failed — continuing startup without seeding");
+            return Array.Empty<string>();
+        }
     }
 
     /// <summary>
