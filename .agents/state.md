@@ -179,14 +179,20 @@ Owner's standing direction on the queue, given 2026-06-18:
       Test-SqliteConfigDbIntegrity; hard sqlite3 dependency, fail-fast). deploy.ps1: DB backed
       up via verified online backup before mirror; DB triplet excluded from file-drift; **post-
       deploy live-DB integrity check** added (absorbed the planned D4). Pester 45/45.
-    - **NEXT: D2 — promote-dev-to-prod.ps1.** (a) Use Backup-SqliteConfigDb for the
-      pre-promotion snapshot (currently raw copies config/). (b) Replace the now-broken
-      `$jsonConfigFiles` merge (copies archived JSONs that no longer exist) with **DB table
-      merges** (dev-wins) for module_config/module_enablement/section_access/protected_principal/
-      editable_attribute/attribute_legend/app_setting + presence markers. Promotion must run with
-      the prod pool stopped (it already stops it). Pester coverage.
-    - Then D3 (`-Refresh` prod→dev switch), D5 (Install-ExchangeAdminWeb.ps1 DB seeding +
-      operator sqlite repair recipes + stale `sectionaccess.bak` cleanup). (D4 folded into D1.)
+    - **D2 DONE (commits `d0912ef` + codex `5f757ef`, pushed; no app bump — ops only).**
+      Config promotion is now a **wholesale verified DB copy** (owner decision: dev is staging,
+      prod mirrors dev — not a per-key merge). New `Copy-SqliteConfigDb` (VACUUM INTO snapshot →
+      integrity-check → atomic swap). promote-dev-to-prod.ps1: verified prod-DB backup before
+      promote; replaced the dead `$jsonConfigFiles`/`Merge-JsonConfig` block (removed ~180 lines
+      of dead merge helpers, kept Copy-FileChecked for `-CopyAppSettings`); codex-fixed rollback
+      to restore the **verified** backup + integrity-check, and `-Apply` now **aborts** if dev
+      has no config DB. Pester 51/51.
+    - **NEXT: D3 — `-Refresh` (prod→dev) switch** on promote-dev-to-prod.ps1 (the owner's
+      long-standing "copy prod config down to dev" ask): wholesale copy prod's config DB → dev,
+      backup-first, NEVER touches appsettings/PathBase, dev pool stopped. Reuses
+      `Copy-SqliteConfigDb` with source/dest swapped. Pester.
+    - Then D5 (Install-ExchangeAdminWeb.ps1 DB seeding/ACL + operator sqlite repair recipes +
+      stale `sectionaccess.bak` cleanup). (D4 folded into D1.)
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
