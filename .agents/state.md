@@ -191,10 +191,22 @@ Owner's standing direction on the queue, given 2026-06-18:
       suppresses the appsettings fallback (codex parity fix; revert-proven). Two corrupt-file
       parity tests rewritten to unreadable-store; both fail-closed, revert-proven. 10 new
       tests; 9 construction sites updated. 490/490.
-    - **NEXT: B.4 — modules-enabled.json → `module_enablement`** (`ModuleEnablementService`;
-      fail-closed all-disabled on corrupt, `IsStoreCorrupt`; this one needs the revert-the-fix
-      proof). Then section-access, protected-principals, ad-editable-attributes.
+    - **B.4 DONE (app 2.3.16, commits `263a9c5` + P1 review `e6ab83a`, pushed).**
+      modules-enabled.json → `module_enablement` via new `ModuleEnablementRepository`.
+      Fail-closed all-disabled preserved; `IsStoreCorrupt` redefined; no-startup-writes kept.
+      Codex caught a **P1**: corrupt legacy file during upgrade silently downgraded to
+      EnabledByDefault — fixed with a `_legacyFileCorrupt` flag making ReadState + IsStoreCorrupt
+      fail closed until the file is repaired/removed. Revert-proven on both the DB-corrupt and
+      legacy-file-corrupt paths. `ModuleEnablementServiceTests` reworked off files onto the
+      store. 493/493.
+    - **NEXT: B.5 — sectionaccess.json → `section_access`** (`SectionAccessService`; the
+      AUTHORIZATION store — fail-closed, cache-until-save, `IsFragmentCorrupt`, keep the
+      appsettings `Security:SectionAccess` fallback). Highest-stakes cutover; revert-proof the
+      fail-closed paths. Then protected-principals (B.6), ad-editable-attributes (B.7).
     - **Schema is at user_version 2** (v1 Phase A tables; v2 module_config_present).
+    - **Lesson:** codex has now caught a real parity/security issue on A, B.1, B.3, B.4 —
+      the corrupt-legacy-file-during-upgrade class is the recurring trap; check it explicitly
+      on B.5–B.7 (each fail-closed store must stay fail-closed when its legacy file is corrupt).
     - **Phase D promotion debt is accumulating** — see the running list in
       `docs/SqliteConfigStore-Plan.md` Phase D; each Phase B store adds an entry.
 - **Module packaging:** direction set 2026-06-18 (see `.agents/decisions.md`): `.zip` package
