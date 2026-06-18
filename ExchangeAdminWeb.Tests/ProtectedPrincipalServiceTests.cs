@@ -54,7 +54,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
-        var extLog = new ExtendedLogService(config, env, Substitute.For<ILogger<ExtendedLogService>>());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>());
         var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
         var operationTrace = new OperationTraceService(config, jsonlLog);
         var delineaService = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, operationTrace);

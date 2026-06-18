@@ -141,7 +141,7 @@ public class EmergencyDisableServiceTests : IDisposable
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
 
-        var extendedLog = new ExtendedLogService(config, env, Substitute.For<ILogger<ExtendedLogService>>());
+        var extendedLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>());
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extendedLog, operationTrace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());

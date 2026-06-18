@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.Extensions.Configuration;
 using Serilog.Events;
 
@@ -12,25 +13,31 @@ public class ExtendedLogService : IDisposable
     private const int MaxQueuedWrites = 1024;
     private const int DefaultMaxFileMB = 10;
     private const int DefaultMaxFilesPerDay = 5;
+
+    // app_setting key for the persisted extended-log level (replaces config/extended-log-level.txt).
+    internal const string LevelSettingKey = "extended_log_level";
+
     private readonly string _logFolder;
     private readonly ILogger<ExtendedLogService> _logger;
+    private readonly AppSettingRepository _settings;
     private readonly Channel<PendingLogEntry> _writeQueue;
     private readonly Task _writerTask;
     private readonly long _maxFileBytes;
     private readonly int _maxFilesPerDay;
     private volatile LogEventLevel _minimumLevel = LogEventLevel.Fatal;
-    private readonly string _configFilePath;
+    private readonly string _legacyConfigFilePath;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public ExtendedLogService(IConfiguration config, IWebHostEnvironment env, ILogger<ExtendedLogService> logger)
+    public ExtendedLogService(IConfiguration config, IWebHostEnvironment env, AppSettingRepository settings, ILogger<ExtendedLogService> logger)
     {
         _logger = logger;
+        _settings = settings;
         var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
-        _configFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
+        _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
         _maxFileBytes = GetMaxFileBytes(config);
         _maxFilesPerDay = Math.Clamp(config.GetValue<int?>("ExtendedLog:MaxFilesPerDay") ?? DefaultMaxFilesPerDay, 2, 50);
         _writeQueue = Channel.CreateBounded<PendingLogEntry>(new BoundedChannelOptions(MaxQueuedWrites)
@@ -41,6 +48,7 @@ public class ExtendedLogService : IDisposable
         });
         _writerTask = Task.Run(ProcessQueueAsync);
         Directory.CreateDirectory(_logFolder);
+        ImportLegacyLevelIfPresent();
         LoadLevel();
     }
 
@@ -63,11 +71,7 @@ public class ExtendedLogService : IDisposable
 
         try
         {
-            var dir = Path.GetDirectoryName(_configFilePath)!;
-            Directory.CreateDirectory(dir);
-            using var stream = new FileStream(_configFilePath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-            using var writer = new StreamWriter(stream);
-            writer.Write(level);
+            _settings.Set(LevelSettingKey, level);
         }
         catch (Exception ex)
         {
@@ -252,16 +256,34 @@ public class ExtendedLogService : IDisposable
 
     private void LoadLevel()
     {
-        if (File.Exists(_configFilePath))
+        try
         {
-            try
-            {
-                using var stream = new FileStream(_configFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                using var reader = new StreamReader(stream);
-                var level = reader.ReadToEnd().Trim();
-                SetLevel(level);
-            }
-            catch { }
+            var level = _settings.Get(LevelSettingKey);
+            if (!string.IsNullOrWhiteSpace(level))
+                SetLevel(level.Trim());
+        }
+        catch { }
+    }
+
+    // One-time import of the legacy config/extended-log-level.txt into app_setting, then archive
+    // the file (SqliteConfigStore-Plan §4). Only writes if the DB has no level yet, so a value
+    // already in the DB always wins over the (now stale) file.
+    private void ImportLegacyLevelIfPresent()
+    {
+        try
+        {
+            if (!File.Exists(_legacyConfigFilePath))
+                return;
+
+            var level = File.ReadAllText(_legacyConfigFilePath).Trim();
+            if (!string.IsNullOrWhiteSpace(level))
+                _settings.SetIfMissing(LevelSettingKey, level);
+
+            LegacyConfigImport.ArchiveFile(_legacyConfigFilePath, _logger);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to import legacy extended log level file");
         }
     }
 

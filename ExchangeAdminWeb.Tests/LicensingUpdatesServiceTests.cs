@@ -47,7 +47,7 @@ public class LicensingUpdatesServiceTests : IDisposable
             new DelineaService(
                 Substitute.For<IHttpClientFactory>().Also(f => f.CreateClient(Arg.Any<string>()).Returns(new HttpClient())),
                 config, Substitute.For<ILogger<DelineaService>>(),
-                new ExtendedLogService(config, env, Substitute.For<ILogger<ExtendedLogService>>()),
+                new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>()),
                 new OperationTraceService(config, new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()))),
             Substitute.For<ILogger<ModuleCredentialService>>());
 
@@ -55,7 +55,7 @@ public class LicensingUpdatesServiceTests : IDisposable
         var delineaService = new DelineaService(
             Substitute.For<IHttpClientFactory>().Also(f => f.CreateClient(Arg.Any<string>()).Returns(new HttpClient())),
             config, Substitute.For<ILogger<DelineaService>>(),
-            new ExtendedLogService(config, env, Substitute.For<ILogger<ExtendedLogService>>()),
+            new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>()),
             new OperationTraceService(config, new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>())));
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, delineaService, protectedPrincipalLogger);
 

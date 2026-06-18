@@ -51,6 +51,7 @@ try
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.IConfigStore,
         ExchangeAdminWeb.Services.Storage.SqliteConfigStore>();
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.AppSettingRepository>();
 
     builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();

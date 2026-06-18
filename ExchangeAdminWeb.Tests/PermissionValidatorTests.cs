@@ -47,7 +47,7 @@ public class PermissionValidatorTests
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
         var delineaLogger = Substitute.For<ILogger<DelineaService>>();
         var extLogLogger = Substitute.For<ILogger<ExtendedLogService>>();
-        var extLog = new ExtendedLogService(config, env, extLogLogger);
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(Path.GetTempPath()), extLogLogger);
         var jsonlLogger = Substitute.For<ILogger<JsonlLogService>>();
         var jsonlLog = new JsonlLogService(config, jsonlLogger);
         var operationTrace = new OperationTraceService(config, jsonlLog);
