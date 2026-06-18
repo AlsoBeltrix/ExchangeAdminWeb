@@ -93,6 +93,87 @@ function Backup-SqliteConfigDb {
 
 <#
 .SYNOPSIS
+    Replaces the destination config DB with a consistent, integrity-verified copy of the source
+    config DB (dev -> prod wholesale promotion; SqliteConfigStore-Plan Phase D2).
+
+.DESCRIPTION
+    dev is staging for prod and the two run the same code version after a promotion, so prod's
+    config should mirror dev's exactly — a wholesale replace, not a per-table merge (owner
+    decision 2026-06-18; any prod-only key is either dead under the new code or a dev
+    misconfiguration to fix in dev, so nothing of prod's is worth preserving).
+
+    Uses 'VACUUM INTO' to write a fresh consistent snapshot of the SOURCE directly onto the
+    destination path, so a live/WAL source cannot produce a torn copy. The destination's WAL/SHM
+    sidecars are removed (the fresh DB has no pending WAL), and the result is integrity-checked.
+    The CALLER is responsible for backing up the destination first and for stopping the
+    destination app pool before calling this.
+
+.PARAMETER SourceConfigDir
+    Config directory containing the source (dev) exchangeadmin.db.
+.PARAMETER DestConfigDir
+    Config directory whose exchangeadmin.db will be replaced (prod).
+.OUTPUTS
+    The destination DB path on success. Throws if the source DB is absent or fails integrity.
+#>
+function Copy-SqliteConfigDb {
+    [CmdletBinding(SupportsShouldProcess)]
+    param(
+        [Parameter(Mandatory)][string]$SourceConfigDir,
+        [Parameter(Mandatory)][string]$DestConfigDir
+    )
+
+    $sourceDb = Join-Path $SourceConfigDir 'exchangeadmin.db'
+    if (-not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) {
+        throw "Source config DB not found at $sourceDb — cannot promote config to $DestConfigDir."
+    }
+
+    $sqlite3 = Assert-Sqlite3Available
+
+    if (-not (Test-Path -LiteralPath $DestConfigDir)) {
+        New-Item -ItemType Directory -Path $DestConfigDir -Force | Out-Null
+    }
+    $destDb = Join-Path $DestConfigDir 'exchangeadmin.db'
+
+    if (-not $PSCmdlet.ShouldProcess($destDb, "Replace with consistent copy of $sourceDb")) {
+        return $destDb
+    }
+
+    # Write a fresh consistent snapshot of the source onto a temp path, integrity-check it, then
+    # atomically swap it into place and drop the destination's stale WAL/SHM sidecars.
+    $tmpDb = Join-Path $DestConfigDir ("exchangeadmin.promote.{0}.db" -f ([guid]::NewGuid().ToString('N')))
+    try {
+        $escaped = $tmpDb -replace "'", "''"
+        & $sqlite3 $sourceDb "VACUUM INTO '$escaped'"
+        if ($LASTEXITCODE -ne 0) {
+            throw "sqlite3 VACUUM INTO failed (exit $LASTEXITCODE) copying $sourceDb"
+        }
+
+        $integrity = (& $sqlite3 $tmpDb 'PRAGMA integrity_check;') 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on the promoted copy"
+        }
+        if ("$integrity".Trim() -ne 'ok') {
+            throw "Promoted config DB failed integrity check: '$integrity'. Prod NOT changed."
+        }
+
+        # Remove the destination's old WAL/SHM (they belong to the DB being replaced); the fresh
+        # VACUUM INTO output is a self-contained DB with no pending WAL.
+        foreach ($suffix in '-wal', '-shm') {
+            $side = "$destDb$suffix"
+            if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
+        }
+
+        Move-Item -LiteralPath $tmpDb -Destination $destDb -Force
+        return $destDb
+    } finally {
+        if (Test-Path -LiteralPath $tmpDb -PathType Leaf) {
+            Remove-Item -LiteralPath $tmpDb -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+<#
+.SYNOPSIS
     Runs PRAGMA integrity_check against a DB; throws on a definitive fail or if sqlite3 missing.
 #>
 function Test-SqliteConfigDbIntegrity {
@@ -114,4 +195,4 @@ function Test-SqliteConfigDbIntegrity {
     return $true
 }
 
-Export-ModuleMember -Function Get-Sqlite3Path, Assert-Sqlite3Available, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Test-SqliteConfigDbIntegrity
+Export-ModuleMember -Function Get-Sqlite3Path, Assert-Sqlite3Available, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteConfigDb, Test-SqliteConfigDbIntegrity

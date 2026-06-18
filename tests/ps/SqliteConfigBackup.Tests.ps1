@@ -91,6 +91,40 @@ Describe 'SqliteConfigBackup module' {
         }
     }
 
+    It 'Copy-SqliteConfigDb replaces dest with a consistent copy of source (wholesale promote)' -Skip:(-not $HasSqlite) {
+        $srcDir = New-TempDir
+        $dstDir = New-TempDir
+        try {
+            # Source (dev): a DB with a distinctive value.
+            & sqlite3 (Join-Path $srcDir 'exchangeadmin.db') "CREATE TABLE app_setting(key TEXT PRIMARY KEY, value TEXT); INSERT INTO app_setting VALUES ('k','dev-value');"
+            # Dest (prod): a DIFFERENT DB that must be fully replaced.
+            & sqlite3 (Join-Path $dstDir 'exchangeadmin.db') "CREATE TABLE app_setting(key TEXT PRIMARY KEY, value TEXT); INSERT INTO app_setting VALUES ('k','prod-old'); INSERT INTO app_setting VALUES ('prod-only','x');"
+
+            $result = Copy-SqliteConfigDb -SourceConfigDir $srcDir -DestConfigDir $dstDir
+            $result | Should -Be (Join-Path $dstDir 'exchangeadmin.db')
+
+            # Dest now mirrors source exactly: dev value present, prod-only row gone.
+            $val = (& sqlite3 (Join-Path $dstDir 'exchangeadmin.db') "SELECT value FROM app_setting WHERE key='k';").Trim()
+            $val | Should -Be 'dev-value'
+            $prodOnly = (& sqlite3 (Join-Path $dstDir 'exchangeadmin.db') "SELECT COUNT(*) FROM app_setting WHERE key='prod-only';").Trim()
+            $prodOnly | Should -Be '0'
+
+            Test-SqliteConfigDbIntegrity -DbPath $result | Should -BeTrue
+        } finally {
+            Remove-Item $srcDir, $dstDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Copy-SqliteConfigDb throws when the source DB is absent' {
+        $srcDir = New-TempDir
+        $dstDir = New-TempDir
+        try {
+            { Copy-SqliteConfigDb -SourceConfigDir $srcDir -DestConfigDir $dstDir } | Should -Throw
+        } finally {
+            Remove-Item $srcDir, $dstDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'integrity helper passes on a good DB and throws on a corrupt one' -Skip:(-not $HasSqlite) {
         $dir = New-TempDir
         try {

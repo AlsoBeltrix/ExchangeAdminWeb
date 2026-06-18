@@ -14,6 +14,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Shared SQLite config-DB backup / promote / integrity helpers (SqliteConfigStore-Plan Phase D).
+Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
+
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Message) Write-Host " OK  $Message" -ForegroundColor Green }
 function Write-Warn { param([string]$Message) Write-Host "  !  $Message" -ForegroundColor Yellow }
@@ -126,183 +129,6 @@ function Invoke-RobocopyChecked {
     }
 
     Write-Ok "$Description completed (robocopy exit $exit)"
-}
-
-function Merge-JsonConfig {
-    param([string]$DevFile, [string]$ProdFile, [string]$Name, [switch]$DevWins)
-
-    $devExists = Test-Path -LiteralPath $DevFile -PathType Leaf
-    $prodExists = Test-Path -LiteralPath $ProdFile -PathType Leaf
-
-    if (-not $devExists -and -not $prodExists) { return }
-
-    if (-not $devExists) {
-        if (-not $Apply) { Write-Plan "No dev $Name - prod keeps its version" }
-        else { Write-Ok "$Name - no dev version, prod unchanged" }
-        return
-    }
-
-    if (-not $prodExists) {
-        Copy-FileChecked -Source $DevFile -Destination $ProdFile
-        return
-    }
-
-    $mergeLabel = if ($DevWins) { "dev values promoted to prod" } else { "prod values preserved, new dev keys added" }
-
-    if (-not $Apply) {
-        Write-Plan "Merge $Name ($mergeLabel)"
-        try {
-            $devJson = Get-Content -LiteralPath $DevFile -Raw | ConvertFrom-Json
-            $prodJson = Get-Content -LiteralPath $ProdFile -Raw | ConvertFrom-Json
-            $changes = Compare-JsonKeys -Dev $devJson -Prod $prodJson -DevWins:$DevWins
-            foreach ($change in $changes) {
-                Write-Plan "  $change"
-            }
-        } catch {
-            throw "Failed to preview merge $Name - dry run cannot verify config changes. Error: $_"
-        }
-        return
-    }
-
-    try {
-        $devJson = Get-Content -LiteralPath $DevFile -Raw | ConvertFrom-Json
-        $prodJson = Get-Content -LiteralPath $ProdFile -Raw | ConvertFrom-Json
-
-        $merged = if ($DevWins) {
-            Merge-Object -Base $devJson -Overlay $prodJson -OverlayWins $false
-        } else {
-            Merge-Object -Base $prodJson -Overlay $devJson -OverlayWins $false
-        }
-        $prodDir = Split-Path -Parent $ProdFile
-        if (-not (Test-Path -LiteralPath $prodDir -PathType Container)) {
-            New-Item -ItemType Directory -Path $prodDir -Force | Out-Null
-        }
-        $tmp = Join-Path $prodDir ("$Name.merge.{0}.tmp" -f [guid]::NewGuid().ToString("N"))
-        try {
-            $merged | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $tmp -Encoding UTF8
-            Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json | Out-Null
-            Move-Item -LiteralPath $tmp -Destination $ProdFile -Force
-            Write-Ok "Merged $Name ($mergeLabel)"
-        } finally {
-            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-        throw "Failed to merge $Name - promotion cannot continue. Error: $_"
-    }
-}
-
-function Merge-Object {
-    param($Base, $Overlay, [bool]$OverlayWins = $false)
-
-    if ($null -eq $Base) { return $Overlay }
-    if ($null -eq $Overlay) { return $Base }
-
-    if ($Base -is [PSCustomObject] -and $Overlay -is [PSCustomObject]) {
-        $result = $Base.PSObject.Copy()
-        foreach ($prop in $Overlay.PSObject.Properties) {
-            $existing = $result.PSObject.Properties[$prop.Name]
-            if ($null -eq $existing) {
-                $result | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
-            } elseif ($existing.Value -is [PSCustomObject] -and $prop.Value -is [PSCustomObject]) {
-                $existing.Value = Merge-Object -Base $existing.Value -Overlay $prop.Value -OverlayWins $OverlayWins
-            } elseif ($OverlayWins) {
-                $existing.Value = $prop.Value
-            }
-        }
-        return $result
-    }
-
-    return $Base
-}
-
-function Format-ValueForDiff {
-    param($Value)
-    if ($null -eq $Value) { return "(null)" }
-    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-        $items = @($Value)
-        if ($items.Count -eq 0) { return "[]" }
-
-        $objectLabels = @()
-        foreach ($item in $items) {
-            if ($item -isnot [PSCustomObject]) {
-                $objectLabels = @()
-                break
-            }
-
-            $label = $null
-            foreach ($propertyName in @('name', 'Name', 'id', 'Id', 'moduleId', 'ModuleId', 'policyAlias', 'PolicyAlias')) {
-                $property = $item.PSObject.Properties[$propertyName]
-                if ($property -and $property.Value) {
-                    $label = "$($property.Value)"
-                    break
-                }
-            }
-
-            if (-not $label) {
-                $objectLabels = @()
-                break
-            }
-            $objectLabels += $label
-        }
-
-        if ($objectLabels.Count -eq $items.Count -and $items.Count -gt 3) {
-            $preview = @($objectLabels | Select-Object -First 8)
-            $suffix = if ($objectLabels.Count -gt 8) { ", ..." } else { "" }
-            return "[$($items.Count) objects: $($preview -join ', ')$suffix]"
-        }
-
-        return (ConvertTo-Json -InputObject $items -Depth 8 -Compress)
-    }
-    if ($Value -is [PSCustomObject]) {
-        return (ConvertTo-Json -InputObject $Value -Depth 8 -Compress)
-    }
-    return "$Value"
-}
-
-function Get-ValueFingerprint {
-    param($Value)
-    if ($null -eq $Value) { return "(null)" }
-    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
-        return (ConvertTo-Json -InputObject @($Value) -Depth 20 -Compress)
-    }
-    if ($Value -is [PSCustomObject]) {
-        return (ConvertTo-Json -InputObject $Value -Depth 20 -Compress)
-    }
-    return "$Value"
-}
-
-function Compare-JsonKeys {
-    param($Dev, $Prod, [switch]$DevWins, [string]$Prefix = "")
-
-    $changes = @()
-    if ($Dev -is [PSCustomObject] -and $Prod -is [PSCustomObject]) {
-        foreach ($prop in $Dev.PSObject.Properties) {
-            $key = if ($Prefix) { "$Prefix.$($prop.Name)" } else { $prop.Name }
-            $prodProp = $Prod.PSObject.Properties[$prop.Name]
-            if ($null -eq $prodProp) {
-                $devDisplay = Format-ValueForDiff $prop.Value
-                $changes += "+ $key = $devDisplay (new from dev)"
-            } elseif ($prop.Value -is [PSCustomObject] -and $prodProp.Value -is [PSCustomObject]) {
-                $changes += Compare-JsonKeys -Dev $prop.Value -Prod $prodProp.Value -DevWins:$DevWins -Prefix $key
-            } elseif ($DevWins) {
-                $devFingerprint = Get-ValueFingerprint $prop.Value
-                $prodFingerprint = Get-ValueFingerprint $prodProp.Value
-                $devDisplay = Format-ValueForDiff $prop.Value
-                $prodDisplay = Format-ValueForDiff $prodProp.Value
-                if ($devFingerprint -ne $prodFingerprint) {
-                    $suffix = if ($devDisplay -eq $prodDisplay) { " (content changed)" } else { "" }
-                    $changes += "~ $key : $prodDisplay -> $devDisplay$suffix"
-                }
-            }
-        }
-        foreach ($prop in $Prod.PSObject.Properties) {
-            $key = if ($Prefix) { "$Prefix.$($prop.Name)" } else { $prop.Name }
-            if ($null -eq $Dev.PSObject.Properties[$prop.Name]) {
-                $changes += "  $key (prod-only, preserved)"
-            }
-        }
-    }
-    return $changes
 }
 
 function Copy-FileChecked {
@@ -451,6 +277,18 @@ Invoke-RobocopyChecked -Description "Backing up prod publish folder" -RobocopyAr
     '/NFL', '/NDL', '/NJH', '/NJS', '/R:2', '/W:1'
 )
 
+# The publish-folder backup above includes config/ via robocopy, but a robocopy of a LIVE WAL
+# database can be torn/inconsistent — so additionally capture a verified online backup of prod's
+# config DB (if it has one yet) into the same backup folder. No-op on a pre-SQLite prod (returns
+# null). Throws/aborts if prod's live DB fails its integrity check (owner decision 2026-06-18).
+if ($Apply) {
+    $prodConfigDirForBackup = Join-Path $prod "config"
+    $prodDbBackup = Backup-SqliteConfigDb -ConfigDir $prodConfigDirForBackup -DestDir $backup -Timestamp $timestamp
+    if ($prodDbBackup) { Write-Ok "Prod config DB backed up (verified) to $prodDbBackup" }
+} else {
+    Write-Plan "Verified online backup of prod config DB (if present) into $backup"
+}
+
 Stop-AppPoolChecked -Name $ProdAppPoolName
 
 $promotionFailed = $false
@@ -471,53 +309,27 @@ try {
     Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase
 
     if (-not $SkipConfigFragments) {
-        # TRANSITIONAL (SQLite Phase B): these fragments are being moved into the SQLite config
-        # DB one at a time. modules-enabled.json moved in B.4 (app 2.3.16); after cutover it no
-        # longer exists at runtime, so its merge below silently no-ops and enablement does NOT
-        # promote until Phase D replaces these with module_enablement/section_access/etc. table
-        # merges. sectionaccess/protected-principals/ad-editable-attributes follow in B.5-B.7.
-        # See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
-        $jsonConfigFiles = @(
-            'sectionaccess.json',
-            'modules-enabled.json',
-            'protected-principals.json',
-            'ad-editable-attributes.json',
-            'ad-editable-attributes-legend.json'
-        )
-
-        # Promote per-module config files (dev values win - this is tested config)
-        # TRANSITIONAL (SQLite Phase B.3): module-config-*.json (and the older single
-        # module-config.json) were moved into the SQLite module_config table (app 2.3.15).
-        # After cutover these files no longer exist at runtime, so this loop matches nothing and
-        # per-module config does NOT promote until Phase D replaces it with a module_config
-        # table merge. See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
+        # Config promotion (SqliteConfigStore-Plan Phase D2): all runtime config now lives in the
+        # single SQLite DB config/exchangeadmin.db. dev is staging for prod and both run the same
+        # code version after this promotion, so prod's config should MIRROR dev's exactly — a
+        # wholesale replace, not a per-key merge (owner decision 2026-06-18: any prod-only key is
+        # either dead under the new code or a dev misconfiguration to fix in dev). Copy-SqliteConfigDb
+        # writes a consistent, integrity-verified snapshot of dev's DB over prod's. Prod's prior DB
+        # was backed up (verified) above; the prod pool is stopped at this point.
         $devConfigDir = Join-Path $dev "config"
         $prodConfigDir = Join-Path $prod "config"
-        foreach ($moduleFile in Get-ChildItem -Path $devConfigDir -Filter "module-config-*.json" -ErrorAction SilentlyContinue) {
-            Merge-JsonConfig `
-                -DevFile $moduleFile.FullName `
-                -ProdFile (Join-Path $prodConfigDir $moduleFile.Name) `
-                -Name $moduleFile.Name `
-                -DevWins
+        if (Test-IsSqliteConfigDbPresent -ConfigDir $devConfigDir) {
+            if ($Apply) {
+                $promoted = Copy-SqliteConfigDb -SourceConfigDir $devConfigDir -DestConfigDir $prodConfigDir
+                Write-Ok "Promoted dev config DB to prod (verified): $promoted"
+            } else {
+                Write-Plan "Replace prod config DB with a consistent copy of $devConfigDir\exchangeadmin.db (wholesale)"
+            }
+        } else {
+            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db — nothing to promote. (Run -Dev with the current build first.)"
         }
-
-        # Promote operational config files (dev values win)
-        foreach ($name in $jsonConfigFiles) {
-            Merge-JsonConfig `
-                -DevFile (Join-Path $dev "config\$name") `
-                -ProdFile (Join-Path $prod "config\$name") `
-                -Name $name `
-                -DevWins
-        }
-
-        # TRANSITIONAL (SQLite Phase B.1): extended-log-level.txt was moved into the SQLite
-        # app_setting table (app 2.3.13). After cutover this file no longer exists at runtime,
-        # so this copy safely no-ops (Copy-FileChecked warns and skips a missing source). The
-        # log level therefore does NOT promote until Phase D replaces this with a DB-row merge.
-        # See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
-        Copy-FileChecked -Source (Join-Path $dev "config\extended-log-level.txt") -Destination (Join-Path $prod "config\extended-log-level.txt")
     } else {
-        Write-Warn "Skipping config fragment copy by request."
+        Write-Warn "Skipping config promotion by request."
     }
 } catch {
     $promotionFailed = $true

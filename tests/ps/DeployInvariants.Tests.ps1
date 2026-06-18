@@ -330,6 +330,29 @@ Describe 'tools/promote-dev-to-prod.ps1' {
         $s.Text | Should -Match 'appsettings\.promote\..*\.tmp'
     }
 
+    It 'promotes config by wholesale DB copy, not the removed JSON-fragment merge (SQLite Phase D2)' {
+        # Config now lives in one SQLite DB; promotion replaces prod's DB with a consistent copy
+        # of dev's (dev is staging, same code version -> prod mirrors dev). The old per-file
+        # Merge-JsonConfig machinery is dead and must be gone (it merged now-archived JSONs).
+        $s.Text | Should -Match 'Copy-SqliteConfigDb' `
+            -Because 'config promotion is a wholesale verified DB copy'
+        $s.Text | Should -Not -Match 'function Merge-JsonConfig' `
+            -Because 'the JSON-fragment merge helpers are dead after the SQLite cutover'
+        $s.Text | Should -Not -Match '\$jsonConfigFiles' `
+            -Because 'the per-file fragment list merged files that no longer exist'
+    }
+
+    It 'backs up prod config DB (verified) before promoting, with the pool stopped' {
+        # The prod DB must be captured by the verified online backup (not just the robocopy of
+        # config/, which can tear a live WAL DB), and the promote copy must happen after the
+        # prod pool is stopped.
+        $s.Text | Should -Match 'Backup-SqliteConfigDb' `
+            -Because 'prod''s live DB needs a consistent backup before being replaced'
+        $s.Text.IndexOf('Stop-AppPoolChecked') |
+            Should -BeLessThan $s.Text.IndexOf('Copy-SqliteConfigDb') `
+            -Because 'the prod DB must be replaced only while its app pool is stopped'
+    }
+
     It 'only claims prod was restored from backup when rollback actually completed' {
         # Success-aggregation trap: the closing throw used to assert "Prod has been
         # restored from backup" unconditionally, even when the rollback robocopy failed
