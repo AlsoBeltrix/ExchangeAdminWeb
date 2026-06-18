@@ -228,6 +228,19 @@ Owner's standing direction on the queue, given 2026-06-18:
       preserved; 30s TTL; IsAllowlistCorrupt reads fresh; legend fail-open; denylist validation
       stays in service. Codex caught **two P2s** (import-write-fails fail-open; malformed
       choices_json throwing through callers) — both fixed, revert-proven. 502/502.
+    - **★ DEV VALIDATION PASSED (2026-06-18, app 2.3.19 deployed to dev).** Smoke test on the
+      real box: `config/exchangeadmin.db` (+ -wal/-shm) created; ALL legacy JSONs archived as
+      `*.imported-<ts>` (two timestamps — singletons at startup, the Scoped ADAttributeEditor on
+      first request; both ran). Confirmed working: module-admin pages load; Graph secret saved
+      via UI survived reload (B.3 write→DB→read); module disable/re-enable persisted (B.4);
+      Section Access correct for modules checked (B.5); protected principals (CEO/CIO) show
+      correctly in admin (B.6 read path); AD Attribute Editor admin + module load (B.7). No
+      "corrupt" banners. **Two checks deferred (not blockers, but gate before PROD):**
+      (1) a NON-ADMIN access-enforcement check — proves authorization actually denies, not just
+      that config reads; nobody was available. (2) mutating a protected principal — correctly
+      not tested against live CEO/CIO; write path is unit-tested. Also noted: a stale
+      `sectionaccess.bak` (deploy-script artifact, not runtime config) sits un-archived in dev
+      config — harmless, Phase D ops-script rework cleans it up.
     - **★ PHASE B COMPLETE — all 7 stores on the config DB.** Schema at **user_version 5**
       (v1 Phase A tables; v2 module_config_present; v3 section_access_present;
       v4 protected_principal_present; v5 editable_attribute_present + attribute_legend_present).
