@@ -302,6 +302,20 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         $result.Count | Should -BeGreaterThan 0
         $result.Unguarded | Should -BeNullOrEmpty -Because "every icacls call must be followed by a `$LASTEXITCODE check; unguarded: $($result.Unguarded -join '; ')"
     }
+
+    It 'grants the pool identity inheritable Modify on config/ so the SQLite DB inherits write' {
+        # The app creates config/exchangeadmin.db at runtime; it must inherit Modify (WAL needs
+        # write) from the config-dir ACL. (OI)(CI)M = object+container inherit, Modify.
+        $s.Text | Should -Match 'Set-DirectoryAcl -Path \$configDir -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"' `
+            -Because 'the runtime DB inherits the config-dir ACL — no DB-specific grant needed'
+    }
+
+    It 'still writes the section-access seed (consumed as first-run DB import seed)' {
+        # Fresh installs get correct initial authorization via this seed, which the app imports
+        # into section_access on first start. The install script need not speak SQLite.
+        $s.Text | Should -Match 'New-SectionAccessSeed' `
+            -Because 'a fresh install must seed initial section-access (authorization)'
+    }
 }
 
 Describe 'tools/promote-dev-to-prod.ps1' {

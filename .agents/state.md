@@ -187,12 +187,19 @@ Owner's standing direction on the queue, given 2026-06-18:
       of dead merge helpers, kept Copy-FileChecked for `-CopyAppSettings`); codex-fixed rollback
       to restore the **verified** backup + integrity-check, and `-Apply` now **aborts** if dev
       has no config DB. Pester 51/51.
-    - **NEXT: D3 — `-Refresh` (prod→dev) switch** on promote-dev-to-prod.ps1 (the owner's
-      long-standing "copy prod config down to dev" ask): wholesale copy prod's config DB → dev,
-      backup-first, NEVER touches appsettings/PathBase, dev pool stopped. Reuses
-      `Copy-SqliteConfigDb` with source/dest swapped. Pester.
-    - Then D5 (Install-ExchangeAdminWeb.ps1 DB seeding/ACL + operator sqlite repair recipes +
-      stale `sectionaccess.bak` cleanup). (D4 folded into D1.)
+    - **D3 DONE (commits `5bc74c9` + codex `33525b7`, pushed; no app bump).** `-Refresh`
+      (prod→dev) switch on promote-dev-to-prod.ps1: wholesale verified copy of prod's config DB
+      → dev (reuses `Copy-SqliteConfigDb` reversed), backs up dev first, dev pool stopped, never
+      touches prod or dev appsettings/PathBase. New `-DevAppPoolName` param. Codex-fixed: exempt
+      `-Refresh` from the prod-overwrite consent gate. Pester 54/54.
+    - **NEXT: D5 (last Phase D slice) — Install-ExchangeAdminWeb.ps1 + repair recipes + cleanup.**
+      (a) Install script: ensure config/ ACL covers the DB (it grants the dir, so the DB inherits
+      — verify), and decide whether fresh installs need any DB pre-seeding (likely NOT — the app
+      migrates+seeds on first start, Phase A+C; confirm and document). Architectural invariant #1:
+      Install must stay environment-neutral/standalone — do NOT couple to deploy.ps1. (b) Operator
+      sqlite repair recipes in docs (the "open it in Notepad" replacement). (c) Remove the stale
+      `sectionaccess.bak` artifact handling. Pester. Then **Phase E** (docs sweep + gated
+      module-guide rewrite).
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
