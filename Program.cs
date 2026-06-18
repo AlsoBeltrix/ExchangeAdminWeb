@@ -141,6 +141,13 @@ try
         var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
         var schemaVersion = migrator.Migrate();
         Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);
+
+        // Startup self-registration (SqliteConfigStore-Plan §3d): non-destructively seed
+        // enablement rows for any catalog modules missing one (e.g. a newly added module), at
+        // their EnabledByDefault. Never overwrites existing rows — the banned destructive
+        // startup write stays banned. No-op on a corrupt store.
+        var enablement = app.Services.GetRequiredService<ModuleEnablementService>();
+        enablement.SeedMissingModules();
     }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');

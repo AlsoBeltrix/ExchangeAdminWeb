@@ -351,8 +351,88 @@ public class ModuleEnablementServiceTests : IDisposable
         service.IsModuleRawEnabled("MailboxPermissions");
 
         // No write means the change token is unchanged and no rows were created.
+        // (Seeding is a SEPARATE explicit call — SeedMissingModules — not part of construction
+        // or reads, so construction+reads must still write nothing.)
         Assert.Equal(tokenBefore, _store.GetChangeToken());
         Assert.False(_repository.HasAny());
+    }
+
+    // --- Phase C: startup self-registration (non-destructive seeding) ---
+
+    [Fact]
+    public void SeedMissingModules_EmptyStore_SeedsEveryNonSystemModuleAtDefault()
+    {
+        var service = CreateService();
+
+        var seeded = service.SeedMissingModules();
+
+        Assert.True(_repository.TryGetAll(out var state));
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+        {
+            Assert.True(state.ContainsKey(module.Id), $"{module.Id} should be seeded");
+            Assert.Equal(module.EnabledByDefault, state[module.Id]);
+            Assert.Contains(module.Id, seeded);
+        }
+        // System modules are always-on and not stored.
+        Assert.DoesNotContain("AdminSettings", state.Keys);
+    }
+
+    [Fact]
+    public void SeedMissingModules_DoesNotOverwriteExistingRows()
+    {
+        // The 2026-06-12 incident regression guard: seeding must NEVER flip an existing value.
+        // ExchangeOnline defaults to false; set it true, then seed and confirm it stays true.
+        SeedEnablement(new Dictionary<string, bool> { ["ExchangeOnline"] = true });
+        var service = CreateService();
+
+        var seeded = service.SeedMissingModules();
+
+        Assert.True(_repository.TryGetAll(out var state));
+        Assert.True(state["ExchangeOnline"], "existing ExchangeOnline=true must NOT be overwritten by seeding");
+        Assert.DoesNotContain("ExchangeOnline", seeded); // not newly seeded
+        // But a module with no row should have been added.
+        Assert.Contains("MailboxPermissions", seeded);
+    }
+
+    [Fact]
+    public void SeedMissingModules_IsIdempotent()
+    {
+        var service = CreateService();
+
+        var first = service.SeedMissingModules();
+        Assert.NotEmpty(first);
+
+        var tokenAfterFirst = _store.GetChangeToken();
+        var second = service.SeedMissingModules();
+
+        Assert.Empty(second); // nothing left to seed
+        Assert.Equal(tokenAfterFirst, _store.GetChangeToken()); // no write on the second run
+    }
+
+    [Fact]
+    public void SeedMissingModules_CorruptLegacyFile_DoesNotSeed_StaysFailClosed()
+    {
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(Path.Combine(configDir, "modules-enabled.json"), "{ not valid json");
+
+        var service = CreateService();
+        var seeded = service.SeedMissingModules();
+
+        // Must not seed over a corrupt store, and must not have written anything.
+        Assert.Empty(seeded);
+        Assert.False(_repository.HasAny());
+        Assert.True(service.IsStoreCorrupt());
+    }
+
+    [Fact]
+    public void SeedMissingModules_UnreadableStore_DoesNotThrow_DoesNotSeed()
+    {
+        var service = CreateService(new UnreadableStore());
+
+        var seeded = service.SeedMissingModules();
+
+        Assert.Empty(seeded); // fail-safe: no throw, no seed
     }
 
     [Fact]

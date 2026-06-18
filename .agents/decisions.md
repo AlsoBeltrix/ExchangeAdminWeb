@@ -182,12 +182,19 @@ this app, the app is single-writer/single-box by design, and SQLite removes ops
 surface (no service, file-copy backups, `VACUUM INTO` snapshots for the planned
 prod<->dev config copy tool) where Express adds it.
 
-Consequences (to be finalized at plan approval):
+Consequences:
 - New modules and new app settings self-register idempotently at startup
   (INSERT-if-missing with defaults). This RELAXES the 2026-06-12 owner direction
   "the app must never write enablement state at startup" for NON-DESTRUCTIVE seeding
-  only; destructive startup writes remain forbidden. The original direction stands
-  unmodified until the plan is approved and this entry is updated.
+  only; destructive startup writes remain forbidden.
+  **IN EFFECT as of SQLite Phase C (app 2.3.20, 2026-06-18):** `ModuleEnablementService.
+  SeedMissingModules()` runs at startup (Program.cs, after the migrator) and does
+  `INSERT ... ON CONFLICT DO NOTHING` for catalog modules with no row, at their
+  `EnabledByDefault`. It reads-first and only opens a write transaction when something is
+  actually missing (a no-op seed bumps no change token). It NEVER modifies an existing row
+  (the 2026-06-12 incident regression — ExchangeOnline flipped to false — is guarded by a
+  test that fails if seeding becomes destructive), and it no-ops on a corrupt/unreadable
+  store. The original "no *destructive* startup write" direction stands unmodified.
 - Much of the 2026-06-12 incident hardening (config/ backup snapshots, post-deploy
   drift check, robocopy config exclusions, corrupt-JSON guards) becomes
   obsolete-by-design; the plan must enumerate what is retired vs kept.

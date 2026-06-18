@@ -40,6 +40,40 @@ public class ModuleEnablementService
     }
 
     /// <summary>
+    /// Startup self-registration (SqliteConfigStore-Plan §3d): non-destructively seed a
+    /// <see cref="module_enablement"/> row for every catalog module that has none yet, at the
+    /// descriptor's <c>EnabledByDefault</c>. Existing rows are never modified, so this does NOT
+    /// reintroduce the banned destructive startup write (the 2026-06-12 incident). System
+    /// modules are always-on and not stored, so they are skipped. No-op (and intentionally so)
+    /// when the store is corrupt — we must not seed over an unreadable/legacy-corrupt store.
+    /// Returns the IDs newly seeded.
+    /// </summary>
+    public IReadOnlyList<string> SeedMissingModules()
+    {
+        if (_legacyFileCorrupt)
+        {
+            _logger.LogWarning("Skipping module enablement seeding — legacy store is corrupt (failing closed)");
+            return Array.Empty<string>();
+        }
+
+        // If the store can't even be read, don't try to write to it.
+        if (!_repository.TryGetAll(out _))
+        {
+            _logger.LogWarning("Skipping module enablement seeding — store is unreadable");
+            return Array.Empty<string>();
+        }
+
+        var defaults = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+            defaults[module.Id] = module.EnabledByDefault;
+
+        var seeded = _repository.SeedMissing(defaults);
+        if (seeded.Count > 0)
+            _logger.LogInformation("Seeded {Count} missing module enablement rows: {Modules}", seeded.Count, string.Join(", ", seeded));
+        return seeded;
+    }
+
+    /// <summary>
     /// Returns effective enabled state: checks parent cascade via DependsOn.
     /// If the parent module is not effectively enabled, the child is effectively disabled.
     /// </summary>
