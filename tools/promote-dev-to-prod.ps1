@@ -4,12 +4,14 @@ param(
     [string]$ProdPath = "D:\inetpub\ExchangeAdminWeb",
     [string]$ProdAppPoolName = "ExchangeAdminWeb",
     [string]$ProdPathBase = "/ExchangeAdminWeb",
+    [string]$DevAppPoolName = "ExchangeAdminWebDev",
     [string]$BackupRoot,
     [int]$BackupRetention = 3,
     [switch]$Apply,
     [switch]$IUnderstandThisOverwritesProd,
     [switch]$CopyAppSettings,
-    [switch]$SkipConfigFragments
+    [switch]$SkipConfigFragments,
+    [switch]$Refresh
 )
 
 $ErrorActionPreference = "Stop"
@@ -234,6 +236,60 @@ if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
 $backupRootResolved = if (Test-Path -LiteralPath $BackupRoot) { (Resolve-Path -LiteralPath $BackupRoot).Path } else { $BackupRoot }
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $backup = Join-Path $backupRootResolved ("ExchangeAdminWeb.backup.$timestamp")
+
+# --- -Refresh: pull PROD config DB down into DEV (the reverse of promotion) -----------------
+# The owner's "copy prod config to dev" operation (SqliteConfigStore-Plan §Phase D). It is a
+# wholesale, verified copy of prod's config DB onto dev so dev reproduces prod's live config.
+# It NEVER touches prod, and NEVER touches dev's appsettings.json / PathBase (those are
+# per-environment identity). Backup-first, dev pool stopped during the swap.
+if ($Refresh) {
+    $devConfigDir = Join-Path $dev "config"
+    $prodConfigDir = Join-Path $prod "config"
+
+    Write-Host ""
+    Write-Host "ExchangeAdminWeb prod-to-dev config refresh" -ForegroundColor Magenta
+    Write-Host "  Source (prod): $prodConfigDir" -ForegroundColor DarkGray
+    Write-Host "  Target (dev) : $devConfigDir" -ForegroundColor DarkGray
+    Write-Host "  Dev app pool : $DevAppPoolName" -ForegroundColor DarkGray
+    Write-Host "  Mode         : $(if ($Apply) { 'APPLY' } else { 'DRY RUN' })" -ForegroundColor DarkGray
+    Write-Host ""
+
+    if (-not (Test-IsSqliteConfigDbPresent -ConfigDir $prodConfigDir)) {
+        throw "Prod has no config DB at $prodConfigDir\exchangeadmin.db — nothing to refresh into dev."
+    }
+
+    if (-not $Apply) {
+        Write-Plan "Back up dev config DB (verified) into $backup"
+        Write-Plan "Stop-WebAppPool -Name $DevAppPoolName"
+        Write-Plan "Replace dev config DB with a consistent copy of $prodConfigDir\exchangeadmin.db (wholesale)"
+        Write-Plan "Start-WebAppPool -Name $DevAppPoolName"
+        Write-Warn "Dry run only. Re-run with -Apply to make changes. (Dev appsettings.json / PathBase are never touched.)"
+        return
+    }
+
+    if (-not (Test-IsAdministrator)) { throw "Run this script from an elevated PowerShell session when using -Apply." }
+    Import-Module WebAdministration -ErrorAction Stop
+
+    # Back up dev's current DB first (verified online backup; throws/aborts on integrity failure).
+    $devDbBackup = Backup-SqliteConfigDb -ConfigDir $devConfigDir -DestDir $backup -Timestamp $timestamp
+    if ($devDbBackup) { Write-Ok "Dev config DB backed up (verified) to $devDbBackup" }
+
+    Write-Step "Stopping dev app pool: $DevAppPoolName"
+    Stop-WebAppPool -Name $DevAppPoolName -ErrorAction Stop
+    Start-Sleep -Seconds 3
+    try {
+        $refreshed = Copy-SqliteConfigDb -SourceConfigDir $prodConfigDir -DestConfigDir $devConfigDir
+        Write-Ok "Refreshed dev config DB from prod (verified): $refreshed"
+    } finally {
+        Write-Step "Starting dev app pool: $DevAppPoolName"
+        Start-WebAppPool -Name $DevAppPoolName
+        Write-Ok "Dev app pool started"
+    }
+
+    Write-Host ""
+    Write-Ok "Prod-to-dev config refresh complete. Dev now mirrors prod's config; appsettings.json/PathBase unchanged."
+    return
+}
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb dev-to-prod promotion" -ForegroundColor Magenta

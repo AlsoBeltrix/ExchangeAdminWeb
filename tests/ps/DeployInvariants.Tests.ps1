@@ -372,6 +372,27 @@ Describe 'tools/promote-dev-to-prod.ps1' {
             -Because 'the abort is gated on apply mode (dry-run only warns)'
     }
 
+    It 'supports -Refresh (prod->dev) as a wholesale verified copy that backs up dev first' {
+        $s.Text | Should -Match '\[switch\]\$Refresh' -Because 'the prod->dev refresh is a switch'
+        $refreshBlock = [regex]::Match($s.Text, '(?s)if \(\$Refresh\) \{.*?\n    return\b').Value
+        $refreshBlock | Should -Not -BeNullOrEmpty
+        # Source is prod, dest is dev (reverse of promotion).
+        $refreshBlock | Should -Match 'Copy-SqliteConfigDb -SourceConfigDir \$prodConfigDir -DestConfigDir \$devConfigDir' `
+            -Because 'refresh copies prod config DOWN into dev'
+        # Dev DB backed up before the swap, and the dev pool stopped during it.
+        $refreshBlock.IndexOf('Backup-SqliteConfigDb') |
+            Should -BeLessThan $refreshBlock.IndexOf('Copy-SqliteConfigDb') `
+            -Because 'dev must be backed up before being overwritten'
+        $refreshBlock | Should -Match 'Stop-WebAppPool -Name \$DevAppPoolName' `
+            -Because 'the dev DB must be replaced only while the dev pool is stopped'
+    }
+
+    It '-Refresh never patches appsettings/PathBase (dev keeps its own identity)' {
+        $refreshBlock = [regex]::Match($s.Text, '(?s)if \(\$Refresh\) \{.*?\n    return\b').Value
+        $refreshBlock | Should -Not -Match 'Set-AppsettingsPathBase' `
+            -Because 'refresh is config-DB-only; appsettings/PathBase are per-environment identity'
+    }
+
     It 'only claims prod was restored from backup when rollback actually completed' {
         # Success-aggregation trap: the closing throw used to assert "Prod has been
         # restored from backup" unconditionally, even when the rollback robocopy failed
