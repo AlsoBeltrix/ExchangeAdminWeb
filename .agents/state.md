@@ -207,13 +207,25 @@ Owner's standing direction on the queue, given 2026-06-18:
       unguarded marker read could throw through authorization on partial schema damage — fixed
       with `TryRead` (single guarded read of data + configured). Revert-proven on corrupt-file,
       configured-empty parity, AND partial-damage paths. 497/497.
-    - **NEXT: B.6 — protected-principals.json → `protected_principal`** (`ProtectedPrincipalService`;
-      30s TTL cache, fail-closed, keep MailboxPermissions `ExcludedUsers` + appsettings
-      fallback). Then ad-editable-attributes (B.7, last store — null-on-corrupt for allowlist).
-    - **Schema is at user_version 3** (v1 Phase A; v2 module_config_present; v3 section_access_present).
-    - **Lesson (recurring):** every fail-closed store must stay fail-closed when (a) its legacy
-      file is corrupt during upgrade [B.4 class] and (b) the DB is partially damaged [B.5 class].
-      Check BOTH on B.6/B.7. Also: any presence-marker store needs configured-empty parity.
+    - **B.6 DONE (app 2.3.18, commits `6bc05a0` + P1/P2 review `c408c1b`, pushed).**
+      protected-principals.json → `protected_principal` (4 kinds, row-per-value) +
+      `protected_principal_present` marker (schema v4) via new `ProtectedPrincipalRepository`.
+      30s TTL cache + public API preserved; `TryRead` guards data+configured together. Codex
+      caught **P1** (valid file but import fails → silently dropped rules → now fail-closed +
+      retry next startup) and **P2** (`HasCentralConfig` threw through PermissionValidator → now
+      guarded). Revert-proven. 500/500.
+    - **NEXT: B.7 — ad-editable-attributes(.legend).json → `editable_attribute` /
+      `attribute_legend`** (`ADAttributeEditorService`; LAST store. 30s TTL; allowlist is
+      **null-on-corrupt** [distinct signal, not empty], legend fail-open; hard denylist
+      validation STAYS in the service). Apply the recurring checklist below.
+    - **Schema is at user_version 4** (v1 Phase A; v2 module_config_present;
+      v3 section_access_present; v4 protected_principal_present).
+    - **Recurring checklist for every fail-closed store (verified on B.4/B.5/B.6 by codex):**
+      (a) corrupt legacy file during upgrade → fail closed, file left in place;
+      (b) valid legacy file but DB import fails → fail closed, file left in place, retry next start;
+      (c) DB unreadable / partial schema damage → fail closed, never throw through callers;
+      (d) any presence-marker store → configured-empty must behave as configured, not absent.
+      B.7's allowlist is null-on-corrupt rather than empty — preserve that exact signal.
     - **Lesson:** codex has now caught a real parity/security issue on A, B.1, B.3, B.4 —
       the corrupt-legacy-file-during-upgrade class is the recurring trap; check it explicitly
       on B.5–B.7 (each fail-closed store must stay fail-closed when its legacy file is corrupt).
