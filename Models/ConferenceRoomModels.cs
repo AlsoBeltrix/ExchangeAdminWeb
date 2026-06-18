@@ -177,6 +177,12 @@ public class RoomOperationResult
 {
     public string Email { get; set; } = "";
     public bool Success { get; set; }
+    // True when an earlier mutating step already committed but a later step failed, so the
+    // room is left half-configured (e.g. Set-Place wrote EXO metadata, then the room-list or
+    // AD step failed). Distinct from Success=false with no writes. Two-system, multi-step
+    // applies are not transactional; the operator/audit record must show the real state
+    // rather than a plain failure. Re-running the row is safe (every step is idempotent).
+    public bool Partial { get; set; }
     public string Message { get; set; } = "";
     public List<RoomOperationStep> Steps { get; set; } = [];
     public bool AdAttributeFixRequired { get; set; }

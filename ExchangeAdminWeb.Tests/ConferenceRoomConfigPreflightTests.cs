@@ -54,8 +54,7 @@ public class ConferenceRoomConfigPreflightTests
     [Fact]
     public void RequiredGroupConfigKeys_DoesNotIncludeOptionalKeys()
     {
-        // RoomListOU and the contact-email keys are intentionally NOT required.
-        Assert.DoesNotContain("RoomListOU", ConferenceRoomService.RequiredGroupConfigKeys);
+        // The contact-email keys are intentionally NOT required.
         Assert.DoesNotContain("RestrictedContactEmail", ConferenceRoomService.RequiredGroupConfigKeys);
         Assert.DoesNotContain("ExecContactEmail", ConferenceRoomService.RequiredGroupConfigKeys);
         Assert.DoesNotContain("ADGTContactEmail", ConferenceRoomService.RequiredGroupConfigKeys);

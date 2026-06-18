@@ -7,24 +7,32 @@ repo facts change.
 
 - App version `2.3.10` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). **Prod is on
   `2.3.8`.** Dev is ahead and **none of 2.3.9 / 2.3.10 is in prod.**
-- **All dev work is committed and pushed to `master`** (2026-06-18). Already deployed to dev
-  via `deploy.ps1` (deploy compiles the working tree, so this code has been live on dev since
-  before the commit). Four logical changes landed in a SINGLE batch commit (process note: they
-  should have been committed one-per-change as each landed — they were batched in error; see
-  governance note below):
-  1. **TestAccountPool module removal** → app `2.3.9`→`2.3.10`.
-  2. **CR-2: Conference Rooms preview phantom-type fix** → ConferenceRooms module → `2.0.8`.
-  3. **Finding 1 (review High): Room Finder AD preflight before Set-Place** → ConferenceRooms
-     → `2.0.9` (so the module is at `2.0.9`, covering both CR-2 and Finding 1).
-  4. **Finding 2 (review Medium): GroupManagement page protected-principal gate removed**,
-     enforcement now solely in `GroupManagementService` → GroupManagement `2.0.1`→`2.0.2`.
-- **NEXT ACTION: owner-operational only — deploy app `2.3.10` to prod** (run §Deploy-notes
-  alias check first). No engineering work pending in this stream.
+- **Commit `bb94d17` (pushed to `master` 2026-06-18)** batched four changes (should have been
+  one-per-change; batched in error — see governance note): (1) TestAccountPool removal → app
+  `2.3.9`→`2.3.10`; (2) CR-2 preview phantom-type fix → ConferenceRooms `2.0.8`; (3) review
+  Finding 1 (Room Finder AD preflight before Set-Place) → ConferenceRooms `2.0.9`; (4) review
+  Finding 2 (GroupManagement page protected-principal gate removed, enforcement now solely in
+  the service) → GroupManagement `2.0.1`→`2.0.2`.
+- **UNCOMMITTED follow-up batch (Conference Rooms, 2026-06-18)** — done + verified locally,
+  NOT yet committed, NOT yet deployed (the dev box that produced the live test still runs
+  pre-`bb94d17` code). Two changes, ConferenceRooms `2.0.9`→`2.0.10`:
+  1. **RoomListOU removed — room lists now created cloud-side with no `-OrganizationalUnit`.**
+     The module creates room lists via EXO `New-DistributionGroup`; it was passing the on-prem
+     `RoomListOU` path, which EXO rejects ("organizational unit not found") — the cause of the
+     live all-rows-failed test. Removed the property, ConfigField, and example-config entry.
+     Decision recorded in `.agents/decisions.md` (cloud-only room lists, accepted).
+  2. **Partial-write now reported/audited** (`RoomOperationResult.Partial`, "PARTIAL" UI badge,
+     audit detail). Resolves the GPT follow-up finding that a half-applied row (EXO written,
+     later step failed) was reported as a plain "FAILED". Decision recorded.
+     Also corrected the false "accepted" claim in `docs/CommitReview-2026-06-17.md`.
+- **NEXT ACTION:** commit the follow-up batch (one ConferenceRooms commit), then push. Then the
+  only open item is owner-operational — **deploy app `2.3.10` to prod** (run §Deploy-notes alias
+  check first) and **redeploy dev** so it runs the committed code.
 - **Governance note (owner, 2026-06-18):** commits were batched at end-of-session instead of
   per-change. Owner intends to strengthen governance so changes are committed as they land.
-- `docs/CommitReview-2026-06-17.md` (was untracked; reviews committed range `f3f9eb7..dafc040`)
-  is now committed, with a Resolution section recording Findings 1 & 2 as fixed.
-- Current local suite: **459/459 xUnit at 2.3.10** (build clean, 0 warnings; format clean).
+- Current local suite: **459/459 xUnit at app 2.3.10 / ConferenceRooms 2.0.10** (build clean,
+  0 warnings; format clean). No automated test for the RoomListOU/partial paths (live
+  EXO/AD runspace, no injection seam; AGENTS.md §2) — manual-verification-only.
 - **INCIDENT DIAGNOSED — see Diagnostic Results in
   `docs/Incident-2026-06-12-DevConfigLoss.md`.** Server diagnostics (2026-06-12 PM)
   proved no config was lost: pre/post-deploy `appsettings.json` are SHA256-identical,

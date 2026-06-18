@@ -5,6 +5,40 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-18 - Conference Rooms: cloud-only room lists, and partial-write is reported
+
+Status: Active
+
+Decision (two related owner decisions, 2026-06-18):
+
+1. **Room lists are created in the cloud with no organizational unit.** The Conference Rooms
+   module creates room lists via Exchange Online `New-DistributionGroup` and must NOT pass
+   `-OrganizationalUnit`. Exchange Online does not understand on-prem AD OUs, so passing one
+   (the legacy `RoomListOU` value, an on-prem OU path) made every room-list creation fail with
+   "organizational unit not found." The room list is consequently a cloud-only object — it is
+   NOT created on-prem and synced up like the company's other distribution lists. The owner
+   accepts this divergence given on-prem Exchange is slated for decommission (next year). The
+   `RoomListOU` config field was removed entirely.
+
+2. **Partial Room Finder applies are reported and audited as partial, not as plain failures.**
+   A Room Finder apply performs several non-transactional writes across EXO and on-prem AD
+   (`Set-Place`, then `Set-ADUser` for City/State/Country, then timezone, then room-list
+   membership). If an early step commits and a later one fails, the room is left
+   half-configured. The result must surface this explicitly (`RoomOperationResult.Partial`, a
+   "PARTIAL" UI badge, and the partial detail in the audit record) rather than reporting a bare
+   failure that implies nothing changed. Re-running a row is safe (every step is idempotent).
+   The inherent residual — a genuine write failure after the pre-mutation preflight passes —
+   cannot be eliminated (two systems, no distributed transaction); it is made visible instead.
+
+Reason:
+Both came out of a live owner test (2026-06-18) of Room Finder apply plus a follow-up review.
+This also corrects an earlier `docs/CommitReview-2026-06-17.md` note that described the
+partial-write residual as "accepted" when no such decision existed.
+
+Scope guard:
+This does NOT change how other DLs are managed, and does not endorse cloud-first creation for
+anything beyond Conference Rooms room lists.
+
 ### 2026-06-17 - TestAccountPool module removed
 
 Status: Active

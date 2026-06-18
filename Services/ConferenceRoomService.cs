@@ -47,7 +47,6 @@ public class ConferenceRoomService : ExchangeServiceBase
     private string CeoGroup => Cfg("ConfCEOGroup");
     private string ExceptionGroup => Cfg("ConfExceptionGroup");
     private string AdgtAdminsGroup => Cfg("ADGTAdminsGroup");
-    private string RoomListOU => Cfg("RoomListOU");
 
     private string RestrictedMailTip => Cfg("RestrictedMailTip",
         $"This is a restricted room. Email {Cfg("RestrictedContactEmail")} for assistance with booking this room.");
@@ -237,8 +236,7 @@ public class ConferenceRoomService : ExchangeServiceBase
             };
 
     // The config keys whose values are required before any Room Type operation may run.
-    // RoomListOU is excluded (already IsNullOrWhiteSpace-guarded at the room-list step) and
-    // the contact-email keys are excluded (used only in cosmetic response text).
+    // The contact-email keys are excluded (used only in cosmetic response text).
     public static readonly string[] RequiredGroupConfigKeys =
     [
         "DefaultArbiterGroup", "ExecConfCoordinatorsGroup", "ConfExecAdminsGroup",
@@ -404,8 +402,10 @@ public class ConferenceRoomService : ExchangeServiceBase
         var adError = await SetSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
         if (adError != null)
         {
+            // Set-Place already committed EXO metadata; this row is now half-configured.
             result.Success = false;
-            result.Message = adError;
+            result.Partial = true;
+            result.Message = $"Partial: Building/Capacity/Floor were set in Exchange Online, but City/State/Country failed: {adError} Re-run this row after fixing the cause.";
             result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = false, Error = adError });
             return result;
         }
@@ -434,8 +434,10 @@ public class ConferenceRoomService : ExchangeServiceBase
 
             if (!tzResult.Success)
             {
+                // Earlier steps (Set-Place, and City/State/Country) already committed.
                 result.Success = false;
-                result.Message = tzResult.Message;
+                result.Partial = true;
+                result.Message = $"Partial: metadata and City/State/Country were set, but timezone/working-hours failed: {tzResult.Message} Re-run this row after fixing the cause.";
                 result.Steps.Add(new RoomOperationStep { Stage = "Set-Timezone/WorkDays", Success = false, Error = tzResult.Message });
                 return result;
             }
@@ -454,8 +456,11 @@ public class ConferenceRoomService : ExchangeServiceBase
                     result.AdAttributeFixRequired = true;
                     result.AdAttributeDetail = listResult.AdAttributeDetail;
                 }
+                // Metadata (and City/State/Country) already committed; only the room-list
+                // membership failed, so the room is half-configured.
                 result.Success = false;
-                result.Message = $"Metadata set but room list failed: {listResult.Message}";
+                result.Partial = true;
+                result.Message = $"Partial: room metadata was set, but adding the room to its room list failed: {listResult.Message} Re-run this row after fixing the cause.";
                 return result;
             }
         }
@@ -483,13 +488,17 @@ public class ConferenceRoomService : ExchangeServiceBase
         {
             if (!exists)
             {
+                // Room lists are created cloud-side (New-DistributionGroup runs against the
+                // EXO pool), so NO -OrganizationalUnit is set: Exchange Online does not know
+                // on-prem OUs and rejects an on-prem OU path ("organizational unit not found").
+                // The list is created in EXO's default location. This makes the room list a
+                // cloud-only object (not synced from on-prem like other DLs) — accepted by the
+                // owner 2026-06-18, consistent with the pending on-prem Exchange decommission.
                 _operationTrace?.Step("CreateRoomList", backend: "EXO", command: "New-DistributionGroup", target: roomListName);
-                var newDl = ps.AddCommand("New-DistributionGroup")
+                ps.AddCommand("New-DistributionGroup")
                   .AddParameter("Name", roomListName)
                   .AddParameter("RoomList")
                   .AddParameter("ErrorAction", "Stop");
-                if (!string.IsNullOrWhiteSpace(RoomListOU))
-                    newDl.AddParameter("OrganizationalUnit", RoomListOU);
                 Invoke(ps, tracker);
                 result.Steps.Add(new RoomOperationStep { Stage = $"Create room list '{roomListName}'", Success = true });
             }

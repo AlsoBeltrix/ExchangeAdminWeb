@@ -40,7 +40,9 @@ intent, so neither required a new plan.
   ObjectGUID. A row with bad AD prerequisites now fails before any EXO write. Object
   resolution is shared with the write via a new `ResolveAdObjectGuid` helper so the two
   cannot drift. Residual: a genuine `Set-ADUser` failure after a passing preflight is still
-  possible (two-system writes are not atomic) — inherent and accepted, as the finding noted.
+  possible (two-system writes are not atomic). **This residual is now reported, not silently
+  swallowed — see the 2026-06-18 follow-up below.** (An earlier draft of this note called the
+  residual "accepted"; that was inaccurate — no such decision had been made. Corrected here.)
   ConferenceRooms module 2.0.8 → 2.0.9.
 - **Medium (GroupManagement unaudited denials): FIXED.** Removed the duplicated page-level
   protected-principal gate in `GroupManagement.razor` (Add and Remove). Enforcement now lives
@@ -48,3 +50,27 @@ intent, so neither required a new plan.
   Unavailable/Ambiguous resolution and covers the non-`@` identities the page gate missed;
   every denial flows through the single audited post-service path. Guarded by the existing
   `GroupManagementServiceTests` (proven non-vacuous). GroupManagement module 2.0.1 → 2.0.2.
+
+## Follow-up review (2026-06-18) — GPT + live owner test
+
+A second review and a live dev test of Room Finder apply surfaced two further items:
+
+- **RoomListOU was an on-prem OU path handed to a cloud cmdlet.** The module creates room
+  lists cloud-side (`New-DistributionGroup` against the EXO pool) but passed the configured
+  `RoomListOU` (an on-prem OU path copied from the legacy on-prem `SetupRoomFinder.ps1`, which
+  used non-`C`-prefixed = on-prem cmdlets). Exchange Online does not know on-prem OUs, so every
+  room-list creation failed with "organizational unit not found." **Fix (owner decision
+  2026-06-18): create room lists in the cloud with no `-OrganizationalUnit`** (default
+  location). The room list is therefore a cloud-only object, not synced from on-prem like other
+  DLs — accepted given the pending on-prem Exchange decommission. Removed the `RoomListOU`
+  property, ConfigField, and example-config entry. ConferenceRooms → 2.0.10.
+
+- **Partial-write reporting (the High residual above).** The live test made the partial state
+  concrete: `Set-Place` committed EXO metadata, then the room-list step failed, and the row was
+  reported as a plain "FAILED" — hiding that data had been written. **Fix (owner decision
+  2026-06-18): report and audit partial state explicitly.** Added `RoomOperationResult.Partial`;
+  every post-`Set-Place` failure branch (AD, timezone, room list) now sets it with a message
+  naming what was already written and advising a safe re-run. UI shows a "PARTIAL" badge +
+  warning row; audit records the partial detail as the error detail. No automated test: the
+  branches require a live EXO/AD runspace with no injection seam (same constraint as the
+  Comms10k live path; AGENTS.md §2 forbids a testability refactor) — manual-verification-only.

@@ -221,12 +221,13 @@
                         <tbody>
                             @foreach (var r in finderResults)
                             {
-                                <tr class="@(r.Success ? "" : r.AdAttributeFixRequired ? "table-warning" : "table-danger")">
+                                <tr class="@(r.Success ? "" : (r.AdAttributeFixRequired || r.Partial) ? "table-warning" : "table-danger")">
                                     <td><small>@r.Email</small></td>
                                     <td>
                                         @if (r.AdAttributeFixRequired)
                                         { <span class="badge bg-warning text-dark">AD Fix Required</span> }
                                         else if (r.Success) { <span class="text-success">OK</span> }
+                                        else if (r.Partial) { <span class="badge bg-warning text-dark">PARTIAL</span> }
                                         else { <span class="text-danger">FAILED</span> }
                                     </td>
                                     <td>
@@ -447,7 +448,7 @@
     {
         <div class="row mt-3">
             <div class="col-md-8">
-                <div class="alert @(result.Success ? "alert-success" : result.AdAttributeFixRequired ? "alert-warning" : "alert-danger") alert-dismissible">
+                <div class="alert @(result.Success ? "alert-success" : (result.AdAttributeFixRequired || result.Partial) ? "alert-warning" : "alert-danger") alert-dismissible">
                     @result.Message
                     @if (result.AdAttributeFixRequired)
                     {
