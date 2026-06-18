@@ -159,6 +159,13 @@ Owner's standing direction on the queue, given 2026-06-18:
   autonomously, one commit each, reviewed by `codex review --commit <sha>` with findings
   fixed before the next phase (no per-phase human sign-off, owner direction). Phase order:
   A infra → B per-store cutover → C startup seeding → D ops scripts → E tests/docs.
+  **Phases A + B COMPLETE (app 2.3.19, schema v5). NEXT: Phase C — startup self-registration.**
+  Phase C: idempotent seed of missing `module_enablement` rows (to `EnabledByDefault`) and any
+  default settings, non-destructively (INSERT-if-missing); update decision 2026-06-12 to record
+  that non-destructive seeding is permitted while destructive startup writes stay banned; update
+  the `ModuleEnablementService` "startup writes nothing" tests to "no *destructive* write;
+  seeding inserts only missing rows". Then D (ops scripts — pay down the tracked promotion debt)
+  and E (tests/docs sweep + the gated module-guide rewrite).
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
@@ -214,12 +221,16 @@ Owner's standing direction on the queue, given 2026-06-18:
       caught **P1** (valid file but import fails → silently dropped rules → now fail-closed +
       retry next startup) and **P2** (`HasCentralConfig` threw through PermissionValidator → now
       guarded). Revert-proven. 500/500.
-    - **NEXT: B.7 — ad-editable-attributes(.legend).json → `editable_attribute` /
-      `attribute_legend`** (`ADAttributeEditorService`; LAST store. 30s TTL; allowlist is
-      **null-on-corrupt** [distinct signal, not empty], legend fail-open; hard denylist
-      validation STAYS in the service). Apply the recurring checklist below.
-    - **Schema is at user_version 4** (v1 Phase A; v2 module_config_present;
-      v3 section_access_present; v4 protected_principal_present).
+    - **B.7 DONE (app 2.3.19, commits `8a8d708` + P1/P2 review `4540c89`, pushed).**
+      ad-editable-attributes(.legend).json → `editable_attribute` / `attribute_legend` (+
+      `editable_attribute_present` / `attribute_legend_present`, schema v5) via new
+      `AttributeEditorRepository`. Allowlist null-on-corrupt vs empty-when-unconfigured
+      preserved; 30s TTL; IsAllowlistCorrupt reads fresh; legend fail-open; denylist validation
+      stays in service. Codex caught **two P2s** (import-write-fails fail-open; malformed
+      choices_json throwing through callers) — both fixed, revert-proven. 502/502.
+    - **★ PHASE B COMPLETE — all 7 stores on the config DB.** Schema at **user_version 5**
+      (v1 Phase A tables; v2 module_config_present; v3 section_access_present;
+      v4 protected_principal_present; v5 editable_attribute_present + attribute_legend_present).
     - **Recurring checklist for every fail-closed store (verified on B.4/B.5/B.6 by codex):**
       (a) corrupt legacy file during upgrade → fail closed, file left in place;
       (b) valid legacy file but DB import fails → fail closed, file left in place, retry next start;
