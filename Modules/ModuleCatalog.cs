@@ -238,7 +238,7 @@ public sealed class ModuleCatalog
             SortOrder = 600,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "RecipientLookup"),
             ConfigFields = [

@@ -23,9 +23,9 @@
             <div class="row g-3 mb-3">
                 <div class="col-md-5">
                     <label class="form-label">Email Address</label>
-                    <RecipientAutocomplete @bind-Value="emailAddress"
-                                           Placeholder="user@example.com"
-                                           Disabled="@isLoading" />
+                    <input type="text" class="form-control" @bind="emailAddress"
+                           @bind:event="oninput" @onkeydown="HandleKeyDown"
+                           placeholder="user@example.com" disabled="@isLoading" />
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
                     <button class="btn btn-primary" @onclick="RunLookup"
