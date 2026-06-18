@@ -298,6 +298,19 @@ Per store, in this suggested order (lowest blast radius first):
   DB still fails closed.
 
 ### Phase D — Ops scripts
+
+> **Phase B promotion debt (running list — must all be resolved here).** Each Phase B store
+> cutover moves a config file's data into the DB *before* the promote/deploy scripts learn to
+> carry the DB. During Phase B this is an accepted, bounded gap (the file-copy in
+> `promote-dev-to-prod.ps1` safely *skips* a now-missing source — `Copy-FileChecked` warns,
+> does not throw — so nothing breaks; the setting simply does not promote until rewired here).
+> Stores cut over so far whose promotion/deploy handling Phase D must replace with DB-aware
+> logic:
+> - **extended-log-level.txt** (B.1): `promote-dev-to-prod.ps1` line ~502 still copies the
+>   (now archived) file; replace with the `app_setting` row merge. Also retire the
+>   `deploy.ps1` `extended-log-level.txt` drift exclusion (the every-startup file rewrite is
+>   gone).
+
 **Correction (owner, 2026-06-15): no new copy tool.** An earlier draft invented
 `tools/copy-config.ps1` parallel to machinery that already exists. The deploy pipeline
 already does install and dev→prod copy; the migration only swaps files→DB underneath it.

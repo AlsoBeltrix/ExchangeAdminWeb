@@ -499,6 +499,11 @@ try {
                 -DevWins
         }
 
+        # TRANSITIONAL (SQLite Phase B.1): extended-log-level.txt was moved into the SQLite
+        # app_setting table (app 2.3.13). After cutover this file no longer exists at runtime,
+        # so this copy safely no-ops (Copy-FileChecked warns and skips a missing source). The
+        # log level therefore does NOT promote until Phase D replaces this with a DB-row merge.
+        # See docs/SqliteConfigStore-Plan.md Phase D "Phase B promotion debt".
         Copy-FileChecked -Source (Join-Path $dev "config\extended-log-level.txt") -Destination (Join-Path $prod "config\extended-log-level.txt")
     } else {
         Write-Warn "Skipping config fragment copy by request."
