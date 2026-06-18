@@ -393,6 +393,13 @@ Describe 'tools/promote-dev-to-prod.ps1' {
             -Because 'refresh is config-DB-only; appsettings/PathBase are per-environment identity'
     }
 
+    It '-Refresh is exempt from the prod-overwrite consent gate (it never writes prod) (codex)' {
+        # -Refresh writes dev, not prod, so requiring -IUnderstandThisOverwritesProd would block
+        # it nonsensically. The consent gate must exclude -Refresh.
+        $s.Text | Should -Match '\$Apply -and -not \$Refresh -and -not \$IUnderstandThisOverwritesProd' `
+            -Because 'the prod-overwrite confirmation applies to promotion, not the prod->dev refresh'
+    }
+
     It 'only claims prod was restored from backup when rollback actually completed' {
         # Success-aggregation trap: the closing throw used to assert "Prod has been
         # restored from backup" unconditionally, even when the rollback robocopy failed

@@ -224,7 +224,9 @@ if ($dev.Equals($prod, [StringComparison]::OrdinalIgnoreCase)) {
     throw "DevPath and ProdPath resolve to the same directory. Refusing to continue."
 }
 
-if ($Apply -and -not $IUnderstandThisOverwritesProd) {
+# Prod-overwrite consent gates PROMOTION (dev->prod) only. -Refresh (prod->dev) never writes to
+# prod, so it must NOT require this confirmation — it has its own elevation check below.
+if ($Apply -and -not $Refresh -and -not $IUnderstandThisOverwritesProd) {
     throw "Apply mode requires -IUnderstandThisOverwritesProd to confirm this promotion overwrites the prod publish folder."
 }
 
