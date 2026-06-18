@@ -211,6 +211,24 @@ Describe 'deploy.ps1' {
             -Because 'the snapshot must be taken before any files change'
     }
 
+    It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
+        $upgradeBlock = [regex]::Match(
+            $s.Text,
+            '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
+        ).Value
+
+        # The DB triplet is excluded from the file-drift inventory (it changes across the pool
+        # restart by design), so the live store must instead be verified by integrity_check after
+        # the pool starts — otherwise a missing/corrupt live DB ends on the success banner.
+        $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
+            -Because 'the live DB needs a real post-deploy health check, not file-drift comparison'
+        $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt', 'exchangeadmin.db'" `
+            -Because 'the DB triplet must be excluded from the size/mtime drift inventory'
+        $upgradeBlock.IndexOf('Start-AppPoolWithRetry') |
+            Should -BeLessThan $upgradeBlock.IndexOf('Test-SqliteConfigDbIntegrity') `
+            -Because 'the live-DB check must run after the pool restarts (post migrate/seed)'
+    }
+
     It 'verifies runtime config against a pre-deploy snapshot after the pool restarts (incident fix #5)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,

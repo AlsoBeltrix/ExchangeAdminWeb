@@ -592,6 +592,24 @@ if ($isUpgrade) {
         Write-Success "Runtime config verified: config/ inventory and appsettings.json keys unchanged"
     }
 
+    # Post-deploy live DB health check. The DB triplet is excluded from the file-drift inventory
+    # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
+    # so verify it properly here instead: the app pool was started above, so the schema has been
+    # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
+    # the success banner. Warn (not throw) — the deploy has already happened; this surfaces a bad
+    # outcome to the operator with the verified pre-deploy backup as the rollback.
+    $liveDb = Join-Path $PublishPath "config\exchangeadmin.db"
+    if (Test-Path -LiteralPath $liveDb) {
+        try {
+            Test-SqliteConfigDbIntegrity -DbPath $liveDb | Out-Null
+            Write-Success "Config DB verified: integrity_check passed on the live store"
+        } catch {
+            Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly — restore from the pre-deploy backup in $BackupDir and investigate."
+        }
+    } else {
+        Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
+    }
+
 } else {
 
     # --- FRESH INSTALL ---
