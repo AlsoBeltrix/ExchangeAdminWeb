@@ -192,14 +192,25 @@ Owner's standing direction on the queue, given 2026-06-18:
       → dev (reuses `Copy-SqliteConfigDb` reversed), backs up dev first, dev pool stopped, never
       touches prod or dev appsettings/PathBase. New `-DevAppPoolName` param. Codex-fixed: exempt
       `-Refresh` from the prod-overwrite consent gate. Pester 54/54.
-    - **NEXT: D5 (last Phase D slice) — Install-ExchangeAdminWeb.ps1 + repair recipes + cleanup.**
-      (a) Install script: ensure config/ ACL covers the DB (it grants the dir, so the DB inherits
-      — verify), and decide whether fresh installs need any DB pre-seeding (likely NOT — the app
-      migrates+seeds on first start, Phase A+C; confirm and document). Architectural invariant #1:
-      Install must stay environment-neutral/standalone — do NOT couple to deploy.ps1. (b) Operator
-      sqlite repair recipes in docs (the "open it in Notepad" replacement). (c) Remove the stale
-      `sectionaccess.bak` artifact handling. Pester. Then **Phase E** (docs sweep + gated
-      module-guide rewrite).
+    - **D5 DONE (commits `c0e6546` + codex `297c780`, pushed; no app bump).** Install script:
+      JSON seeds now documented as first-run import-seed (app imports→archives on first start);
+      config/ ACL `(OI)(CI)M` means the DB inherits Modify (WAL write) — no DB-specific grant;
+      stays standalone (invariant #1). New `docs/ConfigDbOperations.md` operator guide
+      (inspect/edit/repair via sqlite3, restore from verified deploy backups, rebuild from
+      `*.imported-*`, fail-closed behavior). `sectionaccess.bak`: no code change (the writer was
+      removed in B.5; stale one is a manual delete). Codex-fixed: repair recipe sets the
+      `section_access_present` marker; seed test asserts the write call not just the helper.
+      Pester 56/56.
+    - **★ PHASE D COMPLETE.** All 3 buckets shipped: deploy-safety (D1 verified online backup +
+      post-deploy integrity check in deploy.ps1), config promotion (D2 wholesale DB copy +
+      rollback fix in promote), prod→dev refresh (D3 `-Refresh`), install+repair (D5). Shared
+      `tools/SqliteConfigBackup.psm1`. sqlite3 declared dependency. **NEXT: Phase E.**
+    - **Phase E — tests/docs sweep + gated module-guide rewrite.** Update Constitution
+      (deploys-never-overwrite-config invariant now "config lives in SQLite store"; promotion =
+      DB copy; backup expectations; no-startup-write rule amended for non-destructive seeding),
+      AGENTS Architectural Invariants 2&3, AdminModuleSpec version header + DB-backed config/
+      section-access sections, README config/deploy sections, and the **full module developer
+      guide rewrite (Phase E2)** now that the DB world is final. Then mark the plan Implemented.
   - **Phase A DONE (app 2.3.12, commits `e8b155c` + review fixes `57832cf`, pushed).**
     `Services/Storage/`: `SqliteConnectionFactory` (short-lived connections, WAL + busy
     timeout, private cache), `ConfigStoreMigrator` (PRAGMA user_version, idempotent, NOCASE
