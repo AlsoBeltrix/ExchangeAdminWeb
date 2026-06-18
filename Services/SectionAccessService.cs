@@ -95,7 +95,9 @@ public class SectionAccessService
     {
         if (_legacyFileCorrupt)
             return true;
-        return !_repository.TryGetAll(out _);
+        // Corrupt if either the data OR the presence marker cannot be read (partial schema
+        // damage) — same guarded read the runtime path uses.
+        return !_repository.TryRead(out _, out _);
     }
 
     private enum SectionAccessSource { None, Fragment, AppSettings }
@@ -109,16 +111,16 @@ public class SectionAccessService
             return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
 
         // The DB store is the "fragment" source. It is read fresh each call (the change-token
-        // model makes out-of-band writes visible). If the store cannot be read at all, fail
-        // closed as an empty Fragment, never the permissive fallback. TryGetAll is the single
-        // read that can surface a DB-integrity failure, so check it first.
-        if (!_repository.TryGetAll(out var data))
+        // model makes out-of-band writes visible). Read data AND the configured flag in a single
+        // guarded operation so a partial/damaged schema (e.g. a missing marker table) fails
+        // closed as an empty Fragment rather than throwing through the authorization path.
+        if (!_repository.TryRead(out var data, out var configured))
         {
             _logger.LogError("Section access store unreadable — failing closed");
             return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
         }
 
-        if (_repository.IsConfigured())
+        if (configured)
             return (data, SectionAccessSource.Fragment);
 
         // Not configured in the DB: fall back to the legacy appsettings Security:SectionAccess.

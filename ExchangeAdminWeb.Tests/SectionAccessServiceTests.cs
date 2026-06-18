@@ -294,6 +294,26 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
+    public void PartialSchemaDamage_MarkerTableDropped_FailsClosed_DoesNotThrow()
+    {
+        // Simulate partial corruption: section_access readable, but the presence-marker table is
+        // gone. The authorization path must fail closed, not throw.
+        SeedSectionAccess(new() { ["MailboxPermissions"] = new[] { "GroupA" } });
+        _store.Write((connection, tx) =>
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DROP TABLE section_access_present;";
+            cmd.ExecuteNonQuery();
+        });
+
+        var service = CreateService();
+
+        Assert.True(service.IsFragmentCorrupt());
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions")); // fail closed, no throw
+    }
+
+    [Fact]
     public void Construction_LegacyFileMissingSectionAccessNode_FailsClosed()
     {
         File.WriteAllText(_legacyFilePath, """{ "Security": { } }""");

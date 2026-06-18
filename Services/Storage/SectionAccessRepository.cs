@@ -24,22 +24,7 @@ public sealed class SectionAccessRepository
     {
         try
         {
-            access = _store.Read(connection =>
-            {
-                using var command = connection.CreateCommand();
-                command.CommandText = "SELECT policy_alias, group_value FROM section_access;";
-                var map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    var alias = reader.GetString(0);
-                    var group = reader.GetString(1);
-                    if (!map.TryGetValue(alias, out var list))
-                        map[alias] = list = new List<string>();
-                    list.Add(group);
-                }
-                return map.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
-            });
+            access = _store.Read(ReadAll);
             return true;
         }
         catch
@@ -49,15 +34,61 @@ public sealed class SectionAccessRepository
         }
     }
 
+    private static Dictionary<string, string[]> ReadAll(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT policy_alias, group_value FROM section_access;";
+        var map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var alias = reader.GetString(0);
+            var group = reader.GetString(1);
+            if (!map.TryGetValue(alias, out var list))
+                map[alias] = list = new List<string>();
+            list.Add(group);
+        }
+        return map.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <summary>True if section access has been configured (the presence marker is set).</summary>
     public bool IsConfigured()
     {
-        return _store.Read(connection =>
+        return _store.Read(connection => ReadConfigured(connection));
+    }
+
+    /// <summary>
+    /// Reads both the access map AND the configured flag in a single guarded operation. Returns
+    /// false if EITHER read fails (a damaged/partial schema — e.g. a missing marker table while
+    /// section_access is still readable). Callers in the authorization path use this so a partial
+    /// corruption fails closed rather than throwing through. Both out-params are safe-defaulted
+    /// on failure.
+    /// </summary>
+    public bool TryRead(out Dictionary<string, string[]> access, out bool configured)
+    {
+        try
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT 1 FROM section_access_present LIMIT 1;";
-            return command.ExecuteScalar() is not null;
-        });
+            (access, configured) = _store.Read(connection =>
+            {
+                var data = ReadAll(connection);
+                var present = ReadConfigured(connection);
+                return (data, present);
+            });
+            return true;
+        }
+        catch
+        {
+            access = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            configured = false;
+            return false;
+        }
+    }
+
+    private static bool ReadConfigured(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM section_access_present LIMIT 1;";
+        return command.ExecuteScalar() is not null;
     }
 
     /// <summary>
