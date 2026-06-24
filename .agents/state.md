@@ -12,9 +12,10 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
     Phase E delivered the docs sweep (Constitution, AGENTS.md, AdminModuleSpec.md,
     example JSON retired) and version bump to 2.3.21.
 
-- **NEXT ACTION — Phase E2** (module developer guide full rewrite, plan §394):
-  Full audit + rewrite of `docs/AdminModuleDeveloperGuide.md`. Needs its own plan
-  approved before starting. See queued work section below.
+- **NEXT ACTION — Module Developer Guide Rewrite** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
+  Status: *Approved*). Full audit + rewrite of `docs/AdminModuleDeveloperGuide.md` and
+  `docs/AdminModuleSpec.md` against app 2.3.21. Includes `<ModuleVersion />` validator
+  enforcement (PAGE009 check + Pester test). AC1–AC8 all approved.
 
 - **PENDING (do not push prod yet — 2026-06-18 direction):** prod deploy SQLite-era build
      invariant → "config lives in SQLite store"; promotion = DB copy; backup expectations;
