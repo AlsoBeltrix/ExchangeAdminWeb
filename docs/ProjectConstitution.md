@@ -55,12 +55,14 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 ### Configuration
 
+- Runtime operational config (module enablement, section access, module settings, protected principals, editable attributes) lives in the SQLite store at `config/exchangeadmin.db`. There are no hand-authored JSON config fragments for these stores.
 - Module-specific settings belong to that module's config, not global `appsettings.json`, unless explicitly retained as upgrade fallback.
-- Per-module config corruption must affect only that module unless a shared config file is actually corrupt.
-- If a config file exists and is corrupt, fail closed. Do not silently fall back to stale defaults.
+- Per-module config corruption must affect only that module unless a shared store is actually corrupt.
+- If a config store is corrupt or unreadable, fail closed. Do not silently fall back to stale defaults.
 - Legacy appsettings fallback is allowed only for upgrade compatibility and only when the module-specific config is absent.
-- Config writes must be atomic: write temp file, validate parse when practical, then replace/move into place.
-- Deployment and promotion scripts must preserve runtime config, logs, and state files intentionally. Do not rely on publish-folder files for durable state unless scripts explicitly preserve them.
+- Config writes must be transactional (SQLite). The atomic temp-file pattern is retired for DB-backed stores.
+- Deployment and promotion scripts must preserve runtime config, logs, and state files intentionally. `config/` is excluded from robocopy mirroring; the DB lives there and is backed up via verified online backup before any deploy.
+- Startup must not perform destructive writes to the config store. Non-destructive seeding (`INSERT … ON CONFLICT DO NOTHING`) of missing module rows is permitted; overwriting existing rows at startup is forbidden.
 
 ### Auditing And Tracing
 

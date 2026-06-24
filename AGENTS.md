@@ -99,6 +99,8 @@ should win. Do not silently choose whichever source is convenient.
 2. Config promotion is dev-wins (`tools/promote-dev-to-prod.ps1`).
 3. Deploys never overwrite runtime config: `appsettings*.json`, `config/`, `logs/` are
    excluded from robocopy mirroring. Preserve these exclusions in any deploy change.
+   Runtime operational config lives in `config/exchangeadmin.db` (SQLite); it is backed
+   up via verified online backup before each deploy, not by raw file copy.
 4. Every ops-script step must support `-PlanOnly` (via `Invoke-PlanOrAction` /
    `Write-Plan`).
 5. PowerShell error model: `$ErrorActionPreference = "Stop"`; failures go through

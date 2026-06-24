@@ -48,7 +48,7 @@ public sealed record ModulePermission(string Name, string PolicyAlias, bool Fail
 ```
 
 - **Name**: Logical permission name (e.g., "Access", "OnPrem", "Create", "Manage")
-- **PolicyAlias**: The string used in `[Authorize(Policy = "...")]` and `config/sectionaccess.json`
+- **PolicyAlias**: The string used in `[Authorize(Policy = "...")]` and the `section_access` table in `config/exchangeadmin.db`
 - **FailClosed**: If true, this permission denies all users when no section access is configured (instead of falling back to AllowedGroups)
 
 ### Authorization Layering
@@ -87,33 +87,29 @@ Admin Event Log is not an AdminGroups system module. It uses the `EventLog` sect
 
 ### Section Access (permissions)
 
-File: `config/sectionaccess.json`
+Table: `section_access` in `config/exchangeadmin.db`
 
-```json
-{
-  "Security": {
-    "SectionAccess": {
-      "MyModule": ["DOMAIN\\MyModuleUsers"],
-      "MyModuleAdmin": ["DOMAIN\\MyModuleAdmins"]
-    }
-  }
-}
-```
+| policy_alias | group_value |
+|---|---|
+| `MyModule` | `DOMAIN\MyModuleUsers` |
+| `MyModuleAdmin` | `DOMAIN\MyModuleAdmins` |
 
-Managed via per-module config pages (`/module-config/{ModuleId}`). Each PolicyAlias appears under Section Access.
+Managed via the Section Access page in Admin Settings. Each PolicyAlias appears there.
+
+- No rows for alias: fail-closed (deny)
+- Store unreadable: fail-closed (deny all)
 
 ### Module Enablement
 
-File: `config/modules-enabled.json`
+Table: `module_enablement` in `config/exchangeadmin.db`
 
-```json
-{
-  "MyModule": true
-}
-```
+| module_id | enabled |
+|---|---|
+| `MyModule` | 1 |
 
-- Absent file: all modules use `EnabledByDefault`
-- Corrupt file: all non-system modules disabled (fail-closed)
+- No row: module uses `EnabledByDefault` from descriptor
+- Store unreadable: all non-system modules disabled (fail-closed)
+- New module rows are seeded non-destructively on startup (`INSERT … ON CONFLICT DO NOTHING`)
 - System modules always enabled regardless of file content
 - Managed via Admin Settings toggle switches or the module's own config page
 
@@ -262,7 +258,7 @@ version lookup inline — use the component so the format stays uniform across a
 New modules require an application publish and app pool restart. Module enablement (on/off) is controlled at runtime via the admin UI without restart.
 
 The deploy script (`deploy.ps1`):
-- Preserves `config/sectionaccess.json` and `config/modules-enabled.json` across upgrades
+- Preserves `config/` (including `exchangeadmin.db`) across upgrades via robocopy exclusion
 - Creates the `config/` directory with write ACL for the app pool identity
 - Sets IIS auth (Windows Auth, NTLM only, kernel mode off)
 

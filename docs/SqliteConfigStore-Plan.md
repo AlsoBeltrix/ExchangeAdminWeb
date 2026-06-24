@@ -1,6 +1,6 @@
 # SQLite Config Store Migration — Plan
 
-Status: In progress (owner go 2026-06-18; implementation started at app 2.3.11)
+Status: Implemented (Phase E complete at app 2.3.21, 2026-06-24)
 App version at drafting: 2.3.8 (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`)
 Authority: subordinate to `docs/ProjectConstitution.md` and `AGENTS.md`. Implements
 decision **2026-06-12 — Runtime config and operational data move to SQLite**

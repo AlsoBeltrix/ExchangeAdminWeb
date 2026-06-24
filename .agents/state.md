@@ -5,29 +5,18 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.20` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **`master` at `cf837e8`, level with `origin/master`, working tree clean.** (Only
-  untracked files are stray `*-command-messagecatchupcommand-message.txt` scratch files.)
-- **ACTIVE WORK STREAM — SQLite config store** (`docs/SqliteConfigStore-Plan.md`, Status:
-  *In progress*). Migrates all `config/` JSON fragments into a per-environment SQLite
-  store at `config/exchangeadmin.db`. Phase progress (detail in the plan, commit log in
-  git):
-  - **Phase A** infra (`Services/Storage/`, connection factory, migrator) — ✅
-  - **Phase B** all 7 stores cut over (app settings, module admins, module config,
-    modules-enabled, section access, protected principals, editable attributes); schema at
-    `user_version 5` — ✅, **dev-validated on a real box 2026-06-18 (app 2.3.19)**
-  - **Phase C** startup non-destructive seeding (`SeedMissingModules`) — ✅
-  - **Phase D** ops scripts (verified online backup + post-deploy integrity check;
-    promotion = wholesale verified DB copy; `-Refresh` prod→dev; install seeds + repair
-    guide `docs/ConfigDbOperations.md`; shared `tools/SqliteConfigBackup.psm1`) — ✅
-  - **Phase E** (tests + docs sweep) and **Phase E2** (full module developer-guide
-    rewrite) — **NOT STARTED.**
+- App version `2.3.21` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:
+  *Implemented*). All Phases A–E done (app 2.3.21, 2026-06-24). 508/508 tests green.
+  - Phase E note: all service test rewrites were completed inline during Phases B-D;
+    Phase E delivered the docs sweep (Constitution, AGENTS.md, AdminModuleSpec.md,
+    example JSON retired) and version bump to 2.3.21.
 
-- **NEXT ACTION — start Phase E** (plan §369 / §394):
-  1. Rewrite service tests against SQLite (list in plan §370–376); keep the
-     storage-agnostic ones (§377); retarget `tests/ps/DeployInvariants.Tests.ps1` to the
-     DB (§379).
-  2. Config-swap doc edits: `ProjectConstitution.md` (deploys-never-overwrite-config
+- **NEXT ACTION — Phase E2** (module developer guide full rewrite, plan §394):
+  Full audit + rewrite of `docs/AdminModuleDeveloperGuide.md`. Needs its own plan
+  approved before starting. See queued work section below.
+
+- **PENDING (do not push prod yet — 2026-06-18 direction):** prod deploy SQLite-era build
      invariant → "config lives in SQLite store"; promotion = DB copy; backup expectations;
      no-startup-write rule amended for non-destructive seeding), `AGENTS.md` Architectural
      Invariants 2 & 3, `AdminModuleSpec.md` version header + DB-backed config/section-access
@@ -38,7 +27,7 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Blockers
 
-- None blocking Phase E.
+- None blocking current work.
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
@@ -101,6 +90,14 @@ These have no plan doc yet; do not start without the noted plan/approval.
   Search path not yet code-located. Confirm desired ranking with owner before implementing.
 - **GM-2 (bug): M365 group management finds no groups at all.** Root cause unknown (Graph
   query / auth-scope / result mapping). Investigate before any fix; treat as a real defect.
+- **CR-BUG-1 (bug): EXO connection pool hands out dead runspaces.** Stale detection uses
+  idle timeout only; EXO can terminate a session server-side within that window (token
+  expiry, session limit, transient hiccup). Pool doesn't detect this until the first
+  cmdlet on the dead runspace throws "must call Connect-ExchangeOnline," causing that
+  room to fail. Pool then discards and self-heals — next room succeeds. Manifests as
+  intermittent single-room failures mid-batch (seen in ConferenceRooms Apply CSV, 15/26
+  succeeded). Fix: validate connection is live before handing out from pool (e.g. a
+  lightweight probe command on borrow). Address after SQLite Phase E/E2 complete.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload
