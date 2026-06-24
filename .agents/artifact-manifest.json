@@ -1,7 +1,7 @@
 {
   "validated_against": {
-    "commit": "7e7c9ac25cb5b96d507486a5fbd57ff1ffc6fb8f",
-    "date": "2026-06-11"
+    "commit": "3494ea4e7f71c1d6a5145175651ee3493a685aa5",
+    "date": "2026-06-24"
   },
   "artifacts": [
     {
@@ -72,6 +72,16 @@
     {
       "path": ".claude/agents/reviewer.md",
       "purpose": "Claude Code subagent: evidence-standard diff review",
+      "custody": "tracked"
+    },
+    {
+      "path": ".claude/commands/playbook.md",
+      "purpose": "Claude Code slash command: invoke a named playbook from .agents/playbooks/",
+      "custody": "tracked"
+    },
+    {
+      "path": ".claude/settings.json",
+      "purpose": "Claude Code hook: re-grounds agent on AGENTS.md Prime Invariants after context compaction",
       "custody": "tracked"
     }
   ]
