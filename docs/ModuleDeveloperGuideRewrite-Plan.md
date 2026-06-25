@@ -1,6 +1,6 @@
 # Module Developer Guide Rewrite Plan
 
-Status: Approved
+Status: Implemented (app 2.3.22, 2026-06-25)
 Owner: Michael
 Last verified against code: commit 49e3010 (2026-06-24)
 

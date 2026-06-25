@@ -6,7 +6,7 @@ Unlike DeployInvariants.Tests.ps1 (static AST parsing), these build a minimal
 module package fixture in a temp directory and run the validator end to end,
 then assert on the emitted issue codes.
 
-Scope today: PAGE009 — every module Razor page must display its descriptor
+Scope today: PAGE009 - every module Razor page must display its descriptor
 Version via the <ModuleVersion /> component. This guards the "canonical,
 enforced rule" claim in AdminModuleSpec.md / AdminModuleDeveloperGuide.md.
 #>
@@ -22,6 +22,8 @@ BeforeAll {
     # the tests assert on the PAGE009 token alone, so unrelated issues do not
     # affect the result.
     function New-ModulePackageFixture {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+            Justification = 'Test helper builds a throwaway fixture under the temp dir; ShouldProcess is noise here')]
         param(
             [string]$Root,
             [bool]$IncludeModuleVersion

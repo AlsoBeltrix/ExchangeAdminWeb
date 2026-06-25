@@ -5,21 +5,23 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.21` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.22` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:
   *Implemented*). All Phases A–E done (app 2.3.21, 2026-06-24). 508/508 tests green.
   - Phase E note: all service test rewrites were completed inline during Phases B-D;
     Phase E delivered the docs sweep (Constitution, AGENTS.md, AdminModuleSpec.md,
     example JSON retired) and version bump to 2.3.21.
 
-- **IN PROGRESS — Module Developer Guide Rewrite** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
-  Status: *Approved*). Full audit + rewrite of `docs/AdminModuleDeveloperGuide.md` and
-  `docs/AdminModuleSpec.md` against app 2.3.21. T1–T9 done (commits through `8488475`),
-  including `<ModuleVersion />` validator enforcement (PAGE009 Error + Pester test in
-  `tests/ps/ValidatorChecks.Tests.ps1`). Folded in a Codex review pass: Graph credential
-  key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline → 2.3.21,
-  this state block repaired. REMAINING: **T10** — full build/test/format/PSSA/Pester green,
-  app version bump, flip plan Status → *Implemented*, then the final whole-branch review.
+- **Module Developer Guide Rewrite COMPLETE** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
+  Status: *Implemented*, app 2.3.22, 2026-06-25). Re-verified + rewrote
+  `docs/AdminModuleDeveloperGuide.md` and `docs/AdminModuleSpec.md` against the SQLite-era
+  codebase, and added `<ModuleVersion />` validator enforcement (Error `PAGE009` in
+  `tools/validate-module-package.ps1` + execution test `tests/ps/ValidatorChecks.Tests.ps1`,
+  proven non-vacuous). A Codex review pass was folded in (one-pass, owner-approved): Graph
+  credential key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline →
+  2.3.22, this state block repaired. 508/508 xUnit + 59/59 Pester green.
+  - NEXT: final whole-branch review (SDD), then this branch is ready (do not push prod yet —
+    see Blockers).
 
 ## Blockers
 
