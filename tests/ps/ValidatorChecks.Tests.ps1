@@ -109,6 +109,7 @@ Describe 'validate-module-package.ps1 PAGE009 (ModuleVersion component required)
             New-ModulePackageFixture -Root $pkg -IncludeModuleVersion $true | Out-Null
             $result = Invoke-Validator -PackagePath $pkg
             $result.Output | Should -Not -Match 'PAGE009'
+            $result.ExitCode | Should -Be 0
         }
         finally {
             Remove-Item -LiteralPath $pkg -Recurse -Force -ErrorAction SilentlyContinue

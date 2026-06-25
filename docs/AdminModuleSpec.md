@@ -1,7 +1,7 @@
 # Admin Module Specification
 
 Version: 2.0
-Last verified against code: commit 5a62603 (2026-06-24)
+Last verified against code: commit cd83823 (2026-06-25)
 
 ## Overview
 
