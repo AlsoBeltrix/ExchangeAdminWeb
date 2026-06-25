@@ -1,6 +1,6 @@
 # EXO Dead-Connection Auto-Retry — Plan
 
-Status: In progress
+Status: Implemented
 Owner: Michael Coelho
 Created: 2026-06-25
 Tracking: CR-BUG-1 (`.agents/state.md` Queued work)

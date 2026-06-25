@@ -5,7 +5,16 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.22` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.23` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **CR-BUG-1 (EXO pool dead-runspace) FIXED** (`docs/ExoDeadConnectionRetry-Plan.md`,
+  Status: *Implemented*, app 2.3.23, 2026-06-25, commit `39ce87a`). The pool now auto-retries
+  a dead/stale EXO session once on a fresh borrow, gated to read-only + single-write ops
+  (opt-in `allowRetry`, default off); the 7 multi-write delegates keep discard-and-fail so a
+  committed write is never repeated. All 10 pool callers route through one
+  `ExoConnectionPool.RunWithRetryAsync` helper (incl. `PermissionValidator`). 9 new
+  orchestration tests over the pure core, proven non-vacuous; 517/517 xUnit green.
+  - NEXT: final whole-branch review (SDD) before the branch is considered done (do not push
+    prod yet — see Blockers).
 - **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:
   *Implemented*). All Phases A–E done (app 2.3.21, 2026-06-24). 508/508 tests green.
   - Phase E note: all service test rewrites were completed inline during Phases B-D;
@@ -77,14 +86,6 @@ These have no plan doc yet; do not start without the noted plan/approval.
   Search path not yet code-located. Confirm desired ranking with owner before implementing.
 - **GM-2 (bug): M365 group management finds no groups at all.** Root cause unknown (Graph
   query / auth-scope / result mapping). Investigate before any fix; treat as a real defect.
-- **CR-BUG-1 (bug): EXO connection pool hands out dead runspaces.** Stale detection uses
-  idle timeout only; EXO can terminate a session server-side within that window (token
-  expiry, session limit, transient hiccup). Pool doesn't detect this until the first
-  cmdlet on the dead runspace throws "must call Connect-ExchangeOnline," causing that
-  room to fail. Pool then discards and self-heals — next room succeeds. Manifests as
-  intermittent single-room failures mid-batch (seen in ConferenceRooms Apply CSV, 15/26
-  succeeded). Fix: validate connection is live before handing out from pool (e.g. a
-  lightweight probe command on borrow). Address after SQLite Phase E/E2 complete.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload
@@ -96,6 +97,8 @@ These have no plan doc yet; do not start without the noted plan/approval.
 
 ## Recently completed (pointers only — full detail in the named docs)
 
+- **CR-BUG-1 EXO pool dead-runspace auto-retry** — `docs/ExoDeadConnectionRetry-Plan.md`
+  (Implemented, app 2.3.23, commit `39ce87a`).
 - **SQLite Phases A–D** — `docs/SqliteConfigStore-Plan.md` + git log (`e8b155c`..`cf837e8`).
 - **ProdReadiness work stream** — COMPLETE, plan Status **Implemented**
   (`docs/ProdReadiness-Plan.md` §10 round 17, `a5ab6aa`); all AC1–AC16 met.
