@@ -71,6 +71,7 @@ public class ConferenceRoomService : ExchangeServiceBase
 
     public async Task<RoomInfo?> GetRoomInfoAsync(string roomEmail)
     {
+        // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-Mailbox")
@@ -115,7 +116,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                 State = place?.Properties["State"]?.Value?.ToString() ?? "",
                 TimeZone = timezone
             };
-        });
+        }, allowRetry: true);
     }
 
     // Room-list naming. The room list IS the building in Microsoft Room Finder; the
@@ -304,7 +305,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                 return (legacyName, true, true, strayCityListName);
 
             return (canonicalName, false, false, strayCityListName);
-        });
+        }, allowRetry: true);
     }
 
     private static readonly HashSet<string> ValidRoomRecipientTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -369,6 +370,8 @@ public class ConferenceRoomService : ExchangeServiceBase
         // Step 1: Set-Place (EXO) — Building/Capacity/Floor/devices are NOT dir-synced, so
         // EXO accepts them. City is intentionally NOT sent here; it is a synced attribute
         // written on-prem in Step 2.
+        // Single-write (Set-Place): safe to retry on a dead pooled session. This is the step
+        // that failed mid-batch in the observed bug (CR-BUG-1) before any cmdlet committed.
         var placeResult = await RunAsync((ps, tracker) =>
         {
             _operationTrace?.Step("SetPlace", backend: "EXO", command: "Set-Place", target: roomEmail);
@@ -386,7 +389,7 @@ public class ConferenceRoomService : ExchangeServiceBase
                 placeCmd.AddParameter("VideoDeviceName", videoDevice);
             Invoke(ps, tracker);
             result.Steps.Add(new RoomOperationStep { Stage = "Set-Place", Success = true });
-        });
+        }, allowRetry: true);
 
         if (!placeResult.Success)
         {

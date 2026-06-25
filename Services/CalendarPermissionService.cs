@@ -52,6 +52,9 @@ public class CalendarPermissionService : ExchangeServiceBase
     {
         string? calendarPath = null;
 
+        // Single-write (Remove-MailboxFolderPermission): safe to retry on a dead pooled session.
+        // The preceding Get-* validations are reads. SetCalendarPermissionAsync is deliberately
+        // NOT opted in: it is a Set-then-fallback-Add (two writes) per the retry-safety audit.
         return RunAsync((ps, tracker) =>
         {
             var resolvedMailbox = ValidateMailbox(ps, targetMailbox);
@@ -63,7 +66,7 @@ public class CalendarPermissionService : ExchangeServiceBase
               .AddParameter("User", user)
               .AddParameter("Confirm", false);
             Invoke(ps, tracker);
-        }, () => ($"Calendar permission removed for {user} on {calendarPath}", null));
+        }, () => ($"Calendar permission removed for {user} on {calendarPath}", null), allowRetry: true);
     }
 
     public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber)

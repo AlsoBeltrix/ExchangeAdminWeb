@@ -10,6 +10,7 @@ public class OutOfOfficeService : ExchangeServiceBase
 
     public async Task<OutOfOfficeResult> GetOutOfOfficeAsync(string emailAddress)
     {
+        // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new OutOfOfficeResult { EmailAddress = emailAddress, State = "Unknown" };
@@ -41,11 +42,12 @@ public class OutOfOfficeService : ExchangeServiceBase
             }
 
             return result;
-        });
+        }, allowRetry: true);
     }
 
     public Task<PermissionResult> SetOutOfOfficeAsync(string emailAddress, string state, string? internalMessage, string? externalMessage, DateTime? startTime, DateTime? endTime)
     {
+        // Single-write (Set-MailboxAutoReplyConfiguration): safe to retry on a dead session.
         return RunAsync((ps, tracker) =>
         {
             ps.AddCommand("Set-MailboxAutoReplyConfiguration")
@@ -72,6 +74,6 @@ public class OutOfOfficeService : ExchangeServiceBase
             Invoke(ps, tracker);
         }, () => (state == "Disabled"
             ? $"Auto-reply disabled for {emailAddress}."
-            : $"Auto-reply set to {state} for {emailAddress}.", (string?)null));
+            : $"Auto-reply set to {state} for {emailAddress}.", (string?)null), allowRetry: true);
     }
 }

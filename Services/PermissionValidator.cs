@@ -333,9 +333,14 @@ public class PermissionValidator
             return members;
         }
 
-        var pooled = await _exoPool.BorrowAsync();
-        try
+        // Read-only (Get-Recipient + Get-DistributionGroupMember): retry-eligible. The pool helper
+        // owns borrow/return/discard and the one-shot retry on a dead session; on a NON-connection
+        // throw it discards (this delegate uses raw ps.Invoke() and can't guarantee a clean
+        // pipeline, matching the prior manual Discard). The "couldn't be found = keep as literal
+        // match" rule stays here as a normal (non-connection) success.
+        return await _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
+            var found = new List<string>();
             var ps = pooled.PowerShell;
 
             ps.AddCommand("Get-Recipient")
@@ -359,15 +364,11 @@ public class PermissionValidator
             {
                 ps.Commands.Clear();
                 _logger.LogInformation("Excluded entry '{Identity}' not found in EXO — kept as literal match", identity);
-                _exoPool.Return(pooled);
-                return members;
+                return new PooledOutcome<List<string>>(found, false);
             }
 
             if (recipients.Count == 0)
-            {
-                _exoPool.Return(pooled);
-                return members;
-            }
+                return new PooledOutcome<List<string>>(found, false);
 
             var recipient = recipients[0];
             var recipientType = recipient.Properties["RecipientTypeDetails"]?.Value?.ToString();
@@ -397,24 +398,16 @@ public class PermissionValidator
                     var upn = member.Properties["UserPrincipalName"]?.Value?.ToString();
                     var sam = member.Properties["SamAccountName"]?.Value?.ToString();
 
-                    if (!string.IsNullOrWhiteSpace(email)) members.Add(email);
-                    if (!string.IsNullOrWhiteSpace(upn) && upn != email) members.Add(upn);
-                    if (!string.IsNullOrWhiteSpace(sam)) members.Add(sam);
+                    if (!string.IsNullOrWhiteSpace(email)) found.Add(email);
+                    if (!string.IsNullOrWhiteSpace(upn) && upn != email) found.Add(upn);
+                    if (!string.IsNullOrWhiteSpace(sam)) found.Add(sam);
                 }
 
-                _logger.LogInformation("Expanded group {Group} to {Count} members", identity, members.Count);
+                _logger.LogInformation("Expanded group {Group} to {Count} members", identity, found.Count);
             }
 
-            _exoPool.Return(pooled);
-        }
-        catch (Exception ex)
-        {
-            _exoPool.Discard(pooled);
-            _logger.LogWarning(ex, "Failed to expand group '{Identity}' via EXO pool", identity);
-            throw;
-        }
-
-        return members;
+            return new PooledOutcome<List<string>>(found, false);
+        }), allowRetry: true, PoolFailurePolicy.Discard);
     }
 
     private static string ExtractUsername(string identity)

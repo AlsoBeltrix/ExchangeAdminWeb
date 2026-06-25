@@ -138,7 +138,7 @@ public class MigrationService : ExchangeServiceBase
             }
 
             return r;
-        });
+        }, allowRetry: true);
 
         if (direction == MigrationDirection.ToCloud && result.NeedsAdGroupCheck)
         {
@@ -253,6 +253,9 @@ public class MigrationService : ExchangeServiceBase
                 return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
+        // NOT retry-eligible: New-MigrationBatch plus conditional Start-/Set-MigrationBatch are
+        // multiple writes; New- is not idempotent (retry would duplicate or collide on the batch
+        // name). A dead session discards and fails as before; the operator re-runs manually.
         return await RunAsync((ps, tracker) =>
         {
             // Create CSV content in memory
@@ -405,7 +408,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to retrieve migration batches");
                 return new List<MigrationBatchInfo>();
             }
-        });
+        }, allowRetry: true);
     }
 
     public async Task<List<MigrationUserInfo>> GetMigrationBatchUsersAsync(string batchName)
@@ -449,7 +452,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to retrieve migration users for batch {BatchName}", batchName);
                 return new List<MigrationUserInfo>();
             }
-        });
+        }, allowRetry: true);
     }
 
     public Task<PermissionResult> CompleteMigrationBatchAsync(string batchName)
@@ -461,7 +464,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null));
+        }, () => ($"Migration batch '{batchName}' completion initiated.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> CompleteMigrationUserAsync(string emailAddress)
@@ -474,12 +477,14 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null));
+        }, () => ($"Migration completion initiated for {emailAddress}.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> ApproveMigrationUserAsync(string emailAddress)
     {
-        // Mirrors ApproveMigrationUser.ps1: approve skipped items, set complete, resume move request
+        // Mirrors ApproveMigrationUser.ps1: approve skipped items, set complete, resume move request.
+        // NOT retry-eligible: multiple writes incl. non-idempotent Resume-MoveRequest (retry-safety
+        // audit). A dead session discards and fails as before; the operator re-runs manually.
         return RunAsync((ps, tracker) =>
         {
             var pastDate = DateTime.Now.AddDays(-1);
@@ -536,7 +541,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration stopped for {emailAddress}.", (string?)null));
+        }, () => ($"Migration stopped for {emailAddress}.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> ResumeMigrationUserAsync(string emailAddress)
@@ -548,7 +553,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration resumed for {emailAddress}.", (string?)null));
+        }, () => ($"Migration resumed for {emailAddress}.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> RemoveMigrationUserAsync(string emailAddress)
@@ -560,7 +565,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration user {emailAddress} removed.", (string?)null));
+        }, () => ($"Migration user {emailAddress} removed.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> RemoveMigrationBatchAsync(string batchName)
@@ -572,7 +577,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' removed.", (string?)null));
+        }, () => ($"Migration batch '{batchName}' removed.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> StopMigrationBatchAsync(string batchName)
@@ -584,7 +589,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' stopped.", (string?)null));
+        }, () => ($"Migration batch '{batchName}' stopped.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> StartMigrationBatchAsync(string batchName)
@@ -596,7 +601,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' started.", (string?)null));
+        }, () => ($"Migration batch '{batchName}' started.", (string?)null), allowRetry: true);
     }
 
     private async Task<(double mailboxGB, double archiveGB)?> GetCloudMailboxSizeAsync(string emailAddress)
@@ -629,7 +634,7 @@ https://admin.exchange.microsoft.com/#/migration";
             }
 
             return ((double mailboxGB, double archiveGB)?)(mailboxGB, archiveGB);
-        });
+        }, allowRetry: true);
     }
 
     public async Task<string?> GetMigrationUserReportAsync(string emailAddress)
@@ -681,7 +686,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogError(ex, "Failed to get migration report for {Email}", emailAddress);
                 return (string?)$"Error retrieving report: {ex.Message}";
             }
-        });
+        }, allowRetry: true);
     }
 
     public async Task<MigrationUserSearchResult> FindMigrationUserBatchAsync(string searchTerm)
@@ -712,7 +717,7 @@ https://admin.exchange.microsoft.com/#/migration";
                 _logger.LogWarning(ex, "Failed to search migration users for {Term}", searchTerm);
                 return MigrationUserSearchResult.Failed(ex.Message);
             }
-        });
+        }, allowRetry: true);
     }
 
     public static MigrationUserSearchResult MatchMigrationUser(

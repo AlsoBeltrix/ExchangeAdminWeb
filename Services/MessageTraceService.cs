@@ -45,6 +45,7 @@ public class MessageTraceService : ExchangeServiceBase
 
     public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
     {
+        // Single-write (Start-HistoricalSearch): safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var response = new HistoricalSearchResponse();
@@ -76,7 +77,7 @@ public class MessageTraceService : ExchangeServiceBase
             }
 
             return response;
-        });
+        }, allowRetry: true);
     }
 
     // -------------------------------------------------------------------------
@@ -98,6 +99,7 @@ public class MessageTraceService : ExchangeServiceBase
 
     private async Task<MessageTraceResponse> GetCloudMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
     {
+        // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var response = new MessageTraceResponse();
@@ -173,7 +175,7 @@ public class MessageTraceService : ExchangeServiceBase
             }
 
             return response;
-        });
+        }, allowRetry: true);
     }
 
     private async Task<MessageTraceResponse> GetOnPremMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)

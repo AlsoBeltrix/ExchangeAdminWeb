@@ -21,6 +21,25 @@ public sealed class PooledRunspace
     }
 }
 
+/// <summary>
+/// Result of running a delegate on a borrowed connection. <see cref="ConnectionFailure"/>
+/// is the caller's signal (via its <c>ConnectionErrorTracker</c>) that the delegate
+/// returned normally but the failure was a dead/stale session — eligible for a one-shot
+/// retry on a fresh connection. Connection failures that surface as a thrown exception
+/// are classified separately by the orchestrator.
+/// </summary>
+internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailure);
+
+/// <summary>
+/// What to do with the borrowed connection when the delegate throws a NON-connection
+/// error. Base helpers <see cref="ExchangeServiceBase.Invoke(PowerShell, ExchangeServiceBase.ConnectionErrorTracker)"/>
+/// clear the pipeline before throwing, so the connection is clean and can be returned.
+/// PermissionValidator uses raw <c>ps.Invoke()</c> and cannot guarantee a clean pipeline,
+/// so it discards (preserving its prior behavior; avoids poisoning the next borrow).
+/// Connection errors ALWAYS discard regardless of this policy — the session is dead.
+/// </summary>
+internal enum PoolFailurePolicy { Return, Discard }
+
 public sealed class ExoConnectionPool : IDisposable
 {
     public const string ConfigModuleKey = "ExchangeOnline";
@@ -164,6 +183,98 @@ public sealed class ExoConnectionPool : IDisposable
         DestroyRunspace(runspace);
         _operationTrace.Step("ExoConnectionDiscarded", backend: "ExchangeOnline");
         _slots.Release();
+    }
+
+    /// <summary>
+    /// Borrow a connection, run <paramref name="run"/> on it, and return/discard it. If the
+    /// failure is a dead/stale session (a thrown connection error, or a returned outcome with
+    /// <see cref="PooledOutcome{T}.ConnectionFailure"/> set) AND <paramref name="allowRetry"/>
+    /// is true, the dead connection is discarded and the delegate runs <b>once</b> more on a
+    /// fresh borrow. This heals the "you must call Connect-ExchangeOnline" failure the pool
+    /// produces when EXO tears a session down inside the idle window.
+    ///
+    /// <para><paramref name="allowRetry"/> MUST be true only for read-only or single-write
+    /// delegates. Re-running a delegate that already committed an earlier write would repeat
+    /// it (double-grant, duplicate batch, etc.), so multi-write delegates pass false. The
+    /// default at every layer is false (no retry) — the safe default.</para>
+    /// </summary>
+    internal Task<T> RunWithRetryAsync<T>(
+        Func<PooledRunspace, Task<PooledOutcome<T>>> run,
+        bool allowRetry,
+        PoolFailurePolicy nonConnectionFailurePolicy)
+        => RunWithRetryCoreAsync(() => BorrowAsync(), Return, Discard, run,
+            IsConnectionError, allowRetry, nonConnectionFailurePolicy);
+
+    /// <summary>
+    /// Canonical classifier for "the pooled EXO session is dead/stale." A dead session inside the
+    /// idle window makes the first cmdlet's pre-check throw
+    /// "GetCurrentConnectionContext ... You must call Connect-ExchangeOnline...". The "connection"
+    /// substring covers that; the explicit "Connect-ExchangeOnline" arm covers wording that drops
+    /// the prefix. <see cref="ExchangeServiceBase.IsConnectionError"/> delegates here so the rule
+    /// lives in one place.
+    /// </summary>
+    public static bool IsConnectionError(Exception? ex) =>
+        ex != null && (
+            ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("Connect-ExchangeOnline", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Pure orchestration core for <see cref="RunWithRetryAsync{T}"/>, expressed over injected
+    /// borrow/return/discard primitives so it is unit-testable without a live EXO connection
+    /// (pool-backed services cannot be unit-hosted). Invariant: every borrow is paired with
+    /// exactly one return-or-discard, so the pool's slot semaphore is conserved across retries.
+    /// </summary>
+    internal static async Task<T> RunWithRetryCoreAsync<T>(
+        Func<Task<PooledRunspace>> borrow,
+        Action<PooledRunspace> ret,
+        Action<PooledRunspace> discard,
+        Func<PooledRunspace, Task<PooledOutcome<T>>> run,
+        Func<Exception, bool> isConnectionError,
+        bool allowRetry,
+        PoolFailurePolicy nonConnectionFailurePolicy)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            attempt++;
+            var lastAttempt = !allowRetry || attempt >= 2;
+            var pooled = await borrow();
+
+            PooledOutcome<T> outcome;
+            try
+            {
+                outcome = await run(pooled);
+            }
+            catch (Exception ex) when (isConnectionError(ex))
+            {
+                // Dead session surfaced as a throw. Always discard; retry once if eligible.
+                discard(pooled);
+                if (lastAttempt) throw;
+                continue;
+            }
+            catch
+            {
+                // Non-connection throw: the session is fine. Return or discard per the
+                // caller's pipeline-cleanliness policy; never retried.
+                if (nonConnectionFailurePolicy == PoolFailurePolicy.Discard) discard(pooled);
+                else ret(pooled);
+                throw;
+            }
+
+            if (outcome.ConnectionFailure)
+            {
+                // Dead session surfaced as a flagged-but-returned outcome (RunAsync swallows
+                // the throw and returns a Fail result). Discard; retry once if eligible.
+                discard(pooled);
+                if (lastAttempt) return outcome.Result;
+                continue;
+            }
+
+            ret(pooled);
+            return outcome.Result;
+        }
     }
 
     /// <summary>

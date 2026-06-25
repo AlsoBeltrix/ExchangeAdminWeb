@@ -38,87 +38,75 @@ public abstract class ExchangeServiceBase
     // Pool / Run helpers
     // -------------------------------------------------------------------------
 
-    protected async Task<PermissionResult> RunAsync(Action<PowerShell, ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null)
+    /// <param name="allowRetry">
+    /// True only for read-only or single-write operations. When the borrowed connection is a
+    /// dead/stale session, the pool discards it and runs <paramref name="operation"/> once more
+    /// on a fresh connection. MUST be false for multi-write operations: re-running after an
+    /// earlier write committed would repeat it. Defaults to false (the safe default).
+    /// </param>
+    protected Task<PermissionResult> RunAsync(Action<PowerShell, ConnectionErrorTracker> operation, Func<(string message, string? detail)>? successFormatter = null, bool allowRetry = false)
     {
-        var pooled = await _exoPool.BorrowAsync();
-        bool discard = false;
-        try
+        return _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
             var tracker = new ConnectionErrorTracker();
-            var result = await Task.Run(() =>
+            var ps = pooled.PowerShell;
+            PermissionResult result;
+            try
             {
-                var ps = pooled.PowerShell;
-                try
+                operation(ps, tracker);
+
+                if (successFormatter is not null)
                 {
-                    operation(ps, tracker);
-
-                    if (successFormatter is not null)
-                    {
-                        var (message, detail) = successFormatter();
-                        return new PermissionResult { Success = true, Message = message, Detail = detail };
-                    }
-                    return PermissionResult.Ok();
+                    var (message, detail) = successFormatter();
+                    result = new PermissionResult { Success = true, Message = message, Detail = detail };
                 }
-                catch (Exception ex)
+                else
                 {
-                    // Invoke clears ps.Streams.Error before throwing, so recover the captured
-                    // detail from the exception (ex.Data) rather than re-reading the stream.
-                    // Fall back to the live stream for any throw that didn't route through Invoke.
-                    var (primary, detail) = ResolvePsErrors(ex);
-                    if (ex.Data[PsErrorsDataKey] is null)
-                    {
-                        var psErrors = SnapshotErrorMessages(ps);
-                        if (psErrors.Count > 0)
-                        {
-                            primary = psErrors[0];
-                            detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
-                        }
-                    }
-
-                    if (IsConnectionError(ex))
-                        tracker.HasConnectionError = true;
-
-                    _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
-                    return PermissionResult.Fail(primary, detail);
+                    result = PermissionResult.Ok();
                 }
-            });
+            }
+            catch (Exception ex)
+            {
+                // Invoke clears ps.Streams.Error before throwing, so recover the captured
+                // detail from the exception (ex.Data) rather than re-reading the stream.
+                // Fall back to the live stream for any throw that didn't route through Invoke.
+                var (primary, detail) = ResolvePsErrors(ex);
+                if (ex.Data[PsErrorsDataKey] is null)
+                {
+                    var psErrors = SnapshotErrorMessages(ps);
+                    if (psErrors.Count > 0)
+                    {
+                        primary = psErrors[0];
+                        detail = psErrors.Count > 1 ? string.Join(" | ", psErrors.Skip(1)) : null;
+                    }
+                }
 
-            discard = tracker.HasConnectionError;
-            return result;
-        }
-        finally
-        {
-            if (discard)
-                _exoPool.Discard(pooled);
-            else
-                _exoPool.Return(pooled);
-        }
+                if (IsConnectionError(ex))
+                    tracker.HasConnectionError = true;
+
+                _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
+                result = PermissionResult.Fail(primary, detail);
+            }
+
+            // RunAsync never re-throws — a connection failure is reported via the tracker so the
+            // pool can discard and (if eligible) retry. The base helper already cleared the
+            // pipeline in Invoke, so a non-connection failure leaves the connection returnable.
+            return new PooledOutcome<PermissionResult>(result, tracker.HasConnectionError);
+        }), allowRetry, PoolFailurePolicy.Return);
     }
 
-    protected async Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query)
+    /// <param name="allowRetry">
+    /// True only for read-only or single-write queries. See <see cref="RunAsync"/>. Defaults to
+    /// false (the safe default).
+    /// </param>
+    protected Task<T> RunPooledQueryAsync<T>(Func<PowerShell, ConnectionErrorTracker, T> query, bool allowRetry = false)
     {
-        var pooled = await _exoPool.BorrowAsync();
-        bool discard = false;
-        try
+        return _exoPool.RunWithRetryAsync(pooled => Task.Run(() =>
         {
             var tracker = new ConnectionErrorTracker();
-            var result = await Task.Run(() => query(pooled.PowerShell, tracker));
-
-            discard = tracker.HasConnectionError;
-            return result;
-        }
-        catch (Exception ex) when (IsConnectionError(ex))
-        {
-            discard = true;
-            throw;
-        }
-        finally
-        {
-            if (discard)
-                _exoPool.Discard(pooled);
-            else
-                _exoPool.Return(pooled);
-        }
+            var result = query(pooled.PowerShell, tracker);
+            return new PooledOutcome<T>(result, tracker.HasConnectionError);
+        }), allowRetry, PoolFailurePolicy.Return);
     }
 
     protected static async Task<T> ThrottledAsync<T>(Func<Task<T>> operation, SemaphoreSlim? throttle = null)
@@ -470,13 +458,14 @@ public abstract class ExchangeServiceBase
 
     protected async Task<bool> HasCloudMailboxAsync(string identity)
     {
+        // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             ps.AddCommand("Get-Mailbox")
               .AddParameter("Identity", identity)
               .AddParameter("ErrorAction", "Ignore");
             return InvokeOptional(ps, tracker).Any();
-        });
+        }, allowRetry: true);
     }
 
     private async Task<string?> GetOnPremMailboxLocationAsync(string identity)
@@ -700,9 +689,6 @@ public abstract class ExchangeServiceBase
     // Connection error detection
     // -------------------------------------------------------------------------
 
-    protected static bool IsConnectionError(Exception? ex) =>
-        ex != null && (
-            ex.Message.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
-            ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase));
+    // Single source of truth lives on the pool so PermissionValidator (not a subclass) shares it.
+    protected static bool IsConnectionError(Exception? ex) => ExoConnectionPool.IsConnectionError(ex);
 }

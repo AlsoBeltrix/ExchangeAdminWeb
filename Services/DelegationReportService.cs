@@ -10,6 +10,7 @@ public class DelegationReportService : ExchangeServiceBase
 
     public async Task<DelegationReportResult> GetMailboxDelegationAsync(string emailAddress)
     {
+        // Read-only: safe to retry on a dead pooled session.
         return await RunPooledQueryAsync((ps, tracker) =>
         {
             var result = new DelegationReportResult { EmailAddress = emailAddress };
@@ -79,6 +80,6 @@ public class DelegationReportService : ExchangeServiceBase
             }
 
             return result;
-        });
+        }, allowRetry: true);
     }
 }

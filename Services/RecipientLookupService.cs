@@ -10,6 +10,7 @@ public class RecipientLookupService : ExchangeServiceBase
 
     public async Task<RecipientInfoResult> GetRecipientInfoAsync(string emailAddress)
     {
+        // Read-only: safe to retry on a dead pooled session.
         var result = await RunPooledQueryAsync((ps, tracker) =>
         {
             var r = new RecipientInfoResult { EmailAddress = emailAddress };
@@ -103,7 +104,7 @@ public class RecipientLookupService : ExchangeServiceBase
             }
 
             return r;
-        });
+        }, allowRetry: true);
 
         if (result.Error == null)
         {

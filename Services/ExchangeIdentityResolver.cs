@@ -11,6 +11,7 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
     {
         try
         {
+            // Read-only: safe to retry on a dead pooled session.
             return await RunPooledQueryAsync((ps, tracker) =>
             {
                 ps.AddCommand("Get-Recipient")
@@ -20,7 +21,7 @@ public class ExchangeIdentityResolver : ExchangeServiceBase, IIdentityResolver
                 var results = Invoke(ps, tracker);
                 var recipient = results.FirstOrDefault();
                 return recipient?.Properties["ExternalDirectoryObjectId"]?.Value?.ToString();
-            });
+            }, allowRetry: true);
         }
         catch (Exception ex)
         {
