@@ -1,17 +1,7 @@
 # Admin Module Specification
 
-Version: 1.1 — PARTIALLY STALE against app 2.3.9 (was "based on v1.5.4")
-
-> **Drift warning.** This spec has not been fully re-verified since app v1.5.4 and
-> the app is now 2.3.9. Known gap: the `AdminModuleDescriptor` example below omits five
-> fields that exist in `Modules/AdminModuleDescriptor.cs` today — `Category`, `Version`,
-> `DependsOn`, `IsConfigOnly`, and `ConfigFields`. `Version` is the load-bearing one: a
-> module-scoped behavior change must bump the descriptor's `Version` (see
-> `docs/ProjectConstitution.md` §Deployment And Versioning); a descriptor written without
-> it silently defaults to `"1.0.0"`. A full audit and rewrite of this spec is scheduled as
-> Phase E2 in `docs/SqliteConfigStore-Plan.md` (gated on the SQLite config swap). Until
-> then, treat `Modules/AdminModuleDescriptor.cs` and `Modules/ModuleCatalog.cs` as the
-> authoritative descriptor contract, not the example below.
+Version: 2.0
+Last verified against code: commit 5a62603 (2026-06-24)
 
 ## Overview
 
@@ -29,12 +19,19 @@ new AdminModuleDescriptor
     Description = "What this module does.", // Home page card text
     Route = "my-module",                // URL path (no leading slash)
     IconCss = "bi bi-icon-nav-menu",    // CSS class for nav icon
+    Category = "Other",                 // Sidebar/home grouping
     SortOrder = 800,                    // Position in nav/home (lower = higher)
-    EnabledByDefault = true,            // Enabled on fresh installs
-    IsSystemModule = false,             // true = cannot be disabled
-    MainPermission = new ModulePermission("Access", "MyModule"),
-    GranularPermissions = [             // Optional sub-permissions
-        new ModulePermission("Admin", "MyModuleAdmin", FailClosed: true)
+    EnabledByDefault = false,           // Enabled on fresh installs
+    IsSystemModule = false,             // true = cannot disabled
+    Version = "1.0.0",                  // Module version (not app version)
+    MainPermission = new ModulePermission("Access", "MyModule", FailClosed: true),
+    DependsOn = null,                   // Module ID depends on, or null
+    IsConfigOnly = false,               // true = config-only, no page
+    GranularPermissions = [],
+    ConfigFields =
+    [
+        new("DelineaSecretId", "Delinea Secret ID",
+            "Secret Server record ID module credentials")
     ]
 }
 ```
