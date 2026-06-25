@@ -292,6 +292,10 @@ if ($route) {
         if ($pageText -match 'string\.IsNullOrWhiteSpace\([^)]*ticket' -and $pageText -notmatch '@bind:event\s*=\s*"oninput"') {
             Add-Issue "Warning" "PAGE008" "Page appears to use ticket-controlled buttons but no @bind:event=`"oninput`" was found." $pageRel
         }
+
+        if ($pageText -notmatch '<ModuleVersion') {
+            Add-Issue "Error" "PAGE009" "Razor page must display its descriptor Version via the <ModuleVersion /> component next to the page heading." $pageRel
+        }
     }
 }
 

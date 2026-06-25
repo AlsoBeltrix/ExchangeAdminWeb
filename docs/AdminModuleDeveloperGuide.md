@@ -1,7 +1,7 @@
 # ExchangeAdminWeb Module Developer Guide
 
 Version: 2.0
-Host baseline: ExchangeAdminWeb 2.3.0
+Host baseline: ExchangeAdminWeb 2.3.21
 Last verified against code: commit 208abfc (2026-06-24)
 
 ## Purpose
@@ -162,11 +162,8 @@ compatibility failures:
 - Graph endpoints that are literal strings and do not start with `/`.
 - Sidebar icon classes that do not exist in the host CSS.
 - Raw stack traces or empty catch blocks in production source.
-
-> **Pending check:** a check that the module page includes the required
-> `<ModuleVersion />` display (see Page Heading And Version Display) is queued but not
-> yet implemented in the validator. Until it lands, authors must add the component
-> manually; it is still a canonical requirement for integration review.
+- Module page missing the required `<ModuleVersion />` display (Error `PAGE009`;
+  see Page Heading And Version Display).
 
 Warnings are advisory by default. To make warnings fail the validation:
 
