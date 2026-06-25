@@ -12,19 +12,14 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
     Phase E delivered the docs sweep (Constitution, AGENTS.md, AdminModuleSpec.md,
     example JSON retired) and version bump to 2.3.21.
 
-- **NEXT ACTION — Module Developer Guide Rewrite** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
+- **IN PROGRESS — Module Developer Guide Rewrite** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
   Status: *Approved*). Full audit + rewrite of `docs/AdminModuleDeveloperGuide.md` and
-  `docs/AdminModuleSpec.md` against app 2.3.21. Includes `<ModuleVersion />` validator
-  enforcement (PAGE009 check + Pester test). AC1–AC8 all approved.
-
-- **PENDING (do not push prod yet — 2026-06-18 direction):** prod deploy SQLite-era build
-     invariant → "config lives in SQLite store"; promotion = DB copy; backup expectations;
-     no-startup-write rule amended for non-destructive seeding), `AGENTS.md` Architectural
-     Invariants 2 & 3, `AdminModuleSpec.md` version header + DB-backed config/section-access
-     sections, relevant `README.md` sections.
-  3. Then **Phase E2** (gated: owner direction is the authoritative module-guide rewrite
-     happens *after* the swap lands). Includes validator enforcement of the module-version
-     display (see Queued work). Finally flip the plan to **Implemented**.
+  `docs/AdminModuleSpec.md` against app 2.3.21. T1–T9 done (commits through `8488475`),
+  including `<ModuleVersion />` validator enforcement (PAGE009 Error + Pester test in
+  `tests/ps/ValidatorChecks.Tests.ps1`). Folded in a Codex review pass: Graph credential
+  key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline → 2.3.21,
+  this state block repaired. REMAINING: **T10** — full build/test/format/PSSA/Pester green,
+  app version bump, flip plan Status → *Implemented*, then the final whole-branch review.
 
 ## Blockers
 
@@ -72,17 +67,6 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 These have no plan doc yet; do not start without the noted plan/approval.
 
-- **Module developer guide — full audit & rewrite.** Gated on the SQLite swap (= Phase E2
-  above). Guide + `AdminModuleSpec.md` version header have drifted on FailClosed
-  permissions, enablement semantics (no startup writes since 2.3.7), descriptor surface,
-  two-rule versioning, auth wiring, `validate-module-package.ps1`. Must stand alone for a
-  developer with no chat context. Coordinate with the module-packaging plan.
-- **Validator enforcement of the module-version display.** The app-wide version display is
-  shipped (app 2.3.11, `Components/Shared/ModuleVersion.razor` on all 20 module pages;
-  rule recorded in `AdminModuleSpec.md` + `AdminModuleDeveloperGuide.md` as **enforced**).
-  REMAINING: `tools/validate-module-package.ps1` must check a module page renders its
-  descriptor `Version` (via `<ModuleVersion />`), with Pester coverage. Until it ships, the
-  "validator enforces this" claim is forward-looking. Bundle with the guide work.
 - **Module packaging/import.** Direction set 2026-06-18 (`.agents/decisions.md`): `.zip`
   package + validator, rebuild-to-install, runtime upload deferred. Needs
   `docs/ModulePackaging-Plan.md` written + approved before any implementation.
