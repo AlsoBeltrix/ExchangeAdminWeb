@@ -2,7 +2,7 @@
 
 Version: 2.0
 Host baseline: ExchangeAdminWeb 2.3.22
-Last verified against code: commit 208abfc (2026-06-24)
+Last verified against code: commit c63eb20 (2026-06-25)
 
 ## Purpose
 
