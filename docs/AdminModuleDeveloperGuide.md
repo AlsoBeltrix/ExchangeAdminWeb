@@ -1,8 +1,8 @@
 # ExchangeAdminWeb Module Developer Guide
 
-Version: 1.3
+Version: 2.0
 Host baseline: ExchangeAdminWeb 2.3.0
-Last verified against code: commit 6e2fbb6 (2026-06-05)
+Last verified against code: commit 208abfc (2026-06-24)
 
 ## Purpose
 
@@ -430,57 +430,48 @@ page that omits the version display is non-conformant and is rejected at validat
 
 ## Module Enablement
 
-Module enablement is stored in:
+Module enablement is stored in the `module_enablement` table (columns: `module_id`,
+`enabled`, `updated_at`) in `config/exchangeadmin.db`, accessed via
+`ModuleEnablementRepository`.
 
-```text
-config/modules-enabled.json
-```
+Row semantics:
 
-Behavior:
+- No row for a module: the descriptor `EnabledByDefault` value is used.
+- Store unreadable: all non-system modules are disabled fail-closed.
+- System modules are always enabled regardless of the store.
 
-- Missing file: modules use descriptor `EnabledByDefault`.
-- Corrupt file: non-system modules are disabled fail-closed.
-- System modules remain enabled.
+At startup, `SeedMissingModules()` performs a non-destructive pass that inserts a row
+for every catalog module that has no row yet, using its `EnabledByDefault` value. It
+uses `INSERT ... ON CONFLICT DO NOTHING`, so existing rows are never overwritten. Reads
+at startup do not write; seeding is an explicit call, not a side-effect of reading.
 
 Enablement is runtime-configurable from the admin UI. It does not require an app
 pool restart.
 
 ## Section Access
 
-Section access is stored in:
+Section access is stored in the `section_access` table (columns: `policy_alias`,
+`group_value`) in `config/exchangeadmin.db`, accessed via `SectionAccessRepository`.
+A `section_access_present` marker row distinguishes "configured-but-empty" from
+"never configured".
 
-```text
-config/sectionaccess.json
-```
+Semantics:
 
-Shape:
-
-```json
-{
-  "Security": {
-    "SectionAccess": {
-      "MyModule": ["DOMAIN\\MyModuleUsers"],
-      "MyModuleAdmin": ["DOMAIN\\MyModuleAdmins"]
-    }
-  }
-}
-```
+- No rows and no marker: fail-closed permissions deny access; non-fail-closed permissions
+  fall back to `Security:AllowedGroups`.
+- Configured-but-empty (marker present, no rows): all access is denied. This is
+  intentionally different from unconfigured — an operator who saves an empty group list
+  is making an explicit deny-all decision.
+- Store unreadable: fail-closed for all sections.
 
 Operators manage these groups on the module config page. Every policy alias in
 the module descriptor appears in that UI.
 
-Fail-closed permissions deny access when no explicit group is configured.
-
 ## Module Configuration
 
-Simple module configuration is stored in per-module files:
-
-```text
-config/module-config-{ModuleId}.json
-```
-
-Each module has its own configuration file, keyed by module ID (for example,
-`config/module-config-Migration.json`). Access it through `ModuleConfigService`:
+Module configuration is stored in the `module_config` table in
+`config/exchangeadmin.db`, accessed via `ModuleConfigRepository`. There are no
+per-module JSON files. Access it through `ModuleConfigService`:
 
 ```csharp
 public string? GetValue(string moduleId, string key);
@@ -489,24 +480,21 @@ public bool IsModuleConfigured(string moduleId);
 public void SaveModuleConfig(string moduleId, Dictionary<string, string> values);
 public bool HasConfigFile { get; }
 public bool IsCorrupt { get; }
+public bool HasModuleConfigFile(string moduleId);
+public bool IsModuleCorrupt(string moduleId);
 public event Action<string>? ConfigSaved;
 ```
 
 Rules:
 
-- Treat `IsCorrupt` as fail-closed for privileged operations. For a specific
-  module's state, prefer the per-module overloads `IsModuleCorrupt(moduleId)`
-  and `HasModuleConfigFile(moduleId)`; the parameterless `IsCorrupt` and
-  `HasConfigFile` are aggregate views across all modules.
+- `HasConfigFile` and `IsCorrupt` are aggregate views across all modules (aliases for
+  the parameterless overload). For a specific module's state, use the per-module
+  overloads `IsModuleCorrupt(moduleId)` and `HasModuleConfigFile(moduleId)`. Treat
+  corrupt state as fail-closed for privileged operations.
 - Required config missing means the operation must not proceed.
 - Do not store secrets in module config.
 - For values that need immediate runtime effect, read from `ModuleConfigService`
   at operation time or subscribe to `ConfigSaved` and invalidate caches.
-- Complex config should live in a dedicated file under `config/` with atomic
-  write and parse validation.
-
-If a module adds a dedicated config file, update deploy/promotion scripts so the
-file is preserved and merged or copied intentionally.
 
 ## Credential Isolation
 
@@ -995,8 +983,8 @@ Run before submitting:
 
 ```powershell
 .\tools\validate-module-package.ps1 -PackagePath D:\source\isolated_module_test\MyModule -HostPath D:\source\ExchangeAdminWeb
-dotnet build ExchangeAdminWeb.csproj --no-restore
-dotnet test ExchangeAdminWeb.Tests\ExchangeAdminWeb.Tests.csproj --no-restore
+dotnet build ExchangeAdminWeb.slnx -c Release
+dotnet test ExchangeAdminWeb.slnx
 dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore
 git diff --check HEAD
 ```
@@ -1013,18 +1001,9 @@ Runtime changes that do not require restart:
 - Simple module config changes, if the service reads config at operation time or
   invalidates caches on save.
 
-Deployment scripts preserve these config files:
-
-- `config/sectionaccess.json`
-- `config/module-config-{ModuleId}.json` (one file per module)
-- `config/modules-enabled.json`
-- `config/protected-principals.json`
-- `config/ad-editable-attributes.json`
-- `config/ad-editable-attributes-legend.json`
-
-If a module introduces a new durable config or state file, update deployment and
-promotion scripts intentionally. State files must not be wiped by publish or
-promotion.
+All runtime config lives in `config/exchangeadmin.db`. The entire `config/` directory
+is excluded from robocopy mirroring, so deploys never overwrite it. The ops scripts
+perform a verified online backup of the database before each deploy.
 
 Do not store durable operational state only inside the publish folder unless the
 deploy scripts explicitly preserve it.
