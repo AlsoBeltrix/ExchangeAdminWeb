@@ -141,7 +141,7 @@ The catalog validates at startup:
 
 ### For Graph API modules
 
-1. Declare a module-specific `DelineaSecretId` config field that points to a Secret Server record containing the Graph app fields.
+1. Declare a module-specific `GraphDelineaSecretId` config field that points to a Secret Server record containing the Graph app fields. (On-prem AD/Exchange modules use `DelineaSecretId`; Graph app credentials use `GraphDelineaSecretId` — see `docs/ProjectConstitution.md` §Credential Isolation.)
 2. The Graph app secret must contain `Tenant ID`, `Application ID`, and `Client Secret` fields.
 3. Each module uses its own Entra app registration with minimal permissions.
 4. Create a `GraphTokenClient` from the module's own Delinea secret on each operation. Do not fall back to another module's config or credential.

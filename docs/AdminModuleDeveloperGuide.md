@@ -193,7 +193,7 @@ snippets are applied to a branch, a real host build/test run.
 | Main policy alias | Usually same as module ID | `NamedLocations` |
 | Granular policy alias | Module ID plus capability | `ADAttributeEditorLevel2` |
 | Audit category | Module ID | `NamedLocations` |
-| Config namespace | Module ID | `NamedLocations:DelineaSecretId` |
+| Config namespace | Module ID | `NamedLocations:GraphDelineaSecretId` |
 
 Do not rename an existing module ID or policy alias without a migration plan.
 These values are persisted in config files and operator procedures.
@@ -265,7 +265,7 @@ new()
     MainPermission = new("Access", "NamedLocations", FailClosed: true),
     ConfigFields = [
         new(
-            "DelineaSecretId",
+            "GraphDelineaSecretId",
             "Graph App Delinea Secret ID",
             "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
     ]
