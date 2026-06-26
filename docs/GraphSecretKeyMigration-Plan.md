@@ -1,8 +1,9 @@
 # Graph Delinea Secret Key Migration — Plan
 
-Status: Approved
+Status: Implemented
 Owner: Michael Coelho
 Created: 2026-06-26
+Implemented: 2026-06-26 (app 2.3.25 -> 2.3.26; commits `2eb9c98`, `063964e`)
 Tracking: "MFA Reset stranded config key" (`.agents/state.md` Known issues / Next-up #1)
 
 ## Problem

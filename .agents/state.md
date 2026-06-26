@@ -5,7 +5,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.25` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.26` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Graph secret key migration DONE (2026-06-26, app 2.3.25→2.3.26;
+  `docs/GraphSecretKeyMigration-Plan.md`, Status: Implemented; commits `2eb9c98`,
+  `063964e`).** Resolves the "MFA Reset stranded config key" issue and the identical latent
+  bug in two sibling Graph modules. Catalog-driven, idempotent startup migration
+  (`ModuleConfigService.MigrateGraphSecretKeys()`, run in `Program.cs` after seeding) moves
+  any value stranded under the renamed old key `DelineaSecretId` to `GraphDelineaSecretId`
+  for every module that declares the new key (MfaReset, NamedLocations, M365GroupManagement,
+  EmergencyDisable); on-prem modules using `DelineaSecretId` as their current key are
+  untouched. The `?? DelineaSecretId` service fallback was then removed from all six read
+  sites (MfaReset/NamedLocations/M365GroupManagement). Module versions →1.0.3 for the three
+  changed; EmergencyDisable unchanged. 6 new tests, all proven non-vacuous; 527/527 green;
+  build/format/diff-check clean. **Manual check deferred to next dev deploy:** confirm each
+  module's config page now shows the recovered value.
 - **Final whole-branch review DONE (2026-06-26, app 2.3.24→2.3.25).** SDD review of the
   whole `e8b155c~1..HEAD` range (3 streams: EXO retry, SQLite store, guide+validator),
   one `reviewer` subagent per stream + cross-cutting pass. All three verdicts SHIP; build
@@ -65,22 +78,23 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Next up (prioritized — owner-ranked 2026-06-26)
 
-Priority order for the open backlog. Items 1–3 are actionable now; 4–5 need an approved
+Priority order for the open backlog. Items 1–2 are actionable now; 3–5 need an approved
 plan first. Full detail in the sections below.
 
-1. **MFA Reset stranded config key** (quick win — owner approved as next; see Known issues).
-   Small, low-risk: one-time key rename + retire the service-side fallback.
-2. **Incorporate AccountLockoutRemediation module** — GPT-built package validated 2026-06-26
+1. **Incorporate AccountLockoutRemediation module** — GPT-built package validated 2026-06-26
    (see "Validated, ready to incorporate" below). Needs an incorporation plan (or
    `/new-module-command`) before code: copy `src/` into the host tree, splice the descriptor
    into `ModuleCatalog.cs`, add the DI line to `Program.cs`, move the test in, build/test/
    format, bump app + module versions. Real validation = manual checks after the dev deploy.
-3. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
+2. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
    cause before any fix). See Queued work.
-4. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
+3. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
    See Queued work.
-5. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-6. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+4. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+5. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+
+Done 2026-06-26: **MFA Reset stranded config key** (and the same latent bug in two sibling
+Graph modules) — see the Now section and `docs/GraphSecretKeyMigration-Plan.md`.
 
 Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms AD
 `DelineaSecretId` in prod (gates CR-1); `deploy.ps1` native `-PlanOnly` (workaround exists).
@@ -91,11 +105,12 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
-- **Deployed versions (confirmed by owner 2026-06-26):** dev is now on **`2.3.25`**
-  (deployed this session, after the PS 5.1 fix below); prod is on **`2.3.11`** — entirely
-  pre-SQLite, so its eventual cutover to 2.3.25 will run the FULL JSON→SQLite legacy import
-  in one shot on first startup (the path the fail-closed parity fix hardens). Still
-  re-confirm on the box immediately before any prod deploy.
+- **Deployed versions (confirmed by owner 2026-06-26):** dev is *deployed* on **`2.3.25`**;
+  `2.3.26` (Graph secret key migration) is built and committed but NOT yet deployed — deploy
+  it to dev to run the migration and do the deferred on-page manual check. Prod is on
+  **`2.3.11`** — entirely pre-SQLite, so its eventual cutover will run the FULL JSON→SQLite
+  legacy import in one shot on first startup (the path the fail-closed parity fix hardens).
+  Still re-confirm on the box immediately before any prod deploy.
 
 ## Verification
 
@@ -120,16 +135,14 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 
 ## Known issues (pre-existing, NOT SQLite-caused)
 
-- **MFA Reset stranded legacy config key.** The Graph Delinea secret was renamed
-  `DelineaSecretId` → `GraphDelineaSecretId` in the catalog. The `ModuleConfig` page only
-  renders the new key, but `MfaResetService` reads `GraphDelineaSecretId ?? DelineaSecretId`.
-  Environments configured before the rename hold the value under the OLD key, so the page
-  shows blank while the service still works via fallback. Confirmed blank in prod
-  (pre-SQLite) and dev → pre-existing. The SQLite import copies every key verbatim, so it
-  neither fixes nor worsens it. **Fix approved as the next quick win (owner, 2026-06-26;
-  see "Next up" #1)**: one-time migrate the OLD-key value to `GraphDelineaSecretId`, then
-  retire the service-side `?? DelineaSecretId` fallback. Still needs a plan slice before code
-  (it's a code change). Affects prod + dev (both confirmed blank).
+- **MFA Reset stranded legacy config key — RESOLVED 2026-06-26 (app 2.3.26).** The Graph
+  Delinea secret was renamed `DelineaSecretId` → `GraphDelineaSecretId`; environments
+  configured before the rename held the value under the OLD key, so the config page showed
+  blank while the service worked via a `?? DelineaSecretId` fallback. Fixed by a catalog-driven
+  idempotent startup migration plus removal of the fallback — see the Now section and
+  `docs/GraphSecretKeyMigration-Plan.md` (Status: Implemented). Code path verified by tests;
+  the on-page recovery is a manual check deferred to the next dev deploy. The same fix also
+  cleared the identical latent bug in NamedLocations and M365GroupManagement.
 
 ## Queued work (forward-looking — no other doc home)
 
