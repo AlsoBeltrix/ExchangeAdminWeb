@@ -13,7 +13,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(20, _catalog.GetAll().Count); // 20 modules (19 operational + 1 config-only)
+        Assert.Equal(21, _catalog.GetAll().Count); // 21 modules (20 operational + 1 config-only)
     }
 
     [Fact]
@@ -97,7 +97,9 @@ public class ModuleCatalogTests
         Assert.Contains("UndoAuditedActions", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
         Assert.DoesNotContain("ExchangeOnline", aliases); // config-only modules excluded
-        Assert.Equal(27, aliases.Count);
+        Assert.Contains("AccountLockoutRemediation", aliases);
+        Assert.Contains("AccountLockoutRemediationLogoff", aliases);
+        Assert.Equal(29, aliases.Count);
     }
 
     [Fact]

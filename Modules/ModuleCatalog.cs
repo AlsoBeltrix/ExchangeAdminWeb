@@ -332,6 +332,28 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "AccountLockoutRemediation",
+            DisplayName = "Account Lockout Remediation",
+            Description = "Identify account lockout source machines and log selected accounts off from implicated or scoped domain computers.",
+            Route = "account-lockout-remediation",
+            IconCss = "bi bi-person-fill-nav-menu",
+            Category = "Identity & Access",
+            SortOrder = 780,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            MainPermission = new("Access", "AccountLockoutRemediation", FailClosed: true),
+            GranularPermissions = [
+                new("Logoff", "AccountLockoutRemediationLogoff", FailClosed: true)
+            ],
+            ConfigFields = [
+                new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to read lockout events, query computer sessions, and log off target sessions"),
+                new("DefaultThrottleLimit", "Default Throttle Limit", "Default WinRM fan-out throttle limit. Valid range: 1-256.", Required: false, DefaultValue: "32"),
+                new("MaxSweepTargets", "Maximum Sweep Targets", "Maximum computers allowed in a scoped sweep. Use 0 for no module limit.", Required: false, DefaultValue: "10000")
+            ]
+        },
+        new()
+        {
             Id = "ConferenceRooms",
             DisplayName = "Conference Rooms",
             Description = "Configure room lists, metadata, booking policies, calendar permissions, and room type templates for Exchange conference rooms.",

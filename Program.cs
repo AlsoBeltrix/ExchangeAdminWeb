@@ -101,6 +101,7 @@ try
     builder.Services.AddSingleton<ADOrganizationalUnitService>();
     builder.Services.AddSingleton<ADDirectorySearchService>();
     builder.Services.AddScoped<EmergencyDisableService>();
+    builder.Services.AddScoped<AccountLockoutRemediationService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
     builder.Services.AddScoped<DelegationReportService>();
     builder.Services.AddScoped<OutOfOfficeService>();

@@ -1,0 +1,326 @@
+@page "/account-lockout-remediation"
+@using ExchangeAdminWeb.Models.AccountLockoutRemediation
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "AccountLockoutRemediation")]
+@rendermode InteractiveServer
+@inject AccountLockoutRemediationService RemediationService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject ClientInfoService ClientInfo
+@inject NavigationManager Navigation
+
+<PageTitle>Account Lockout Remediation</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-4">Account Lockout Remediation<ModuleVersion /></h1>
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="alert @(lastSucceeded ? "alert-success" : "alert-danger") alert-dismissible">
+            @statusMessage
+            <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+        </div>
+    }
+
+    <div class="row g-3">
+        <div class="col-xl-6">
+            <div class="card mb-3">
+                <div class="card-header"><strong>Lockout Source Workflow</strong></div>
+                <div class="card-body">
+                    <div class="row g-2">
+                        <div class="col-md-8">
+                            <label class="form-label">User Filter</label>
+                            <input class="form-control" @bind="sourceUsers" @bind:event="oninput" placeholder="admin_jdoe, svc_backup" disabled="@busy" />
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Within Hours</label>
+                            <input type="number" min="1" max="720" class="form-control" @bind="withinHours" disabled="@busy" />
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Domain Controllers</label>
+                            <input class="form-control" @bind="domainControllers" @bind:event="oninput" placeholder="Leave blank to use PDC Emulator" disabled="@busy" />
+                        </div>
+                    </div>
+
+                    <div class="mt-3 d-flex gap-2">
+                        <button class="btn btn-primary" @onclick="DiscoverSources" disabled="@busy">
+                            @if (busyAction == "discover") { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Find Sources
+                        </button>
+                        <button class="btn btn-outline-secondary" @onclick="DryRunSourceLogoff" disabled="@(busy || discoveryResult == null || discoveryResult.ImplicatedMachines.Count == 0)">
+                            Dry Run Logoff
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            @if (discoveryResult != null)
+            {
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between">
+                        <strong>Lockout Events</strong>
+                        <span class="text-muted">@discoveryResult.ImplicatedMachines.Count machine(s)</span>
+                    </div>
+                    <div class="table-responsive" style="max-height: 360px;">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>User</th>
+                                    <th>Source</th>
+                                    <th>DC</th>
+                                    <th>Time</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var row in discoveryResult.Events)
+                                {
+                                    <tr class="@(row.Actionable ? "" : "table-warning")">
+                                        <td>@row.UserRaw</td>
+                                        <td>@(string.IsNullOrWhiteSpace(row.SourceMachine) ? "(unknown)" : row.SourceMachine)</td>
+                                        <td>@row.DomainController</td>
+                                        <td>@(row.TimeCreated?.ToLocalTime().ToString("g") ?? "")</td>
+                                        <td>@(row.Actionable ? "Actionable" : "Blank source")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="col-xl-6">
+            <div class="card mb-3">
+                <div class="card-header"><strong>Scoped OU / Domain Sweep</strong></div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <label class="form-label">Target Users</label>
+                        <input class="form-control" @bind="sweepUsers" @bind:event="oninput" placeholder="admin_jdoe, svc_backup" disabled="@busy" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Search Base</label>
+                        <input class="form-control" @bind="searchBase" @bind:event="oninput" placeholder="OU=Servers,DC=corp,DC=local or domain root DN" disabled="@busy" />
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Extra Computers</label>
+                        <textarea class="form-control" rows="4" @bind="extraComputers" @bind:event="oninput" placeholder="One hostname per line" disabled="@busy"></textarea>
+                    </div>
+                    <button class="btn btn-outline-secondary" @onclick="DryRunSweep" disabled="@(busy || string.IsNullOrWhiteSpace(sweepUsers) || (string.IsNullOrWhiteSpace(searchBase) && string.IsNullOrWhiteSpace(extraComputers)))">
+                        Dry Run Sweep
+                    </button>
+                </div>
+            </div>
+
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white"><strong>Execute Logoff</strong></div>
+                <div class="card-body">
+                    <div class="mb-2">
+                        <label class="form-label">Ticket Number</label>
+                        <input class="form-control" @bind="ticketNumber" @bind:event="oninput" disabled="@busy" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Type LOG OFF</label>
+                        <input class="form-control" @bind="typedConfirmation" @bind:event="oninput" disabled="@busy" />
+                    </div>
+                    <div class="d-flex gap-2 flex-wrap">
+                        <button class="btn btn-danger" @onclick="ExecuteSourceLogoff" disabled="@(!CanExecuteSource)">
+                            Log Off Source Sessions
+                        </button>
+                        <button class="btn btn-danger" @onclick="ExecuteSweep" disabled="@(!CanExecuteSweep)">
+                            Log Off Scoped Sweep
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (logoffResult != null)
+    {
+        <div class="card mt-3">
+            <div class="card-header d-flex justify-content-between">
+                <strong>Session Results</strong>
+                <span class="text-muted">@logoffResult.SessionHitCount hit(s), @logoffResult.FailureCount failure row(s)</span>
+            </div>
+            <div class="table-responsive" style="max-height: 480px;">
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr>
+                            <th>Computer</th>
+                            <th>User</th>
+                            <th>Session</th>
+                            <th>State</th>
+                            <th>Action</th>
+                            <th>Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in logoffResult.Rows)
+                        {
+                            <tr class="@(row.Success ? "" : "table-warning")">
+                                <td>@row.Computer</td>
+                                <td>@row.User</td>
+                                <td>@row.SessionId</td>
+                                <td>@row.State</td>
+                                <td>@row.Action</td>
+                                <td><small>@row.Detail</small></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool authChecked;
+    private bool busy;
+    private bool lastSucceeded;
+    private string? statusMessage;
+    private string busyAction = "";
+    private string currentUser = "Unknown";
+    private string clientIpAddress = "Unknown";
+
+    private string sourceUsers = "";
+    private int withinHours = 24;
+    private string domainControllers = "";
+    private string sweepUsers = "";
+    private string searchBase = "";
+    private string extraComputers = "";
+    private string ticketNumber = "";
+    private string typedConfirmation = "";
+    private int throttleLimit;
+
+    private AccountLockoutDiscoveryResult? discoveryResult;
+    private AccountLogoffResult? logoffResult;
+
+    private bool CanExecuteSource =>
+        !busy &&
+        discoveryResult?.ImplicatedMachines.Count > 0 &&
+        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        string.Equals(typedConfirmation, "LOG OFF", StringComparison.Ordinal);
+
+    private bool CanExecuteSweep =>
+        !busy &&
+        !string.IsNullOrWhiteSpace(sweepUsers) &&
+        (!string.IsNullOrWhiteSpace(searchBase) || !string.IsNullOrWhiteSpace(extraComputers)) &&
+        !string.IsNullOrWhiteSpace(ticketNumber) &&
+        string.Equals(typedConfirmation, "LOG OFF", StringComparison.Ordinal);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "AccountLockoutRemediation");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        throttleLimit = RemediationService.GetDefaultThrottleLimit();
+        authChecked = true;
+    }
+
+    private async Task DiscoverSources()
+    {
+        await RunAsync("discover", async context =>
+        {
+            discoveryResult = await RemediationService.DiscoverLockoutSourcesAsync(
+                new AccountLockoutSourceRequest(ParseList(sourceUsers), withinHours, ParseList(domainControllers), throttleLimit),
+                context);
+            logoffResult = null;
+            return (discoveryResult.Success, discoveryResult.Message);
+        });
+    }
+
+    private async Task DryRunSourceLogoff()
+    {
+        await RunAsync("source-dry-run", async context =>
+        {
+            logoffResult = await RemediationService.LogoffLockoutSourcesAsync(
+                new AccountLockoutLogoffRequest(ParseList(sourceUsers), withinHours, ParseList(domainControllers), false, "", throttleLimit),
+                context);
+            return (logoffResult.Success, logoffResult.Message);
+        });
+    }
+
+    private async Task ExecuteSourceLogoff()
+    {
+        await RunAsync("source-execute", async context =>
+        {
+            logoffResult = await RemediationService.LogoffLockoutSourcesAsync(
+                new AccountLockoutLogoffRequest(ParseList(sourceUsers), withinHours, ParseList(domainControllers), true, ticketNumber.Trim(), throttleLimit),
+                context);
+            return (logoffResult.Success, logoffResult.Message);
+        });
+    }
+
+    private async Task DryRunSweep()
+    {
+        await RunAsync("sweep-dry-run", async context =>
+        {
+            logoffResult = await RemediationService.SweepScopedComputersAsync(
+                new AccountScopedLogoffRequest(ParseList(sweepUsers), searchBase.Trim(), ParseList(extraComputers), false, "", throttleLimit),
+                context);
+            return (logoffResult.Success, logoffResult.Message);
+        });
+    }
+
+    private async Task ExecuteSweep()
+    {
+        await RunAsync("sweep-execute", async context =>
+        {
+            logoffResult = await RemediationService.SweepScopedComputersAsync(
+                new AccountScopedLogoffRequest(ParseList(sweepUsers), searchBase.Trim(), ParseList(extraComputers), true, ticketNumber.Trim(), throttleLimit),
+                context);
+            return (logoffResult.Success, logoffResult.Message);
+        });
+    }
+
+    private async Task RunAsync(string action, Func<AccountLockoutOperatorContext, Task<(bool success, string message)>> work)
+    {
+        busy = true;
+        busyAction = action;
+        statusMessage = null;
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var context = new AccountLockoutOperatorContext(authState.User, currentUser, clientIpAddress);
+            var result = await work(context);
+            lastSucceeded = result.success;
+            statusMessage = result.message;
+        }
+        finally
+        {
+            busy = false;
+            busyAction = "";
+        }
+    }
+
+    private static string[] ParseList(string value)
+        => (value ?? "")
+            .Split(new[] { ',', ';', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+}
