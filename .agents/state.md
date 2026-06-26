@@ -70,12 +70,17 @@ plan first. Full detail in the sections below.
 
 1. **MFA Reset stranded config key** (quick win — owner approved as next; see Known issues).
    Small, low-risk: one-time key rename + retire the service-side fallback.
-2. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
+2. **Incorporate AccountLockoutRemediation module** — GPT-built package validated 2026-06-26
+   (see "Validated, ready to incorporate" below). Needs an incorporation plan (or
+   `/new-module-command`) before code: copy `src/` into the host tree, splice the descriptor
+   into `ModuleCatalog.cs`, add the DI line to `Program.cs`, move the test in, build/test/
+   format, bump app + module versions. Real validation = manual checks after the dev deploy.
+3. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
    cause before any fix). See Queued work.
-3. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
+4. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
    See Queued work.
-4. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-5. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+5. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+6. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
 
 Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms AD
 `DelineaSecretId` in prod (gates CR-1); `deploy.ps1` native `-PlanOnly` (workaround exists).
@@ -146,6 +151,31 @@ These have no plan doc yet; do not start without the noted plan/approval.
   any modification to non-managed groups at the service/authorization layer (UI hiding is
   not security). Open: how "manages" is determined, on-prem vs M365 vs both, making the
   lookup tolerable. Depends on GM-1/GM-2 being understood first.
+
+## Validated, ready to incorporate
+
+- **AccountLockoutRemediation module (GPT-built, staged in
+  `_not_for_github/example_scripts/AccountLockoutRemediation/`).** Genuine new-module need AND
+  a test of the new module developer guide — it followed the guide's output shape exactly.
+  **Static validation passed 2026-06-26** (the dynamic parts can only be proven by manual
+  checks after a dev deploy):
+  - `tools/validate-module-package.ps1` → **0 errors, 0 warnings**.
+  - All host dependencies exist and **signatures match exactly**: `ModuleCredentialService.
+    GetCredentialsAsync`, `ProtectedPrincipalService.ResolveWithStatusAsync` / `ResolutionStatus`
+    / `ResolvedDirectoryPrincipal` (ObjectGuid/DN/SamAccountName), `OperationTraceService.
+    BeginOperation`+`Step`, `AuditService.LogModuleAction`+`LogLookupAction`, `ModuleConfigService.
+    IsModuleCorrupt`+`GetValue`, `ClientInfoService.GetIpForUser`+`IpAddress`.
+  - Security contract honored: disabled-by-default, both permissions FailClosed; logoff gated by
+    ticket # + typed "LOG OFF"; targets run through ProtectedPrincipal with re-resolution +
+    immutable-GUID re-check immediately before logoff; audit/trace on all paths; credentials
+    never logged; module-scoped `DelineaSecretId` (no credential reuse); dry-run everywhere;
+    per-machine failures aggregated (no blanket success).
+  - Function: 4740-event lockout-source discovery (PDC/named DCs), targeted logoff of implicated
+    machines, and scoped OU/domain sweep with `MaxSweepTargets` cap + WinRM throttle.
+  - NOT yet verified (requires deployed env): live AD event-log read, WinRM reachability,
+    `quser.exe`/`logoff.exe` parsing — run the package's own Manual Validation steps post-deploy.
+  - Incorporation is a code change (needs an approved plan / `/new-module-command`). Queued at
+    "Next up" #2 (after the MFA quick win).
 
 ## Recently completed (pointers only — full detail in the named docs)
 
