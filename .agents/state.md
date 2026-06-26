@@ -112,6 +112,17 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 ## Blockers
 
 - None blocking current work.
+- **OPEN — versioning rule is wrong for new modules (owner, 2026-06-26; not yet fixed).**
+  Current rule (Constitution §Deployment And Versioning; AGENTS.md invariant #6) bumps the
+  base app version for any "shared/app-wide" change, and this session bumped 2.3.26→2.3.27
+  for *adding* the AccountLockoutRemediation module. Owner: **bumping the base app version
+  for every new module is wrong.** End-state intent: modules distributed as `.zip` and
+  uploaded via the web UI — installing a module must NOT require a recompile or an app
+  version bump (only the module's own `Version` moves). This is the deferred
+  runtime-upload/dynamic-load capability from `.agents/decisions.md` 2026-06-18; the
+  versioning rule must change in step with it. Not yet actioned (owner: "address later").
+  When actioned: record a `decision` ("new modules do not bump base app version") and fix
+  the Constitution + AGENTS.md #6 wording. The 2.3.27 bump is already committed (`3e84d50`).
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
