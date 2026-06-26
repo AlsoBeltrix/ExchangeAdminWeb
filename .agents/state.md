@@ -5,7 +5,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.26` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
+  `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
+  `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
+  host tree (page/service/models/test/doc moved, catalog descriptor at SortOrder 780, DI
+  line, catalog count tests 20→21 modules / 27→29 configurable aliases). Two compile errors
+  the package shape-validator does NOT catch were fixed during incorporation (CS0136
+  method-vs-block `message` collision → renamed `summary`; CS8030/CS9174 collection-expr
+  ternary in `DiscoverPdcAsync` → `Array.Empty<string>()`). Added 10 service unit tests
+  (throttle clamp proven non-vacuous; guard paths). Module ships at 1.0.0; 22 modules total
+  now. 539/539 green; build/format/diff-check clean. **Manual validation deferred to dev
+  deploy** (live 4740 read, WinRM, quser/logoff parsing, real dry-run+logoff, protected-block)
+  — run the package's own Manual Validation steps. Staged copy under
+  `_not_for_github/example_scripts/AccountLockoutRemediation/` left in place (gitignored).
 - **Graph secret key migration DONE (2026-06-26, app 2.3.25→2.3.26;
   `docs/GraphSecretKeyMigration-Plan.md`, Status: Implemented; commits `2eb9c98`,
   `063964e`).** Resolves the "MFA Reset stranded config key" issue and the identical latent
@@ -78,23 +91,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Next up (prioritized — owner-ranked 2026-06-26)
 
-Priority order for the open backlog. Items 1–2 are actionable now; 3–5 need an approved
-plan first. Full detail in the sections below.
+Priority order for the open backlog. Item 1 needs investigation; 2–4 need an approved plan
+first. Full detail in the sections below.
 
-1. **Incorporate AccountLockoutRemediation module** — GPT-built package validated 2026-06-26
-   (see "Validated, ready to incorporate" below). Needs an incorporation plan (or
-   `/new-module-command`) before code: copy `src/` into the host tree, splice the descriptor
-   into `ModuleCatalog.cs`, add the DI line to `Program.cs`, move the test in, build/test/
-   format, bump app + module versions. Real validation = manual checks after the dev deploy.
-2. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
+1. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
    cause before any fix). See Queued work.
-3. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
+2. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
    See Queued work.
-4. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-5. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+4. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
 
-Done 2026-06-26: **MFA Reset stranded config key** (and the same latent bug in two sibling
-Graph modules) — see the Now section and `docs/GraphSecretKeyMigration-Plan.md`.
+Done 2026-06-26: **MFA Reset stranded config key** (`docs/GraphSecretKeyMigration-Plan.md`)
+and **AccountLockoutRemediation module incorporation**
+(`docs/AccountLockoutRemediation-Incorporation-Plan.md`) — see the Now section. The latter
+still has manual validation pending its next dev deploy.
 
 Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms AD
 `DelineaSecretId` in prod (gates CR-1); `deploy.ps1` native `-PlanOnly` (workaround exists).
@@ -106,10 +116,12 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
 - **Deployed versions (confirmed by owner 2026-06-26):** dev is *deployed* on **`2.3.26`**
-  (Graph secret key migration ran; recovered Secret ID verified on the config page). Prod is
-  on **`2.3.11`** — entirely pre-SQLite, so its eventual cutover will run the FULL JSON→SQLite
-  legacy import in one shot on first startup (the path the fail-closed parity fix hardens).
-  Still re-confirm on the box immediately before any prod deploy.
+  (Graph secret key migration ran; recovered Secret ID verified on the config page). **`2.3.27`**
+  (AccountLockoutRemediation module) is built and committed but NOT yet deployed — deploy it
+  to dev to run the module's manual validation. Prod is on **`2.3.11`** — entirely pre-SQLite,
+  so its eventual cutover will run the FULL JSON→SQLite legacy import in one shot on first
+  startup (the path the fail-closed parity fix hardens). Still re-confirm on the box
+  immediately before any prod deploy.
 
 ## Verification
 
@@ -165,32 +177,12 @@ These have no plan doc yet; do not start without the noted plan/approval.
   not security). Open: how "manages" is determined, on-prem vs M365 vs both, making the
   lookup tolerable. Depends on GM-1/GM-2 being understood first.
 
-## Validated, ready to incorporate
-
-- **AccountLockoutRemediation module (GPT-built, staged in
-  `_not_for_github/example_scripts/AccountLockoutRemediation/`).** Genuine new-module need AND
-  a test of the new module developer guide — it followed the guide's output shape exactly.
-  **Static validation passed 2026-06-26** (the dynamic parts can only be proven by manual
-  checks after a dev deploy):
-  - `tools/validate-module-package.ps1` → **0 errors, 0 warnings**.
-  - All host dependencies exist and **signatures match exactly**: `ModuleCredentialService.
-    GetCredentialsAsync`, `ProtectedPrincipalService.ResolveWithStatusAsync` / `ResolutionStatus`
-    / `ResolvedDirectoryPrincipal` (ObjectGuid/DN/SamAccountName), `OperationTraceService.
-    BeginOperation`+`Step`, `AuditService.LogModuleAction`+`LogLookupAction`, `ModuleConfigService.
-    IsModuleCorrupt`+`GetValue`, `ClientInfoService.GetIpForUser`+`IpAddress`.
-  - Security contract honored: disabled-by-default, both permissions FailClosed; logoff gated by
-    ticket # + typed "LOG OFF"; targets run through ProtectedPrincipal with re-resolution +
-    immutable-GUID re-check immediately before logoff; audit/trace on all paths; credentials
-    never logged; module-scoped `DelineaSecretId` (no credential reuse); dry-run everywhere;
-    per-machine failures aggregated (no blanket success).
-  - Function: 4740-event lockout-source discovery (PDC/named DCs), targeted logoff of implicated
-    machines, and scoped OU/domain sweep with `MaxSweepTargets` cap + WinRM throttle.
-  - NOT yet verified (requires deployed env): live AD event-log read, WinRM reachability,
-    `quser.exe`/`logoff.exe` parsing — run the package's own Manual Validation steps post-deploy.
-  - Incorporation is a code change (needs an approved plan / `/new-module-command`). Queued at
-    "Next up" #2 (after the MFA quick win).
-
 ## Recently completed (pointers only — full detail in the named docs)
+
+- **AccountLockoutRemediation module** — incorporated 2026-06-26 (app 2.3.27),
+  `docs/AccountLockoutRemediation-Incorporation-Plan.md` (Implemented). Manual validation
+  (live AD 4740 read, WinRM, quser/logoff, real dry-run+logoff, protected-block) still
+  pending its first dev deploy — run the package's own Manual Validation steps then.
 
 - **CR-BUG-1 EXO pool dead-runspace auto-retry** — `docs/ExoDeadConnectionRetry-Plan.md`
   (Implemented, app 2.3.23, commit `39ce87a`).

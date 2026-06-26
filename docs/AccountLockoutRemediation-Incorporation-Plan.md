@@ -1,8 +1,9 @@
 # AccountLockoutRemediation — Incorporation Plan
 
-Status: Draft (awaiting owner approval)
+Status: Implemented
 Owner: Michael Coelho
 Created: 2026-06-26
+Implemented: 2026-06-26 (app 2.3.26 -> 2.3.27; commits `0ca909a`, `2550c55`, + this docs/version slice)
 Tracking: `.agents/state.md` "Validated, ready to incorporate" / Next-up #1
 
 ## What this is

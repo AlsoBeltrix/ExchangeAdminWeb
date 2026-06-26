@@ -1,6 +1,6 @@
 # ExchangeAdminWeb
 
-ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, named locations, and Active Directory tasks through a self-service web interface. Provides 21 modules (20 operational + 1 config-only) covering EXO, Graph API, and on-prem AD operations.
+ASP.NET Core 10 Blazor Server application for Exchange Online administration, mailbox/calendar permissions, group management, MFA operations, conference room setup, named locations, and Active Directory tasks through a self-service web interface. Provides 22 modules (21 operational + 1 config-only) covering EXO, Graph API, and on-prem AD operations.
 
 ## Features
 
@@ -177,6 +177,23 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - Full pagination support for large tenants
 - **Requires:** Graph app registration with `Policy.ReadWrite.ConditionalAccess` permission
 - Section access key: `NamedLocations`
+
+### Account Lockout Remediation (`/account-lockout-remediation`)
+
+Identify the source machine of an account lockout and log the affected accounts off the
+implicated or scoped domain computers. Disabled by default; both permissions fail-closed.
+
+- Discover lockout sources from Security 4740 events on the PDC Emulator (or named DCs)
+- Log selected accounts off the implicated source machines
+- Scoped sweep: log accounts off every machine in an OU/computer list (with a
+  `MaxSweepTargets` cap and a WinRM fan-out throttle)
+- Dry-run by default; execution requires a ticket number and typed "LOG OFF" confirmation
+- Targets are re-resolved through Protected Principals with an immutable-GUID re-check
+  immediately before logoff; all paths audited and traced
+- Granular `Logoff` permission gates execution separately from `Access`
+- **Requires:** module-scoped AD credential (`DelineaSecretId`) with rights to read lockout
+  events, query sessions, and log off sessions; WinRM to target machines
+- Section access keys: `AccountLockoutRemediation`, `AccountLockoutRemediationLogoff`
 
 ### Security & Compliance
 - **Windows Authentication** — Seamless SSO with Active Directory

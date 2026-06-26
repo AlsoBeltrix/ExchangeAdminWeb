@@ -2,7 +2,7 @@
 <!-- templateVersion: 2026-06-22 -->
 
 ASP.NET Core 10 Blazor Server app (`net10.0-windows`) for Exchange Online / Graph /
-on-prem AD administration. 21 modules on a descriptor-based architecture
+on-prem AD administration. 22 modules on a descriptor-based architecture
 (`Modules/ModuleCatalog.cs`). Current app version lives in `<VersionPrefix>` in
 `ExchangeAdminWeb.csproj`.
 
