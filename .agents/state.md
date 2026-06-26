@@ -18,14 +18,23 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
     stores (`ProtectedPrincipal`, `ADAttributeEditor`) already guarded this. Wrapped both
     `ImportIfMissing` calls so a DB-write throw fails closed and leaves the legacy file for
     the next startup to retry. Two new tests, each proven non-vacuous. 521/521 xUnit green.
-  - **Deferred review nits (docs-only, no plan needed, fix opportunistically):**
-    (1) `docs/AdminModuleSpec.md:94` still says section access is managed on the Section
-    Access page in Admin Settings — it's actually each module's config page
-    (`/module-config/{ModuleId}`); contradicts the guide + `AdminSettings.razor:37`.
-    (2) `docs/AdminModuleSpec.md:110` "regardless of file content" is JSON-era wording (now
-    a DB table). (3) `Services/Storage/IConfigStore.cs:11-13` / `ConfigChangeToken.cs:6-9`
-    comments claim cache readers consume `GetChangeToken()`, but the two TTL-caching readers
-    ignore it (accept ≤30s staleness) — correct the comments or wire the token.
+  - **Deferred review nits — DONE (commit `940a125`):** `AdminModuleSpec.md` section-access
+    location corrected to each module's config page (`/module-config/{ModuleId}`) +
+    "regardless of stored state" DB-era wording; `IConfigStore.cs`/`ConfigChangeToken.cs`
+    comments corrected to state the change token is advisory and NOT consulted by the
+    TTL-caching readers (they accept ≤30s staleness, plan-permitted). Wiring the readers to
+    the token remains an unscheduled future option, not a defect.
+- **PowerShell 5.1 ASCII fix for ops scripts (commit `46acddc`, 2026-06-26).** The SQLite
+  Phase D deploy scripts had em dashes (U+2014) / section signs (U+00A7) in comments/strings
+  and are UTF-8 *without BOM*. Windows PowerShell 5.1 (required by `deploy.ps1` — the IIS
+  `WebAdministration` provider won't load under PS7) reads BOM-less files as ANSI, mangling
+  those chars into cascading parse errors; PS7 (UTF-8 default) was unaffected, so it stayed
+  latent until the first 5.1 dev deploy this session. Fixed six files: `deploy.ps1`,
+  `tools/SqliteConfigBackup.psm1` (imported by deploy.ps1 — would have broken the deploy even
+  after fixing deploy.ps1 alone), `tools/promote-dev-to-prod.ps1` (prod promote),
+  `tools/Install-ExchangeAdminWeb.ps1`, and two Pester files — all now pure ASCII, verified
+  parsing under a simulated 5.1 ANSI read; Pester 59/59 green. **This bug would also have hit
+  the prod cutover** (prod on 2.3.11 has never run these scripts); now cleared.
 - **CR-BUG-1 (EXO pool dead-runspace) FIXED** (`docs/ExoDeadConnectionRetry-Plan.md`,
   Status: *Implemented*, app 2.3.23→2.3.24). The pool auto-retries a dead EXO session once on
   a fresh borrow, gated to read-only + single-write ops (opt-in `allowRetry`, default off);
@@ -60,9 +69,11 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
-- **Deployed versions are not repo-verifiable** — confirm prod/dev on the boxes before any
-  deploy. Plan baseline intent was prod + dev both on `2.3.11` pre-cutover; dev last
-  validated at `2.3.19`.
+- **Deployed versions (confirmed by owner 2026-06-26):** dev is now on **`2.3.25`**
+  (deployed this session, after the PS 5.1 fix below); prod is on **`2.3.11`** — entirely
+  pre-SQLite, so its eventual cutover to 2.3.25 will run the FULL JSON→SQLite legacy import
+  in one shot on first startup (the path the fail-closed parity fix hardens). Still
+  re-confirm on the box immediately before any prod deploy.
 
 ## Verification
 
