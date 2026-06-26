@@ -294,6 +294,36 @@ public class SectionAccessServiceTests : IDisposable
     }
 
     [Fact]
+    public void Construction_ValidLegacyFileButImportFails_FailsClosed()
+    {
+        // A valid legacy fragment that cannot be committed to the DB (e.g. SQLite busy) must fail
+        // closed, NOT silently drop the rules by falling through to the appsettings/AllowedGroups
+        // fallback. Mirrors the sibling authorization stores (ProtectedPrincipal, ADAttributeEditor).
+        File.WriteAllText(_legacyFilePath,
+            """{ "Security": { "SectionAccess": { "MailboxPermissions": ["GroupA"] } } }""");
+
+        var service = CreateService(store: new WriteFailsStore());
+
+        Assert.True(service.IsFragmentCorrupt());
+        Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
+        Assert.Empty(service.GetGroupsForSection("DelegationReport")); // even read-only denied
+        Assert.True(File.Exists(_legacyFilePath)); // not archived — next startup retries
+        Assert.Empty(Directory.GetFiles(_configDir, "sectionaccess.json.imported-*"));
+    }
+
+    // Reads succeed (returns empty/unconfigured) but writes throw — simulates SQLite busy during
+    // the one-time import.
+    private sealed class WriteFailsStore : IConfigStore
+    {
+        private readonly SqliteConfigStore _inner;
+        public WriteFailsStore() => _inner = TestConfigStore.Create(Path.Combine(Path.GetTempPath(), $"sa_wfs_{Guid.NewGuid():N}"));
+        public long GetChangeToken() => _inner.GetChangeToken();
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read) => _inner.Read(read);
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) => throw new InvalidOperationException("store busy");
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store busy");
+    }
+
+    [Fact]
     public void PartialSchemaDamage_MarkerTableDropped_FailsClosed_DoesNotThrow()
     {
         // Simulate partial corruption: section_access readable, but the presence-marker table is

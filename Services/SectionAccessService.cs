@@ -175,14 +175,30 @@ public class SectionAccessService
                 return true;
             }
 
-            _repository.ImportIfMissing(parsed);
+            try
+            {
+                _repository.ImportIfMissing(parsed);
+            }
+            catch (Exception ex)
+            {
+                // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
+                // Do NOT archive and do NOT fall through to an unconfigured store — that would
+                // silently drop the section-access rules and fall back to the permissive
+                // appsettings/_allowedGroups path. Fail closed; the file stays on disk so the
+                // next startup retries the import.
+                _logger.LogError(ex, "Failed to import legacy sectionaccess.json into the store — failing closed until import succeeds");
+                return true;
+            }
+
             LegacyConfigImport.ArchiveFile(legacyPath, _logger);
             return false;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy sectionaccess.json");
-            return false;
+            // Reached only if reading the file itself failed (not a parse error — those return
+            // true above). A valid file we could not even read must also fail closed.
+            _logger.LogError(ex, "Failed to process legacy sectionaccess.json — failing closed");
+            return true;
         }
     }
 }
