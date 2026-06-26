@@ -63,6 +63,23 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   - Final whole-branch review now DONE (see top of Now). Branch is review-complete; do not
     push prod yet — see Blockers.
 
+## Next up (prioritized — owner-ranked 2026-06-26)
+
+Priority order for the open backlog. Items 1–3 are actionable now; 4–5 need an approved
+plan first. Full detail in the sections below.
+
+1. **MFA Reset stranded config key** (quick win — owner approved as next; see Known issues).
+   Small, low-risk: one-time key rename + retire the service-side fallback.
+2. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
+   cause before any fix). See Queued work.
+3. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
+   See Queued work.
+4. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+5. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+
+Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms AD
+`DelineaSecretId` in prod (gates CR-1); `deploy.ps1` native `-PlanOnly` (workaround exists).
+
 ## Blockers
 
 - None blocking current work.
@@ -104,8 +121,10 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   Environments configured before the rename hold the value under the OLD key, so the page
   shows blank while the service still works via fallback. Confirmed blank in prod
   (pre-SQLite) and dev → pre-existing. The SQLite import copies every key verbatim, so it
-  neither fixes nor worsens it. Proper fix (deferred, not requested): one-time key rename
-  then retire the service-side fallback.
+  neither fixes nor worsens it. **Fix approved as the next quick win (owner, 2026-06-26;
+  see "Next up" #1)**: one-time migrate the OLD-key value to `GraphDelineaSecretId`, then
+  retire the service-side `?? DelineaSecretId` fallback. Still needs a plan slice before code
+  (it's a code change). Affects prod + dev (both confirmed blank).
 
 ## Queued work (forward-looking — no other doc home)
 
