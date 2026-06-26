@@ -19,7 +19,7 @@ public class MfaResetService
 
     private async Task<GraphTokenClient?> GetGraphClientAsync()
     {
-        var secretIdStr = (_moduleConfig.GetValue("MfaReset", "GraphDelineaSecretId") ?? _moduleConfig.GetValue("MfaReset", "DelineaSecretId"));
+        var secretIdStr = _moduleConfig.GetValue("MfaReset", "GraphDelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
             return null;
 
@@ -40,7 +40,7 @@ public class MfaResetService
     {
         get
         {
-            var secretIdStr = (_moduleConfig.GetValue("MfaReset", "GraphDelineaSecretId") ?? _moduleConfig.GetValue("MfaReset", "DelineaSecretId"));
+            var secretIdStr = _moduleConfig.GetValue("MfaReset", "GraphDelineaSecretId");
             return int.TryParse(secretIdStr, out var id) && id > 0;
         }
     }

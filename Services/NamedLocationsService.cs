@@ -19,7 +19,7 @@ public class NamedLocationsService
 
     private async Task<GraphTokenClient> GetGraphClientAsync()
     {
-        var secretIdStr = (_moduleConfig.GetValue("NamedLocations", "GraphDelineaSecretId") ?? _moduleConfig.GetValue("NamedLocations", "DelineaSecretId"));
+        var secretIdStr = _moduleConfig.GetValue("NamedLocations", "GraphDelineaSecretId");
         if (!int.TryParse(secretIdStr, out var secretId) || secretId <= 0)
             throw new InvalidOperationException("Named Locations module is not configured. Set Graph App Delinea Secret ID in Module Config.");
 
@@ -41,7 +41,7 @@ public class NamedLocationsService
     {
         get
         {
-            var secretIdStr = (_moduleConfig.GetValue("NamedLocations", "GraphDelineaSecretId") ?? _moduleConfig.GetValue("NamedLocations", "DelineaSecretId"));
+            var secretIdStr = _moduleConfig.GetValue("NamedLocations", "GraphDelineaSecretId");
             return int.TryParse(secretIdStr, out var id) && id > 0;
         }
     }

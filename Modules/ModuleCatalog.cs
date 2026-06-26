@@ -289,7 +289,7 @@ public sealed class ModuleCatalog
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
@@ -324,7 +324,7 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
@@ -372,7 +372,7 @@ public sealed class ModuleCatalog
             SortOrder = 790,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.0.3",
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (requires Policy.ReadWrite.ConditionalAccess)")
