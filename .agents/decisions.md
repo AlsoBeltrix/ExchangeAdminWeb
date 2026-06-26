@@ -5,6 +5,34 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-26 - SQLite native-lib advisory CVE-2025-6965: tracked, no action available yet
+
+Status: Active (re-check periodically)
+
+Decision:
+The build emits `NU1903` for `SQLitePCLRaw.lib.e_sqlite3` 2.1.11
+(CVE-2025-6965 / GHSA-2m69-gcr7-jv3q, High). This is **accepted and tracked, not fixed**,
+because there is no patched package to move to: 2.1.11 is the latest published version of
+the native lib, and the advisory lists patched version "None" as of 2026-06-26. The flaw is
+an upstream SQLite engine bug (aggregate-function handling, fixed in SQLite 3.50.2) not yet
+rolled into a released `e_sqlite3` build. It reaches this app only transitively via
+`Microsoft.Data.Sqlite` 10.0.7.
+
+Practical risk here is low: exploitation needs attacker-controlled SQL containing malicious
+aggregate expressions, and the SqliteConfigStore is a single-writer, app-controlled config DB
+with hand-written queries — no untrusted SQL is executed. Severity is High in the abstract;
+exposure for this usage is not.
+
+Action when a fix ships: bump `Microsoft.Data.Sqlite` (and/or pin a patched
+`SQLitePCLRaw.lib.e_sqlite3`) to a version carrying SQLite ≥ 3.50.2, rebuild, run the full
+suite incl. config-store tests, then drop this note. Do NOT suppress `NU1903` in the
+meantime — keep the advisory visible.
+
+Reason:
+Owner direction 2026-06-26 (document & track) after research confirmed no patched package
+exists. Recorded so the recurring build warning is a known, assessed item rather than noise,
+and so a future session does not waste effort attempting a non-existent version bump.
+
 ### 2026-06-18 - SQLite config store: three design decisions resolved; module packaging direction set
 
 Status: Active

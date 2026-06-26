@@ -27,6 +27,9 @@ logs/
 # Session files
 session_*.json
 
+# Operator-command scratch dumps (e.g. /catchup writes *-command-message*.txt)
+*-command-message*.txt
+
 # Sensitive configuration
 appsettings.json
 appsettings.Development.json
