@@ -239,15 +239,31 @@ public class ModuleEnablementService
             }
 
             if (legacy is { Count: > 0 })
-                _repository.ImportIfMissing(legacy);
+            {
+                try
+                {
+                    _repository.ImportIfMissing(legacy);
+                }
+                catch (Exception ex)
+                {
+                    // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
+                    // Do NOT archive and do NOT fall through to a readable-but-empty store — that
+                    // would let modules silently default to EnabledByDefault. Fail closed (all
+                    // modules disabled); the file stays on disk so the next startup retries.
+                    _logger.LogError(ex, "Failed to import legacy modules-enabled.json into the store — failing closed (all modules disabled) until import succeeds");
+                    return true;
+                }
+            }
 
             LegacyConfigImport.ArchiveFile(legacyPath, _logger);
             return false;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to import legacy modules-enabled.json");
-            return false;
+            // Reached only if reading the file itself failed (not a parse error — those return
+            // true above). A valid file we could not even read must also fail closed.
+            _logger.LogError(ex, "Failed to process legacy modules-enabled.json — failing closed (all modules disabled)");
+            return true;
         }
     }
 }

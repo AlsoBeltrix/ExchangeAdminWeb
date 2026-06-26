@@ -577,6 +577,29 @@ public class ModuleEnablementServiceTests : IDisposable
     }
 
     [Fact]
+    public void Construction_ValidLegacyFileButImportFails_FailsClosed()
+    {
+        // A valid legacy file that parses but cannot be committed to the store (e.g. SQLite busy)
+        // must fail closed (all non-system modules disabled), NOT fall through to a readable-but-
+        // empty store that lets modules default to EnabledByDefault. Mirrors the unparseable case
+        // and the sibling authorization stores.
+        var configDir = Path.Combine(_tempDir, "config");
+        Directory.CreateDirectory(configDir);
+        var legacy = Path.Combine(configDir, "modules-enabled.json");
+        File.WriteAllText(legacy, """{ "Migration": true, "MailboxPermissions": false }""");
+
+        var service = CreateService(new WriteFailsStore());
+
+        Assert.True(service.IsStoreCorrupt());
+        foreach (var module in _catalog.GetAll().Where(m => !m.IsSystemModule))
+            Assert.False(service.IsModuleEnabled(module.Id),
+                $"Expected '{module.Id}' disabled while legacy import is failing");
+        // File must remain for the next startup to retry (not archived).
+        Assert.True(File.Exists(legacy));
+        Assert.Empty(Directory.GetFiles(configDir, "modules-enabled.json.imported-*"));
+    }
+
+    [Fact]
     public void Startup_ExistingExchangeOnlineKey_PreservedAndNothingWritten()
     {
         SeedEnablement(new Dictionary<string, bool>
