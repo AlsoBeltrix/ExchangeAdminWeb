@@ -148,6 +148,13 @@ try
         // startup write stays banned. No-op on a corrupt store.
         var enablement = app.Services.GetRequiredService<ModuleEnablementService>();
         enablement.SeedMissingModules();
+
+        // One-time repair of the renamed Graph credential key (DelineaSecretId ->
+        // GraphDelineaSecretId): moves any value stranded under the old key for Graph modules so
+        // the config page (which binds only the new key) shows it. Idempotent, catalog-scoped to
+        // Graph modules, non-destructive. See docs/GraphSecretKeyMigration-Plan.md.
+        var moduleConfig = app.Services.GetRequiredService<ModuleConfigService>();
+        moduleConfig.MigrateGraphSecretKeys();
     }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');

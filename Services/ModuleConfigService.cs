@@ -83,6 +83,45 @@ public class ModuleConfigService
         ConfigSaved?.Invoke(moduleId);
     }
 
+    /// <summary>
+    /// One-time remap of the renamed Graph credential key: for every catalog module that declares
+    /// a <c>GraphDelineaSecretId</c> ConfigField, move a value stranded under the old
+    /// <c>DelineaSecretId</c> key to the new key (and drop the stale row). Catalog-driven so it is
+    /// scoped to Graph modules only — on-prem modules that legitimately use <c>DelineaSecretId</c>
+    /// as their current key are never touched. Idempotent and non-destructive (never overwrites an
+    /// existing new-key value); a module with nothing to remap performs no write. Returns the IDs
+    /// actually changed. See docs/GraphSecretKeyMigration-Plan.md.
+    /// </summary>
+    public IReadOnlyList<string> MigrateGraphSecretKeys()
+    {
+        const string oldKey = "DelineaSecretId";
+        const string newKey = "GraphDelineaSecretId";
+
+        var changed = new List<string>();
+        foreach (var module in _catalog.GetAll())
+        {
+            if (!module.ConfigFields.Any(f => string.Equals(f.Key, newKey, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            try
+            {
+                if (_repository.RemapKey(module.Id, oldKey, newKey))
+                    changed.Add(module.Id);
+            }
+            catch (Exception ex)
+            {
+                // Best-effort repair; a write failure (locked store, etc.) must not abort startup.
+                // The service-side read still works on whichever key holds the value until then.
+                _logger.LogError(ex, "Graph secret key remap failed for {Module}", module.Id);
+            }
+        }
+
+        if (changed.Count > 0)
+            _logger.LogInformation("Migrated stranded Graph secret key for {Count} module(s): {Modules}", changed.Count, string.Join(", ", changed));
+
+        return changed;
+    }
+
     private Dictionary<string, string> ReadModuleConfig(string moduleId)
     {
         // Fail-open: return an empty config on a read error, matching the file version.

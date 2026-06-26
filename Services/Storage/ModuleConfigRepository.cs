@@ -112,6 +112,56 @@ public sealed class ModuleConfigRepository
         });
     }
 
+    /// <summary>
+    /// One-time key remap within a single module: moves a stranded <paramref name="fromKey"/>
+    /// value to <paramref name="toKey"/> when the latter is absent/empty, then removes the
+    /// stale <paramref name="fromKey"/> row. If <paramref name="toKey"/> already has a non-empty
+    /// value it wins (no overwrite) and the dead <paramref name="fromKey"/> row is simply deleted.
+    /// Returns true only if a row was actually written or deleted (so a no-op bumps no change
+    /// token). Used by the Graph credential key rename (DelineaSecretId -> GraphDelineaSecretId);
+    /// see docs/GraphSecretKeyMigration-Plan.md.
+    /// </summary>
+    public bool RemapKey(string moduleId, string fromKey, string toKey)
+    {
+        // Read first so a module with nothing to remap never opens a write transaction.
+        var current = GetModule(moduleId);
+        var hasFrom = current.TryGetValue(fromKey, out var fromValue) && !string.IsNullOrWhiteSpace(fromValue);
+        var hasTo = current.TryGetValue(toKey, out var toValue) && !string.IsNullOrWhiteSpace(toValue);
+        var fromRowPresent = current.ContainsKey(fromKey);
+
+        if (!fromRowPresent)
+            return false; // nothing stranded under the old key
+
+        var copyValue = !hasTo && hasFrom; // move only when the new key has no usable value
+
+        return _store.Write((connection, transaction) =>
+        {
+            if (copyValue)
+            {
+                using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText =
+                    "INSERT INTO module_config (module_id, config_key, config_value, updated_at) " +
+                    "VALUES ($id, $key, $value, $ts) " +
+                    "ON CONFLICT(module_id, config_key) DO UPDATE SET config_value = excluded.config_value, updated_at = excluded.updated_at;";
+                insert.Parameters.AddWithValue("$id", moduleId);
+                insert.Parameters.AddWithValue("$key", toKey);
+                insert.Parameters.AddWithValue("$value", fromValue);
+                insert.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o"));
+                insert.ExecuteNonQuery();
+            }
+
+            using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM module_config WHERE module_id = $id AND config_key = $key;";
+            delete.Parameters.AddWithValue("$id", moduleId);
+            delete.Parameters.AddWithValue("$key", fromKey);
+            delete.ExecuteNonQuery();
+
+            return true;
+        });
+    }
+
     private static void MarkPresent(SqliteConnection connection, SqliteTransaction transaction, string moduleId)
     {
         using var command = connection.CreateCommand();
