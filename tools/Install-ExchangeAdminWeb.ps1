@@ -591,11 +591,11 @@ Write-AppSettings -Path $configPath -Settings (New-AppSettingsObject `
 
 # Config seeds (SQLite note): runtime config now lives in config/exchangeadmin.db, created by
 # the app on first start. These JSON seeds are written only if missing and are consumed as
-# ONE-TIME IMPORT SEED — on first start the app imports each into the DB and archives the file
-# as *.imported-<timestamp> (SqliteConfigStore-Plan §4). So a fresh install still gets correct
+# ONE-TIME IMPORT SEED - on first start the app imports each into the DB and archives the file
+# as *.imported-<timestamp> (SqliteConfigStore-Plan section 4). So a fresh install still gets correct
 # initial config (incl. the section-access authorization seed) without this script needing to
 # speak SQLite. The config/ ACL granted above is (OI)(CI)M, so the DB the app creates inside
-# config/ inherits Modify for the pool identity (WAL needs write) — no DB-specific ACL needed.
+# config/ inherits Modify for the pool identity (WAL needs write) - no DB-specific ACL needed.
 # This script stays environment-neutral and standalone; it does not speak SQLite or couple to
 # any environment-specific deploy tooling.
 Write-JsonFileIfMissing -Path (Join-Path $configDir "sectionaccess.json") -Value (New-SectionAccessSeed -Groups $adminGroupsQualified) -Description "section access config (first-run import seed)"

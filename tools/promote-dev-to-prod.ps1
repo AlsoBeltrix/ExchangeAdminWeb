@@ -225,7 +225,7 @@ if ($dev.Equals($prod, [StringComparison]::OrdinalIgnoreCase)) {
 }
 
 # Prod-overwrite consent gates PROMOTION (dev->prod) only. -Refresh (prod->dev) never writes to
-# prod, so it must NOT require this confirmation — it has its own elevation check below.
+# prod, so it must NOT require this confirmation - it has its own elevation check below.
 if ($Apply -and -not $Refresh -and -not $IUnderstandThisOverwritesProd) {
     throw "Apply mode requires -IUnderstandThisOverwritesProd to confirm this promotion overwrites the prod publish folder."
 }
@@ -240,7 +240,7 @@ $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $backup = Join-Path $backupRootResolved ("ExchangeAdminWeb.backup.$timestamp")
 
 # --- -Refresh: pull PROD config DB down into DEV (the reverse of promotion) -----------------
-# The owner's "copy prod config to dev" operation (SqliteConfigStore-Plan §Phase D). It is a
+# The owner's "copy prod config to dev" operation (SqliteConfigStore-Plan section Phase D). It is a
 # wholesale, verified copy of prod's config DB onto dev so dev reproduces prod's live config.
 # It NEVER touches prod, and NEVER touches dev's appsettings.json / PathBase (those are
 # per-environment identity). Backup-first, dev pool stopped during the swap.
@@ -257,7 +257,7 @@ if ($Refresh) {
     Write-Host ""
 
     if (-not (Test-IsSqliteConfigDbPresent -ConfigDir $prodConfigDir)) {
-        throw "Prod has no config DB at $prodConfigDir\exchangeadmin.db — nothing to refresh into dev."
+        throw "Prod has no config DB at $prodConfigDir\exchangeadmin.db - nothing to refresh into dev."
     }
 
     if (-not $Apply) {
@@ -336,7 +336,7 @@ Invoke-RobocopyChecked -Description "Backing up prod publish folder" -RobocopyAr
 )
 
 # The publish-folder backup above includes config/ via robocopy, but a robocopy of a LIVE WAL
-# database can be torn/inconsistent — so additionally capture a verified online backup of prod's
+# database can be torn/inconsistent - so additionally capture a verified online backup of prod's
 # config DB (if it has one yet) into the same backup folder. No-op on a pre-SQLite prod (returns
 # null). Throws/aborts if prod's live DB fails its integrity check (owner decision 2026-06-18).
 if ($Apply) {
@@ -369,7 +369,7 @@ try {
     if (-not $SkipConfigFragments) {
         # Config promotion (SqliteConfigStore-Plan Phase D2): all runtime config now lives in the
         # single SQLite DB config/exchangeadmin.db. dev is staging for prod and both run the same
-        # code version after this promotion, so prod's config should MIRROR dev's exactly — a
+        # code version after this promotion, so prod's config should MIRROR dev's exactly - a
         # wholesale replace, not a per-key merge (owner decision 2026-06-18: any prod-only key is
         # either dead under the new code or a dev misconfiguration to fix in dev). Copy-SqliteConfigDb
         # writes a consistent, integrity-verified snapshot of dev's DB over prod's. Prod's prior DB
@@ -385,11 +385,11 @@ try {
             }
         } elseif ($Apply) {
             # All runtime config lives in the DB now. A missing dev DB means promotion would ship
-            # binaries with NO config promoted, leaving prod on stale/missing config — abort
+            # binaries with NO config promoted, leaving prod on stale/missing config - abort
             # rather than report success. (Triggers the rollback in the surrounding catch.)
-            throw "Dev has no config DB at $devConfigDir\exchangeadmin.db — cannot promote config. Run -Dev with the current build first."
+            throw "Dev has no config DB at $devConfigDir\exchangeadmin.db - cannot promote config. Run -Dev with the current build first."
         } else {
-            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db — nothing to promote (dry run). Run -Dev with the current build first."
+            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db - nothing to promote (dry run). Run -Dev with the current build first."
         }
     } else {
         Write-Warn "Skipping config promotion by request."

@@ -9,10 +9,10 @@
     could produce a rollback snapshot that is itself corrupt.
 
     DEPENDENCY: sqlite3.exe must be on PATH (declared in docs/AdminModuleDeveloperGuide.md /
-    deployment docs — install via `winget install SQLite.SQLite`). Backups use a true online
+    deployment docs - install via `winget install SQLite.SQLite`). Backups use a true online
     backup ('VACUUM INTO') followed by 'PRAGMA integrity_check', which works even while the app
     is running. If sqlite3.exe is absent the backup THROWS rather than silently degrading to an
-    unverified file copy — a deploy must not proceed without a verifiable rollback snapshot.
+    unverified file copy - a deploy must not proceed without a verifiable rollback snapshot.
 
     On an integrity-check FAILURE the function THROWS (owner decision 2026-06-18: abort the
     deploy rather than continue over a corrupt store with a worthless rollback snapshot).
@@ -85,7 +85,7 @@ function Backup-SqliteConfigDb {
         throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on $backupPath"
     }
     if ("$integrity".Trim() -ne 'ok') {
-        throw "Config DB integrity check FAILED: '$integrity'. Aborting before any changes — the live config DB at $dbPath may be corrupt. Investigate before deploying."
+        throw "Config DB integrity check FAILED: '$integrity'. Aborting before any changes - the live config DB at $dbPath may be corrupt. Investigate before deploying."
     }
 
     return $backupPath
@@ -98,7 +98,7 @@ function Backup-SqliteConfigDb {
 
 .DESCRIPTION
     dev is staging for prod and the two run the same code version after a promotion, so prod's
-    config should mirror dev's exactly — a wholesale replace, not a per-table merge (owner
+    config should mirror dev's exactly - a wholesale replace, not a per-table merge (owner
     decision 2026-06-18; any prod-only key is either dead under the new code or a dev
     misconfiguration to fix in dev, so nothing of prod's is worth preserving).
 
@@ -124,7 +124,7 @@ function Copy-SqliteConfigDb {
 
     $sourceDb = Join-Path $SourceConfigDir 'exchangeadmin.db'
     if (-not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) {
-        throw "Source config DB not found at $sourceDb — cannot promote config to $DestConfigDir."
+        throw "Source config DB not found at $sourceDb - cannot promote config to $DestConfigDir."
     }
 
     $sqlite3 = Assert-Sqlite3Available

@@ -203,7 +203,7 @@ Describe 'deploy.ps1' {
         $upgradeBlock | Should -Match 'Backup-SqliteConfigDb' `
             -Because 'the live config DB needs a consistent, integrity-verified backup (SQLite Phase D)'
         $upgradeBlock | Should -Not -Match 'Copy-Item \$runtimeConfigDir \$configDirBackup -Recurse' `
-            -Because 'a raw recursive copy of a live WAL DB can be inconsistent — replaced by the online backup'
+            -Because 'a raw recursive copy of a live WAL DB can be inconsistent - replaced by the online backup'
         $upgradeBlock | Should -Match 'config\.\$\{timestamp\}\.bak' `
             -Because 'the snapshot must be timestamped and retained like appsettings backups'
         $upgradeBlock.IndexOf('Backup-SqliteConfigDb') |
@@ -219,7 +219,7 @@ Describe 'deploy.ps1' {
 
         # The DB triplet is excluded from the file-drift inventory (it changes across the pool
         # restart by design), so the live store must instead be verified by integrity_check after
-        # the pool starts — otherwise a missing/corrupt live DB ends on the success banner.
+        # the pool starts - otherwise a missing/corrupt live DB ends on the success banner.
         $upgradeBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
             -Because 'the live DB needs a real post-deploy health check, not file-drift comparison'
         $upgradeBlock | Should -Match "driftCheckExclusions = @\('extended-log-level.txt', 'exchangeadmin.db'" `
@@ -307,7 +307,7 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         # The app creates config/exchangeadmin.db at runtime; it must inherit Modify (WAL needs
         # write) from the config-dir ACL. (OI)(CI)M = object+container inherit, Modify.
         $s.Text | Should -Match 'Set-DirectoryAcl -Path \$configDir -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"' `
-            -Because 'the runtime DB inherits the config-dir ACL — no DB-specific grant needed'
+            -Because 'the runtime DB inherits the config-dir ACL - no DB-specific grant needed'
     }
 
     It 'still writes the section-access seed file (consumed as first-run DB import seed)' {

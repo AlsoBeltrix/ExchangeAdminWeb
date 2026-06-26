@@ -424,7 +424,7 @@ if ($isUpgrade) {
     # pre-incident enablement state unknowable. Back up the runtime config directory,
     # retained alongside the appsettings backups.
     #
-    # The config DB (config/exchangeadmin.db) is a LIVE SQLite database — a raw recursive
+    # The config DB (config/exchangeadmin.db) is a LIVE SQLite database - a raw recursive
     # Copy-Item of a live WAL DB can be torn/inconsistent, producing a worthless rollback
     # snapshot. Back the DB up via a verified online backup (VACUUM INTO + integrity_check;
     # SqliteConfigStore-Plan Phase D), then copy any remaining non-DB config files (e.g. legacy
@@ -458,7 +458,7 @@ if ($isUpgrade) {
     # pool restart and would false-positive the drift check.
     # The SQLite config DB triplet (.db/-wal/-shm) changes byte-for-byte across a pool restart
     # (WAL checkpoints, startup seeding) by design, so a size/mtime drift comparison is
-    # meaningless for it — it is verified by PRAGMA integrity_check after deploy instead (see the
+    # meaningless for it - it is verified by PRAGMA integrity_check after deploy instead (see the
     # post-deploy DB health check). Exclude it from the file-drift inventory.
     $driftCheckExclusions = @('extended-log-level.txt', 'exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm')
     $preConfigInventory = @{}
@@ -596,7 +596,7 @@ if ($isUpgrade) {
     # above (it changes by design across the pool restart via WAL checkpoint + startup seeding),
     # so verify it properly here instead: the app pool was started above, so the schema has been
     # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
-    # the success banner. Warn (not throw) — the deploy has already happened; this surfaces a bad
+    # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
     # outcome to the operator with the verified pre-deploy backup as the rollback.
     $liveDb = Join-Path $PublishPath "config\exchangeadmin.db"
     if (Test-Path -LiteralPath $liveDb) {
@@ -604,7 +604,7 @@ if ($isUpgrade) {
             Test-SqliteConfigDbIntegrity -DbPath $liveDb | Out-Null
             Write-Success "Config DB verified: integrity_check passed on the live store"
         } catch {
-            Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly — restore from the pre-deploy backup in $BackupDir and investigate."
+            Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
         }
     } else {
         Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."

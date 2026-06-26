@@ -81,7 +81,7 @@ Describe 'SqliteConfigBackup module' {
         $src = New-TempDir
         $dst = New-TempDir
         try {
-            # Write garbage bytes under the DB name — VACUUM INTO / integrity_check must reject it.
+            # Write garbage bytes under the DB name - VACUUM INTO / integrity_check must reject it.
             $db = Join-Path $src 'exchangeadmin.db'
             [System.IO.File]::WriteAllText($db, 'this is not a sqlite database, it is garbage')
             { Backup-SqliteConfigDb -ConfigDir $src -DestDir $dst -Timestamp '20260618' } |
