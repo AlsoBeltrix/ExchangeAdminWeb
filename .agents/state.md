@@ -5,7 +5,27 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.24` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.25` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Final whole-branch review DONE (2026-06-26, app 2.3.24→2.3.25).** SDD review of the
+  whole `e8b155c~1..HEAD` range (3 streams: EXO retry, SQLite store, guide+validator),
+  one `reviewer` subagent per stream + cross-cutting pass. All three verdicts SHIP; build
+  clean, format clean, `git diff --check` clean. One security-relevant finding fixed before
+  done (owner: "fix before done"):
+  - **Fail-closed parity fix (commits `cb4b984`, `eed13f4`):** during the one-time
+    JSON→SQLite legacy import, `SectionAccessService` and `ModuleEnablementService` failed
+    *open* when the DB write threw (e.g. SQLite busy) — they fell through to the permissive
+    appsettings/`EnabledByDefault` path instead of denying. The two sibling authorization
+    stores (`ProtectedPrincipal`, `ADAttributeEditor`) already guarded this. Wrapped both
+    `ImportIfMissing` calls so a DB-write throw fails closed and leaves the legacy file for
+    the next startup to retry. Two new tests, each proven non-vacuous. 521/521 xUnit green.
+  - **Deferred review nits (docs-only, no plan needed, fix opportunistically):**
+    (1) `docs/AdminModuleSpec.md:94` still says section access is managed on the Section
+    Access page in Admin Settings — it's actually each module's config page
+    (`/module-config/{ModuleId}`); contradicts the guide + `AdminSettings.razor:37`.
+    (2) `docs/AdminModuleSpec.md:110` "regardless of file content" is JSON-era wording (now
+    a DB table). (3) `Services/Storage/IConfigStore.cs:11-13` / `ConfigChangeToken.cs:6-9`
+    comments claim cache readers consume `GetChangeToken()`, but the two TTL-caching readers
+    ignore it (accept ≤30s staleness) — correct the comments or wire the token.
 - **CR-BUG-1 (EXO pool dead-runspace) FIXED** (`docs/ExoDeadConnectionRetry-Plan.md`,
   Status: *Implemented*, app 2.3.23→2.3.24). The pool auto-retries a dead EXO session once on
   a fresh borrow, gated to read-only + single-write ops (opt-in `allowRetry`, default off);
@@ -17,9 +37,6 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
     signature (`IsRetriablePrecheckError`), so a single write whose session drops *after*
     Exchange accepted it is never re-submitted. Also excluded git-ignored `_not_for_github\`
     from csproj compile globs (was breaking local builds; not part of the bug fix).
-  - 11 orchestration tests over the pure core, narrowing proven non-vacuous; 519/519 xUnit green.
-  - NEXT: final whole-branch review (SDD) before the branch is considered done (do not push
-    prod yet — see Blockers).
 - **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:
   *Implemented*). All Phases A–E done (app 2.3.21, 2026-06-24). 508/508 tests green.
   - Phase E note: all service test rewrites were completed inline during Phases B-D;
@@ -34,8 +51,8 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   proven non-vacuous). A Codex review pass was folded in (one-pass, owner-approved): Graph
   credential key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline →
   2.3.22, this state block repaired. 508/508 xUnit + 59/59 Pester green.
-  - NEXT: final whole-branch review (SDD), then this branch is ready (do not push prod yet —
-    see Blockers).
+  - Final whole-branch review now DONE (see top of Now). Branch is review-complete; do not
+    push prod yet — see Blockers.
 
 ## Blockers
 
