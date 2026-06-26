@@ -91,7 +91,7 @@ Table: `section_access` in `config/exchangeadmin.db`
 | `MyModule` | `DOMAIN\MyModuleUsers` |
 | `MyModuleAdmin` | `DOMAIN\MyModuleAdmins` |
 
-Managed via the Section Access page in Admin Settings. Each PolicyAlias appears there.
+Managed on each module's config page (`/module-config/{ModuleId}`). Each PolicyAlias appears there.
 
 - No rows for alias: fail-closed (deny)
 - Store unreadable: fail-closed (deny all)
@@ -107,7 +107,7 @@ Table: `module_enablement` in `config/exchangeadmin.db`
 - No row: module uses `EnabledByDefault` from descriptor
 - Store unreadable: all non-system modules disabled (fail-closed)
 - New module rows are seeded non-destructively on startup (`INSERT … ON CONFLICT DO NOTHING`)
-- System modules always enabled regardless of file content
+- System modules always enabled regardless of stored state
 - Managed via Admin Settings toggle switches or the module's own config page
 
 ## Registration

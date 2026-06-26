@@ -9,12 +9,20 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// bug need fixing in multiple services instead of one.
 ///
 /// Reads run on a short-lived connection. Writes run inside a transaction and automatically
-/// bump the <see cref="ConfigChangeToken"/> on commit, so cache-holding readers can detect the
-/// change (§5B.2). No store keeps a long-lived connection (§5B.1).
+/// bump the <see cref="ConfigChangeToken"/> on commit (§5B.2). No store keeps a long-lived
+/// connection (§5B.1).
+///
+/// Note: the change token is available for cache-invalidation but is currently advisory — the
+/// two TTL-caching readers (ProtectedPrincipalService, ADAttributeEditorService) do NOT consult
+/// it and instead accept a ≤30s staleness window (§5B.2 permitted this). Only the store and its
+/// tests reference <see cref="GetChangeToken"/> today; wiring the readers to it is a future option.
 /// </summary>
 public interface IConfigStore
 {
-    /// <summary>The current change token; readers compare this to decide whether to reload.</summary>
+    /// <summary>
+    /// The current change token. Intended for readers that want to compare-and-reload, but no
+    /// production reader consults it yet (see the type remarks); the TTL caches accept ≤30s drift.
+    /// </summary>
     long GetChangeToken();
 
     /// <summary>Runs a read against a short-lived connection and returns its result.</summary>
