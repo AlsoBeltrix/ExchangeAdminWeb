@@ -9,6 +9,11 @@ namespace ExchangeAdminWeb.Tests;
 /// operations must discard that dead connection and run once more on a fresh borrow; multi-write
 /// operations must NOT retry (a re-run would repeat an already-committed write).
 ///
+/// Review #2 (2026-06-26) narrowed the RETRY trigger: retry fires only on the pre-cmdlet signature
+/// (proves the cmdlet never ran), NOT on any connection error. A session that drops mid/after a
+/// cmdlet still DISCARDS but must not replay a possibly-committed single write. So discard is gated
+/// by the broad IsConnectionError and retry by the narrow IsRetriablePrecheckError.
+///
 /// These exercise <see cref="ExoConnectionPool.RunWithRetryCoreAsync{T}"/>, the pure orchestration
 /// core, with fake borrow/return/discard delegates — the real pool needs a live EXO connection and
 /// cannot be unit-hosted. The core owns the borrow↔return/discard pairing and the retry decision,
@@ -16,10 +21,15 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 public class ExoConnectionPoolRetryTests
 {
-    // A connection error matches ExoConnectionPool.IsConnectionError. This is the real observed text.
+    // The narrow pre-cmdlet signature: dead session detected BEFORE any cmdlet ran. Retriable.
     private static InvalidOperationException DeadSession() =>
         new("Exception calling \"GetCurrentConnectionContext\" with \"1\" argument(s): " +
             "\"You must call Connect-ExchangeOnline before calling any other cmdlet.\"");
+
+    // A connection error that is NOT the pre-cmdlet signature: e.g. the session drops mid-flight.
+    // Broad classifier discards it, but it must NOT trigger a replay.
+    private static InvalidOperationException MidFlightConnectionDrop() =>
+        new("The remote session was unexpectedly closed: the connection was aborted.");
 
     private static InvalidOperationException BusinessError() =>
         new("The mailbox 'x' couldn't be found.");
@@ -43,7 +53,6 @@ public class ExoConnectionPoolRetryTests
             Borrows++;
             var id = _nextId++;
             BorrowedIds.Add(id);
-            // The runspace internals are irrelevant here; identity is tracked via list position.
             var pr = MakeRunspace(id);
             _live.Add(pr);
             return Task.FromResult(pr);
@@ -54,8 +63,6 @@ public class ExoConnectionPoolRetryTests
 
         private int IdOf(PooledRunspace pr) => _live.IndexOf(pr);
 
-        // PooledRunspace needs a Runspace + PowerShell; we never invoke on them in these tests, so
-        // a defaulted instance via the public ctor is enough. Build the cheapest valid instance.
         private static PooledRunspace MakeRunspace(int gen)
         {
             var rs = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace();
@@ -64,75 +71,87 @@ public class ExoConnectionPoolRetryTests
         }
     }
 
+    private static Task<T> Run<T>(
+        FakePool pool,
+        Func<PooledRunspace, Task<PooledOutcome<T>>> run,
+        bool allowRetry,
+        PoolFailurePolicy policy = PoolFailurePolicy.Return)
+        => ExoConnectionPool.RunWithRetryCoreAsync(
+            pool.Borrow, pool.Return, pool.Discard, run,
+            ExoConnectionPool.IsConnectionError,
+            ExoConnectionPool.IsRetriablePrecheckError,
+            allowRetry, policy);
+
     [Fact]
-    public async Task EligibleOp_DeadSessionThenSuccess_RetriesOnFreshBorrow()
+    public async Task EligibleOp_PrecheckDeadSessionThenSuccess_RetriesOnFreshBorrow()
     {
         var pool = new FakePool();
         var attempts = 0;
 
-        var result = await ExoConnectionPool.RunWithRetryCoreAsync<string>(
-            pool.Borrow, pool.Return, pool.Discard,
-            _ =>
-            {
-                attempts++;
-                if (attempts == 1) throw DeadSession();
-                return Task.FromResult(new PooledOutcome<string>("ok", false));
-            },
-            ExoConnectionPool.IsConnectionError,
-            allowRetry: true,
-            PoolFailurePolicy.Return);
+        var result = await Run<string>(pool, _ =>
+        {
+            attempts++;
+            if (attempts == 1) throw DeadSession();
+            return Task.FromResult(new PooledOutcome<string>("ok", false));
+        }, allowRetry: true);
 
         Assert.Equal("ok", result);
-        Assert.Equal(2, attempts);            // ran twice
-        Assert.Equal(2, pool.Borrows);        // on two separate borrows
-        Assert.Equal(1, pool.Discards);       // the dead one was discarded
-        Assert.Equal(1, pool.Returns);        // the healthy one returned
+        Assert.Equal(2, attempts);
+        Assert.Equal(2, pool.Borrows);
+        Assert.Equal(1, pool.Discards);
+        Assert.Equal(1, pool.Returns);
         Assert.Equal(0, pool.DiscardedIds[0]); // first (dead) connection discarded
         Assert.Equal(1, pool.ReturnedIds[0]);  // second (fresh) connection returned
-        // Slot conservation: every borrow paired with exactly one return-or-discard.
-        Assert.Equal(pool.Borrows, pool.Returns + pool.Discards);
+        Assert.Equal(pool.Borrows, pool.Returns + pool.Discards); // slot conservation
     }
 
     [Fact]
-    public async Task EligibleOp_DeadSessionTwice_SurfacesFailure_NoThirdAttempt()
+    public async Task EligibleOp_PrecheckDeadSessionTwice_SurfacesFailure_NoThirdAttempt()
     {
         var pool = new FakePool();
         var attempts = 0;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ExoConnectionPool.RunWithRetryCoreAsync<string>(
-                pool.Borrow, pool.Return, pool.Discard,
-                _ => { attempts++; throw DeadSession(); },
-                ExoConnectionPool.IsConnectionError,
-                allowRetry: true,
-                PoolFailurePolicy.Return));
+            Run<string>(pool, _ => { attempts++; throw DeadSession(); }, allowRetry: true));
 
         Assert.Equal(2, attempts);       // exactly one retry, no third
         Assert.Equal(2, pool.Borrows);
-        Assert.Equal(2, pool.Discards);  // both dead connections discarded
+        Assert.Equal(2, pool.Discards);
         Assert.Equal(0, pool.Returns);
         Assert.Equal(pool.Borrows, pool.Returns + pool.Discards);
     }
 
     [Fact]
-    public async Task NonEligibleOp_DeadSession_DiscardsButDoesNotRetry()
+    public async Task EligibleOp_MidFlightConnectionDrop_DiscardsButDoesNotRetry()
+    {
+        // THE review-#2 case: a connection error that is NOT the pre-cmdlet signature. The single
+        // write may have committed, so we must discard (don't reuse a dead session) but NOT replay.
+        var pool = new FakePool();
+        var attempts = 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Run<string>(pool, _ => { attempts++; throw MidFlightConnectionDrop(); }, allowRetry: true));
+
+        Assert.Equal(1, attempts);       // NO retry despite being eligible — error isn't pre-check
+        Assert.Equal(1, pool.Borrows);
+        Assert.Equal(1, pool.Discards);  // still discarded (broad connection error)
+        Assert.Equal(0, pool.Returns);
+        Assert.Equal(pool.Borrows, pool.Returns + pool.Discards);
+    }
+
+    [Fact]
+    public async Task NonEligibleOp_PrecheckDeadSession_DiscardsButDoesNotRetry()
     {
         var pool = new FakePool();
         var attempts = 0;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ExoConnectionPool.RunWithRetryCoreAsync<string>(
-                pool.Borrow, pool.Return, pool.Discard,
-                _ => { attempts++; throw DeadSession(); },
-                ExoConnectionPool.IsConnectionError,
-                allowRetry: false,   // multi-write op: NOT eligible
-                PoolFailurePolicy.Return));
+            Run<string>(pool, _ => { attempts++; throw DeadSession(); }, allowRetry: false));
 
-        Assert.Equal(1, attempts);       // single attempt, no retry
+        Assert.Equal(1, attempts);       // multi-write op: not eligible, no retry
         Assert.Equal(1, pool.Borrows);
         Assert.Equal(1, pool.Discards);  // dead connection still discarded (self-heal for next time)
         Assert.Equal(0, pool.Returns);
-        Assert.Equal(pool.Borrows, pool.Returns + pool.Discards);
     }
 
     [Fact]
@@ -142,12 +161,7 @@ public class ExoConnectionPoolRetryTests
         var attempts = 0;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ExoConnectionPool.RunWithRetryCoreAsync<string>(
-                pool.Borrow, pool.Return, pool.Discard,
-                _ => { attempts++; throw BusinessError(); },
-                ExoConnectionPool.IsConnectionError,
-                allowRetry: true,    // eligible, but the error is not a connection error
-                PoolFailurePolicy.Return));
+            Run<string>(pool, _ => { attempts++; throw BusinessError(); }, allowRetry: true));
 
         Assert.Equal(1, attempts);       // no retry for a business error
         Assert.Equal(1, pool.Borrows);
@@ -161,12 +175,7 @@ public class ExoConnectionPoolRetryTests
         var pool = new FakePool();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ExoConnectionPool.RunWithRetryCoreAsync<string>(
-                pool.Borrow, pool.Return, pool.Discard,
-                _ => throw BusinessError(),
-                ExoConnectionPool.IsConnectionError,
-                allowRetry: true,
-                PoolFailurePolicy.Discard));  // PermissionValidator policy
+            Run<string>(pool, _ => throw BusinessError(), allowRetry: true, PoolFailurePolicy.Discard));
 
         Assert.Equal(1, pool.Borrows);
         Assert.Equal(1, pool.Discards);  // can't guarantee clean pipeline -> discard
@@ -174,48 +183,61 @@ public class ExoConnectionPoolRetryTests
     }
 
     [Fact]
-    public async Task EligibleOp_ConnectionFailureViaTracker_RetriesAndSucceeds()
+    public async Task EligibleOp_PrecheckFailureViaTracker_RetriesAndSucceeds()
     {
         // RunAsync swallows the throw and signals the dead session via the returned outcome's
-        // ConnectionFailure flag instead of throwing. The orchestrator must treat that identically.
+        // flags instead of throwing. RetriablePrecheck=true means it was the pre-cmdlet signature.
         var pool = new FakePool();
         var attempts = 0;
 
-        var result = await ExoConnectionPool.RunWithRetryCoreAsync<string>(
-            pool.Borrow, pool.Return, pool.Discard,
-            _ =>
-            {
-                attempts++;
-                return Task.FromResult(attempts == 1
-                    ? new PooledOutcome<string>("failed", true)   // flagged dead session, returned not thrown
-                    : new PooledOutcome<string>("ok", false));
-            },
-            ExoConnectionPool.IsConnectionError,
-            allowRetry: true,
-            PoolFailurePolicy.Return);
+        var result = await Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(attempts == 1
+                ? new PooledOutcome<string>("failed", ConnectionFailure: true, RetriablePrecheck: true)
+                : new PooledOutcome<string>("ok", false));
+        }, allowRetry: true);
 
         Assert.Equal("ok", result);
         Assert.Equal(2, attempts);
-        Assert.Equal(1, pool.Discards);  // first (flagged) discarded
-        Assert.Equal(1, pool.Returns);   // second returned
+        Assert.Equal(1, pool.Discards);
+        Assert.Equal(1, pool.Returns);
     }
 
     [Fact]
-    public async Task NonEligibleOp_ConnectionFailureViaTracker_ReturnsResultNoRetry()
+    public async Task EligibleOp_MidFlightFailureViaTracker_DiscardsNoRetry()
+    {
+        // Connection failure flagged via tracker, but NOT the pre-cmdlet signature: discard, no replay.
+        var pool = new FakePool();
+        var attempts = 0;
+
+        var result = await Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(new PooledOutcome<string>("failed", ConnectionFailure: true, RetriablePrecheck: false));
+        }, allowRetry: true);
+
+        Assert.Equal("failed", result);  // surfaced as-is
+        Assert.Equal(1, attempts);       // NO retry
+        Assert.Equal(1, pool.Discards);  // discarded
+        Assert.Equal(0, pool.Returns);
+    }
+
+    [Fact]
+    public async Task NonEligibleOp_PrecheckFailureViaTracker_ReturnsResultNoRetry()
     {
         var pool = new FakePool();
         var attempts = 0;
 
-        var result = await ExoConnectionPool.RunWithRetryCoreAsync<string>(
-            pool.Borrow, pool.Return, pool.Discard,
-            _ => { attempts++; return Task.FromResult(new PooledOutcome<string>("failed", true)); },
-            ExoConnectionPool.IsConnectionError,
-            allowRetry: false,
-            PoolFailurePolicy.Return);
+        var result = await Run<string>(pool, _ =>
+        {
+            attempts++;
+            return Task.FromResult(new PooledOutcome<string>("failed", ConnectionFailure: true, RetriablePrecheck: true));
+        }, allowRetry: false);
 
-        Assert.Equal("failed", result);  // surfaced as-is
-        Assert.Equal(1, attempts);       // no retry
-        Assert.Equal(1, pool.Discards);  // dead connection discarded
+        Assert.Equal("failed", result);
+        Assert.Equal(1, attempts);       // not eligible, no retry
+        Assert.Equal(1, pool.Discards);
         Assert.Equal(0, pool.Returns);
     }
 
@@ -224,12 +246,8 @@ public class ExoConnectionPoolRetryTests
     {
         var pool = new FakePool();
 
-        var result = await ExoConnectionPool.RunWithRetryCoreAsync<string>(
-            pool.Borrow, pool.Return, pool.Discard,
-            _ => Task.FromResult(new PooledOutcome<string>("ok", false)),
-            ExoConnectionPool.IsConnectionError,
-            allowRetry: true,
-            PoolFailurePolicy.Return);
+        var result = await Run<string>(pool,
+            _ => Task.FromResult(new PooledOutcome<string>("ok", false)), allowRetry: true);
 
         Assert.Equal("ok", result);
         Assert.Equal(1, pool.Borrows);
@@ -238,12 +256,26 @@ public class ExoConnectionPoolRetryTests
     }
 
     [Fact]
-    public void IsConnectionError_RecognizesDeadSessionSignature()
+    public void Classifiers_DiscardIsBroad_RetryIsNarrow()
     {
+        // Discard (broad): pre-check AND mid-flight AND generic connection errors.
         Assert.True(ExoConnectionPool.IsConnectionError(DeadSession()));
+        Assert.True(ExoConnectionPool.IsConnectionError(MidFlightConnectionDrop()));
         Assert.True(ExoConnectionPool.IsConnectionError(
             new InvalidOperationException("The runspace is not available.")));
         Assert.False(ExoConnectionPool.IsConnectionError(BusinessError()));
         Assert.False(ExoConnectionPool.IsConnectionError(null));
+
+        // Retry (narrow): ONLY the pre-cmdlet signature. Crucially NOT the mid-flight drop.
+        Assert.True(ExoConnectionPool.IsRetriablePrecheckError(DeadSession()));
+        Assert.False(ExoConnectionPool.IsRetriablePrecheckError(MidFlightConnectionDrop()));
+        Assert.False(ExoConnectionPool.IsRetriablePrecheckError(
+            new InvalidOperationException("The runspace is not available.")));
+        Assert.False(ExoConnectionPool.IsRetriablePrecheckError(BusinessError()));
+        Assert.False(ExoConnectionPool.IsRetriablePrecheckError(null));
+
+        // Every retriable error is also a connection error (retry implies discard).
+        Assert.True(ExoConnectionPool.IsConnectionError(DeadSession())
+            && ExoConnectionPool.IsRetriablePrecheckError(DeadSession()));
     }
 }

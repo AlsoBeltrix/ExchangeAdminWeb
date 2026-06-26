@@ -81,8 +81,16 @@ public abstract class ExchangeServiceBase
                     }
                 }
 
+                // Invoke (when used) already classified via the error stream before clearing it;
+                // also classify from the thrown message to cover throws that bypassed Invoke and
+                // BuildPsException's recovered primary text. OR-ing is idempotent.
                 if (IsConnectionError(ex))
                     tracker.HasConnectionError = true;
+                if (ExoConnectionPool.IsRetriablePrecheckError(ex))
+                {
+                    tracker.HasConnectionError = true;
+                    tracker.HasRetriablePrecheckError = true;
+                }
 
                 _logger.LogError(ex, "Exchange operation failed: {Message}", primary);
                 result = PermissionResult.Fail(primary, detail);
@@ -91,7 +99,7 @@ public abstract class ExchangeServiceBase
             // RunAsync never re-throws — a connection failure is reported via the tracker so the
             // pool can discard and (if eligible) retry. The base helper already cleared the
             // pipeline in Invoke, so a non-connection failure leaves the connection returnable.
-            return new PooledOutcome<PermissionResult>(result, tracker.HasConnectionError);
+            return new PooledOutcome<PermissionResult>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
         }), allowRetry, PoolFailurePolicy.Return);
     }
 
@@ -105,7 +113,7 @@ public abstract class ExchangeServiceBase
         {
             var tracker = new ConnectionErrorTracker();
             var result = query(pooled.PowerShell, tracker);
-            return new PooledOutcome<T>(result, tracker.HasConnectionError);
+            return new PooledOutcome<T>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
         }), allowRetry, PoolFailurePolicy.Return);
     }
 
@@ -127,7 +135,15 @@ public abstract class ExchangeServiceBase
 
     protected internal sealed class ConnectionErrorTracker
     {
+        /// <summary>Any dead/suspect-session error was seen — gates DISCARD.</summary>
         public bool HasConnectionError { get; set; }
+
+        /// <summary>
+        /// The narrow "must call Connect-ExchangeOnline" pre-cmdlet error was seen — gates RETRY.
+        /// Implies <see cref="HasConnectionError"/>. See
+        /// <see cref="ExoConnectionPool.IsRetriablePrecheckError"/>.
+        /// </summary>
+        public bool HasRetriablePrecheckError { get; set; }
     }
 
     // -------------------------------------------------------------------------
@@ -184,8 +200,7 @@ public abstract class ExchangeServiceBase
             // Capture detail, then clear BOTH before throwing so the next step on this pooled
             // runspace starts clean (the pipeline is shared across steps in one operation).
             var psErrors = SnapshotErrorMessages(ps);
-            if (IsConnectionError(ex) || ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-                tracker.HasConnectionError = true;
+            ClassifyConnectionError(tracker, ex, ps);
 
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
@@ -197,8 +212,7 @@ public abstract class ExchangeServiceBase
         if (ps.HadErrors)
         {
             var psErrors = SnapshotErrorMessages(ps);
-            if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-                tracker.HasConnectionError = true;
+            ClassifyConnectionError(tracker, null, ps);
 
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
@@ -229,8 +243,7 @@ public abstract class ExchangeServiceBase
             var captured = SnapshotErrorMessages(ps);
             if (captured.Count == 0)
                 captured.Add(ex.Message);
-            if (IsConnectionError(ex) || ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-                tracker.HasConnectionError = true;
+            ClassifyConnectionError(tracker, ex, ps);
 
             ps.Commands.Clear();
             ps.Streams.Error.Clear();
@@ -239,8 +252,7 @@ public abstract class ExchangeServiceBase
         }
 
         var streamErrors = SnapshotErrorMessages(ps);
-        if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-            tracker.HasConnectionError = true;
+        ClassifyConnectionError(tracker, null, ps);
 
         ps.Commands.Clear();
         ps.Streams.Error.Clear();
@@ -256,8 +268,7 @@ public abstract class ExchangeServiceBase
     protected static Collection<PSObject> InvokeOptional(PowerShell ps, ConnectionErrorTracker tracker)
     {
         var result = ps.Invoke();
-        if (ps.Streams.Error.Any(e => IsConnectionError(e.Exception)))
-            tracker.HasConnectionError = true;
+        ClassifyConnectionError(tracker, null, ps);
         ps.Streams.Error.Clear();
         ps.Commands.Clear();
         return result;
@@ -691,4 +702,21 @@ public abstract class ExchangeServiceBase
 
     // Single source of truth lives on the pool so PermissionValidator (not a subclass) shares it.
     protected static bool IsConnectionError(Exception? ex) => ExoConnectionPool.IsConnectionError(ex);
+
+    /// <summary>
+    /// Set the tracker's connection/precheck flags from a thrown exception and/or the error
+    /// stream. Discard is gated by the broad <see cref="IsConnectionError"/>; retry by the narrow
+    /// <see cref="ExoConnectionPool.IsRetriablePrecheckError"/> (which implies a connection error).
+    /// Call BEFORE clearing <c>ps.Streams.Error</c>.
+    /// </summary>
+    private static void ClassifyConnectionError(ConnectionErrorTracker tracker, Exception? thrown, PowerShell ps)
+    {
+        bool conn = (thrown != null && IsConnectionError(thrown))
+            || ps.Streams.Error.Any(e => IsConnectionError(e.Exception));
+        bool precheck = (thrown != null && ExoConnectionPool.IsRetriablePrecheckError(thrown))
+            || ps.Streams.Error.Any(e => ExoConnectionPool.IsRetriablePrecheckError(e.Exception));
+
+        if (conn || precheck) tracker.HasConnectionError = true;
+        if (precheck) tracker.HasRetriablePrecheckError = true;
+    }
 }

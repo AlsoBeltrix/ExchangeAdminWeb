@@ -36,6 +36,8 @@ already self-heals — the failed connection is discarded on the connection erro
    duplicated borrow/return/discard pattern collapses to a single seam.
 4. **Retry is restricted to read-only and single-write operations** (see Safety below).
    Multi-write operations keep today's behavior (discard, fail, user re-runs manually).
+5. **Retry fires only on the narrow pre-cmdlet signature**, not on any connection error
+   (see "Replay safety" below). Discard still fires on any connection error.
 
 ## Safety model — why retry must be gated (corrected after audit)
 
@@ -62,11 +64,48 @@ Why this is sufficient for the observed bug: the failing Conference Rooms step,
 `Set-Place` (`ConferenceRoomService.cs:372-389`), is a single write — it opts in and is
 healed. Read paths (autocomplete, lookups, reports) are all eligible too.
 
-Note: with eligibility gated this way, the breadth of the existing `IsConnectionError`
-classifier (`ExchangeServiceBase.cs:703-707`, matches "connection"/"session"/"runspace")
-is no longer a hazard — re-running a read or a single write is harmless regardless of
-which connection error tripped it. We will still add the exact
-"GetCurrentConnectionContext / must call Connect-ExchangeOnline" signature for clarity.
+## Replay safety — the retry trigger must be narrower than the discard trigger (review #2)
+
+A second review (2026-06-26) found that "single write" is NOT the same as "safe to
+replay." Counter-example: `Start-HistoricalSearch` (`MessageTraceService.cs`) is one
+write, but if Exchange *accepts* the submission and the runspace then drops before the
+client observes the result, a broad connection-error classifier would treat that as
+retryable and submit a **second** search job. The same commit-unknown risk applies to
+several opted-in migration actions (`Start-MigrationBatch`, `Stop-MigrationBatch`,
+`Remove-MigrationBatch`).
+
+Root cause: the original design used **one** predicate (`IsConnectionError`) for **two**
+distinct decisions:
+
+- **Discard the connection** — correct on *any* connection error; a dead/suspect session
+  must never go back in the pool. Keep broad.
+- **Retry the delegate** — only safe when we can prove the cmdlet **never executed**.
+
+Fix: split them. Retry fires only on the **exact pre-cmdlet signature** the EXO module
+throws when a borrowed session is already gone *before* the first cmdlet runs:
+"You must call Connect-ExchangeOnline before calling any other cmdlet" /
+"GetCurrentConnectionContext". That error is emitted by the module's pre-flight context
+check, so the cmdlet provably did nothing — replay is safe. A session that dies *during*
+or *after* a cmdlet produces a *different* transport/connection error, which still
+discards but does **not** retry.
+
+This removes the commit-unknown replay risk for **every** eligible op, not just the ones
+we could hand-prove idempotent, so the single-write opt-ins (historical search, migration
+start/stop/remove) stay eligible and safe. The multi-write exclusion remains as a second
+layer.
+
+Mechanism: a dedicated `IsRetriablePrecheckError` predicate gates retry; the broad
+`IsConnectionError` continues to gate discard. The narrow signal travels both failure
+paths — the thrown path (classify the exception) and the flagged/tracker path that
+`RunAsync` uses (the path the observed bug actually takes: `Invoke` catches the throw,
+sets the tracker, and `RunAsync` returns a Fail outcome rather than throwing).
+
+Caveat (assumption, not proven from code): a *mid-flight* connection loss never yields
+the exact "must call Connect-ExchangeOnline" string. This is consistent with that message
+originating from the pre-flight context check rather than transport teardown, but it is an
+EXO-behavior claim worth confirming in-tenant. If EXO ever emits that string post-submit,
+the narrow gate would still over-retry that one op; the multi-write exclusion limits blast
+radius.
 
 ## Audit — eligibility of every pool delegate
 
@@ -191,3 +230,19 @@ module's catalog `Version` changes. (Confirm against `docs/ProjectConstitution.m
 
 - None blocking. Eligibility default = no-retry (safe), opt-in per call site; retry
   count = 1; multi-write sites excluded (owner option 1). Flag if any should differ.
+
+## Review log
+
+- **2026-06-25, app 2.3.23, commit `39ce87a`** — initial implementation: shared
+  `RunWithRetryAsync` helper, one-shot retry gated to read-only + single-write opt-ins,
+  7 multi-write delegates excluded, all 10 pool callers routed through the helper, 9 tests.
+- **2026-06-26, app 2.3.24** — review #2 (external) found "single write ≠ safe to replay":
+  a single write (e.g. `Start-HistoricalSearch`) whose connection drops *after* Exchange
+  accepts it would be re-submitted under a broad retry trigger. Fix: split the trigger —
+  DISCARD stays broad (`IsConnectionError`), RETRY narrowed to the pre-cmdlet signature
+  (`IsRetriablePrecheckError`: "must call Connect-ExchangeOnline" / "GetCurrentConnectionContext"),
+  which proves the cmdlet never ran. Narrow signal carried on both failure paths (thrown +
+  tracker outcome). +2 tests (mid-flight drop discards but does NOT retry, via throw and via
+  tracker); narrowing proven non-vacuous (widening the trigger fails the mid-flight test).
+  Also excluded the git-ignored `_not_for_github\` scratch tree from the csproj compile
+  globs (it was breaking local builds; pre-existing contamination, not part of this fix).

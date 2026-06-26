@@ -5,14 +5,19 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.23` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- App version `2.3.24` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **CR-BUG-1 (EXO pool dead-runspace) FIXED** (`docs/ExoDeadConnectionRetry-Plan.md`,
-  Status: *Implemented*, app 2.3.23, 2026-06-25, commit `39ce87a`). The pool now auto-retries
-  a dead/stale EXO session once on a fresh borrow, gated to read-only + single-write ops
-  (opt-in `allowRetry`, default off); the 7 multi-write delegates keep discard-and-fail so a
-  committed write is never repeated. All 10 pool callers route through one
-  `ExoConnectionPool.RunWithRetryAsync` helper (incl. `PermissionValidator`). 9 new
-  orchestration tests over the pure core, proven non-vacuous; 517/517 xUnit green.
+  Status: *Implemented*, app 2.3.23→2.3.24). The pool auto-retries a dead EXO session once on
+  a fresh borrow, gated to read-only + single-write ops (opt-in `allowRetry`, default off);
+  the 7 multi-write delegates keep discard-and-fail so a committed write is never repeated.
+  All 10 pool callers route through one `ExoConnectionPool.RunWithRetryAsync` helper (incl.
+  `PermissionValidator`).
+  - **Review #2 (2026-06-26, app 2.3.24):** retry trigger narrowed — DISCARD on any
+    connection error (broad), but RETRY only on the pre-cmdlet "must call Connect-ExchangeOnline"
+    signature (`IsRetriablePrecheckError`), so a single write whose session drops *after*
+    Exchange accepted it is never re-submitted. Also excluded git-ignored `_not_for_github\`
+    from csproj compile globs (was breaking local builds; not part of the bug fix).
+  - 11 orchestration tests over the pure core, narrowing proven non-vacuous; 519/519 xUnit green.
   - NEXT: final whole-branch review (SDD) before the branch is considered done (do not push
     prod yet — see Blockers).
 - **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:

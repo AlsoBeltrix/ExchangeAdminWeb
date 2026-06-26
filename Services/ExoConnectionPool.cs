@@ -22,13 +22,17 @@ public sealed class PooledRunspace
 }
 
 /// <summary>
-/// Result of running a delegate on a borrowed connection. <see cref="ConnectionFailure"/>
-/// is the caller's signal (via its <c>ConnectionErrorTracker</c>) that the delegate
-/// returned normally but the failure was a dead/stale session — eligible for a one-shot
-/// retry on a fresh connection. Connection failures that surface as a thrown exception
-/// are classified separately by the orchestrator.
+/// Result of running a delegate on a borrowed connection.
+/// <para><see cref="ConnectionFailure"/>: the delegate returned normally (RunAsync swallows
+/// the throw) but a dead/suspect session was detected — gates DISCARD.</para>
+/// <para><see cref="RetriablePrecheck"/>: the captured failure was the narrow
+/// "must call Connect-ExchangeOnline" pre-cmdlet signature, proving the cmdlet never ran —
+/// gates RETRY. Strictly implies <see cref="ConnectionFailure"/>. A mid-flight drop sets
+/// ConnectionFailure (discard) but NOT RetriablePrecheck (no replay).</para>
+/// Connection failures that surface as a thrown exception are classified by the orchestrator
+/// from the exception directly.
 /// </summary>
-internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailure);
+internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailure, bool RetriablePrecheck = false);
 
 /// <summary>
 /// What to do with the borrowed connection when the delegate throws a NON-connection
@@ -203,15 +207,12 @@ public sealed class ExoConnectionPool : IDisposable
         bool allowRetry,
         PoolFailurePolicy nonConnectionFailurePolicy)
         => RunWithRetryCoreAsync(() => BorrowAsync(), Return, Discard, run,
-            IsConnectionError, allowRetry, nonConnectionFailurePolicy);
+            IsConnectionError, IsRetriablePrecheckError, allowRetry, nonConnectionFailurePolicy);
 
     /// <summary>
-    /// Canonical classifier for "the pooled EXO session is dead/stale." A dead session inside the
-    /// idle window makes the first cmdlet's pre-check throw
-    /// "GetCurrentConnectionContext ... You must call Connect-ExchangeOnline...". The "connection"
-    /// substring covers that; the explicit "Connect-ExchangeOnline" arm covers wording that drops
-    /// the prefix. <see cref="ExchangeServiceBase.IsConnectionError"/> delegates here so the rule
-    /// lives in one place.
+    /// Broad classifier for "the pooled EXO session is dead/suspect" — gates DISCARD. Any of
+    /// these means the connection must not return to the pool. <see cref="ExchangeServiceBase.IsConnectionError"/>
+    /// delegates here so the rule lives in one place.
     /// </summary>
     public static bool IsConnectionError(Exception? ex) =>
         ex != null && (
@@ -219,6 +220,22 @@ public sealed class ExoConnectionPool : IDisposable
             ex.Message.Contains("session", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("runspace", StringComparison.OrdinalIgnoreCase) ||
             ex.Message.Contains("Connect-ExchangeOnline", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Narrow classifier for "the borrowed session was already dead BEFORE the first cmdlet ran"
+    /// — gates RETRY (review #2, 2026-06-26). The EXO module's pre-flight context check throws
+    /// "You must call Connect-ExchangeOnline before calling any other cmdlet" /
+    /// "GetCurrentConnectionContext" only before a cmdlet executes, so the operation provably did
+    /// nothing and replay is safe. This is STRICTLY NARROWER than <see cref="IsConnectionError"/>:
+    /// a session that drops during/after a cmdlet yields a different transport error that
+    /// discards but must NOT retry (it could re-submit an already-accepted single write, e.g.
+    /// Start-HistoricalSearch). Every retriable error is also a connection error, so discard
+    /// always fires alongside.
+    /// </summary>
+    public static bool IsRetriablePrecheckError(Exception? ex) =>
+        ex != null && (
+            ex.Message.Contains("Connect-ExchangeOnline", StringComparison.OrdinalIgnoreCase) ||
+            ex.Message.Contains("GetCurrentConnectionContext", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Pure orchestration core for <see cref="RunWithRetryAsync{T}"/>, expressed over injected
@@ -232,6 +249,7 @@ public sealed class ExoConnectionPool : IDisposable
         Action<PooledRunspace> discard,
         Func<PooledRunspace, Task<PooledOutcome<T>>> run,
         Func<Exception, bool> isConnectionError,
+        Func<Exception, bool> isRetriablePrecheckError,
         bool allowRetry,
         PoolFailurePolicy nonConnectionFailurePolicy)
     {
@@ -239,7 +257,7 @@ public sealed class ExoConnectionPool : IDisposable
         while (true)
         {
             attempt++;
-            var lastAttempt = !allowRetry || attempt >= 2;
+            var canRetry = allowRetry && attempt < 2;
             var pooled = await borrow();
 
             PooledOutcome<T> outcome;
@@ -249,10 +267,12 @@ public sealed class ExoConnectionPool : IDisposable
             }
             catch (Exception ex) when (isConnectionError(ex))
             {
-                // Dead session surfaced as a throw. Always discard; retry once if eligible.
+                // Dead/suspect session surfaced as a throw. Always discard. Retry ONLY if the
+                // error proves the cmdlet never ran (narrow pre-check signature) — a mid-flight
+                // drop discards but must not replay a possibly-committed write.
                 discard(pooled);
-                if (lastAttempt) throw;
-                continue;
+                if (canRetry && isRetriablePrecheckError(ex)) continue;
+                throw;
             }
             catch
             {
@@ -265,11 +285,12 @@ public sealed class ExoConnectionPool : IDisposable
 
             if (outcome.ConnectionFailure)
             {
-                // Dead session surfaced as a flagged-but-returned outcome (RunAsync swallows
-                // the throw and returns a Fail result). Discard; retry once if eligible.
+                // Dead/suspect session surfaced as a flagged-but-returned outcome (RunAsync
+                // swallows the throw and returns a Fail result). Always discard. Retry ONLY if
+                // the captured failure was the narrow pre-check signature.
                 discard(pooled);
-                if (lastAttempt) return outcome.Result;
-                continue;
+                if (canRetry && outcome.RetriablePrecheck) continue;
+                return outcome.Result;
             }
 
             ret(pooled);

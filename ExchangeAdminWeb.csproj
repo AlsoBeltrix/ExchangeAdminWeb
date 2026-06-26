@@ -4,12 +4,15 @@
     <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <DefaultItemExcludes>$(DefaultItemExcludes);ExchangeAdminWeb.Tests\**</DefaultItemExcludes>
-    <VersionPrefix>2.3.23</VersionPrefix>
+    <!-- _not_for_github\ is a git-ignored local scratch tree (session notes, example scripts).
+         It holds loose .cs/.razor files that are not part of the app and do not compile on their
+         own; exclude it from all default item globs so a local checkout builds cleanly. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);ExchangeAdminWeb.Tests\**;_not_for_github\**</DefaultItemExcludes>
+    <VersionPrefix>2.3.24</VersionPrefix>
     <InformationalVersion>$(VersionPrefix)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>2.3.23.0</AssemblyVersion>
-    <FileVersion>2.3.23.0</FileVersion>
+    <AssemblyVersion>2.3.24.0</AssemblyVersion>
+    <FileVersion>2.3.24.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>
