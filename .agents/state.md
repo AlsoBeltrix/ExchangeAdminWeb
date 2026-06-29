@@ -128,10 +128,16 @@ detail in the sections below.
    notification (decisions.md 2026-06-29). Closes GAP 1 principal-write surface. 578/578 green.
    **Manual validation deferred to next dev deploy** (real add/remove member+owner, protected
    refusal, admin email, audit rows).
-2. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
-   Now top of the active backlog. See Queued work.
+2. **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624` ranking+tests, `d8bd2a6`
+   layout; `docs/GroupManagementSearch-Plan.md`, Implemented). On-prem group search now
+   ranks results exact-first (then prefix, then contains; alphabetical within tier), fetches
+   up to 200 from AD so the exact match is never dropped, shows top 100 in a scrollable
+   frame. Page reordered: controls on top, results below in the scroll frame (no longer
+   pushed off-screen). 585/585 green. **Manual validation deferred to next dev deploy**
+   (search ranking against real AD, layout behavior).
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-4. **GM-3** self-service group management — needs own plan; depends on GM-1 + M365 work first.
+   Now top of the active backlog.
+4. **GM-3** self-service group management — needs own plan; depends on M365 work (done) first.
 
 Done 2026-06-26: **MFA Reset stranded config key** (`docs/GraphSecretKeyMigration-Plan.md`)
 and **AccountLockoutRemediation module incorporation**
@@ -256,9 +262,12 @@ These have no plan doc yet; do not start without the noted plan/approval.
 - **Module packaging/import.** Direction set 2026-06-18 (`.agents/decisions.md`): `.zip`
   package + validator, rebuild-to-install, runtime upload deferred. Needs
   `docs/ModulePackaging-Plan.md` written + approved before any implementation.
-- **GM-1 (bug): GroupManagement search too fuzzy.** Exact group name (e.g. "IAM") returns
-  dozens of fuzzy matches. Tighten on-prem AD group search so exact/near-exact ranks first.
-  Search path not yet code-located. Confirm desired ranking with owner before implementing.
+- **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624`, `d8bd2a6`;
+  `docs/GroupManagementSearch-Plan.md`, Implemented). Search now ranks exact-first (then
+  prefix, then contains; alphabetical within tier) via the pure `RankGroups` in
+  `GroupManagementService`; fetches up to 200 from AD, shows top 100 in a scrollable frame.
+  Page reordered so controls stay on top and results scroll below. Manual validation deferred
+  to next dev deploy.
 - **GM-2 (investigated 2026-06-26 — NOT the originally-reported bug).** Live test on dev
   (2.3.26) showed search *works*: it returns only Unified/M365 groups by design
   (`M365GroupManagementService.SearchGroupsAsync` filters
