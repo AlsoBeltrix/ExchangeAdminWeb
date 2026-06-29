@@ -193,6 +193,8 @@ All mutating actions must call `AuditService` with:
 - Result (Success/Failed)
 - Relevant context (target, error detail)
 
+Mutating actions, security-sensitive reads, and permission/access changes must also send notifications via the shared `EmailService` (never a module-specific mailer). The notification policy is canonical in `docs/ProjectConstitution.md` §Auditing And Tracing → Notifications; see the Developer Guide §Notifications for the methods to call.
+
 `AuditService` writes the business audit record to the audit JSONL file. Correlated operation trace records (`operation.start`, `operation.step`, `operation.complete`) use the same `operationId` but are written to the separate trace JSONL file. Module code that needs a multi-step transaction transcript should begin an `OperationTraceService` scope before the first backend call, then write sanitized `Step(...)` records for important milestones such as authorization checks, vault credential retrieval, Graph/Exchange/AD writes, notifications, or cleanup. Shared backend services emit standalone trace records when no operation scope is active. Never place secrets, tokens, raw exception messages, raw PowerShell output, or raw API payloads in trace details.
 
 ## Service Pattern
@@ -267,12 +269,18 @@ The deploy script (`deploy.ps1`):
    enforced by `tools/validate-module-package.ps1`)
 4. Create the service class (if needed) inheriting `ExchangeServiceBase`
 5. Add audit logging for all mutating actions
-6. Test: build passes, existing tests pass
-7. Deploy to dev, verify:
+6. Add notifications via the shared `EmailService` per the Constitution
+   §Notifications: admin notification on every mutating action, admin alert on
+   every security-sensitive read, and affected-user notification on any
+   permission/access change
+7. Test: build passes, existing tests pass
+8. Deploy to dev, verify:
    - Module appears in nav/home when authorized
    - Module hidden when disabled
    - Direct URL denied when disabled
    - Section access configurable on module config page
    - Module version shows next to the page heading
    - Audit entries created for actions
+   - Notifications sent (admin for changes/security reads; affected user for
+     permission/access changes)
 8. Deploy to prod

@@ -73,6 +73,14 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 - UI-visible event logs must not expose backend secrets, raw exception bodies from auth systems, or excessive diagnostic noise by default.
 - Long-running or multi-step backend operations should use `OperationTraceService` for start/step/complete visibility.
 
+### Notifications
+
+- Every mutating action (any create, write, delete, or change to a user, mailbox, group, identity state, access state, password, token/session state, or directory attribute) must send an administrator notification via `EmailService`.
+- Every security-sensitive read (any module whose purpose is to surface security-relevant data — e.g. lockout/sign-in/audit lookups, protected-object inspection) must send an administrator alert.
+- Any change to a user's permissions or access must additionally notify the affected user, not only administrators.
+- Notification is in addition to the mandatory audit event, never a substitute for it.
+- Notification failure must not change or mask the backend operation result. Catch notification exceptions and log them separately.
+
 ### Protected Principals
 
 - Protected-principal checks must fail closed when protection config or required lookup data is unavailable.

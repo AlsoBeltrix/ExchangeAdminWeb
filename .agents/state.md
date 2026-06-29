@@ -6,6 +6,14 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Notifications now mandatory (decision 2026-06-29, docs-only).** Every mutating action
+  → admin notification; every security-sensitive read → admin alert; every permission/access
+  change → also notify the affected user. Always via the shared `Services/EmailService.cs`
+  (no bespoke mailers). Canonical rule: `docs/ProjectConstitution.md` §Auditing And Tracing →
+  Notifications; Guide/Spec point to it. `.agents/decisions.md` 2026-06-29 has the full record
+  and names the superseded discretionary guidance. **Not yet enforced in code** — existing
+  modules predate the rule and have not been audited for compliance; this was a guidance change
+  only. A future task: sweep modules for missing notifications and consider validator coverage.
 - **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
   `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
   `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the

@@ -5,6 +5,48 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-29 - Notifications are mandatory for changes, security reads, and permission changes
+
+Status: Active
+
+Decision:
+Notification is no longer discretionary. Three rules now bind every module:
+
+1. **Every mutating action** (any create, write, delete, or change to a user, mailbox,
+   group, identity state, access state, password, token/session state, or directory
+   attribute) must send an administrator notification.
+2. **Every security-sensitive read** (any module whose purpose is to surface
+   security-relevant data — e.g. lockout/sign-in/audit lookups, protected-object
+   inspection) must send an administrator alert.
+3. **Any change to a user's permissions or access** must additionally notify the
+   affected user, not only administrators.
+
+Notification is in addition to the mandatory audit event, never a substitute. Notification
+failure must not change or mask the backend operation result (same fail-safe rule as audit).
+
+All notification goes through the existing shared `Services/EmailService.cs`
+(`SendAdminNotificationAsync` incl. the generic `details`-dictionary overload for arbitrary
+module data; `SendUserNotificationAsync` for the affected user). Modules must NOT build a
+bespoke mailer, SMTP client, or message template; if a new shape is needed, add an overload
+(with a test) to `EmailService` rather than notifying from the module.
+
+Canonical location:
+The rule lives in exactly one place — `docs/ProjectConstitution.md` §Auditing And Tracing →
+Notifications. `docs/AdminModuleDeveloperGuide.md` §Notifications and `docs/AdminModuleSpec.md`
+(audit/trace requirements + new-module checklist) point to it and name the methods; they do
+not restate the policy.
+
+Reason:
+Owner direction 2026-06-29. Privileged directory/Exchange/Graph changes and security lookups
+must be visible to administrators in real time (not only in the audit log), and users must
+learn when their own access changes.
+
+Supersedes:
+The prior discretionary guidance in `docs/AdminModuleDeveloperGuide.md` §Notifications
+("use `EmailService` only when the workflow warrants", "avoid alert fatigue — routine reads
+usually should not email anyone", "security-response modules *may* notify"). That text is
+removed, not retained, so the deprecated rule does not linger to confuse a future reader.
+
 ### 2026-06-26 - SQLite native-lib advisory CVE-2025-6965: tracked, no action available yet
 
 Status: Active (re-check periodically)

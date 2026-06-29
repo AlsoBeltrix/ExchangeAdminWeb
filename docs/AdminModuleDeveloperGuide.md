@@ -836,15 +836,25 @@ Trace rules:
 
 ## Notifications
 
-Use `EmailService` only when the module's workflow warrants operator or user
-notification.
+Notification is mandatory. The policy (when a module must notify, and whom) lives
+in one place: `docs/ProjectConstitution.md` §Auditing And Tracing → Notifications.
+Read it before adding or changing notification behavior.
 
-Rules:
+Use the existing shared `Services/EmailService.cs` — inject it and call its
+methods. Do not build a module-specific mailer, SMTP client, or message template;
+all notification goes through this one service so configuration, throttling, and
+sanitization stay in a single place.
 
-- Notification failure must not change the backend operation result.
-- Catch notification exceptions and log them.
-- Avoid alert fatigue. Routine reads usually should not email anyone.
-- Security-response modules may notify on every success/failure.
+- Admin notification / security-read alert: `EmailService.SendAdminNotificationAsync(...)`.
+  Use the `IReadOnlyDictionary<string,string> details` overload for arbitrary
+  module data.
+- Affected-user notification on a permission/access change:
+  `EmailService.SendUserNotificationAsync(...)`.
+
+If `EmailService` lacks a shape a new module needs, add an overload to that service
+(with a test) rather than notifying from the module. Notification failure must not
+change or mask the backend result — `EmailService` already catches and logs; keep
+the call off the operation's success path.
 
 ## File Uploads
 
