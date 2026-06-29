@@ -23,7 +23,8 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   (not failed); overall success accepts OK or SKIPPED for that step. Cloud-only users unchanged.
   Also added `GraphTokenClient.PatchWithStatusAsync` (status + sanitized error.code/message, no
   tokens/raw bodies) to surface the real Graph error on a genuine PATCH failure; `PatchAsync`
-  kept as wrapper. +13 tests, non-vacuous verified.
+  kept as wrapper. +13 tests, non-vacuous verified. **Manual validation DONE on dev 2.3.27
+  (owner, 2026-06-29) — synced-user path good.**
 - **BlockedSenders module added DONE (2026-06-29, commit `5e4172e`; module 1.0.0, app version
   unchanged — new-module bump deferred per owner; `docs/BlockedSenders-Plan.md`, Implemented).**
   New cloud-only module: view EXO blocked senders (`Get-BlockedSenderAddress`) and unblock one
@@ -33,6 +34,17 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   Audit on list/unblock/denied, operation trace on the write, admin email notification on
   success/failure. Ticket + explicit confirmation required before unblock. **Catalog now 22
   modules / 31 configurable aliases** (was 21 / 29). 553/553 green (14 new), non-vacuous verified.
+  **Manual validation on dev 2.3.27 (owner, 2026-06-29): functionally good. Found slow/blank
+  page load on open — fixed, see BlockedSenders load-timing fix below.**
+- **BlockedSenders load-timing fix DONE (2026-06-29, commit `17910f3`; module 1.0.0→1.0.1,
+  app version unchanged; `docs/BlockedSendersLoadTiming-Plan.md`, Approved).**
+  The module was the only page that auto-called EXO in `OnInitializedAsync`; under
+  InteractiveServer prerender that blocked the whole page for the 10-15s `Get-BlockedSenderAddress`
+  round-trip before any HTML (or the spinner) reached the browser — clicking the sidebar item
+  gave no feedback for 10-15s. Moved the list load to `OnAfterRenderAsync(firstRender)` (one-shot
+  `loadStarted` guard); page + spinner now render immediately, list fills in after. Spinner-only
+  feedback, as before (owner). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
+  format/diff-check clean. **Re-deploy to dev pending to confirm the instant-load behavior.**
 - **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
   `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
   `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
@@ -42,9 +54,10 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   method-vs-block `message` collision → renamed `summary`; CS8030/CS9174 collection-expr
   ternary in `DiscoverPdcAsync` → `Array.Empty<string>()`). Added 10 service unit tests
   (throttle clamp proven non-vacuous; guard paths). Module ships at 1.0.0; 22 modules total
-  now. 539/539 green; build/format/diff-check clean. **Manual validation deferred to dev
-  deploy** (live 4740 read, WinRM, quser/logoff parsing, real dry-run+logoff, protected-block)
-  — run the package's own Manual Validation steps. Staged copy under
+  now. 539/539 green; build/format/diff-check clean. **Manual validation still DEFERRED by
+  owner (2026-06-29) even though dev is on 2.3.27** (live 4740 read, WinRM, quser/logoff
+  parsing, real dry-run+logoff, protected-block) — run the package's own Manual Validation
+  steps when ready. Staged copy under
   `_not_for_github/example_scripts/AccountLockoutRemediation/` left in place (gitignored).
 - **Graph secret key migration DONE (2026-06-26, app 2.3.25→2.3.26;
   `docs/GraphSecretKeyMigration-Plan.md`, Status: Implemented; commits `2eb9c98`,
@@ -126,15 +139,14 @@ detail in the sections below.
    Full add/remove of members and owners via Graph, each gated through the protected-principal
    check (fail closed) before any write. Admin notification only — no affected-user
    notification (decisions.md 2026-06-29). Closes GAP 1 principal-write surface. 578/578 green.
-   **Manual validation deferred to next dev deploy** (real add/remove member+owner, protected
-   refusal, admin email, audit rows).
+   **Manual validation DONE on dev 2.3.27 (owner, 2026-06-29) — looks good.**
 2. **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624` ranking+tests, `d8bd2a6`
    layout; `docs/GroupManagementSearch-Plan.md`, Implemented). On-prem group search now
    ranks results exact-first (then prefix, then contains; alphabetical within tier), fetches
    up to 200 from AD so the exact match is never dropped, shows top 100 in a scrollable
    frame. Page reordered: controls on top, results below in the scroll frame (no longer
-   pushed off-screen). 585/585 green. **Manual validation deferred to next dev deploy**
-   (search ranking against real AD, layout behavior).
+   pushed off-screen). 585/585 green. **Manual validation DONE on dev 2.3.27 (owner,
+   2026-06-29) — looks good.**
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
    Now top of the active backlog.
 4. **GM-3** self-service group management — needs own plan; depends on M365 work (done) first.
@@ -199,10 +211,11 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
-- **Deployed versions (confirmed by owner 2026-06-26):** dev is *deployed* on **`2.3.26`**
-  (Graph secret key migration ran; recovered Secret ID verified on the config page). **`2.3.27`**
-  (AccountLockoutRemediation module) is built and committed but NOT yet deployed — deploy it
-  to dev to run the module's manual validation. Prod is on **`2.3.11`** — entirely pre-SQLite,
+- **Deployed versions (confirmed by owner 2026-06-29):** dev is *deployed* on **`2.3.27`**
+  (deployed 2026-06-29; GM-1, M365 member/owner, EmergencyDisable synced-user, BlockedSenders
+  all validated good — except AccountLockoutRemediation manual validation, still deferred by
+  owner, and the BlockedSenders load-timing fix `17910f3`, which post-dates this deploy and
+  needs a re-deploy to confirm). Prod is on **`2.3.11`** — entirely pre-SQLite,
   so its eventual cutover will run the FULL JSON→SQLite legacy import in one shot on first
   startup (the path the fail-closed parity fix hardens). Still re-confirm on the box
   immediately before any prod deploy.
