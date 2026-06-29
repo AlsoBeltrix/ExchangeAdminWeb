@@ -128,6 +128,7 @@
 @code {
     private bool authChecked;
     private bool isLoading;
+    private bool loadStarted;
     private string currentUser = string.Empty;
     private string clientIpAddress = "Unknown";
 
@@ -157,7 +158,20 @@
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
 
+        // Show the page with its loading spinner immediately. The EXO list load is
+        // deferred to OnAfterRenderAsync so it does not block prerender — calling it
+        // here would freeze the whole page for the 10-15s EXO round-trip before any
+        // HTML (and the spinner) reaches the browser.
+        isLoading = true;
         authChecked = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || loadStarted || !authChecked)
+            return;
+
+        loadStarted = true;
         await LoadBlockedSenders();
     }
 

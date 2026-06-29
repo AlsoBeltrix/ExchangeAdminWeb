@@ -271,7 +271,7 @@ public sealed class ModuleCatalog
             SortOrder = 650,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "BlockedSenders", FailClosed: true),
             GranularPermissions = [new("Unblock", "BlockedSendersUnblock", FailClosed: true)]
