@@ -217,17 +217,19 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
   - **Both gaps need an approved plan before any code** (mutating-module changes). Neither is
     yet scheduled; M365 gating folds naturally into the M365 member/owner plan, Migration is a
     standalone fix.
-- **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
-  until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
-  in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
-- **Deployed versions (confirmed by owner 2026-06-29):** dev is *deployed* on **`2.3.27`**
-  (deployed 2026-06-29; GM-1, M365 member/owner, EmergencyDisable synced-user, BlockedSenders
-  all validated good — except AccountLockoutRemediation manual validation, still deferred by
-  owner, and the BlockedSenders load-timing fix `17910f3`, which post-dates this deploy and
-  needs a re-deploy to confirm). Prod is on **`2.3.11`** — entirely pre-SQLite,
-  so its eventual cutover will run the FULL JSON→SQLite legacy import in one shot on first
-  startup (the path the fail-closed parity fix hardens). Still re-confirm on the box
-  immediately before any prod deploy.
+- **Prod-deploy hold LIFTED — prod cut over to 2.3.27 (owner, 2026-06-29).** The deferred
+  prod hold (owner direction 2026-06-18) is done: prod moved from 2.3.11 (pre-SQLite) straight
+  to app **`2.3.27`**, so the full JSON→SQLite legacy import ran on first startup (the path the
+  fail-closed parity fix hardens). Sub-TODO that still gates CR-1 in prod: configure the
+  ConferenceRooms AD `DelineaSecretId` in the deployed prod instance.
+- **Deployed versions (confirmed by owner 2026-06-29):** dev and prod are both on app
+  **`2.3.27`**, validated good (GM-1, M365 member/owner, EmergencyDisable synced-user,
+  BlockedSenders all confirmed on dev; AccountLockoutRemediation manual validation still
+  deferred by owner). The BlockedSenders refresh fix is validated on dev (commit `cde778f`,
+  module 1.0.2). **Unverified detail:** the two BlockedSenders module-version fixes
+  (`17910f3` → 1.0.1, `cde778f` → 1.0.2) are module bumps, not app bumps, so "prod = app
+  2.3.27" does not by itself confirm prod was built from a commit that includes them — confirm
+  the prod build commit if the BlockedSenders behaviour matters in prod.
 
 ## Verification
 
