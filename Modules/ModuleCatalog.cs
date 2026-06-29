@@ -262,6 +262,22 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "BlockedSenders",
+            DisplayName = "Blocked Senders",
+            Description = "View and unblock Exchange Online blocked senders (accounts blocked from sending mail for outbound spam).",
+            Route = "blocked-senders",
+            IconCss = "bi bi-envelope-fill-nav-menu",
+            Category = "Exchange",
+            SortOrder = 650,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            DependsOn = "ExchangeOnline",
+            MainPermission = new("Access", "BlockedSenders", FailClosed: true),
+            GranularPermissions = [new("Unblock", "BlockedSendersUnblock", FailClosed: true)]
+        },
+        new()
+        {
             Id = "GroupManagement",
             DisplayName = "AD Group Management",
             Description = "Search, view membership, and manage on-premises Active Directory groups.",

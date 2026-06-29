@@ -1,0 +1,306 @@
+@page "/blocked-senders"
+@using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Models
+@using ExchangeAdminWeb.Models.BlockedSenders
+@attribute [Authorize(Policy = "BlockedSenders")]
+@rendermode InteractiveServer
+@inject BlockedSenderService BlockedSenderSvc
+@inject AuditService Audit
+@inject EmailService Email
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject OperationTraceService OperationTrace
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<ExchangeAdminWeb.Components.Pages.BlockedSenders> Logger
+
+<PageTitle>Blocked Senders</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Blocked senders are Microsoft 365 accounts the service has blocked from sending mail (usually after outbound spam). Unblocking is logged and notified. If the account keeps sending spam it will be re-blocked automatically.</small>
+    </div>
+    <h1 class="mb-4">Blocked Senders<ModuleVersion /></h1>
+
+    @if (result is not null)
+    {
+        <div class="alert @(result.Success ? "alert-success" : "alert-danger") alert-dismissible" role="alert">
+            <strong>@(result.Success ? "Success" : "Error"):</strong> @result.Message
+            @if (!string.IsNullOrEmpty(result.Detail))
+            {
+                <div class="mt-1"><small>@result.Detail</small></div>
+            }
+            <button type="button" class="btn-close" @onclick="() => result = null" aria-label="Close"></button>
+        </div>
+    }
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <strong>Currently Blocked Senders</strong>
+            <button class="btn btn-outline-primary btn-sm" @onclick="LoadBlockedSenders" disabled="@isLoading">
+                @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                Refresh
+            </button>
+        </div>
+        <div class="card-body p-0">
+            @if (loadError is not null)
+            {
+                <div class="alert alert-danger m-3 mb-0">@loadError</div>
+            }
+            else if (blockedSenders.Count > 0)
+            {
+                <div style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Sender Address</th>
+                                <th>Reason</th>
+                                <th style="width: 200px;">Blocked</th>
+                                <th style="width: 110px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var sender in blockedSenders)
+                            {
+                                <tr class="@(confirmAddress == sender.SenderAddress ? "table-active" : "")">
+                                    <td>@sender.SenderAddress</td>
+                                    <td><small class="text-muted">@(string.IsNullOrWhiteSpace(sender.Reason) ? "—" : sender.Reason)</small></td>
+                                    <td><small class="text-muted">@(string.IsNullOrWhiteSpace(sender.BlockedDateRaw) ? "—" : sender.BlockedDateRaw)</small></td>
+                                    <td>
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => BeginUnblock(sender)" disabled="@isLoading">Unblock</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else if (!isLoading)
+            {
+                <p class="text-muted p-3 mb-0">No blocked senders found. Click Refresh to reload.</p>
+            }
+        </div>
+    </div>
+
+    @if (confirmAddress is not null)
+    {
+        <div class="card mt-3 border-warning">
+            <div class="card-header bg-warning-subtle"><strong>Confirm unblock</strong></div>
+            <div class="card-body">
+                <p class="mb-3">
+                    Unblock <strong>@confirmAddress</strong>? This re-enables the account's ability to send mail.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
+                    <input id="ticketNumber" class="form-control" type="text"
+                           placeholder="INC0001234 or REQ0005678"
+                           @bind="ticketNumber" @bind:event="oninput" />
+                    <div class="form-text">Service request or incident ticket number</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold" for="reason">Reason (optional)</label>
+                    <input id="reason" class="form-control" type="text"
+                           placeholder="Why this sender is being unblocked"
+                           @bind="reason" />
+                </div>
+                <button class="btn btn-danger me-2" @onclick="ConfirmUnblock" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Confirm Unblock
+                </button>
+                <button class="btn btn-secondary" @onclick="CancelUnblock" disabled="@isLoading">Cancel</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool authChecked;
+    private bool isLoading;
+    private string currentUser = string.Empty;
+    private string clientIpAddress = "Unknown";
+
+    private List<BlockedSenderInfo> blockedSenders = new();
+    private string? loadError;
+    private PermissionResult? result;
+
+    private string? confirmAddress;
+    private string ticketNumber = string.Empty;
+    private string reason = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        // CRITICAL: Explicitly check authorization - [Authorize] attribute is not reliably enforced
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "BlockedSenders");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        authChecked = true;
+        await LoadBlockedSenders();
+    }
+
+    private async Task LoadBlockedSenders()
+    {
+        isLoading = true;
+        loadError = null;
+        await Task.Yield();
+
+        try
+        {
+            var senders = await BlockedSenderSvc.GetBlockedSendersAsync();
+            blockedSenders = senders.ToList();
+
+            try
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, "ListBlockedSenders",
+                    $"{blockedSenders.Count} sender(s)", success: true);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for blocked-sender list");
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Could not load blocked senders: {ex.Message}";
+            blockedSenders = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void BeginUnblock(BlockedSenderInfo sender)
+    {
+        confirmAddress = sender.SenderAddress;
+        ticketNumber = string.Empty;
+        reason = string.Empty;
+        result = null;
+    }
+
+    private void CancelUnblock()
+    {
+        confirmAddress = null;
+        ticketNumber = string.Empty;
+        reason = string.Empty;
+    }
+
+    private async Task ConfirmUnblock()
+    {
+        if (confirmAddress is null)
+            return;
+
+        isLoading = true;
+        result = null;
+        await Task.Yield();
+
+        var address = confirmAddress;
+        var ticket = ticketNumber.Trim();
+        var unblockReason = reason.Trim();
+
+        // Re-check authorization immediately before the write: a user removed from the
+        // section group (or whose module was disabled) mid-session must not keep mutating.
+        // The unblock write requires the granular BlockedSendersUnblock policy; viewing
+        // the list only requires the main BlockedSenders policy.
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "BlockedSendersUnblock");
+        if (!authCheck.Succeeded)
+        {
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
+                    "BlockedSenders", address, success: false, ticketNumber: ticket,
+                    errorDetail: "Authorization denied (BlockedSendersUnblock).");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for denied unblock of {Address}", address);
+            }
+            result = PermissionResult.Fail("Authorization denied. You do not have permission to unblock senders.");
+            isLoading = false;
+            return;
+        }
+
+        var scope = OperationTrace.BeginOperation("BlockedSenders", "UnblockSender",
+            currentUser, clientIpAddress, target: address, ticket: ticket);
+
+        PermissionResult opResult;
+        try
+        {
+            OperationTrace.Step("Reauthorized");
+            OperationTrace.Step("BackendWrite", backend: "ExchangeOnline", command: "Remove-BlockedSenderAddress", target: address);
+            opResult = await BlockedSenderSvc.UnblockSenderAsync(address, unblockReason);
+            scope.Complete(opResult.Success, opResult.Success ? null : opResult.Message);
+        }
+        catch (Exception ex)
+        {
+            OperationTrace.Step("BackendWrite", "Failed", backend: "ExchangeOnline", exception: ex);
+            scope.Complete(false, "Unblock failed", ex);
+            opResult = PermissionResult.Fail($"Unblock failed: {ex.Message}");
+        }
+
+        // Audit the outcome. An audit-write failure must not change the already-committed result.
+        try
+        {
+            Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender",
+                "BlockedSenders", address, opResult.Success, ticketNumber: ticket,
+                errorDetail: opResult.Success ? null : opResult.Message);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to write audit for unblock of {Address}", address);
+        }
+
+        // Admin notification (house pattern for mutating modules). A send failure must not
+        // change the unblock result, so it is caught and logged separately.
+        try
+        {
+            await Email.SendAdminNotificationAsync(
+                currentUser, clientIpAddress, "UnblockSender", opResult.Success, ticket,
+                new Dictionary<string, string>
+                {
+                    ["Sender Address"] = address,
+                    ["Reason"] = string.IsNullOrWhiteSpace(unblockReason) ? "(none)" : unblockReason,
+                },
+                opResult.Success ? null : opResult.Message);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to send admin notification for unblock of {Address}", address);
+        }
+
+        result = opResult;
+        isLoading = false;
+
+        if (opResult.Success)
+        {
+            confirmAddress = null;
+            ticketNumber = string.Empty;
+            reason = string.Empty;
+            await LoadBlockedSenders();
+        }
+    }
+}

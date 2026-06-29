@@ -110,6 +110,7 @@ try
     builder.Services.AddScoped<MessageTraceService>();
     builder.Services.AddScoped<MailboxPermissionService>();
     builder.Services.AddScoped<CalendarPermissionService>();
+    builder.Services.AddScoped<BlockedSenderService>();
 
     builder.Services.AddSingleton<ExtendedLogService>();
     builder.Services.AddSingleton<JsonlLogService>();
