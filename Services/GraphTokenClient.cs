@@ -95,7 +95,13 @@ public sealed class GraphTokenClient
         return string.IsNullOrWhiteSpace(content) ? null : JsonDocument.Parse(content);
     }
 
-    public async Task<bool> PatchAsync(string endpoint, object body)
+    /// <summary>
+    /// PATCH that surfaces the HTTP status and a sanitized Graph error so callers can report
+    /// WHY a write failed (e.g. an on-premises-mastered property rejection on a synced user)
+    /// instead of a bare bool. SafeError contains only the Graph error.code/message, never the
+    /// token or raw response body.
+    /// </summary>
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PatchWithStatusAsync(string endpoint, object body)
     {
         var token = await GetAccessTokenAsync();
         using var request = new HttpRequestMessage(HttpMethod.Patch, $"{GraphBaseUrl}{endpoint}");
@@ -105,7 +111,46 @@ public sealed class GraphTokenClient
         request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
         var response = await _httpClient.SendAsync(request);
-        return response.IsSuccessStatusCode;
+        if (response.IsSuccessStatusCode)
+            return (true, response.StatusCode, null);
+
+        var content = await response.Content.ReadAsStringAsync();
+        return (false, response.StatusCode, ExtractGraphError(content));
+    }
+
+    public async Task<bool> PatchAsync(string endpoint, object body)
+    {
+        var (ok, _, _) = await PatchWithStatusAsync(endpoint, body);
+        return ok;
+    }
+
+    /// <summary>
+    /// Pulls the Graph <c>error.code</c>/<c>error.message</c> out of an error response body for
+    /// safe logging. Returns null when the body is empty or unparseable. Never returns tokens or
+    /// other request data — input is only the response body.
+    /// </summary>
+    internal static string? ExtractGraphError(string? responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+            return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (doc.RootElement.TryGetProperty("error", out var error))
+            {
+                var code = error.TryGetProperty("code", out var c) ? c.GetString() : null;
+                var message = error.TryGetProperty("message", out var m) ? m.GetString() : null;
+                var combined = string.Join(": ", new[] { code, message }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                return string.IsNullOrWhiteSpace(combined) ? null : combined;
+            }
+        }
+        catch (JsonException)
+        {
+            // Non-JSON error body — fall through to null rather than echo arbitrary content.
+        }
+
+        return null;
     }
 
     private async Task<string> GetAccessTokenAsync()

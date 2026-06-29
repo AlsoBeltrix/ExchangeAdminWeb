@@ -141,6 +141,7 @@ public class EmergencyDisableService
         // 4. Build pre-action snapshot
         bool preAdEnabled;
         bool preEntraEnabled;
+        bool isSynced;
 
         try
         {
@@ -157,7 +158,7 @@ public class EmergencyDisableService
 
         try
         {
-            preEntraEnabled = await ReadEntraEnabledState(target.UserPrincipalName, graphClient);
+            (preEntraEnabled, isSynced) = await ReadEntraEnabledState(target.UserPrincipalName, graphClient);
         }
         catch (Exception ex)
         {
@@ -168,7 +169,7 @@ public class EmergencyDisableService
             return new EmergencyDisableResult(false, msg, null, steps);
         }
 
-        steps.Add(new DisableStepResult("ReadPreState", "OK", $"AD={preAdEnabled}, Entra={preEntraEnabled}"));
+        steps.Add(new DisableStepResult("ReadPreState", "OK", $"AD={preAdEnabled}, Entra={preEntraEnabled}, Synced={isSynced}"));
 
         var snapshot = new DisableSnapshot
         {
@@ -230,8 +231,20 @@ public class EmergencyDisableService
         var revokeResult = await ExecuteRevokeEntraSessions(target.UserPrincipalName, graphClient);
         steps.Add(revokeResult);
 
-        // 6d. Disable Entra account
-        var disableEntraResult = await ExecuteDisableEntra(target.UserPrincipalName, graphClient);
+        // 6d. Disable Entra account. For synced users accountEnabled is on-prem mastered and
+        // Entra rejects a direct PATCH; the AD disable (6a) is the master and propagates on the
+        // next sync, so skip the doomed write and record it as not-applicable rather than failed.
+        DisableStepResult disableEntraResult;
+        if (ShouldSkipEntraDisable(isSynced))
+        {
+            const string skipReason = "Skipped: user is synced from on-prem AD; accountEnabled is on-prem mastered. Disabled via AD, propagates to Entra on next directory sync.";
+            _operationTrace.Step("DisableEntra", "Skipped", backend: "MicrosoftGraph", target: target.UserPrincipalName, details: new Dictionary<string, object?> { ["reason"] = "onPremisesSyncEnabled" });
+            disableEntraResult = new DisableStepResult("DisableEntra", "SKIPPED", skipReason);
+        }
+        else
+        {
+            disableEntraResult = await ExecuteDisableEntra(target.UserPrincipalName, graphClient);
+        }
         steps.Add(disableEntraResult);
 
         // 7. Update snapshot with step results
@@ -245,12 +258,10 @@ public class EmergencyDisableService
             _logger.LogWarning(ex, "Failed to update snapshot file with final step results for operation {OpId}", opScope.OperationId);
         }
 
-        // Determine overall success (all mutation steps must succeed)
-        var allMutationsSucceeded =
-            disableAdResult.Status == "OK" &&
-            resetPwResult.Status == "OK" &&
-            revokeResult.Status == "OK" &&
-            disableEntraResult.Status == "OK";
+        // Determine overall success. AD disable / reset / revoke must each be OK; the Entra
+        // disable may be OK or SKIPPED (skipped for synced users — see ShouldSkipEntraDisable).
+        var allMutationsSucceeded = IsOverallSuccess(
+            disableAdResult.Status, resetPwResult.Status, revokeResult.Status, disableEntraResult.Status);
 
         var overallSuccess = allMutationsSucceeded;
         var overallError = allMutationsSucceeded ? null : "One or more steps failed. Review step details and escalate for manual follow-up.";
@@ -330,18 +341,43 @@ public class EmergencyDisableService
         }
     }
 
-    private async Task<bool> ReadEntraEnabledState(string upn, GraphTokenClient graphClient)
+    private async Task<(bool Enabled, bool IsSynced)> ReadEntraEnabledState(string upn, GraphTokenClient graphClient)
     {
         var escaped = Uri.EscapeDataString(upn);
-        using var doc = await graphClient.GetAsync($"/users/{escaped}?$select=accountEnabled");
+        using var doc = await graphClient.GetAsync($"/users/{escaped}?$select=accountEnabled,onPremisesSyncEnabled");
         if (doc == null)
             throw new InvalidOperationException("Graph API returned non-success reading user state.");
 
-        if (doc.RootElement.TryGetProperty("accountEnabled", out var prop))
-            return prop.GetBoolean();
+        if (!doc.RootElement.TryGetProperty("accountEnabled", out var prop))
+            throw new InvalidOperationException("Graph API response missing accountEnabled property.");
 
-        throw new InvalidOperationException("Graph API response missing accountEnabled property.");
+        // onPremisesSyncEnabled is true only for directory-synced users; absent or null means
+        // cloud-only. accountEnabled is on-prem mastered for synced users, so a direct Graph
+        // PATCH of it is rejected — see ShouldSkipEntraDisable.
+        var isSynced = doc.RootElement.TryGetProperty("onPremisesSyncEnabled", out var syncProp)
+            && syncProp.ValueKind == JsonValueKind.True;
+
+        return (prop.GetBoolean(), isSynced);
     }
+
+    /// <summary>
+    /// For directory-synced users, <c>accountEnabled</c> is mastered on-premises and Entra
+    /// rejects a direct Graph PATCH of it ("on-premises mastered Directory Synced objects").
+    /// The on-prem AD disable already handles the master copy, which propagates on the next
+    /// directory sync, so the direct Entra disable is skipped for synced users. Pure for testing.
+    /// </summary>
+    internal static bool ShouldSkipEntraDisable(bool isSynced) => isSynced;
+
+    /// <summary>
+    /// Overall success accounting. The three on-prem/cloud-action mutations must each be OK; the
+    /// Entra disable step may be OK or SKIPPED (skipped for synced users, see
+    /// <see cref="ShouldSkipEntraDisable"/>). Pure for testing.
+    /// </summary>
+    internal static bool IsOverallSuccess(string disableAdStatus, string resetPwStatus, string revokeStatus, string disableEntraStatus) =>
+        disableAdStatus == "OK" &&
+        resetPwStatus == "OK" &&
+        revokeStatus == "OK" &&
+        (disableEntraStatus == "OK" || disableEntraStatus == "SKIPPED");
 
     private async Task<DisableStepResult> ExecuteDisableAD(ResolvedDirectoryPrincipal target, (string username, string password, string domain) creds, bool adSlotHeld = false)
     {
@@ -498,11 +534,14 @@ public class EmergencyDisableService
         try
         {
             var escaped = Uri.EscapeDataString(upn);
-            var success = await graphClient.PatchAsync($"/users/{escaped}", new { accountEnabled = false });
+            var (success, status, safeError) = await graphClient.PatchWithStatusAsync($"/users/{escaped}", new { accountEnabled = false });
             if (!success)
             {
-                _operationTrace.Step("DisableEntra", "Failed", backend: "MicrosoftGraph", command: "PATCH /users/{upn} accountEnabled=false");
-                return new DisableStepResult("DisableEntra", "FAILED", "Graph API returned non-success for disable user.");
+                var detail = $"Graph PATCH disable returned {(int)status} {status}"
+                    + (string.IsNullOrWhiteSpace(safeError) ? "." : $": {safeError}");
+                _operationTrace.Step("DisableEntra", "Failed", backend: "MicrosoftGraph", command: "PATCH /users/{upn} accountEnabled=false",
+                    details: new Dictionary<string, object?> { ["status"] = (int)status, ["graphError"] = safeError });
+                return new DisableStepResult("DisableEntra", "FAILED", detail);
             }
 
             _operationTrace.Step("DisableEntra", "Success", backend: "MicrosoftGraph", command: "PATCH /users/{upn} accountEnabled=false", target: upn);

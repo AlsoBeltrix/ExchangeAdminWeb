@@ -107,10 +107,52 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.NotNull(module);
         Assert.False(module.EnabledByDefault);
         Assert.True(module.MainPermission.FailClosed);
-        Assert.Equal("1.0.4", module.Version);
+        Assert.Equal("1.0.5", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");
+    }
+
+    // ---- Synced-user Entra-disable decision (pure) ------------------------------------------
+
+    [Fact]
+    public void ShouldSkipEntraDisable_SyncedUser_IsSkipped()
+    {
+        Assert.True(EmergencyDisableService.ShouldSkipEntraDisable(isSynced: true));
+    }
+
+    [Fact]
+    public void ShouldSkipEntraDisable_CloudOnlyUser_IsNotSkipped()
+    {
+        Assert.False(EmergencyDisableService.ShouldSkipEntraDisable(isSynced: false));
+    }
+
+    // ---- Overall-success accounting (pure) --------------------------------------------------
+
+    [Fact]
+    public void IsOverallSuccess_SyncedUser_EntraSkipped_IsSuccess()
+    {
+        // AD/reset/revoke all OK and the Entra disable SKIPPED (synced) => overall success.
+        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "SKIPPED"));
+    }
+
+    [Fact]
+    public void IsOverallSuccess_CloudUser_EntraOk_IsSuccess()
+    {
+        Assert.True(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "OK"));
+    }
+
+    [Fact]
+    public void IsOverallSuccess_EntraFailed_IsFailure()
+    {
+        Assert.False(EmergencyDisableService.IsOverallSuccess("OK", "OK", "OK", "FAILED"));
+    }
+
+    [Fact]
+    public void IsOverallSuccess_AdFailed_IsFailure_EvenIfEntraSkipped()
+    {
+        // A SKIPPED Entra step must not paper over a failed AD mutation.
+        Assert.False(EmergencyDisableService.IsOverallSuccess("FAILED", "OK", "OK", "SKIPPED"));
     }
 
     private EmergencyDisableService CreateService(string? protectedPrincipalsJson = null)

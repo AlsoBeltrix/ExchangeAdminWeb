@@ -73,4 +73,58 @@ public class GraphTokenClientTests
 
         Assert.Null(document);
     }
+
+    [Fact]
+    public async Task PatchWithStatusAsync_Success_ReturnsOk()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false });
+
+        Assert.True(ok);
+        Assert.Equal(HttpStatusCode.NoContent, status);
+        Assert.Null(safeError);
+    }
+
+    [Fact]
+    public async Task PatchWithStatusAsync_NonSuccess_SurfacesStatusAndSanitizedGraphError()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("""
+                {"error":{"code":"Request_BadRequest","message":"Unable to update the specified properties for on-premises mastered Directory Synced objects."}}
+                """)
+        };
+
+        var (ok, status, safeError) = await client.PatchWithStatusAsync("/users/x", new { accountEnabled = false });
+
+        Assert.False(ok);
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.NotNull(safeError);
+        Assert.Contains("Request_BadRequest", safeError);
+        Assert.Contains("on-premises mastered", safeError);
+    }
+
+    [Fact]
+    public async Task PatchAsync_BackCompat_ReturnsBool()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var ok = await client.PatchAsync("/users/x", new { accountEnabled = false });
+
+        Assert.False(ok);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not json")]
+    [InlineData("{\"something\":\"else\"}")]
+    public void ExtractGraphError_UnusableBody_ReturnsNull(string? body)
+    {
+        Assert.Null(GraphTokenClient.ExtractGraphError(body));
+    }
 }

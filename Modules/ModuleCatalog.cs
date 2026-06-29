@@ -427,7 +427,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.4",
+            Version = "1.0.5",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
