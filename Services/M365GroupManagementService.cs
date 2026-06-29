@@ -10,6 +10,7 @@ public class M365GroupManagementService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly OperationTraceService _operationTrace;
     private readonly AuditService _audit;
+    private readonly ProtectedPrincipalService _protectedPrincipals;
 
     public M365GroupManagementService(
         ModuleConfigService moduleConfig,
@@ -17,6 +18,7 @@ public class M365GroupManagementService
         IHttpClientFactory httpClientFactory,
         OperationTraceService operationTrace,
         AuditService audit,
+        ProtectedPrincipalService protectedPrincipals,
         ILogger<M365GroupManagementService> logger)
     {
         _moduleConfig = moduleConfig;
@@ -24,6 +26,7 @@ public class M365GroupManagementService
         _httpClientFactory = httpClientFactory;
         _operationTrace = operationTrace;
         _audit = audit;
+        _protectedPrincipals = protectedPrincipals;
         _logger = logger;
     }
 
@@ -143,12 +146,106 @@ public class M365GroupManagementService
 
     public async Task<List<M365GroupMember>> GetMembersAsync(string groupId)
     {
-        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=displayName,mail,userPrincipalName&$top=999");
+        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/members?$select=id,displayName,mail,userPrincipalName&$top=999");
     }
 
     public async Task<List<M365GroupMember>> GetOwnersAsync(string groupId)
     {
-        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=displayName,mail,userPrincipalName&$top=999");
+        return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=id,displayName,mail,userPrincipalName&$top=999");
+    }
+
+    public Task<M365GroupResult> AddMemberAsync(string groupId, string memberUpnOrId) =>
+        AddDirectoryObjectAsync(groupId, "members", memberUpnOrId);
+
+    public Task<M365GroupResult> AddOwnerAsync(string groupId, string ownerUpnOrId) =>
+        AddDirectoryObjectAsync(groupId, "owners", ownerUpnOrId);
+
+    public Task<M365GroupResult> RemoveMemberAsync(string groupId, string memberObjectId, string memberIdentityForCheck) =>
+        RemoveDirectoryObjectAsync(groupId, "members", memberObjectId, memberIdentityForCheck);
+
+    public Task<M365GroupResult> RemoveOwnerAsync(string groupId, string ownerObjectId, string ownerIdentityForCheck) =>
+        RemoveDirectoryObjectAsync(groupId, "owners", ownerObjectId, ownerIdentityForCheck);
+
+    // Protected-principal gate, enforced in-service immediately before the Graph write
+    // regardless of caller, mirroring GroupManagementService.CheckProtectedAsync. The page
+    // also checks, but "UI hiding is not security" (Constitution). Resolves the identity
+    // against on-prem AD; fails closed on Unavailable/Ambiguous/CheckFailed and refuses
+    // protected principals. Returns null when clear to mutate, or a Fail result to abort.
+    // Known limitation (plan, owner 2026-06-29): a cloud-only account that AD cannot
+    // resolve returns NotFound and is treated as not protected — accepted risk.
+    private async Task<M365GroupResult?> CheckProtectedAsync(string identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity))
+            return null;
+
+        try
+        {
+            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
+            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
+                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                return new M365GroupResult
+                {
+                    Success = false,
+                    Message = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                        ? "Identity is ambiguous — matches multiple AD users."
+                        : "Protection check unavailable. Cannot verify if this member is protected."
+                };
+            }
+
+            if (resolved != null)
+            {
+                var check = await _protectedPrincipals.CheckAsync(resolved);
+                if (check.CheckFailed)
+                    return new M365GroupResult { Success = false, Message = $"Protection check failed: {check.Reason}" };
+                if (check.IsProtected)
+                    return new M365GroupResult { Success = false, Message = "This member is a protected principal. Operation not permitted." };
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
+            return new M365GroupResult { Success = false, Message = $"Protection check error: {ex.Message}" };
+        }
+    }
+
+    private async Task<M365GroupResult> AddDirectoryObjectAsync(string groupId, string relationship, string identity)
+    {
+        var denial = await CheckProtectedAsync(identity);
+        if (denial is not null)
+            return denial;
+
+        var client = await GetGraphClientAsync();
+        var body = new Dictionary<string, object>
+        {
+            ["@odata.id"] = $"https://graph.microsoft.com/v1.0/directoryObjects/{Uri.EscapeDataString(identity)}"
+        };
+
+        var ok = await client.PostNoContentAsync($"/groups/{Uri.EscapeDataString(groupId)}/{relationship}/$ref", body);
+        if (!ok)
+            return new M365GroupResult { Success = false, Message = $"Failed to add {identity}. Verify the user exists and the Graph app has Group.ReadWrite.All." };
+
+        var noun = relationship == "owners" ? "owner" : "member";
+        _logger.LogInformation("Added {Noun} {Identity} to group {GroupId}", noun, identity, groupId);
+        return new M365GroupResult { Success = true, Message = $"Added {noun} {identity}." };
+    }
+
+    private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck)
+    {
+        var denial = await CheckProtectedAsync(identityForCheck);
+        if (denial is not null)
+            return denial;
+
+        var client = await GetGraphClientAsync();
+        var ok = await client.DeleteAsync($"/groups/{Uri.EscapeDataString(groupId)}/{relationship}/{Uri.EscapeDataString(objectId)}/$ref");
+        if (!ok)
+            return new M365GroupResult { Success = false, Message = $"Failed to remove {identityForCheck}. Verify the Graph app has Group.ReadWrite.All." };
+
+        var noun = relationship == "owners" ? "owner" : "member";
+        _logger.LogInformation("Removed {Noun} {Identity} from group {GroupId}", noun, identityForCheck, groupId);
+        return new M365GroupResult { Success = true, Message = $"Removed {noun} {identityForCheck}." };
     }
 
     private async Task<List<M365GroupMember>> GetPagedMembersAsync(string initialUrl)
@@ -200,6 +297,7 @@ public class M365GroupManagementService
     {
         return new M365GroupMember
         {
+            Id = item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
             DisplayName = item.TryGetProperty("displayName", out var dn) ? dn.GetString() ?? "" : "",
             Mail = item.TryGetProperty("mail", out var mail) ? mail.GetString() ?? "" : "",
             UserPrincipalName = item.TryGetProperty("userPrincipalName", out var upn) ? upn.GetString() ?? "" : ""
@@ -221,6 +319,7 @@ public class M365Group
 
 public class M365GroupMember
 {
+    public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public string Mail { get; set; } = "";
     public string UserPrincipalName { get; set; } = "";
