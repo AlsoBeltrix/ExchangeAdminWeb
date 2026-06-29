@@ -94,7 +94,10 @@ public class GroupManagementService
               .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
               .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description" })
               .AddParameter("Credential", credential)
-              .AddParameter("ResultSetSize", 25)
+              // Fetch wider than we display so ranking sees more than the shown set —
+              // guarantees an exact match is fetched even when many groups share the
+              // substring. RankGroups then promotes it to the top; the page shows 100.
+              .AddParameter("ResultSetSize", 200)
               .AddParameter("ErrorAction", "Stop");
             var groups = ps.Invoke();
             ps.Commands.Clear();
@@ -116,8 +119,41 @@ public class GroupManagementService
                 });
             }
 
-            return results;
+            return RankGroups(results, searchTerm.Trim()).Take(100).ToList();
         }));
+    }
+
+    /// <summary>
+    /// Orders search results so the most relevant groups surface first, exact match always
+    /// at the top. Pure and deterministic so it is unit-testable (the live AD query in
+    /// SearchGroupsAsync is not). Tiers (case-insensitive), exact first:
+    ///   1. exact match on Name or SamAccountName
+    ///   2. Name or SamAccountName starts with the term
+    ///   3. remaining (substring) matches
+    /// Within a tier, alphabetical by Name (ordinal-ignore-case). A blank term returns the
+    /// input ordered by Name.
+    /// </summary>
+    internal static List<GroupInfo> RankGroups(IEnumerable<GroupInfo> results, string term)
+    {
+        var list = results ?? Enumerable.Empty<GroupInfo>();
+
+        if (string.IsNullOrWhiteSpace(term))
+            return list.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+
+        static int Tier(GroupInfo g, string term)
+        {
+            bool ExactOn(string? v) => string.Equals(v, term, StringComparison.OrdinalIgnoreCase);
+            bool StartsOn(string? v) => !string.IsNullOrEmpty(v) && v.StartsWith(term, StringComparison.OrdinalIgnoreCase);
+
+            if (ExactOn(g.Name) || ExactOn(g.SamAccountName)) return 0;
+            if (StartsOn(g.Name) || StartsOn(g.SamAccountName)) return 1;
+            return 2;
+        }
+
+        return list
+            .OrderBy(g => Tier(g, term))
+            .ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string? samAccountName = null)
