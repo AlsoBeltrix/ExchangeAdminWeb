@@ -5,6 +5,64 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-29 - Module distribution end state: UI-driven .zip upload that installs/updates a module
+
+Status: Active (long-term direction; nothing to implement now, no plan yet)
+
+Decision (owner direction 2026-06-29):
+The end state for module distribution is that the **main app can load a module from the UI as
+a `.zip` upload** — an administrator uploads a packaged module through the web UI and the app
+installs or updates it, with **no full app rebuild-and-redeploy** for that module. Whether the
+package carries a **precompiled** module assembly or **source compiled at runtime** is left
+**open** — the owner is explicitly not deciding that yet. Interim steps toward this are at the
+agent's discretion; this entry records the destination, not the route.
+
+This is **long-term thinking. Nothing is to be built now and no plan is approved.** It is
+recorded so the requirement is durable repo memory rather than living only in chat.
+
+Why this is now recorded (triggering context):
+A one-line BlockedSenders UI fix (module 1.0.1 → 1.0.2) could not reach prod on its own — prod
+still runs BlockedSenders 1.0.0 — because today a "module" is not an installable unit: it is C#
++ Razor compiled into the single `ExchangeAdminWeb.dll`, its services hand-wired in `Program.cs`
+(~54 registrations), its policies generated from the compiled `ModuleCatalog` at startup. There
+is no seam where a module plugs in, so any module change requires rebuilding and shipping the
+whole app. That friction is the motivation for this direction.
+
+Refines / updates: the **2026-06-18 "Module packaging direction"** decision (same file), which
+set `.zip` package + `tools/validate-module-package.ps1` validator as near-term scope and
+**deferred runtime upload / assembly loading** as "the hardest and riskiest version … solves a
+problem the owner does not currently have." That deferral still holds for *now* (no
+implementation), but the owner has now confirmed UI-driven upload **is** the intended end state,
+not merely a someday-nice-to-have. The 2026-06-18 entry's near-term scope (rebuild-to-install,
+documented package + validator) is the sensible first leg; this entry sets the further
+destination it builds toward.
+
+Assessed terrain (agent analysis 2026-06-29 — guidance for the future plan, not owner decisions):
+- The hard prerequisite is a **module contract / self-registration seam**: a module declares its
+  own services, policies, routes, catalog descriptor, and components, and the app *discovers*
+  modules instead of hand-wiring them in `Program.cs`. This refactor is valuable and low-risk
+  regardless of precompiled-vs-runtime, and is step 1.
+- **Precompiled-vs-runtime only forks at the install step.** The contract refactor, splitting
+  each module into its own assembly, and the package format are shared groundwork either way.
+  Runtime compilation means accepting and compiling arbitrary code in a privileged Exchange/AD
+  tool (an ACE surface) — agent lean is precompiled, but the owner has deferred the call.
+- **"From the UI" almost certainly still means a quick self-restart to apply**, not true
+  zero-restart live loading: Blazor Server fixes its module/route/DI set once at startup.
+  Zero-restart live swap fights the framework hardest and is the riskiest variant; treat it as
+  "probably never," not the target.
+- Plausible interim staging (each step independently useful, single deploy until step 4):
+  (1) module contract / self-registration; (2) each module builds as its own DLL loaded from a
+  folder at startup → install/update = drop a DLL + restart, no full rebuild; (3) `.zip` package
+  + validator (the 2026-06-18 near-term scope); (4) UI upload + self-restart to apply.
+
+Canonical location / next step when actioned:
+This entry is the durable requirement. The implementation scope still belongs in a
+`docs/ModulePackaging-Plan.md` that must be written and approved before any code. The
+precompiled-vs-runtime decision is to be made when that plan reaches the install/loader stage,
+and recorded then. See also `.agents/state.md` "Queued work → Module packaging/import" and the
+OPEN versioning-rule blocker (new modules should not bump the base app version), which is the
+same end state viewed from the versioning angle.
+
 ### 2026-06-29 - M365 group member/owner changes: admin notification only, no affected-user notification
 
 Status: Active

@@ -283,9 +283,15 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 
 These have no plan doc yet; do not start without the noted plan/approval.
 
-- **Module packaging/import.** Direction set 2026-06-18 (`.agents/decisions.md`): `.zip`
-  package + validator, rebuild-to-install, runtime upload deferred. Needs
-  `docs/ModulePackaging-Plan.md` written + approved before any implementation.
+- **Module packaging/import.** Near-term direction set 2026-06-18 (`.agents/decisions.md`):
+  `.zip` package + validator, rebuild-to-install, runtime upload deferred. **End state
+  confirmed by owner 2026-06-29 (`.agents/decisions.md`): the main app loads a module from
+  the UI as a `.zip` upload, no full app rebuild for that module; precompiled-vs-runtime left
+  open.** Motivated by a one-line BlockedSenders fix being unable to reach prod (prod still
+  runs BlockedSenders 1.0.0) because a module is not an installable unit today. Long-term —
+  nothing to build now. Needs `docs/ModulePackaging-Plan.md` written + approved before any
+  implementation; the prereq first leg is a module contract / self-registration seam. Related:
+  the OPEN versioning-rule blocker (new modules should not bump the base app version).
 - **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624`, `d8bd2a6`;
   `docs/GroupManagementSearch-Plan.md`, Implemented). Search now ranks exact-first (then
   prefix, then contains; alphabetical within tier) via the pure `RankGroups` in
