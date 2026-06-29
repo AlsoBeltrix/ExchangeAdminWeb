@@ -91,15 +91,18 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Next up (prioritized — owner-ranked 2026-06-26)
 
-Priority order for the open backlog. Item 1 needs investigation; 2–4 need an approved plan
-first. Full detail in the sections below.
+Priority order for the open backlog. All items need an approved plan before code. Full
+detail in the sections below.
 
-1. **GM-2** — M365 group management finds no groups at all (broken feature; investigate root
-   cause before any fix). See Queued work.
+1. **M365 member/owner management** — investigated 2026-06-26: GM-2 was NOT a search bug
+   (search works; Unified-only by design). Real gap: the M365 module is view-only for
+   members/owners — add/remove was never built. Owner wants it built (full add/remove of
+   both). **BLOCKED on the protected-principal scoping decision in Blockers** — settle that
+   before writing the plan. See Queued work.
 2. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
    See Queued work.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-4. **GM-3** self-service group management — needs own plan; depends on GM-1/GM-2 first.
+4. **GM-3** self-service group management — needs own plan; depends on GM-1 + M365 work first.
 
 Done 2026-06-26: **MFA Reset stranded config key** (`docs/GraphSecretKeyMigration-Plan.md`)
 and **AccountLockoutRemediation module incorporation**
@@ -123,6 +126,20 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
   versioning rule must change in step with it. Not yet actioned (owner: "address later").
   When actioned: record a `decision` ("new modules do not bump base app version") and fix
   the Constitution + AGENTS.md #6 wording. The 2.3.27 bump is already committed (`3e84d50`).
+- **OPEN — should protected-principal checks gate group membership changes? (owner,
+  2026-06-26; not yet decided).** The on-prem `GroupManagementService` runs every
+  add/remove through `CheckProtectedAsync` (fails closed if the resolver is Unavailable).
+  Owner position: the protected-principal mechanism exists to stop a help-desk newbie from
+  granting **permissions** (e.g. self-adding to the CEO's mailbox), NOT to police routine
+  group management — so applying it universally to group add/remove is wrong, and the
+  forthcoming M365 member/owner feature should not inherit it by default. **Conflict to
+  resolve:** Constitution §Protected Principals says "Group protection must be transitive"
+  and "Never bypass protected-principal checks in privileged modules unless narrowly
+  scoped, documented, and required for compensation cleanup" — i.e. the repo currently
+  treats group writes as in-scope for protection. Settle which wins before building M365
+  member/owner management. When actioned: record a `decision`, then reconcile the
+  Constitution wording and the on-prem `GroupManagementService` gate with it. (Deferred
+  Friday EOD 2026-06-26.)
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
@@ -177,8 +194,25 @@ These have no plan doc yet; do not start without the noted plan/approval.
 - **GM-1 (bug): GroupManagement search too fuzzy.** Exact group name (e.g. "IAM") returns
   dozens of fuzzy matches. Tighten on-prem AD group search so exact/near-exact ranks first.
   Search path not yet code-located. Confirm desired ranking with owner before implementing.
-- **GM-2 (bug): M365 group management finds no groups at all.** Root cause unknown (Graph
-  query / auth-scope / result mapping). Investigate before any fix; treat as a real defect.
+- **GM-2 (investigated 2026-06-26 — NOT the originally-reported bug).** Live test on dev
+  (2.3.26) showed search *works*: it returns only Unified/M365 groups by design
+  (`M365GroupManagementService.SearchGroupsAsync` filters
+  `groupTypes/any(g:g eq 'Unified') and startsWith(displayName,...)`). The earlier
+  "finds no groups at all" report was a synced **security** group (Source: Windows Server AD,
+  not Unified) being correctly excluded — the grey "No M365 groups found" message, not the
+  red HTTP-status error banner, confirms a clean 200 with empty `value`. Verified the query
+  needs no `ConsistencyLevel: eventual`/`$count` per MS advanced-queries table (group
+  `displayName`/`startsWith` and `groupTypes/any`/`eq` are both Default-supported). The
+  failure-masking fix (`7048a3e`, app 2.3.5) is already in dev, so failures now surface as
+  errors, not empty lists.
+  **Real gap found:** the M365 module is **view-only for members and owners.**
+  `M365GroupManagementService` has `GetMembersAsync`/`GetOwnersAsync` (read) but **no**
+  add/remove methods, and `M365GroupManagement.razor` renders members/owners as read-only
+  tables. Owner (2026-06-26): managing memberships/owners is the point of the module — this
+  needs **building** (a feature, not a fix). Scope: full add/remove of both members and
+  owners via Graph (`POST .../members/$ref`, `DELETE .../members/{id}/$ref`, same for
+  owners). Needs an approved plan before any code; blocked on the protected-principal
+  scoping decision below.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload
