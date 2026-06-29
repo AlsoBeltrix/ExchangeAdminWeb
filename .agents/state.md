@@ -121,15 +121,15 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 Priority order for the open backlog. All items need an approved plan before code. Full
 detail in the sections below.
 
-1. **M365 member/owner management** — investigated 2026-06-26: GM-2 was NOT a search bug
-   (search works; Unified-only by design). Real gap: the M365 module is view-only for
-   members/owners — add/remove was never built. Owner wants it built (full add/remove of
-   both). **UNBLOCKED 2026-06-29** — the protected-principal scoping decision is settled
-   (protected principals are off-limits to every mutating module, no carve-out; see
-   Blockers/decisions). The plan must require add/remove to gate the target through the
-   protected-principal check and fail closed. See Queued work.
+1. **M365 member/owner management — DONE 2026-06-29** (module 1.1.0; commits `211c6eb`
+   service+tests, `03c443a` UI; `docs/M365MemberOwnerManagement-Plan.md`, Implemented).
+   Full add/remove of members and owners via Graph, each gated through the protected-principal
+   check (fail closed) before any write. Admin notification only — no affected-user
+   notification (decisions.md 2026-06-29). Closes GAP 1 principal-write surface. 578/578 green.
+   **Manual validation deferred to next dev deploy** (real add/remove member+owner, protected
+   refusal, admin email, audit rows).
 2. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
-   See Queued work.
+   Now top of the active backlog. See Queued work.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
 4. **GM-3** self-service group management — needs own plan; depends on GM-1 + M365 work first.
 
@@ -174,15 +174,15 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
     GroupManagement, AccountLockoutRemediation, ConferenceRooms, LicensingUpdates, MfaReset,
     OutOfOffice, MailboxPermissions, CalendarPermissions, Comms10k. BlockedSenders targets a
     sender address (not a principal) — N/A.
-  - **GAP 1 — `M365GroupManagementService` is UNGATED.** No protected-principal reference in
-    the service or `Components/Pages/M365GroupManagement.razor` (grep: zero matches). Writes
-    `CreateGroupAsync` (`Services/M365GroupManagementService.cs:106` POST /groups),
-    `UpdateGroupAsync` (`:125` PATCH /groups/{id}), `DeleteGroupAsync` (`:136` DELETE
-    /groups/{id}) run with no target check. NOTE: this module currently does group
-    create/update/delete only — it has read-only `GetMembersAsync`/`GetOwnersAsync` but no
-    member/owner *write* yet; the planned M365 member/owner feature (top backlog item) must add
-    gating as part of its plan, and the existing create/update/delete should be brought under
-    the rule too.
+  - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29 (principal-write surface).**
+    The M365 member/owner management feature shipped (module 1.1.0; commits `211c6eb`,
+    `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`, Implemented). Member/owner add/remove
+    now routes the target identity through an in-service protected-principal gate
+    (`CheckProtectedAsync` → `ProtectedPrincipalService.CheckAsync`, fail closed on
+    Unavailable/Ambiguous/CheckFailed) before any Graph write, mirroring GroupManagement.
+    Group create/update/delete remain ungated **by design** (owner decision 2026-06-29:
+    member/owner only, no protected-*group* gating; see `.agents/decisions.md`). Known
+    accepted limitation: AD-based resolution treats a cloud-only NotFound as not protected.
   - **GAP 2 — `MigrationService` is UNGATED.** No protected-principal reference in the service
     or `Components/Pages/Migration.razor` (grep: zero matches). `New-MigrationBatch`
     (`Services/MigrationService.cs` ~:267/:277, both ToCloud and ToOnPrem) creates a batch over
@@ -224,15 +224,15 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
 
 ## Known issues (pre-existing, NOT SQLite-caused)
 
-- **Protected-principal gating gaps (2 modules) — OPEN, found by sweep 2026-06-29.** The
+- **Protected-principal gating gaps — 1 of 2 remaining (sweep 2026-06-29).** The
   2026-06-29 decision requires every mutating module to gate its write target through the
-  protected-principal check; a read-only sweep found two modules that do not. Address when
-  the higher-priority bug queue clears; each needs an approved plan (mutating-module change).
-  - **GAP 1 — `M365GroupManagementService` UNGATED.** No protected-principal reference in the
-    service or `Components/Pages/M365GroupManagement.razor`. Writes with no target check:
-    `CreateGroupAsync` (`Services/M365GroupManagementService.cs:106`), `UpdateGroupAsync`
-    (`:125`), `DeleteGroupAsync` (`:136`). Members/owners are read-only today; the planned M365
-    member/owner feature must add gating, and existing CRUD should be brought under the rule.
+  protected-principal check; a read-only sweep found two modules that did not. GAP 1 is now
+  closed (see below); GAP 2 remains. Address when the higher-priority bug queue clears; it
+  needs an approved plan (mutating-module change).
+  - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29.** Member/owner add/remove now
+    gates the target through the protected-principal check before any Graph write (module
+    1.1.0; commits `211c6eb`, `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`). Group
+    create/update/delete intentionally ungated (owner decision; see Now section + decisions.md).
   - **GAP 2 — `MigrationService` UNGATED.** No protected-principal reference in the service or
     `Components/Pages/Migration.razor`. `New-MigrationBatch` (`Services/MigrationService.cs`
     ~:267/:277, ToCloud + ToOnPrem) creates a batch over target mailboxes with no
@@ -270,14 +270,11 @@ These have no plan doc yet; do not start without the noted plan/approval.
   `displayName`/`startsWith` and `groupTypes/any`/`eq` are both Default-supported). The
   failure-masking fix (`7048a3e`, app 2.3.5) is already in dev, so failures now surface as
   errors, not empty lists.
-  **Real gap found:** the M365 module is **view-only for members and owners.**
-  `M365GroupManagementService` has `GetMembersAsync`/`GetOwnersAsync` (read) but **no**
-  add/remove methods, and `M365GroupManagement.razor` renders members/owners as read-only
-  tables. Owner (2026-06-26): managing memberships/owners is the point of the module — this
-  needs **building** (a feature, not a fix). Scope: full add/remove of both members and
-  owners via Graph (`POST .../members/$ref`, `DELETE .../members/{id}/$ref`, same for
-  owners). Needs an approved plan before any code. **Protected-principal scoping resolved
-  2026-06-29** (no carve-out — add/remove must gate the target and fail closed); see Blockers.
+  **Member/owner management gap — BUILT 2026-06-29** (module 1.1.0; commits `211c6eb`,
+  `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`, Implemented). Full add/remove of both
+  members and owners via Graph (`POST .../$ref`, `DELETE .../{id}/$ref`), each gated through
+  the protected-principal check and fail closed before any write; admin notification only.
+  Manual validation deferred to next dev deploy.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload

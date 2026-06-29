@@ -298,14 +298,14 @@ public sealed class ModuleCatalog
         {
             Id = "M365GroupManagement",
             DisplayName = "M365 Group Management",
-            Description = "Create, modify, and delete Microsoft 365 groups via Graph API.",
+            Description = "Create, modify, and delete Microsoft 365 groups and manage their members and owners via Graph API.",
             Route = "m365-group-management",
             IconCss = "bi bi-people-fill-nav-menu",
             Category = "Directory & Groups",
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.1.0",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")

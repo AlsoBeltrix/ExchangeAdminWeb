@@ -5,6 +5,37 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-29 - M365 group member/owner changes: admin notification only, no affected-user notification
+
+Status: Active
+
+Decision: Adding or removing a member or owner of an M365 group sends an **admin
+notification only**. No notification is sent to the affected user (the member/owner being
+added or removed).
+
+This **refines** the 2026-06-29 "Notifications are mandatory" decision, which requires
+that a permission/access change also notify the affected user. Group member/owner changes
+are excluded from that affected-user requirement: per owner, M365 group membership is
+typically not tied to permissions, and even when it is, user-facing emails would only
+drive tickets. Admin notification and full audit still apply to every change.
+
+Scope: `M365GroupManagement` module member/owner add/remove only. The broader
+affected-user notification rule stands unchanged for genuine permission grants/changes in
+other modules.
+
+Also recorded here: **GAP 1 from the 2026-06-29 protected-principal sweep is closed for the
+principal-write surface.** `M365GroupManagementService` member/owner add/remove now routes
+the target identity through an in-service protected-principal gate (`CheckAsync`, fail
+closed on Unavailable/Ambiguous/CheckFailed) before any Graph write, mirroring
+`GroupManagementService`. Group create/update/delete remain ungated by design (owner:
+member/owner only, no protected-*group* gating). Known limitation: the gate resolves
+against on-prem AD, so a cloud-only account AD cannot resolve returns NotFound and is
+treated as not protected — accepted risk, consistent with on-prem Group Management.
+
+Implemented: module `M365GroupManagement` 1.0.3 → 1.1.0 (app version unchanged); commits
+`211c6eb` (service+tests), `03c443a` (UI). Plan:
+`docs/M365MemberOwnerManagement-Plan.md` (Status: Implemented).
+
 ### 2026-06-29 - Protected principals are off-limits to every mutating module — no carve-outs
 
 Status: Active
