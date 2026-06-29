@@ -269,12 +269,8 @@ These have no plan doc yet; do not start without the noted plan/approval.
   needs no `ConsistencyLevel: eventual`/`$count` per MS advanced-queries table (group
   `displayName`/`startsWith` and `groupTypes/any`/`eq` are both Default-supported). The
   failure-masking fix (`7048a3e`, app 2.3.5) is already in dev, so failures now surface as
-  errors, not empty lists.
-  **Member/owner management gap — BUILT 2026-06-29** (module 1.1.0; commits `211c6eb`,
-  `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`, Implemented). Full add/remove of both
-  members and owners via Graph (`POST .../$ref`, `DELETE .../{id}/$ref`), each gated through
-  the protected-principal check and fail closed before any write; admin notification only.
-  Manual validation deferred to next dev deploy.
+  errors, not empty lists. The separate member/owner management gap this investigation also
+  surfaced is now BUILT (2026-06-29, module 1.1.0) — see Now section #1 and Blockers GAP 1.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload
