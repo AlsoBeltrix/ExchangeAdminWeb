@@ -44,7 +44,16 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   gave no feedback for 10-15s. Moved the list load to `OnAfterRenderAsync(firstRender)` (one-shot
   `loadStarted` guard); page + spinner now render immediately, list fills in after. Spinner-only
   feedback, as before (owner). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
-  format/diff-check clean. **Re-deploy to dev pending to confirm the instant-load behavior.**
+  format/diff-check clean.
+- **BlockedSenders refresh-hang fix DONE (2026-06-29, commit `cde778f`; module 1.0.1→1.0.2,
+  app version unchanged).** Follow-on to the load-timing fix above: owner reported the page
+  loads but the spinner never stops and Refresh stays greyed out. Root cause — the list load
+  runs from `OnAfterRenderAsync`, after which Blazor does NOT auto-render, so `isLoading=false`
+  never reached the UI (data arrived in memory but the screen stayed frozen on the loading
+  state). Added `StateHasChanged()` in `LoadBlockedSenders`' `finally` (harmless on the
+  button-click path). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
+  format/diff-check clean. **Re-deploy to dev pending to confirm refresh completes + button
+  re-enables.**
 - **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
   `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
   `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
