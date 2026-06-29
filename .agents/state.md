@@ -52,8 +52,10 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   never reached the UI (data arrived in memory but the screen stayed frozen on the loading
   state). Added `StateHasChanged()` in `LoadBlockedSenders`' `finally` (harmless on the
   button-click path). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
-  format/diff-check clean. **Re-deploy to dev pending to confirm refresh completes + button
-  re-enables.**
+  format/diff-check clean. **Validated on dev (owner, 2026-06-29) — refresh completes, button
+  re-enables. NOTE: prod still runs BlockedSenders 1.0.0** (the 1.0.1/1.0.2 fixes are module
+  bumps, not app bumps, so the 2.3.27 prod cutover did not necessarily include them — confirm
+  the prod build commit if the fix is needed in prod).
 - **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
   `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
   `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
@@ -135,38 +137,32 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   proven non-vacuous). A Codex review pass was folded in (one-pass, owner-approved): Graph
   credential key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline →
   2.3.22, this state block repaired. 508/508 xUnit + 59/59 Pester green.
-  - Final whole-branch review now DONE (see top of Now). Branch is review-complete; do not
-    push prod yet — see Blockers.
+  - Final whole-branch review now DONE (see top of Now). Branch is review-complete.
 
-## Next up (prioritized — owner-ranked 2026-06-26)
+## Next up (prioritized)
 
-Priority order for the open backlog. All items need an approved plan before code. Full
-detail in the sections below.
+Live backlog only (DONE items moved out). All items need an approved plan before code.
 
-1. **M365 member/owner management — DONE 2026-06-29** (module 1.1.0; commits `211c6eb`
-   service+tests, `03c443a` UI; `docs/M365MemberOwnerManagement-Plan.md`, Implemented).
-   Full add/remove of members and owners via Graph, each gated through the protected-principal
-   check (fail closed) before any write. Admin notification only — no affected-user
-   notification (decisions.md 2026-06-29). Closes GAP 1 principal-write surface. 578/578 green.
-   **Manual validation DONE on dev 2.3.27 (owner, 2026-06-29) — looks good.**
-2. **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624` ranking+tests, `d8bd2a6`
-   layout; `docs/GroupManagementSearch-Plan.md`, Implemented). On-prem group search now
-   ranks results exact-first (then prefix, then contains; alphabetical within tier), fetches
-   up to 200 from AD so the exact match is never dropped, shows top 100 in a scrollable
-   frame. Page reordered: controls on top, results below in the scroll frame (no longer
-   pushed off-screen). 585/585 green. **Manual validation DONE on dev 2.3.27 (owner,
-   2026-06-29) — looks good.**
+1. **GAP 2 — `MigrationService` protected-principal gate.** Last remaining security gap from
+   the 2026-06-29 sweep: `New-MigrationBatch` (`Services/MigrationService.cs` ~:267/:277,
+   ToCloud + ToOnPrem) creates a batch over target mailboxes with NO protected-principal
+   validation. Contained fix; mirrors the GAP 1 pattern already shipped for M365. Needs a
+   standalone approved plan (mutating-module change). Agent-recommended next action.
+2. **Notifications enforcement sweep.** The 2026-06-29 mandatory-notification rule
+   (decisions.md; Constitution §Auditing And Tracing → Notifications) is not yet enforced in
+   older modules. Audit each mutating module / security read for the required
+   admin/affected-user notification via `EmailService`; consider validator coverage. Larger,
+   diffuse; needs a plan.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-   Now top of the active backlog.
-4. **GM-3** self-service group management — needs own plan; depends on M365 work (done) first.
+   End state confirmed 2026-06-29 (UI `.zip` upload, no full rebuild; precompiled-vs-runtime
+   open). First leg = module contract / self-registration seam. See Queued work + decisions.md.
+4. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
+   bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
+   invariant #6. Small, docs-only; tied to the module-packaging end state.
+5. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
 
-Done 2026-06-26: **MFA Reset stranded config key** (`docs/GraphSecretKeyMigration-Plan.md`)
-and **AccountLockoutRemediation module incorporation**
-(`docs/AccountLockoutRemediation-Incorporation-Plan.md`) — see the Now section. The latter
-still has manual validation pending its next dev deploy.
-
-Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms AD
-`DelineaSecretId` in prod (gates CR-1); `deploy.ps1` native `-PlanOnly` (workaround exists).
+Separate track (ops, not engineering): configure ConferenceRooms AD `DelineaSecretId` in the
+prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround exists).
 
 ## Blockers
 
@@ -214,9 +210,8 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
     or `Components/Pages/Migration.razor` (grep: zero matches). `New-MigrationBatch`
     (`Services/MigrationService.cs` ~:267/:277, both ToCloud and ToOnPrem) creates a batch over
     target mailboxes with no protected-principal validation on the batch members.
-  - **Both gaps need an approved plan before any code** (mutating-module changes). Neither is
-    yet scheduled; M365 gating folds naturally into the M365 member/owner plan, Migration is a
-    standalone fix.
+  - **GAP 1 CLOSED (above). GAP 2 remains** and needs an approved plan before any code
+    (mutating-module change); standalone Migration fix. It is "Next up" item #1.
 - **Prod-deploy hold LIFTED — prod cut over to 2.3.27 (owner, 2026-06-29).** The deferred
   prod hold (owner direction 2026-06-18) is done: prod moved from 2.3.11 (pre-SQLite) straight
   to app **`2.3.27`**, so the full JSON→SQLite legacy import ran on first startup (the path the
