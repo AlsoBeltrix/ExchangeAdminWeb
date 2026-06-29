@@ -110,21 +110,45 @@
                         <p class="text-muted p-3 mb-0">Enter a search term and click Search to find M365 groups.</p>
                     }
 
-                    @if (selectedGroup != null && members != null)
+                    @if (selectedGroup != null && members != null && !showForm)
                     {
                         <div class="border-top p-3">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold mb-1"><small>Ticket Number (required for member/owner changes)</small></label>
+                                <input type="text" class="form-control form-control-sm" @bind="memberTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isMemberOp" />
+                            </div>
+
                             <h6>Members (@members.Count)</h6>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@isMemberOp" />
+                                <button class="btn btn-outline-primary" @onclick="AddMember"
+                                        disabled="@(isMemberOp || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                    @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    Add
+                                </button>
+                            </div>
                             @if (members.Count > 0)
                             {
                                 <div style="max-height: 200px; overflow-y: auto;">
                                     <table class="table table-sm mb-0">
-                                        <thead><tr><th>Name</th><th>Email</th></tr></thead>
+                                        <thead><tr><th>Name</th><th>Email</th><th style="width: 110px;"></th></tr></thead>
                                         <tbody>
                                             @foreach (var m in members)
                                             {
                                                 <tr>
                                                     <td>@m.DisplayName</td>
                                                     <td><small class="text-muted">@(string.IsNullOrEmpty(m.Mail) ? m.UserPrincipalName : m.Mail)</small></td>
+                                                    <td>
+                                                        @if (confirmRemoveMember == m.Id)
+                                                        {
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveMember(m)" disabled="@(isMemberOp || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveMember = null" disabled="@isMemberOp">×</button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveMember = m.Id" disabled="@isMemberOp">Remove</button>
+                                                        }
+                                                    </td>
                                                 </tr>
                                             }
                                         </tbody>
@@ -137,17 +161,36 @@
                             }
 
                             <h6 class="mt-3">Owners (@(owners?.Count ?? 0))</h6>
+                            <div class="input-group input-group-sm mb-2">
+                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@isMemberOp" />
+                                <button class="btn btn-outline-primary" @onclick="AddOwner"
+                                        disabled="@(isMemberOp || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                    @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    Add
+                                </button>
+                            </div>
                             @if (owners != null && owners.Count > 0)
                             {
                                 <div style="max-height: 150px; overflow-y: auto;">
                                     <table class="table table-sm mb-0">
-                                        <thead><tr><th>Name</th><th>Email</th></tr></thead>
+                                        <thead><tr><th>Name</th><th>Email</th><th style="width: 110px;"></th></tr></thead>
                                         <tbody>
                                             @foreach (var o in owners)
                                             {
                                                 <tr>
                                                     <td>@o.DisplayName</td>
                                                     <td><small class="text-muted">@(string.IsNullOrEmpty(o.Mail) ? o.UserPrincipalName : o.Mail)</small></td>
+                                                    <td>
+                                                        @if (confirmRemoveOwner == o.Id)
+                                                        {
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveOwner(o)" disabled="@(isMemberOp || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveOwner = null" disabled="@isMemberOp">×</button>
+                                                        }
+                                                        else
+                                                        {
+                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveOwner = o.Id" disabled="@isMemberOp">Remove</button>
+                                                        }
+                                                    </td>
                                                 </tr>
                                             }
                                         </tbody>
@@ -280,6 +323,13 @@
 
     private M365GroupResult? operationResult;
     private string? confirmDelete;
+
+    private bool isMemberOp;
+    private string memberTicketNumber = "";
+    private string addMemberIdentity = "";
+    private string addOwnerIdentity = "";
+    private string? confirmRemoveMember;
+    private string? confirmRemoveOwner;
 
     private bool showForm;
     private M365Group? editingGroup;
@@ -520,6 +570,86 @@
         finally
         {
             isOperating = false;
+        }
+    }
+
+    private Task AddMember() =>
+        RunMemberOpAsync("M365GroupManagement_AddMember", addMemberIdentity.Trim(),
+            () => GroupService.AddMemberAsync(selectedGroup!.Id, addMemberIdentity.Trim()),
+            () => addMemberIdentity = "");
+
+    private Task AddOwner() =>
+        RunMemberOpAsync("M365GroupManagement_AddOwner", addOwnerIdentity.Trim(),
+            () => GroupService.AddOwnerAsync(selectedGroup!.Id, addOwnerIdentity.Trim()),
+            () => addOwnerIdentity = "");
+
+    private Task RemoveMember(M365GroupMember m) =>
+        RunMemberOpAsync("M365GroupManagement_RemoveMember",
+            string.IsNullOrEmpty(m.Mail) ? m.UserPrincipalName : m.Mail,
+            () => GroupService.RemoveMemberAsync(selectedGroup!.Id, m.Id,
+                string.IsNullOrEmpty(m.UserPrincipalName) ? m.Mail : m.UserPrincipalName),
+            () => confirmRemoveMember = null);
+
+    private Task RemoveOwner(M365GroupMember o) =>
+        RunMemberOpAsync("M365GroupManagement_RemoveOwner",
+            string.IsNullOrEmpty(o.Mail) ? o.UserPrincipalName : o.Mail,
+            () => GroupService.RemoveOwnerAsync(selectedGroup!.Id, o.Id,
+                string.IsNullOrEmpty(o.UserPrincipalName) ? o.Mail : o.UserPrincipalName),
+            () => confirmRemoveOwner = null);
+
+    // Shared member/owner mutation pipeline: server re-auth, invoke the service write,
+    // audit + admin notification (no affected-user notification — owner decision
+    // 2026-06-29, docs/M365MemberOwnerManagement-Plan.md), reload on success.
+    private async Task RunMemberOpAsync(string action, string targetLabel, Func<Task<M365GroupResult>> op, Action onSuccess)
+    {
+        if (selectedGroup == null) return;
+
+        isMemberOp = true;
+        operationResult = null;
+        await Task.Yield();
+
+        var ticket = memberTicketNumber.Trim();
+        var target = $"{targetLabel} → {selectedGroup.DisplayName} ({selectedGroup.Id})";
+
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "M365GroupManagement");
+            if (!authCheck.Succeeded)
+            {
+                operationResult = new M365GroupResult { Success = false, Message = "Authorization denied." };
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, false, ticket, "Authorization denied"); }
+                catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
+                return;
+            }
+
+            operationResult = await op();
+
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = $"{selectedGroup.DisplayName} ({selectedGroup.Id})", ["Target"] = targetLabel }, operationResult.Success ? null : operationResult.Message); }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
+
+            if (operationResult.Success)
+            {
+                onSuccess();
+                members = await GroupService.GetMembersAsync(selectedGroup.Id);
+                owners = await GroupService.GetOwnersAsync(selectedGroup.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            operationResult = new M365GroupResult { Success = false, Message = ex.Message };
+            Logger.LogError(ex, "Failed {Action} for {Target}", action, target);
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, false, ticket, ex.Message); }
+            catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, false, ticket, new Dictionary<string, string> { ["Group"] = $"{selectedGroup.DisplayName} ({selectedGroup.Id})", ["Target"] = targetLabel }, ex.Message); }
+            catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", action); }
+        }
+        finally
+        {
+            isMemberOp = false;
         }
     }
 
