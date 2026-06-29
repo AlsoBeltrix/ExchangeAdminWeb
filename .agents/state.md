@@ -14,6 +14,25 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   and names the superseded discretionary guidance. **Not yet enforced in code** — existing
   modules predate the rule and have not been audited for compliance; this was a guidance change
   only. A future task: sweep modules for missing notifications and consider validator coverage.
+- **EmergencyDisable synced-user fix DONE (2026-06-29, commit `c1c80a3`; module 1.0.4→1.0.5,
+  app version unchanged; `docs/EmergencyDisableSyncedUser-Plan.md`, Implemented).** For users
+  synced from on-prem AD, `accountEnabled` is on-prem mastered and Entra rejects a direct Graph
+  PATCH; the module already disables the AD master + revokes Entra sessions but then attempted
+  the doomed PATCH and marked the whole op failed. Now reads `onPremisesSyncEnabled` in the
+  existing pre-read; synced users skip the PATCH and record the Entra-disable step as SKIPPED
+  (not failed); overall success accepts OK or SKIPPED for that step. Cloud-only users unchanged.
+  Also added `GraphTokenClient.PatchWithStatusAsync` (status + sanitized error.code/message, no
+  tokens/raw bodies) to surface the real Graph error on a genuine PATCH failure; `PatchAsync`
+  kept as wrapper. +13 tests, non-vacuous verified.
+- **BlockedSenders module added DONE (2026-06-29, commit `5e4172e`; module 1.0.0, app version
+  unchanged — new-module bump deferred per owner; `docs/BlockedSenders-Plan.md`, Implemented).**
+  New cloud-only module: view EXO blocked senders (`Get-BlockedSenderAddress`) and unblock one
+  by address (`Remove-BlockedSenderAddress`). Rides the shared EXO pool via `ExchangeServiceBase`,
+  `DependsOn ExchangeOnline`, no module credential. Split permissions: `BlockedSenders` (view,
+  fail-closed) + `BlockedSendersUnblock` (write, fail-closed, re-checked before the cmdlet).
+  Audit on list/unblock/denied, operation trace on the write, admin email notification on
+  success/failure. Ticket + explicit confirmation required before unblock. **Catalog now 22
+  modules / 31 configurable aliases** (was 21 / 29). 553/553 green (14 new), non-vacuous verified.
 - **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
   `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
   `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
@@ -105,8 +124,10 @@ detail in the sections below.
 1. **M365 member/owner management** — investigated 2026-06-26: GM-2 was NOT a search bug
    (search works; Unified-only by design). Real gap: the M365 module is view-only for
    members/owners — add/remove was never built. Owner wants it built (full add/remove of
-   both). **BLOCKED on the protected-principal scoping decision in Blockers** — settle that
-   before writing the plan. See Queued work.
+   both). **UNBLOCKED 2026-06-29** — the protected-principal scoping decision is settled
+   (protected principals are off-limits to every mutating module, no carve-out; see
+   Blockers/decisions). The plan must require add/remove to gate the target through the
+   protected-principal check and fail closed. See Queued work.
 2. **GM-1** — GroupManagement search too fuzzy (degraded; tighten exact/near-exact ranking).
    See Queued work.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
@@ -134,20 +155,41 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
   versioning rule must change in step with it. Not yet actioned (owner: "address later").
   When actioned: record a `decision` ("new modules do not bump base app version") and fix
   the Constitution + AGENTS.md #6 wording. The 2.3.27 bump is already committed (`3e84d50`).
-- **OPEN — should protected-principal checks gate group membership changes? (owner,
-  2026-06-26; not yet decided).** The on-prem `GroupManagementService` runs every
-  add/remove through `CheckProtectedAsync` (fails closed if the resolver is Unavailable).
-  Owner position: the protected-principal mechanism exists to stop a help-desk newbie from
-  granting **permissions** (e.g. self-adding to the CEO's mailbox), NOT to police routine
-  group management — so applying it universally to group add/remove is wrong, and the
-  forthcoming M365 member/owner feature should not inherit it by default. **Conflict to
-  resolve:** Constitution §Protected Principals says "Group protection must be transitive"
-  and "Never bypass protected-principal checks in privileged modules unless narrowly
-  scoped, documented, and required for compensation cleanup" — i.e. the repo currently
-  treats group writes as in-scope for protection. Settle which wins before building M365
-  member/owner management. When actioned: record a `decision`, then reconcile the
-  Constitution wording and the on-prem `GroupManagementService` gate with it. (Deferred
-  Friday EOD 2026-06-26.)
+- **RESOLVED 2026-06-29 — protected principals are off-limits to every mutating module, no
+  carve-outs.** (Recorded in `.agents/decisions.md` 2026-06-29; Constitution §Protected
+  Principals updated with an explicit bullet.) The earlier owner position ("protection is only
+  about granting permissions, not routine group management") was reversed: the end state is that
+  no module may mutate a protected principal — account state, permissions, group membership,
+  directory attributes, anything — across EmergencyDisable, AD Attribute Editor, Group
+  Management, and the planned M365 member/owner feature. The guard binds to the *target* of the
+  write; it must refuse, fail closed, and audit the denial. The on-prem `GroupManagementService`
+  `CheckProtectedAsync` gate is therefore correct and stays. **Follow-up (read-only sweep,
+  pending):** verify every mutating module actually routes its target through the
+  protected-principal check before writing — confirm there is no module that writes without
+  gating. Findings go below; any gap becomes its own planned fix.
+  - **Sweep DONE 2026-06-29 (read-only audit; two gaps found, both verified in source).** Of
+    14 mutating modules, 12 gate the write target through the protected-principal check
+    (`ProtectedPrincipalService.CheckAsync` / `PermissionValidator.ValidateTargetMailboxAsync`
+    / a local `CheckProtectedAsync`): EmergencyDisable, ADAttributeEditor (+Undo),
+    GroupManagement, AccountLockoutRemediation, ConferenceRooms, LicensingUpdates, MfaReset,
+    OutOfOffice, MailboxPermissions, CalendarPermissions, Comms10k. BlockedSenders targets a
+    sender address (not a principal) — N/A.
+  - **GAP 1 — `M365GroupManagementService` is UNGATED.** No protected-principal reference in
+    the service or `Components/Pages/M365GroupManagement.razor` (grep: zero matches). Writes
+    `CreateGroupAsync` (`Services/M365GroupManagementService.cs:106` POST /groups),
+    `UpdateGroupAsync` (`:125` PATCH /groups/{id}), `DeleteGroupAsync` (`:136` DELETE
+    /groups/{id}) run with no target check. NOTE: this module currently does group
+    create/update/delete only — it has read-only `GetMembersAsync`/`GetOwnersAsync` but no
+    member/owner *write* yet; the planned M365 member/owner feature (top backlog item) must add
+    gating as part of its plan, and the existing create/update/delete should be brought under
+    the rule too.
+  - **GAP 2 — `MigrationService` is UNGATED.** No protected-principal reference in the service
+    or `Components/Pages/Migration.razor` (grep: zero matches). `New-MigrationBatch`
+    (`Services/MigrationService.cs` ~:267/:277, both ToCloud and ToOnPrem) creates a batch over
+    target mailboxes with no protected-principal validation on the batch members.
+  - **Both gaps need an approved plan before any code** (mutating-module changes). Neither is
+    yet scheduled; M365 gating folds naturally into the M365 member/owner plan, Migration is a
+    standalone fix.
 - **Deferred (owner direction 2026-06-18):** prod deploy of the SQLite-era build is held
   until the work queue clears — do not push to prod until then. Sub-TODO that gates CR-1
   in prod: configure the ConferenceRooms AD `DelineaSecretId` in the deployed instance.
@@ -181,6 +223,21 @@ Separate track (gated by the prod-deploy hold, not engineering): ConferenceRooms
   `deploy-pipeline -PlanOnly` covers the prod dry-run requirement).
 
 ## Known issues (pre-existing, NOT SQLite-caused)
+
+- **Protected-principal gating gaps (2 modules) — OPEN, found by sweep 2026-06-29.** The
+  2026-06-29 decision requires every mutating module to gate its write target through the
+  protected-principal check; a read-only sweep found two modules that do not. Address when
+  the higher-priority bug queue clears; each needs an approved plan (mutating-module change).
+  - **GAP 1 — `M365GroupManagementService` UNGATED.** No protected-principal reference in the
+    service or `Components/Pages/M365GroupManagement.razor`. Writes with no target check:
+    `CreateGroupAsync` (`Services/M365GroupManagementService.cs:106`), `UpdateGroupAsync`
+    (`:125`), `DeleteGroupAsync` (`:136`). Members/owners are read-only today; the planned M365
+    member/owner feature must add gating, and existing CRUD should be brought under the rule.
+  - **GAP 2 — `MigrationService` UNGATED.** No protected-principal reference in the service or
+    `Components/Pages/Migration.razor`. `New-MigrationBatch` (`Services/MigrationService.cs`
+    ~:267/:277, ToCloud + ToOnPrem) creates a batch over target mailboxes with no
+    protected-principal validation. Standalone fix.
+  - Full sweep result (12/14 modules already gated) is in the Now section.
 
 - **MFA Reset stranded legacy config key — RESOLVED 2026-06-26 (app 2.3.26).** The Graph
   Delinea secret was renamed `DelineaSecretId` → `GraphDelineaSecretId`; environments
@@ -219,8 +276,8 @@ These have no plan doc yet; do not start without the noted plan/approval.
   tables. Owner (2026-06-26): managing memberships/owners is the point of the module — this
   needs **building** (a feature, not a fix). Scope: full add/remove of both members and
   owners via Graph (`POST .../members/$ref`, `DELETE .../members/{id}/$ref`, same for
-  owners). Needs an approved plan before any code; blocked on the protected-principal
-  scoping decision below.
+  owners). Needs an approved plan before any code. **Protected-principal scoping resolved
+  2026-06-29** (no carve-out — add/remove must gate the target and fail closed); see Blockers.
 - **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
   Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
   nothing built until approved. Key requirements: likely a separate module; do NOT preload

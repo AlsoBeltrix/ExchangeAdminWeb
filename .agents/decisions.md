@@ -5,6 +5,52 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-29 - Protected principals are off-limits to every mutating module — no carve-outs
+
+Status: Active
+
+Decision:
+No module in this tool may perform a mutating operation whose **target** is a protected
+principal. This is absolute and covers every change type — account state, permissions, group
+membership, directory attributes, password/session state, anything — across every module that
+writes, including Emergency Disable, AD Attribute Editor, Group Management, and the planned
+M365 member/owner management. If the object being changed is a protected principal (directly,
+or transitively via a protected group), the operation must refuse, fail closed, and audit the
+denial. There is no group-management exception and no "routine change" exception.
+
+This explicitly resolves the previously-open question (recorded in `.agents/state.md`) of
+whether routine group add/remove should be exempt from protected-principal gating. The answer
+is **no exemption**: the guard binds to the *target* of the write, uniformly.
+
+Audience rationale (why this is non-negotiable):
+This tool's users are L2 helpdesk personnel who are deliberately NOT trusted with direct admin
+access. The tool exists to hand them a limited, heavily-logged, notified subset of admin
+actions to save L3/L4 from grunt work. The protected-principal guard is what stops an L2
+operator from acting on a high-value identity (e.g. adding the CEO to a group that changes his
+O365 licensing) in response to an unvetted ticket. Operations against protected principals must
+escalate to a real admin outside this tool, not be processable within it.
+
+Scope / mechanism note:
+This is a confirmation and scope-clarification of existing intent, not a new rule. The guard is
+the existing protected-principal check; this decision forbids treating any mutating module as
+out of its scope. The narrow, documented compensation-cleanup bypass allowed by
+`docs/ProjectConstitution.md` §Protected Principals (line: "Never bypass ... unless the bypass
+is narrowly scoped, documented, and required for compensation cleanup") is unchanged — that is
+the only permitted exception and it is not a helpdesk-facing operation.
+
+Canonical location:
+`docs/ProjectConstitution.md` §Protected Principals remains the authority. This entry settles
+the open scoping question and removes the ambiguity that let group membership be read as a
+possible exception.
+
+Reason:
+Owner direction 2026-06-29. Settles the open blocker that was gating M365 member/owner
+management design.
+
+Supersedes:
+The open question in `.agents/state.md` ("should protected-principal checks gate routine group
+add/remove?"). Resolved: yes, they gate it, with no carve-out.
+
 ### 2026-06-29 - Notifications are mandatory for changes, security reads, and permission changes
 
 Status: Active

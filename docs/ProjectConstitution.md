@@ -83,6 +83,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 ### Protected Principals
 
+- No module may perform a mutating operation whose target is a protected principal — this covers every change type (account state, permissions, group membership, directory attributes, password/session state) across every writing module, with no group-management or "routine change" carve-out. The guard binds to the target of the write; the operation must refuse, fail closed, and audit the denial. (See `.agents/decisions.md` 2026-06-29.)
 - Protected-principal checks must fail closed when protection config or required lookup data is unavailable.
 - Group protection must be transitive.
 - OU and group checks must be based on resolved directory objects, not substring matches.
