@@ -204,6 +204,10 @@
         finally
         {
             isLoading = false;
+            // The initial load runs from OnAfterRenderAsync, after which Blazor does NOT
+            // auto-render. Without this the spinner stays up and Refresh stays disabled
+            // even though the data has arrived. Harmless on the button-click path.
+            StateHasChanged();
         }
     }
 
