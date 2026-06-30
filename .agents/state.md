@@ -6,6 +6,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Migration eligibility protected-principal flag DONE (2026-06-30; module `Migration`
+  1.2.0→1.3.0, app version unchanged; `docs/MigrationEligibilityProtectedFlag-Plan.md`,
+  Implemented; commits `acf877d`, `2fb842c`, + docs/version slice).** Check Eligibility now
+  flags protected principals as an axis **orthogonal** to the Ex/AD verdict (does NOT change
+  Eligible/Ineligible). Owner decision (2026-06-30, decisions.md): protected+eligible shows
+  **Eligible**+escalate flag; protected+ineligible shows **Ineligible**+escalate flag.
+  **Single-user**: protected ⇒ Create Migration Batch button suppressed (same as ineligible).
+  **Bulk/group**: create flow unchanged (GAP 2 gate still filters+reports at creation); table
+  just shows the protected marker. Fail-closed on Unavailable/Ambiguous/CheckFailed. Reuses
+  existing `CheckProtectedAsync` via new `ApplyProtectionFlagAsync` seam in
+  `CheckMigrationEligibilityAsync`; check is a read — no new denial audit/alert at check time
+  (GAP 2 does that at create), existing check audit/notification record protected status. 4 new
+  unit tests, proven non-vacuous; 593/593 green, format/diff-check clean. **Manual validation
+  on dev pending.**
 - **GAP 2 — Migration protected-principal gate DONE (2026-06-30; module `Migration`
   1.1.3→1.2.0, app version unchanged; `docs/MigrationProtectedPrincipalGate-Plan.md`,
   Implemented; commits `0b855ac`, `5d72978`, + docs/version slice).** Closes the last

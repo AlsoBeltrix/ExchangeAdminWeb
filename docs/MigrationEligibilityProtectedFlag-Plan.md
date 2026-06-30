@@ -1,8 +1,10 @@
 # Migration Eligibility — Protected-Principal Flag — Plan
 
-Status: Draft (awaiting owner approval)
+Status: Implemented (2026-06-30)
 App version at draft: 2.3.27 (unchanged — module-scoped change)
-Module: `Migration` (Version `1.2.0` → `1.3.0`, proposed)
+Module: `Migration` (Version `1.2.0` → `1.3.0`)
+Commits: `acf877d` (slice 1: model+service+tests), `2fb842c` (slice 2: UI+audit),
+plus this docs/version slice.
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 

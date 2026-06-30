@@ -5,6 +5,46 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-30 - Migration eligibility check: protected status is a separate axis, suppresses single-user create
+
+Status: Active
+
+Decision (owner direction 2026-06-30):
+The Migration module's **Check Eligibility** step must flag protected principals, treating
+protected status as an axis **orthogonal** to the Exchange/AD eligibility verdict — it does
+not change Eligible/Ineligible:
+
+- Protected **and** eligible in Ex/AD → still shown **Eligible**, flagged as a protected
+  principal that must be escalated outside this tool.
+- Protected **and** ineligible in Ex/AD → still shown **Ineligible**, with the protected/
+  escalate flag plus the real ineligibility reason(s).
+
+Create-button behavior differs by entry type (explicit owner direction):
+
+- **Single-user entry:** a protected principal is treated, for the **Create Migration Batch**
+  button, exactly like an ineligible user — the Create card/button does not appear.
+- **Group / bulk (CSV) entry:** no change to the create flow — surfaced "as already decided."
+  The 2026-06-30 GAP 2 batch gate already filters protected targets out at creation and
+  reports them; the eligibility table simply shows the protected flag at check time.
+
+Fail-closed: when protection cannot be verified (Unavailable / Ambiguous / CheckFailed), the
+target is flagged protected (escalate), consistent with the GAP 2 gate's posture.
+
+Mechanism: reuses the existing in-service protection check (`CheckProtectedAsync`) via a new
+`ApplyProtectionFlagAsync` seam called from `CheckMigrationEligibilityAsync`; no new protection
+logic. The check is a read — no new denial audit row or admin alert is raised at check time
+(the GAP 2 gate already does that at create time); the existing eligibility-check audit detail
+and admin notification record protected status.
+
+Builds on the 2026-06-30 GAP 2 decision (below): that decision governs *batch creation*; this
+one moves protected *visibility* earlier, to the eligibility check, and adds single-user create
+suppression.
+
+Implemented: module `Migration` `1.2.0` → `1.3.0` (app version unchanged); commits `acf877d`
+(model+service+tests), `2fb842c` (UI+audit), + docs/version slice. Plan:
+`docs/MigrationEligibilityProtectedFlag-Plan.md` (Status: Implemented). 4 new unit tests,
+proven non-vacuous; 593/593 green.
+
 ### 2026-06-30 - Migration batches: filter protected principals out, never silently, never block the whole batch
 
 Status: Active

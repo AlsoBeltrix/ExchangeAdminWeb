@@ -180,7 +180,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.3.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
