@@ -34,7 +34,7 @@ public class EmailService
         _notifyUsers = bool.Parse(config["Email:NotifyUsersOnPermissionGrant"] ?? "false");
     }
 
-    public async Task SendAdminNotificationAsync(
+    public virtual async Task SendAdminNotificationAsync(
         string performedBy,
         string ipAddress,
         string action,
@@ -102,7 +102,7 @@ public class EmailService
         }
     }
 
-    public async Task SendAdminNotificationAsync(
+    public virtual async Task SendAdminNotificationAsync(
         string performedBy,
         string ipAddress,
         string action,

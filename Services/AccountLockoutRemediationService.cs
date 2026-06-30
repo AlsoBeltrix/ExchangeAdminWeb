@@ -16,6 +16,7 @@ public sealed class AccountLockoutRemediationService
     private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly IAuthorizationService _authorization;
     private readonly AuditService _audit;
+    private readonly EmailService _email;
     private readonly OperationTraceService _operationTrace;
     private readonly ILogger<AccountLockoutRemediationService> _logger;
 
@@ -25,6 +26,7 @@ public sealed class AccountLockoutRemediationService
         ProtectedPrincipalService protectedPrincipals,
         IAuthorizationService authorization,
         AuditService audit,
+        EmailService email,
         OperationTraceService operationTrace,
         ILogger<AccountLockoutRemediationService> logger)
     {
@@ -33,6 +35,7 @@ public sealed class AccountLockoutRemediationService
         _protectedPrincipals = protectedPrincipals;
         _authorization = authorization;
         _audit = audit;
+        _email = email;
         _operationTrace = operationTrace;
         _logger = logger;
     }
@@ -128,6 +131,15 @@ public sealed class AccountLockoutRemediationService
         AccountLockoutLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
+        var result = await LogoffLockoutSourcesCoreAsync(request, context);
+        await NotifyLogoffAdminAsync("AccountLockout_LogoffSources", request, null, result, context);
+        return result;
+    }
+
+    private async Task<AccountLogoffResult> LogoffLockoutSourcesCoreAsync(
+        AccountLockoutLogoffRequest request,
+        AccountLockoutOperatorContext context)
+    {
         var discovery = await DiscoverLockoutSourcesAsync(
             new AccountLockoutSourceRequest(request.Users, request.WithinHours, request.DomainControllers, request.ThrottleLimit),
             context);
@@ -159,6 +171,15 @@ public sealed class AccountLockoutRemediationService
     }
 
     public async Task<AccountLogoffResult> SweepScopedComputersAsync(
+        AccountScopedLogoffRequest request,
+        AccountLockoutOperatorContext context)
+    {
+        var result = await SweepScopedComputersCoreAsync(request, context);
+        await NotifyLogoffAdminAsync("AccountLockout_SweepScoped", null, request, result, context);
+        return result;
+    }
+
+    private async Task<AccountLogoffResult> SweepScopedComputersCoreAsync(
         AccountScopedLogoffRequest request,
         AccountLockoutOperatorContext context)
     {
@@ -781,6 +802,47 @@ if (-not $found) {
 
     private static AccountLogoffResult EmptyLogoffResult(string message, bool execute)
         => new(false, message, execute, 0, 0, 0, []);
+
+    // Mandatory admin notification on every executed logoff operation (Constitution
+    // §Notifications) — session-state change. One summary notification per operation
+    // (counts), not one per session row. Dry-runs (Executed == false) do not notify.
+    // Fail-safe: a send failure logs but never changes the returned result.
+    private async Task NotifyLogoffAdminAsync(
+        string action,
+        AccountLockoutLogoffRequest? sourceRequest,
+        AccountScopedLogoffRequest? scopedRequest,
+        AccountLogoffResult result,
+        AccountLockoutOperatorContext context)
+    {
+        if (!result.Executed)
+            return;
+
+        var users = sourceRequest?.Users ?? scopedRequest?.Users ?? [];
+        var ticket = sourceRequest?.TicketNumber ?? scopedRequest?.TicketNumber ?? "";
+        var details = new Dictionary<string, string>
+        {
+            ["Target Users"] = users.Length > 0 ? string.Join(", ", users) : "(none)",
+            ["Machines"] = result.MachineCount.ToString(),
+            ["Sessions Logged Off"] = result.SessionHitCount.ToString(),
+            ["Failures"] = result.FailureCount.ToString()
+        };
+
+        try
+        {
+            await _email.SendAdminNotificationAsync(
+                context.DisplayName,
+                context.IpAddress,
+                action,
+                result.Success,
+                ticket,
+                details,
+                result.Success ? null : result.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send AccountLockoutRemediation admin notification for {Action}", action);
+        }
+    }
 
     private void AuditLogoff(
         AccountLockoutOperatorContext context,

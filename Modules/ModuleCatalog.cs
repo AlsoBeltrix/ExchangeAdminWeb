@@ -357,7 +357,7 @@ public sealed class ModuleCatalog
             SortOrder = 780,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.0.1",
             MainPermission = new("Access", "AccountLockoutRemediation", FailClosed: true),
             GranularPermissions = [
                 new("Logoff", "AccountLockoutRemediationLogoff", FailClosed: true)

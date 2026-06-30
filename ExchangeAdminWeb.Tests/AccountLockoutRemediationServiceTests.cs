@@ -128,6 +128,61 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- Admin notification on executed logoff (Constitution §Notifications) ----------------
+
+    [Fact]
+    public async Task LogoffSources_Executed_NotifiesAdmins()
+    {
+        // Execute:true reaches (and fails at) the credential gate, but the returned result
+        // still carries Executed == true, so the mandatory admin notification must fire.
+        var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
+
+        await service.LogoffLockoutSourcesAsync(
+            new AccountLockoutLogoffRequest(["jdoe"], 24, ["dc1"], Execute: true, "INC123", 0),
+            Context());
+
+        await email.Received(1).SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), "AccountLockout_LogoffSources",
+            Arg.Any<bool>(), Arg.Any<string>(),
+            Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task LogoffSources_DryRun_DoesNotNotifyAdmins()
+    {
+        // Execute:false is a dry run — no state change, so no admin notification.
+        var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
+
+        await service.LogoffLockoutSourcesAsync(
+            new AccountLockoutLogoffRequest(["jdoe"], 24, ["dc1"], Execute: false, "", 0),
+            Context());
+
+        await email.DidNotReceive().SendAdminNotificationAsync(
+            Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<bool>(), Arg.Any<string>(),
+            Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    public async Task LogoffSources_NotificationThrows_DoesNotChangeResult()
+    {
+        // Fail-safe: a notification send failure must not change the operation result.
+        var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
+        email.SendAdminNotificationAsync(
+                Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>(),
+                Arg.Any<bool>(), Arg.Any<string>(),
+                Arg.Any<IReadOnlyDictionary<string, string>>(), Arg.Any<string?>())
+            .Returns(Task.FromException(new InvalidOperationException("smtp down")));
+
+        var result = await service.LogoffLockoutSourcesAsync(
+            new AccountLockoutLogoffRequest(["jdoe"], 24, ["dc1"], Execute: true, "INC123", 0),
+            Context());
+
+        // Same fail-at-credential-gate result as without the throwing notifier.
+        Assert.False(result.Success);
+        Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- Construction helper ----------------------------------------------------------------
 
     private static AccountLockoutOperatorContext Context()
@@ -135,6 +190,13 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
 
     private AccountLockoutRemediationService CreateService(
         out IAuthorizationService authorization,
+        IDictionary<string, string>? moduleConfigValues = null,
+        bool corruptStore = false)
+        => CreateService(out authorization, out _, moduleConfigValues, corruptStore);
+
+    private AccountLockoutRemediationService CreateService(
+        out IAuthorizationService authorization,
+        out EmailService email,
         IDictionary<string, string>? moduleConfigValues = null,
         bool corruptStore = false)
     {
@@ -176,12 +238,17 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         authorization.AuthorizeAsync(Arg.Any<ClaimsPrincipal>(), Arg.Any<object?>(), Arg.Any<string>())
             .Returns(AuthorizationResult.Success());
 
+        // Substitutable EmailService (notification methods are virtual) so notification
+        // firing can be observed. Constructed with a minimal config + substitute logger.
+        email = Substitute.For<EmailService>(config, Substitute.For<ILogger<EmailService>>());
+
         return new AccountLockoutRemediationService(
             moduleCredentials,
             moduleConfig,
             protectedPrincipals,
             authorization,
             audit,
+            email,
             operationTrace,
             Substitute.For<ILogger<AccountLockoutRemediationService>>());
     }
