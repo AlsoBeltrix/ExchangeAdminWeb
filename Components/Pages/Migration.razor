@@ -68,10 +68,17 @@
 
                 @if (singleResult != null)
                 {
-                    <div class="alert @(singleResult.Status == MigrationStatus.Eligible ? "alert-success" : "alert-danger") mt-3">
+                    <div class="alert @(singleResult.Status == MigrationStatus.Eligible && !singleResult.IsProtected ? "alert-success" : "alert-danger") mt-3">
                         @if (singleResult.Status == MigrationStatus.Eligible)
                         {
-                            <p class="mb-0"><strong>@singleResult.EmailAddress IS eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises"). :)</strong></p>
+                            @if (singleResult.IsProtected)
+                            {
+                                <p class="mb-0"><strong>@singleResult.EmailAddress is eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises") from an Exchange/AD standpoint, but is a protected principal and cannot be migrated from this tool.</strong></p>
+                            }
+                            else
+                            {
+                                <p class="mb-0"><strong>@singleResult.EmailAddress IS eligible to migrate @(singleMigrationDirection == MigrationDirection.ToCloud ? "to Exchange Online" : "to On-Premises"). :)</strong></p>
+                            }
                         }
                         else
                         {
