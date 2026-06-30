@@ -11,6 +11,7 @@ public class MigrationService : ExchangeServiceBase
 {
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
+    private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly string[] _adminNotificationEmails;
 
     private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
@@ -40,11 +41,12 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
-    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MigrationService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
+    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MigrationService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace, ProtectedPrincipalService protectedPrincipals)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "Migration", operationTrace)
     {
         _config = config;
         _moduleConfig = moduleConfig;
+        _protectedPrincipals = protectedPrincipals;
 
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";
         _adminNotificationEmails = adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -243,6 +245,75 @@ public class MigrationService : ExchangeServiceBase
         };
     }
 
+    /// <summary>
+    /// In-service protected-principal gate, enforced immediately before a migration target is
+    /// written into a batch, regardless of caller or identity format. Mirrors
+    /// <see cref="GroupManagementService"/>'s gate: fails closed when resolution is Unavailable
+    /// or Ambiguous, and on any exception. Returns null when the target is clear to migrate, or
+    /// a Fail result (whose Message is the operator-facing reason) to exclude it.
+    /// </summary>
+    private async Task<PermissionResult?> CheckProtectedAsync(string identity)
+    {
+        if (string.IsNullOrWhiteSpace(identity))
+            return null;
+
+        try
+        {
+            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
+            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
+                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? "Identity is ambiguous — matches multiple AD users."
+                    : "Protection check unavailable. Cannot verify if this mailbox is protected.");
+            }
+
+            if (resolved != null)
+            {
+                var check = await _protectedPrincipals.CheckAsync(resolved);
+                if (check.CheckFailed)
+                    return PermissionResult.Fail($"Protection check failed: {check.Reason}");
+                if (check.IsProtected)
+                    return PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.");
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Protected principal check failed for migration target {Identity} — excluding as precaution", identity);
+            return PermissionResult.Fail($"Protection check error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Splits migration targets into those clear to migrate and those excluded by the
+    /// protected-principal gate. Each excluded entry is an operator-facing "identity — reason"
+    /// string. Runs before any batch side effect, so a protected target never reaches the write
+    /// path. The <paramref name="checker"/> seam exists for unit testing; production passes null
+    /// and the real gate is used.
+    /// </summary>
+    internal async Task<(List<string> allowed, List<string> excluded)> PartitionByProtectionAsync(
+        IEnumerable<string> targets,
+        Func<string, Task<PermissionResult?>>? checker = null)
+    {
+        checker ??= CheckProtectedAsync;
+
+        var allowed = new List<string>();
+        var excluded = new List<string>();
+
+        foreach (var target in targets)
+        {
+            var block = await checker(target);
+            if (block == null)
+                allowed.Add(target);
+            else
+                excluded.Add($"{target} — {block.Message}");
+        }
+
+        return (allowed, excluded);
+    }
+
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
     {
         string[]? targetDatabases = null;
@@ -253,13 +324,36 @@ public class MigrationService : ExchangeServiceBase
                 return PermissionResult.Fail("No on-prem target databases are configured. Check Migration:OnPremTargetDatabases or the Migration module configuration.");
         }
 
+        // Protected-principal gate (Constitution: protected principals are off-limits to every
+        // mutating module). Partition the targets BEFORE building the CSV or invoking
+        // New-MigrationBatch so a protected mailbox can never reach the write path. Per owner
+        // decision (2026-06-30): one protected target must not block the whole batch and the
+        // exclusion must never be silent — filter the protected targets out, migrate the rest,
+        // and report the exclusions back clearly.
+        var (allowedEmails, excludedTargets) = await PartitionByProtectionAsync(eligibleEmails);
+
+        if (allowedEmails.Count == 0)
+        {
+            // Every target was excluded (includes the single-protected-target case). Create
+            // nothing and tell the operator plainly why.
+            return new PermissionResult
+            {
+                Success = false,
+                Message = excludedTargets.Count == 1
+                    ? "The migration target is a protected principal and was excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required."
+                    : $"All {excludedTargets.Count} migration target(s) are protected principals and were excluded. Nothing was created. Escalate to an administrator outside this tool if migration is required.",
+                Detail = "Excluded:\n" + string.Join("\n", excludedTargets),
+                ExcludedTargets = excludedTargets
+            };
+        }
+
         // NOT retry-eligible: New-MigrationBatch plus conditional Start-/Set-MigrationBatch are
         // multiple writes; New- is not idempotent (retry would duplicate or collide on the batch
         // name). A dead session discards and fails as before; the operator re-runs manually.
-        return await RunAsync((ps, tracker) =>
+        var result = await RunAsync((ps, tracker) =>
         {
             // Create CSV content in memory
-            var csvContent = "EmailAddress\r\n" + string.Join("\r\n", eligibleEmails);
+            var csvContent = "EmailAddress\r\n" + string.Join("\r\n", allowedEmails);
             var csvBytes = Encoding.UTF8.GetBytes(csvContent);
 
             if (direction == MigrationDirection.ToCloud)
@@ -307,39 +401,68 @@ public class MigrationService : ExchangeServiceBase
 
         }, () =>
         {
-            var userList = string.Join(", ", eligibleEmails);
+            var userList = string.Join(", ", allowedEmails);
 
             string message;
-            if (autoStart && eligibleEmails.Count == 1)
+            if (autoStart && allowedEmails.Count == 1)
             {
-                message = $"Mailbox \"{eligibleEmails[0]}\" migration is in progress. Please monitor it in the portal.";
+                message = $"Mailbox \"{allowedEmails[0]}\" migration is in progress. Please monitor it in the portal.";
             }
             else if (autoStart)
             {
-                message = $"Migration batch '{batchName}' with {eligibleEmails.Count} user(s) is in progress. Please monitor it in the portal.";
+                message = $"Migration batch '{batchName}' with {allowedEmails.Count} user(s) is in progress. Please monitor it in the portal.";
             }
-            else if (eligibleEmails.Count == 1)
+            else if (allowedEmails.Count == 1)
             {
-                message = $"Mailbox \"{eligibleEmails[0]}\" migration batch created. Please monitor it in the portal.";
+                message = $"Mailbox \"{allowedEmails[0]}\" migration batch created. Please monitor it in the portal.";
             }
             else
             {
-                message = $"Migration batch '{batchName}' created successfully with {eligibleEmails.Count} user(s). Please monitor it in the portal.";
+                message = $"Migration batch '{batchName}' created successfully with {allowedEmails.Count} user(s). Please monitor it in the portal.";
             }
 
             var details = $@"Batch Name: {batchName}
 Direction: {direction}
 On-Prem Target Databases: {(targetDatabases == null || targetDatabases.Length == 0 ? "N/A" : string.Join(", ", targetDatabases))}
 Users: {userList}
-Count: {eligibleEmails.Count}
+Count: {allowedEmails.Count}
 Auto-Start: {autoStart}
-Auto-Complete: {autoComplete}
+Auto-Complete: {autoComplete}";
+
+            if (excludedTargets.Count > 0)
+            {
+                details += $@"
+
+EXCLUDED — protected principals, NOT migrated ({excludedTargets.Count}):
+{string.Join("\n", excludedTargets)}
+Escalate these to an administrator outside this tool if migration is required.";
+            }
+
+            details += @"
 
 Monitor progress in the Exchange Admin Center at:
 https://admin.exchange.microsoft.com/#/migration";
 
             return (message, details);
         });
+
+        // Carry the protected-principal exclusions back to the caller so the page and the admin
+        // notification can surface them. RunAsync builds the result; re-wrap to attach the list
+        // (and prepend a clear note to the success message) without losing Success/Detail.
+        if (excludedTargets.Count > 0)
+        {
+            return new PermissionResult
+            {
+                Success = result.Success,
+                Message = result.Success
+                    ? $"{result.Message} NOTE: {excludedTargets.Count} protected principal(s) were excluded and NOT migrated."
+                    : result.Message,
+                Detail = result.Detail,
+                ExcludedTargets = excludedTargets
+            };
+        }
+
+        return result;
     }
 
     public async Task<List<MigrationBatchInfo>> GetMigrationBatchesAsync()
