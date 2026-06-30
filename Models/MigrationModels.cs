@@ -12,6 +12,17 @@ public class MigrationEligibilityResult
     public long CloudQuotaGB { get; set; } = 100;
     public bool ExceedsQuota => TotalSizeGB > CloudQuotaGB;
     internal bool NeedsAdGroupCheck { get; set; }
+
+    /// <summary>
+    /// True when the target is a protected principal OR protection could not be
+    /// verified (fail-closed). Orthogonal to <see cref="Status"/>: a protected
+    /// principal keeps its real Ex/AD eligibility verdict but must be escalated
+    /// outside this tool and cannot be migrated here.
+    /// </summary>
+    public bool IsProtected { get; set; }
+
+    /// <summary>Operator-facing reason for the protection flag (null when not flagged).</summary>
+    public string? ProtectionNote { get; set; }
 }
 
 public class MigrationBatchResult

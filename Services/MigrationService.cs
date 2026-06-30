@@ -203,6 +203,12 @@ public class MigrationService : ExchangeServiceBase
             }
         }
 
+        // Flag protected principals as a separate axis from the Ex/AD verdict. A protected
+        // target keeps its real Eligible/Ineligible status but must be escalated outside this
+        // tool; the UI suppresses single-user batch creation for it, and the GAP 2 gate filters
+        // it out of bulk batches at creation time. Fail-closed via the shared protection check.
+        await ApplyProtectionFlagAsync(result);
+
         return result;
     }
 
@@ -312,6 +318,28 @@ public class MigrationService : ExchangeServiceBase
         }
 
         return (allowed, excluded);
+    }
+
+    /// <summary>
+    /// Flags an eligibility result if its target is a protected principal (or protection
+    /// cannot be verified — fail-closed). Sets <see cref="MigrationEligibilityResult.IsProtected"/>
+    /// and <see cref="MigrationEligibilityResult.ProtectionNote"/> but never changes
+    /// <see cref="MigrationEligibilityResult.Status"/>: protection is an orthogonal axis to the
+    /// Exchange/AD eligibility verdict. The <paramref name="checker"/> seam exists for unit
+    /// testing; production passes null and the real gate is used.
+    /// </summary>
+    internal async Task ApplyProtectionFlagAsync(
+        MigrationEligibilityResult result,
+        Func<string, Task<PermissionResult?>>? checker = null)
+    {
+        checker ??= CheckProtectedAsync;
+
+        var block = await checker(result.EmailAddress);
+        if (block != null)
+        {
+            result.IsProtected = true;
+            result.ProtectionNote = block.Message;
+        }
     }
 
     public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)

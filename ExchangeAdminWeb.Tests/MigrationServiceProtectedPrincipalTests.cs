@@ -108,6 +108,81 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
         Assert.Equal(2, result.ExcludedTargets!.Count);
     }
 
+    // --- ApplyProtectionFlagAsync: protection is an orthogonal axis to the Ex/AD verdict ---
+
+    [Fact]
+    public async Task ApplyProtectionFlag_CleanTarget_NotFlagged_StatusUnchanged()
+    {
+        var service = CreateService();
+        var result = new MigrationEligibilityResult
+        {
+            EmailAddress = "clean@contoso.com",
+            Status = MigrationStatus.Eligible
+        };
+
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(null));
+
+        Assert.False(result.IsProtected);
+        Assert.Null(result.ProtectionNote);
+        Assert.Equal(MigrationStatus.Eligible, result.Status);
+    }
+
+    [Fact]
+    public async Task ApplyProtectionFlag_ProtectedButEligible_FlaggedAndStaysEligible()
+    {
+        var service = CreateService();
+        var result = new MigrationEligibilityResult
+        {
+            EmailAddress = "ceo@contoso.com",
+            Status = MigrationStatus.Eligible
+        };
+
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
+            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.")));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains("protected principal", result.ProtectionNote);
+        // The orthogonal-axis requirement: an Ex/AD-eligible target stays Eligible.
+        Assert.Equal(MigrationStatus.Eligible, result.Status);
+    }
+
+    [Fact]
+    public async Task ApplyProtectionFlag_ProtectedAndIneligible_FlaggedAndKeepsIneligibleReasons()
+    {
+        var service = CreateService();
+        var result = new MigrationEligibilityResult
+        {
+            EmailAddress = "ceo@contoso.com",
+            Status = MigrationStatus.Ineligible
+        };
+        result.IneligibilityReasons.Add("Already cloud mailbox");
+
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
+            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.")));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains("protected principal", result.ProtectionNote);
+        Assert.Equal(MigrationStatus.Ineligible, result.Status);
+        Assert.Contains("Already cloud mailbox", result.IneligibilityReasons);
+    }
+
+    [Fact]
+    public async Task ApplyProtectionFlag_CheckUnavailable_FlaggedFailClosed()
+    {
+        var service = CreateService();
+        var result = new MigrationEligibilityResult
+        {
+            EmailAddress = "user@contoso.com",
+            Status = MigrationStatus.Eligible
+        };
+
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
+            PermissionResult.Fail("Protection check unavailable. Cannot verify if mailbox is protected.")));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains("unavailable", result.ProtectionNote);
+    }
+
     private MigrationService CreateService(string? onPremTargetDatabases = null)
     {
         var configData = new Dictionary<string, string?>
