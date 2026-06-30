@@ -76,7 +76,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 ### Notifications
 
 - Every mutating action (any create, write, delete, or change to a user, mailbox, group, identity state, access state, password, token/session state, or directory attribute) must send an administrator notification via `EmailService`.
-- Every security-sensitive read (any module whose purpose is to surface security-relevant data — e.g. lockout/sign-in/audit lookups, protected-object inspection) must send an administrator alert.
+- A read module classified as a security-response surface must send an administrator alert. Whether a given read counts is a deployment classification, not an automatic property of touching directory data: this app's reads expose only data already visible in AD / the address book and all of them audit, so they are classified non-alerting (audit is sufficient) unless a module is purpose-built for security response. (See `.agents/decisions.md` 2026-06-30 for the current per-module classification and the deferred read-alerting work.)
 - Any change to a user's permissions or access must additionally notify the affected user, not only administrators.
 - Notification is in addition to the mandatory audit event, never a substitute for it.
 - Notification failure must not change or mask the backend operation result. Catch notification exceptions and log them separately.

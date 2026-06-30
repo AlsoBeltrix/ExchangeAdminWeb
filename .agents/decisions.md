@@ -5,6 +5,53 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-30 - Notifications enforcement sweep: three rule-1 gaps fixed; rule-2 read-alerting classified non-applicable and deferred
+
+Status: Active
+
+The 2026-06-29 "Notifications are mandatory" decision was docs-only; older modules predated it
+and were never retrofitted. A read-only audit (2026-06-30) of all 20 non-system modules found
+rule 1 (admin notification on every mutating action) mostly already honoured, with three silent
+gaps, and rule 2 (alert on security-sensitive reads) effectively unimplemented. Owner direction
+(2026-06-30) resolved scope as follows.
+
+**Rule 1 — three gaps fixed (admins notified):**
+- `MfaReset` (`1.0.3`→`1.0.4`, commit `bd68d10`): admin notification on every real
+  `MfaReset_Execute` attempt (reset, protected block, fail-closed outcome, exception); skips the
+  trivial ticket-invalid / auth-denied pre-gates and the read-only ListMethods path. Page change,
+  fail-safe.
+- `ConferenceRooms` (`2.0.11`→`2.0.12`, commit `6e83ef9`): admin notification on all four write
+  paths (single Finder, single Type per apply; bulk Finder, bulk Type one summary per CSV apply
+  with counts — LicensingUpdates bulk precedent, not per row). Page change, fail-safe.
+- `AccountLockoutRemediation` (`1.0.0`→`1.0.1`, commit `14c6219`): one summary admin notification
+  per **executed** logoff (both public paths), gated on `result.Executed` so dry-runs stay silent.
+  Placed at the public-method boundary, not the per-row `AuditLogoff` sites (those sit past the
+  credential gate — untestable and would email per session). Service change + 3 non-vacuous tests.
+  `EmailService`'s two `SendAdminNotificationAsync` overloads were made `virtual` (no behaviour/
+  signature change) to give tests a seam to observe firing; the repo had none.
+
+**Rule 3 (notify affected user):** none of the three gap modules are user-permission grants, so
+admins-only. **Open, gated on testing:** `AccountLockoutRemediation` user-notification (telling a
+logged-off user) is deferred until the module is actually exercised — nobody uses it yet and it is
+not validated. Revisit after real testing; record a follow-up decision then. Do not build it now.
+
+**Rule 2 (alert on security-sensitive reads): classified non-applicable for this app, alerting
+deferred.** Candidate reads (DelegationReport, MessageTrace, EventLog viewer, RecipientLookup,
+AccountLockout discovery) all already audit, and the app exposes only data already visible in AD /
+the address book. Owner: these are not genuinely sensitive reads, so audit logging is sufficient
+and per-read admin alerting is **not** wanted (it would bury the change-notifications that matter
+under message-trace / event-log-open volume). **Never** notify users for these. The lift is small
+but the value is negative, so read-alerting is deferred indefinitely, not scheduled. The
+Constitution §Notifications rule-2 wording was narrowed (this commit) so its old examples
+("audit lookups", "protected-object inspection") no longer contradict this classification.
+
+Plan: `docs/NotificationsEnforcementSweep-Plan.md` (Status: Implemented). App version unchanged
+throughout (no functional `EmailService` change); each gap module took a **patch** bump because
+this is conformance to already-mandatory behaviour, not new capability (owner, 2026-06-30).
+
+Builds on / enforces the 2026-06-29 "Notifications are mandatory" decision (below), which remains
+the canonical statement of the three rules in `docs/ProjectConstitution.md` §Notifications.
+
 ### 2026-06-30 - Migration eligibility check: protected status is a separate axis, suppresses single-user create
 
 Status: Active

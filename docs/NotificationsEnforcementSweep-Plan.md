@@ -1,6 +1,6 @@
 # Notifications Enforcement Sweep — Plan
 
-Status: In progress (owner go 2026-06-30)
+Status: Implemented (2026-06-30; commits bd68d10, 6e83ef9, 14c6219, + this docs slice)
 Owner: Michael
 Authority: `docs/ProjectConstitution.md` §Auditing And Tracing → Notifications;
 `.agents/decisions.md` 2026-06-29 "Notifications are mandatory…"

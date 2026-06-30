@@ -53,9 +53,19 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   change → also notify the affected user. Always via the shared `Services/EmailService.cs`
   (no bespoke mailers). Canonical rule: `docs/ProjectConstitution.md` §Auditing And Tracing →
   Notifications; Guide/Spec point to it. `.agents/decisions.md` 2026-06-29 has the full record
-  and names the superseded discretionary guidance. **Not yet enforced in code** — existing
-  modules predate the rule and have not been audited for compliance; this was a guidance change
-  only. A future task: sweep modules for missing notifications and consider validator coverage.
+  and names the superseded discretionary guidance. **Enforcement sweep DONE 2026-06-30** — see
+  the Notifications enforcement sweep entry below.
+- **Notifications enforcement sweep DONE (2026-06-30; `docs/NotificationsEnforcementSweep-Plan.md`,
+  Implemented; decisions.md 2026-06-30; commits `bd68d10`, `6e83ef9`, `14c6219`, + docs slice).**
+  Read-only audit of all 20 non-system modules: rule 1 (admin-notify on mutation) mostly already
+  honoured; 3 silent gaps fixed — `MfaReset` (1.0.3→1.0.4), `ConferenceRooms` (2.0.11→2.0.12),
+  `AccountLockoutRemediation` (1.0.0→1.0.1, +3 non-vacuous tests). All **patch** bumps (conformance,
+  not capability; owner). App version unchanged. `EmailService` admin overloads made `virtual`
+  (test seam, no behaviour change). Rule 3: gap modules are admins-only; **AccountLockout
+  user-notify OPEN, gated on real testing**. Rule 2 (alert on security reads): classified
+  **non-applicable** for this app (reads only expose AD/address-book data, all audit) — alerting
+  **deferred indefinitely**, never user-notify; Constitution §Notifications rule-2 wording narrowed
+  to match. **Manual dev validation pending** for MfaReset + ConferenceRooms (page changes).
 - **EmergencyDisable synced-user fix DONE (2026-06-29, commit `c1c80a3`; module 1.0.4→1.0.5,
   app version unchanged; `docs/EmergencyDisableSyncedUser-Plan.md`, Implemented).** For users
   synced from on-prem AD, `accountEnabled` is on-prem mastered and Entra rejects a direct Graph
@@ -185,18 +195,15 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 Live backlog only (DONE items moved out). All items need an approved plan before code.
 
-1. **Notifications enforcement sweep.** The 2026-06-29 mandatory-notification rule
-   (decisions.md; Constitution §Auditing And Tracing → Notifications) is not yet enforced in
-   older modules. Audit each mutating module / security read for the required
-   admin/affected-user notification via `EmailService`; consider validator coverage. Larger,
-   diffuse; needs a plan.
-2. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+1. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
    End state confirmed 2026-06-29 (UI `.zip` upload, no full rebuild; precompiled-vs-runtime
    open). First leg = module contract / self-registration seam. See Queued work + decisions.md.
-3. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
+2. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
    bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
    invariant #6. Small, docs-only; tied to the module-packaging end state.
-4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
+3. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
+4. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
+   user is notified, after the module is actually exercised on dev. See decisions.md 2026-06-30.
 
 Separate track (ops, not engineering): configure ConferenceRooms AD `DelineaSecretId` in the
 prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround exists).
