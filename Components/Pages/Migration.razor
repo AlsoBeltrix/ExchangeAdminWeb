@@ -88,6 +88,16 @@
                                 </ul>
                             }
                         }
+                        @if (singleResult.IsProtected)
+                        {
+                            <hr />
+                            <p class="mb-1"><strong>⚠ Protected principal — must be escalated.</strong></p>
+                            @if (!string.IsNullOrWhiteSpace(singleResult.ProtectionNote))
+                            {
+                                <p class="mb-1">@singleResult.ProtectionNote</p>
+                            }
+                            <p class="mb-0">Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.</p>
+                        }
                         @if (singleResult.Warnings.Any())
                         {
                             <hr />
@@ -116,7 +126,7 @@
                         }
                     </div>
 
-                    @if (singleResult.Status == MigrationStatus.Eligible)
+                    @if (singleResult.Status == MigrationStatus.Eligible && !singleResult.IsProtected)
                     {
                         <div class="card mt-3 border-success">
                             <div class="card-body">
@@ -259,6 +269,10 @@
                                             else
                                             {
                                                 <span class="text-success">✓ Ready to migrate</span>
+                                            }
+                                            @if (item.IsProtected)
+                                            {
+                                                <div class="text-danger mt-1"><strong>⚠ Protected principal — will be excluded from the batch; escalate outside this tool.</strong></div>
                                             }
                                         </td>
                                         <td style="text-align: right;">
@@ -800,14 +814,23 @@
 
             var ipAddress = clientIpAddress;
 
+            var checkDetail = singleResult.IneligibilityReasons.Any()
+                ? string.Join("; ", singleResult.IneligibilityReasons)
+                : null;
+            if (singleResult.IsProtected)
+            {
+                var protectedNote = $"PROTECTED PRINCIPAL — escalate (not migrated){(string.IsNullOrWhiteSpace(singleResult.ProtectionNote) ? "" : $": {singleResult.ProtectionNote}")}";
+                checkDetail = string.IsNullOrWhiteSpace(checkDetail) ? protectedNote : $"{checkDetail}; {protectedNote}";
+            }
+
             Audit.LogMigrationCheck(currentUser, ipAddress, singleEmail, singleResult.Status.ToString(),
-                singleTicketNumber, string.Join("; ", singleResult.IneligibilityReasons));
+                singleTicketNumber, checkDetail);
 
             // Send admin notification
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CheckMigrationEligibility_{singleMigrationDirection}", singleEmail, "N/A",
                 singleResult.Status.ToString(), singleResult.Status == MigrationStatus.Eligible, singleTicketNumber,
-                singleResult.IneligibilityReasons.Any() ? string.Join("; ", singleResult.IneligibilityReasons) : null);
+                checkDetail);
         }
         catch (Exception ex)
         {
