@@ -6,6 +6,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Comms-10k replace UX clarity DONE (2026-06-29; module 1.0.3→1.0.4, app version
+  unchanged; `docs/Comms10kReplaceUx-Plan.md`, Approved).** Bug report: comms team said
+  membership "did not sync" (validated 4309 but Entra still showed old 4307). Logs
+  (`E:\WWWOutput\ExchangeAdminWeb`) proved no write occurred — only a `Comms10k_Export`
+  on 2026-06-29; last real `Comms10k_Replace` was 2026-06-11. Root cause: UX trap — user
+  stopped after Validate, read "resolved" as "applied". Fix (Razor only, no service/logic
+  change): (1) relabel post-Validate result "Validated — not applied yet … list has not
+  changed"; (2) persistent "Pending apply — list unchanged" badge; (3) stronger
+  Replace CTA (btn-lg + helper text); (4) success note that Entra count updates on next
+  directory sync, not instantly; (5) **ticket number made optional** (owner: comms team
+  won't always have one) — Validate no longer disabled without a ticket; an entered ticket
+  is still validated where ServiceNow is on (Constitution:104 — ticket is plain audit
+  metadata unless validation requested). 585/585 green, format/diff-check clean. Manual
+  validation on dev pending.
 - **Notifications now mandatory (decision 2026-06-29, docs-only).** Every mutating action
   → admin notification; every security-sensitive read → admin alert; every permission/access
   change → also notify the affected user. Always via the shared `Services/EmailService.cs`

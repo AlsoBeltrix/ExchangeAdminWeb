@@ -82,8 +82,8 @@
                 <div class="card-header"><strong>Replace Members</strong></div>
                 <div class="card-body">
                     <div class="mb-3">
-                        <label class="form-label">Ticket Number</label>
-                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isLoading" />
+                        <label class="form-label">Ticket Number <span class="text-muted">(optional)</span></label>
+                        <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput" placeholder="INC/REQ number, if you have one" disabled="@isLoading" />
                     </div>
                     <div class="mb-3">
                         <label class="form-label">CSV File (Email column required)</label>
@@ -93,7 +93,7 @@
                     @if (parsedEmails.Count > 0 && resolveResult == null)
                     {
                         <p class="text-info">@parsedEmails.Count email(s) parsed. Click Validate to check against AD.</p>
-                        <button class="btn btn-primary btn-sm" @onclick="ValidateEmails" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">
+                        <button class="btn btn-primary btn-sm" @onclick="ValidateEmails" disabled="@isLoading">
                             @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Validate
                         </button>
@@ -102,7 +102,9 @@
                     @if (resolveResult != null && resolveResult.Success)
                     {
                         <div class="alert alert-info mt-2">
-                            <strong>@resolveResult.ResolvedDns.Count</strong> users resolved.
+                            <strong>Validated &mdash; not applied yet.</strong>
+                            <strong>@resolveResult.ResolvedDns.Count</strong> of @parsedEmails.Count email(s) matched in AD.
+                            The distribution list has <strong>not</strong> changed.
                             @if (resolveResult.SkippedEmails.Count > 0)
                             {
                                 <br /><span class="text-danger"><strong>@resolveResult.SkippedEmails.Count not found:</strong> @string.Join(", ", resolveResult.SkippedEmails.Take(10))@(resolveResult.SkippedEmails.Count > 10 ? "..." : "")</span>
@@ -127,7 +129,9 @@
                         }
                         else if (resolveResult.ResolvedDns.Count > 0)
                         {
-                            <button class="btn btn-warning" @onclick="() => confirmPending = true">
+                            <span class="badge bg-warning text-dark mb-2">Pending apply &mdash; list unchanged</span>
+                            <p class="text-muted mb-2"><small>This is the step that actually changes the list.</small></p>
+                            <button class="btn btn-warning btn-lg" @onclick="() => confirmPending = true">
                                 Replace All Members (@resolveResult.ResolvedDns.Count users)
                             </button>
                         }
@@ -143,6 +147,10 @@
             {
                 <div class="alert @(result.Success ? "alert-success" : "alert-danger") mt-3 alert-dismissible">
                     @result.Message
+                    @if (result.Success)
+                    {
+                        <br /><small>The Entra/Outlook member count updates on the next directory sync (typically within ~30 minutes), not immediately.</small>
+                    }
                     <button type="button" class="btn-close" @onclick="() => result = null"></button>
                 </div>
             }
@@ -260,13 +268,20 @@
         await Task.Yield();
         try
         {
-            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticketNumber.Trim());
-            if (!ticketValidation.IsValid)
+            // Ticket is optional (comms team won't always have one). Only validate a
+            // ticket that was actually entered; an entered ticket is still enforced where
+            // ServiceNow validation is configured. See docs/ProjectConstitution.md:104.
+            var trimmedTicket = ticketNumber.Trim();
+            if (!string.IsNullOrEmpty(trimmedTicket))
             {
-                result = new Comms10kUpdateResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
-                return;
+                var ticketValidation = await ServiceNow.ValidateTicketAsync(trimmedTicket);
+                if (!ticketValidation.IsValid)
+                {
+                    result = new Comms10kUpdateResult { Success = false, Message = $"Ticket validation failed: {ticketValidation.Message}" };
+                    return;
+                }
             }
-            validatedTicket = ticketNumber.Trim();
+            validatedTicket = trimmedTicket;
 
             resolveResult = await Comms10kService.ResolveEmailsAsync(parsedEmails);
             if (!resolveResult.Success)

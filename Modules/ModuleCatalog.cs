@@ -322,7 +322,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.0.4",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
