@@ -260,7 +260,7 @@
                             <tbody>
                                 @foreach (var item in bulkResult.EligibilityResults)
                                 {
-                                    <tr class="@(item.Status == MigrationStatus.Eligible ? "table-success" : "table-danger")">
+                                    <tr class="@(item.Status == MigrationStatus.Eligible && !item.IsProtected ? "table-success" : "table-danger")">
                                         <td>@item.EmailAddress</td>
                                         <td><strong>@item.Status</strong></td>
                                         <td>
