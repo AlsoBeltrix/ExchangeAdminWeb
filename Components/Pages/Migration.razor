@@ -165,6 +165,19 @@
                                 <p class="mb-0 mt-2">@singleCreateResult.Detail</p>
                             }
                         </div>
+                        @if (singleCreateResult.ExcludedTargets is { Count: > 0 } singleExcluded)
+                        {
+                            <div class="alert alert-warning mt-3">
+                                <strong>⚠ @singleExcluded.Count protected principal(s) were excluded and NOT migrated.</strong>
+                                <ul class="mb-2 mt-2">
+                                    @foreach (var item in singleExcluded)
+                                    {
+                                        <li>@item</li>
+                                    }
+                                </ul>
+                                <p class="mb-0">Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.</p>
+                            </div>
+                        }
                     }
                 }
             </div>
@@ -317,6 +330,19 @@
                                 <p class="mb-0 mt-2">@createResult.Detail</p>
                             }
                         </div>
+                        @if (createResult.ExcludedTargets is { Count: > 0 } bulkExcluded)
+                        {
+                            <div class="alert alert-warning mt-3">
+                                <strong>⚠ @bulkExcluded.Count protected principal(s) were excluded and NOT migrated.</strong>
+                                <ul class="mb-2 mt-2">
+                                    @foreach (var item in bulkExcluded)
+                                    {
+                                        <li>@item</li>
+                                    }
+                                </ul>
+                                <p class="mb-0">Migrating a protected principal is not permitted in this tool. Escalate to an administrator outside this tool if migration is required.</p>
+                            </div>
+                        }
                     }
                 }
             </div>
@@ -824,11 +850,20 @@
                 singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete);
 
             var ipAddress = clientIpAddress;
+            var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
 
             try
             {
                 Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
                     1, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+
+                // Audit every protected-principal exclusion as its own denial row, never silent.
+                foreach (var excluded in singleExcluded)
+                {
+                    Audit.LogMigrationAction(currentUser, ipAddress,
+                        $"CreateMigrationBatch_{singleMigrationDirection}_ProtectedExclusion", excluded,
+                        false, singleTicketNumber, "Excluded — protected principal, not migrated");
+                }
             }
             catch (Exception ex)
             {
@@ -836,13 +871,18 @@
                 {
                     Success = singleCreateResult.Success,
                     Message = singleCreateResult.Message,
-                    Detail = $"Audit logging failed: {ex.Message}"
+                    Detail = $"Audit logging failed: {ex.Message}",
+                    ExcludedTargets = singleCreateResult.ExcludedTargets
                 };
             }
 
+            var singleExclusionNote = singleExcluded.Count > 0
+                ? $" | EXCLUDED protected principals (not migrated): {string.Join("; ", singleExcluded)}"
+                : "";
+
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{singleMigrationDirection}", finalBatchName,
-                singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}",
+                singleResult.EmailAddress, $"AutoStart:{singleAutoStart} AutoComplete:{singleAutoComplete}{singleExclusionNote}",
                 singleCreateResult.Success, singleTicketNumber, singleCreateResult.Success ? null : singleCreateResult.Message);
         }
         catch (Exception ex)
@@ -946,11 +986,21 @@
                 migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete);
 
             var ipAddress = clientIpAddress;
+            var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
+            var createdCount = eligibleEmails.Count - bulkExcluded.Count;
 
             try
             {
                 Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
-                    eligibleEmails.Count, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+                    createdCount, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+
+                // Audit every protected-principal exclusion as its own denial row, never silent.
+                foreach (var excluded in bulkExcluded)
+                {
+                    Audit.LogMigrationAction(currentUser, ipAddress,
+                        $"CreateMigrationBatch_{migrationDirection}_ProtectedExclusion", excluded,
+                        false, bulkTicketNumber, "Excluded — protected principal, not migrated");
+                }
             }
             catch (Exception ex)
             {
@@ -958,13 +1008,18 @@
                 {
                     Success = createResult.Success,
                     Message = createResult.Message,
-                    Detail = $"Audit logging failed: {ex.Message}"
+                    Detail = $"Audit logging failed: {ex.Message}",
+                    ExcludedTargets = createResult.ExcludedTargets
                 };
             }
 
+            var bulkExclusionNote = bulkExcluded.Count > 0
+                ? $" | EXCLUDED {bulkExcluded.Count} protected principal(s) (not migrated): {string.Join("; ", bulkExcluded)}"
+                : "";
+
             await Email.SendAdminNotificationAsync(
                 currentUser, ipAddress, $"CreateMigrationBatch_{migrationDirection}", finalBatchName,
-                $"{eligibleEmails.Count} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}",
+                $"{createdCount} users", $"AutoStart:{bulkAutoStart} AutoComplete:{bulkAutoComplete}{bulkExclusionNote}",
                 createResult.Success, bulkTicketNumber, createResult.Success ? null : createResult.Message);
         }
         catch (Exception ex)
