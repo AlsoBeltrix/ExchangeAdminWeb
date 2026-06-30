@@ -5,6 +5,7 @@
 @rendermode InteractiveServer
 @inject ConferenceRoomService RoomService
 @inject AuditService Audit
+@inject EmailService Email
 @inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -588,11 +589,13 @@
                 ["countryOrRegion"] = countryOrRegion, ["state"] = state
             };
             AuditFinderAction(email, result.Success, ticket, result.Success ? null : result.Message, oldValues, newValues);
+            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, result.Success, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
             AuditFinderAction(email, false, ticket, ex.Message);
+            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, false, ticket, ex.Message);
         }
         finally { isLoading = false; }
     }
@@ -772,10 +775,12 @@
                 Success = success == finderResults.Count,
                 Message = $"{success}/{finderResults.Count} rooms configured."
             };
+            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata_Bulk", $"{finderResults.Count} room(s)", result.Success, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
+            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata_Bulk", "(bulk)", false, csvFinderTicket.Trim(), ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
     }
@@ -827,11 +832,13 @@
                 ["site"] = typeSite, ["removePerms"] = typeRemovePerms
             };
             AuditTypeAction(email, result.Success, ticket, result.Success ? null : result.Message, newValues: newValues);
+            await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, result.Success, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Email = email, Success = false, Message = ex.Message };
             AuditTypeAction(email, false, ticket, ex.Message);
+            await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, false, ticket, ex.Message);
         }
         finally { isLoading = false; }
     }
@@ -1005,10 +1012,12 @@
                 Success = success == typeResults.Count,
                 Message = $"{success}/{typeResults.Count} rooms configured."
             };
+            await NotifyRoomAdminAsync("ConferenceRooms_SetType_Bulk", $"{typeResults.Count} room(s)", result.Success, ticket, result.Message);
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
+            await NotifyRoomAdminAsync("ConferenceRooms_SetType_Bulk", "(bulk)", false, csvTypeTicket.Trim(), ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
     }
@@ -1016,6 +1025,24 @@
     // =========================================================================
     // Shared Helpers
     // =========================================================================
+
+    // Mandatory admin notification on every room write (Constitution §Notifications).
+    // Fail-safe: a send failure logs but never changes the operation result. Single-room
+    // paths call this per apply; bulk paths call it once with a summary after the loop.
+    private async Task NotifyRoomAdminAsync(string action, string target, bool success, string ticket, string? errorDetail)
+    {
+        try
+        {
+            await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action,
+                success, ticket,
+                new Dictionary<string, string> { ["Room"] = target },
+                success ? null : errorDetail);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to send Conference Rooms admin notification for {Action} {Target}", action, target);
+        }
+    }
 
     private async Task<bool> ReauthorizeAsync()
     {
