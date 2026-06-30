@@ -19,7 +19,7 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   `CheckMigrationEligibilityAsync`; check is a read — no new denial audit/alert at check time
   (GAP 2 does that at create), existing check audit/notification record protected status. 4 new
   unit tests, proven non-vacuous; 593/593 green, format/diff-check clean. **Manual validation
-  on dev pending.**
+  on dev DONE (owner, 2026-06-30).**
 - **GAP 2 — Migration protected-principal gate DONE (2026-06-30; module `Migration`
   1.1.3→1.2.0, app version unchanged; `docs/MigrationProtectedPrincipalGate-Plan.md`,
   Implemented; commits `0b855ac`, `5d72978`, + docs/version slice).** Closes the last
@@ -33,7 +33,7 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   refusal. Fail-closed on Unavailable/Ambiguous/exception. Same accepted cloud-only `NotFound`
   limitation as GroupManagement/M365 (most relevant on move-back). New `PermissionResult.
   ExcludedTargets` field (backward compatible). 4 new tests, proven non-vacuous; 589/589 green,
-  format/diff-check clean. **Manual validation on dev pending.**
+  format/diff-check clean. **Manual validation on dev DONE (owner, 2026-06-30).**
 - **Comms-10k replace UX clarity DONE (2026-06-29; module 1.0.3→1.0.4, app version
   unchanged; `docs/Comms10kReplaceUx-Plan.md`, Approved).** Bug report: comms team said
   membership "did not sync" (validated 4309 but Entra still showed old 4307). Logs

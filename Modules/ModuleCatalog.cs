@@ -340,7 +340,7 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.0.4",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")

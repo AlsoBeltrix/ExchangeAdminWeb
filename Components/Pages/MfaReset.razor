@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject MfaResetService MfaService
 @inject AuditService Audit
+@inject EmailService Email
 @inject ServiceNowService ServiceNow
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -217,6 +218,10 @@
         var upn = userPrincipalName.Trim();
         var ticket = ticketNumber.Trim();
         var methodTypesBeforeReset = methods.Select(m => m.MethodType).ToArray();
+        // Notify admins on any real attempt against the target (reset, protected block,
+        // fail-closed protection outcome, or exception) — but not on the trivial
+        // ticket-invalid / auth-denied pre-gates. Set once those gates pass.
+        var notifyAdmins = false;
 
         try
         {
@@ -238,6 +243,8 @@
                     errorDetail: "Authorization denied");
                 return;
             }
+
+            notifyAdmins = true;
 
             // Protected principal check — fail closed unless AD lookup confirms no AD object (cloud-only)
             try
@@ -310,6 +317,24 @@
         {
             isLoading = false;
             methods = new();
+
+            // Mandatory admin notification on every real MFA reset attempt (Constitution
+            // §Notifications). Fail-safe: a send failure must not change the operation result.
+            if (notifyAdmins)
+            {
+                var success = result?.Success ?? false;
+                try
+                {
+                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "MfaReset_Execute",
+                        success, ticket,
+                        new Dictionary<string, string> { ["Target User"] = upn },
+                        success ? null : result?.Message);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to send MFA reset admin notification for {Upn}", upn);
+                }
+            }
         }
     }
 }
