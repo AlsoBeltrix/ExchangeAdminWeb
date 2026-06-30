@@ -851,11 +851,12 @@
 
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
+            var singleCreatedCount = 1 - singleExcluded.Count;
 
             try
             {
                 Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
-                    1, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+                    singleCreatedCount, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
 
                 // Audit every protected-principal exclusion as its own denial row, never silent.
                 foreach (var excluded in singleExcluded)
