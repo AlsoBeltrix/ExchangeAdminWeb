@@ -6,6 +6,20 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **GAP 2 — Migration protected-principal gate DONE (2026-06-30; module `Migration`
+  1.1.3→1.2.0, app version unchanged; `docs/MigrationProtectedPrincipalGate-Plan.md`,
+  Implemented; commits `0b855ac`, `5d72978`, + docs/version slice).** Closes the last
+  protected-principal gap from the 2026-06-29 sweep. `CreateMigrationBatchAsync` now
+  partitions every target through the protected-principal gate **before** any side effect
+  (CSV build / `New-MigrationBatch`), on both ToCloud and ToOnPrem. Owner decision
+  (2026-06-30, decisions.md): protected targets are **filtered out and reported, never
+  silently**, and **one protected target never blocks the whole batch** — the rest migrate;
+  exclusions show in a persistent UI warning, get their own audit denial rows, and are listed
+  in the admin notification. All-protected (incl. single target) ⇒ nothing created, plain
+  refusal. Fail-closed on Unavailable/Ambiguous/exception. Same accepted cloud-only `NotFound`
+  limitation as GroupManagement/M365 (most relevant on move-back). New `PermissionResult.
+  ExcludedTargets` field (backward compatible). 4 new tests, proven non-vacuous; 589/589 green,
+  format/diff-check clean. **Manual validation on dev pending.**
 - **Comms-10k replace UX clarity DONE (2026-06-29; module 1.0.3→1.0.4, app version
   unchanged; `docs/Comms10kReplaceUx-Plan.md`, Approved).** Bug report: comms team said
   membership "did not sync" (validated 4309 but Entra still showed old 4307). Logs
@@ -157,23 +171,18 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 Live backlog only (DONE items moved out). All items need an approved plan before code.
 
-1. **GAP 2 — `MigrationService` protected-principal gate.** Last remaining security gap from
-   the 2026-06-29 sweep: `New-MigrationBatch` (`Services/MigrationService.cs` ~:267/:277,
-   ToCloud + ToOnPrem) creates a batch over target mailboxes with NO protected-principal
-   validation. Contained fix; mirrors the GAP 1 pattern already shipped for M365. Needs a
-   standalone approved plan (mutating-module change). Agent-recommended next action.
-2. **Notifications enforcement sweep.** The 2026-06-29 mandatory-notification rule
+1. **Notifications enforcement sweep.** The 2026-06-29 mandatory-notification rule
    (decisions.md; Constitution §Auditing And Tracing → Notifications) is not yet enforced in
    older modules. Audit each mutating module / security read for the required
    admin/affected-user notification via `EmailService`; consider validator coverage. Larger,
    diffuse; needs a plan.
-3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+2. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
    End state confirmed 2026-06-29 (UI `.zip` upload, no full rebuild; precompiled-vs-runtime
    open). First leg = module contract / self-registration seam. See Queued work + decisions.md.
-4. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
+3. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
    bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
    invariant #6. Small, docs-only; tied to the module-packaging end state.
-5. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
+4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
 
 Separate track (ops, not engineering): configure ConferenceRooms AD `DelineaSecretId` in the
 prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround exists).
@@ -220,12 +229,18 @@ prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround 
     Group create/update/delete remain ungated **by design** (owner decision 2026-06-29:
     member/owner only, no protected-*group* gating; see `.agents/decisions.md`). Known
     accepted limitation: AD-based resolution treats a cloud-only NotFound as not protected.
-  - **GAP 2 — `MigrationService` is UNGATED.** No protected-principal reference in the service
-    or `Components/Pages/Migration.razor` (grep: zero matches). `New-MigrationBatch`
-    (`Services/MigrationService.cs` ~:267/:277, both ToCloud and ToOnPrem) creates a batch over
-    target mailboxes with no protected-principal validation on the batch members.
-  - **GAP 1 CLOSED (above). GAP 2 remains** and needs an approved plan before any code
-    (mutating-module change); standalone Migration fix. It is "Next up" item #1.
+  - **GAP 2 — `MigrationService` — CLOSED 2026-06-30** (module `Migration` 1.1.3→1.2.0,
+    app version unchanged; commits `0b855ac`, `5d72978`, + docs/version slice;
+    `docs/MigrationProtectedPrincipalGate-Plan.md`, Implemented). `CreateMigrationBatchAsync`
+    now partitions every target through the protected-principal gate **before** any side
+    effect (CSV build / `New-MigrationBatch`); protected targets are filtered out, the rest
+    are migrated, and exclusions are reported in the UI (always-visible warning), audited as
+    denial rows, and listed in the admin notification. All-protected (incl. single target) ⇒
+    nothing created, clear refusal. Fail-closed on Unavailable/Ambiguous/exception. Owner
+    decision (2026-06-30, decisions.md): filter-and-report, never silent, one protected target
+    never blocks the batch. Same accepted cloud-only NotFound limitation as the other modules.
+    4 new tests, proven non-vacuous; 589/589 green.
+  - **GAP 1 and GAP 2 both CLOSED. No protected-principal gating gaps remain.**
 - **Prod-deploy hold LIFTED — prod cut over to 2.3.27 (owner, 2026-06-29).** The deferred
   prod hold (owner direction 2026-06-18) is done: prod moved from 2.3.11 (pre-SQLite) straight
   to app **`2.3.27`**, so the full JSON→SQLite legacy import ran on first startup (the path the
@@ -263,20 +278,20 @@ prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround 
 
 ## Known issues (pre-existing, NOT SQLite-caused)
 
-- **Protected-principal gating gaps — 1 of 2 remaining (sweep 2026-06-29).** The
-  2026-06-29 decision requires every mutating module to gate its write target through the
-  protected-principal check; a read-only sweep found two modules that did not. GAP 1 is now
-  closed (see below); GAP 2 remains. Address when the higher-priority bug queue clears; it
-  needs an approved plan (mutating-module change).
+- **Protected-principal gating gaps — BOTH CLOSED (sweep 2026-06-29).** The 2026-06-29
+  decision requires every mutating module to gate its write target through the
+  protected-principal check; a read-only sweep found two modules that did not. Both are now
+  fixed.
   - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29.** Member/owner add/remove now
     gates the target through the protected-principal check before any Graph write (module
     1.1.0; commits `211c6eb`, `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`). Group
     create/update/delete intentionally ungated (owner decision; see Now section + decisions.md).
-  - **GAP 2 — `MigrationService` UNGATED.** No protected-principal reference in the service or
-    `Components/Pages/Migration.razor`. `New-MigrationBatch` (`Services/MigrationService.cs`
-    ~:267/:277, ToCloud + ToOnPrem) creates a batch over target mailboxes with no
-    protected-principal validation. Standalone fix.
-  - Full sweep result (12/14 modules already gated) is in the Now section.
+  - **GAP 2 — `MigrationService` — CLOSED 2026-06-30.** Batch creation now partitions targets
+    through the protected-principal gate before any write; protected targets filtered out and
+    reported (UI/audit/email), all-protected ⇒ nothing created (module 1.2.0; commits
+    `0b855ac`, `5d72978`; `docs/MigrationProtectedPrincipalGate-Plan.md`). See Now section +
+    decisions.md.
+  - Full sweep result (12/14 modules already gated; the other 2 now fixed) is in the Now section.
 
 - **MFA Reset stranded legacy config key — RESOLVED 2026-06-26 (app 2.3.26).** The Graph
   Delinea secret was renamed `DelineaSecretId` → `GraphDelineaSecretId`; environments

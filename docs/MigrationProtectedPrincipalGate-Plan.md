@@ -1,8 +1,8 @@
 # Migration Protected-Principal Gate — Plan
 
-Status: Approved
+Status: Implemented (2026-06-30)
 App version at draft: 2.3.27 (unchanged — module-scoped change)
-Module: `Migration` (Version bump on landing — see §6)
+Module: `Migration` (Version `1.1.3` → `1.2.0`)
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 

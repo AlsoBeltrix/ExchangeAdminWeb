@@ -5,6 +5,41 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-06-30 - Migration batches: filter protected principals out, never silently, never block the whole batch
+
+Status: Active
+
+Decision (owner direction 2026-06-30):
+When a migration batch (`Migration` module, `CreateMigrationBatchAsync`, both ToCloud and
+ToOnPrem) contains a protected principal among its targets, the protected target(s) are
+**filtered out** and the batch is created for the remaining (non-protected) targets. Two
+hard constraints from the owner:
+
+1. **It must never fail silently** — every exclusion is reported back to the operator
+   clearly and directly (a distinct, always-visible warning block in the UI naming each
+   excluded principal and the reason), audited as its own denial row, and included in the
+   admin notification body.
+2. **One protected target must never block the whole batch** — the rest are still migrated.
+
+Degenerate case: if **every** target is protected (including the single-target path),
+nothing is created and the operator is told plainly why, with the escalate-outside-this-tool
+message.
+
+This closes **GAP 2** from the 2026-06-29 protected-principal sweep (`.agents/state.md`).
+It applies the 2026-06-29 "protected principals are off-limits to every mutating module"
+decision to the migration-batch surface, and chooses the *filter-and-report* enforcement
+shape (not refuse-whole-batch, not silent-drop) per explicit owner direction.
+
+Protection check scope: reuses the existing on-prem-AD check (`ProtectedPrincipalService`
+`ResolveWithStatusAsync` + `CheckAsync`), fail-closed on Unavailable/Ambiguous/exception.
+Same accepted, documented cloud-only limitation as GroupManagement / M365GroupManagement:
+a cloud-only target AD cannot resolve returns `NotFound` and is treated as not protected.
+This is most relevant on the ToOnPrem (move-back) path, where targets are cloud mailboxes.
+
+Implemented: module `Migration` `1.1.3` → `1.2.0` (app version unchanged); commits
+`0b855ac` (service+tests), `5d72978` (UI+audit+notification), + this docs/version slice.
+Plan: `docs/MigrationProtectedPrincipalGate-Plan.md` (Status: Implemented).
+
 ### 2026-06-29 - Module distribution end state: UI-driven .zip upload that installs/updates a module
 
 Status: Active (long-term direction; nothing to implement now, no plan yet)
