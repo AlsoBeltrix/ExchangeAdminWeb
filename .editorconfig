@@ -1,0 +1,13 @@
+root = true
+
+# All text files: LF line endings to match .gitattributes (dotnet format reads
+# this; without it the formatter falls back to the OS default — CRLF on Windows
+# CI — and fails the format check against the LF-stored source).
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+
+# PowerShell scripts are stored CRLF (.gitattributes: *.ps1 eol=crlf).
+[*.{ps1,psm1,psd1}]
+end_of_line = crlf
