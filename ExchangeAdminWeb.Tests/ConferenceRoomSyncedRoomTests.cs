@@ -55,6 +55,56 @@ public class ConferenceRoomSyncedRoomTests
         Assert.False(ConferenceRoomService.OnPremSkipCountsAsSuccess(cloudAttrDeferredToOnPrem: true));
     }
 
+    // --- Room-list add fallback classification (docs/ConferenceRooms-OnPremRoomListAdd-Plan.md) ---
+
+    [Fact]
+    public void ClassifyRoomListAddFailure_SyncedFromOnPrem_FallsBackToOnPrem()
+    {
+        // The exact stakeholder error (2026-07-01): an on-prem-mastered room list.
+        const string msg = "The operation on Identity \"40a5acc2-82d5-4010-a672-47fd7f1f44bbc\" failed because it's out of the current user's write scope. The action 'Add-DistributionGroupMember', 'ErrorAction,Identity,Member', can't be performed on the object because the object is being synchronized from your on-premises organization. This action should be performed on the object in your on-premises organization.";
+        Assert.Equal(ConferenceRoomService.RoomListAddAction.OnPremFallback,
+            ConferenceRoomService.ClassifyRoomListAddFailure(msg));
+    }
+
+    [Theory]
+    [InlineData("The room 'x' isn't a room mailbox and can't be added to a room list.")]
+    [InlineData("NonRoomMailboxAddToRoomListException: bad recipient type")]
+    public void ClassifyRoomListAddFailure_NonRoomMailbox_IsAdAttributeFix_NotFallback(string msg)
+    {
+        // A room-attribute problem the on-prem membership add cannot fix — must NOT fall back.
+        Assert.Equal(ConferenceRoomService.RoomListAddAction.AdAttributeFix,
+            ConferenceRoomService.ClassifyRoomListAddFailure(msg));
+    }
+
+    [Theory]
+    [InlineData("Insufficient permissions to perform the operation.")]
+    [InlineData("The term 'Add-DistributionGroupMember' is not recognized.")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void ClassifyRoomListAddFailure_UnrelatedOrEmpty_Surfaced(string? msg)
+    {
+        // Anything else is surfaced as-is (no fallback, no masking).
+        Assert.Equal(ConferenceRoomService.RoomListAddAction.Surface,
+            ConferenceRoomService.ClassifyRoomListAddFailure(msg));
+    }
+
+    [Fact]
+    public void BuildRoomListAddedMessage_Cloud_HasNoSyncNote()
+    {
+        var msg = ConferenceRoomService.BuildRoomListAddedMessage("San Jose Conference Rooms", viaOnPrem: false);
+        Assert.Contains("San Jose Conference Rooms", msg);
+        Assert.DoesNotContain("directory sync", msg, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildRoomListAddedMessage_OnPrem_TellsOperatorAboutSyncDelay()
+    {
+        var msg = ConferenceRoomService.BuildRoomListAddedMessage("San Jose Conference Rooms", viaOnPrem: true);
+        Assert.Contains("San Jose Conference Rooms", msg);
+        Assert.Contains("on-prem", msg, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("directory sync", msg, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void PermissionRemovalStep_NoErrors_Succeeds()
     {

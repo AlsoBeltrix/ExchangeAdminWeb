@@ -222,6 +222,36 @@ public class ConferenceRoomService : ExchangeServiceBase
     public static bool OnPremSkipCountsAsSuccess(bool cloudAttrDeferredToOnPrem)
         => !cloudAttrDeferredToOnPrem;
 
+    // Classifies a failed cloud room-list add into one of three actions. Pure + static so the
+    // branch is unit-testable without a live AD/EXO connection.
+    //  - AdAttributeFix: the room's own AD attributes are wrong (not a room mailbox); on-prem
+    //    membership add cannot fix it, so keep the existing guidance and do NOT fall back.
+    //  - OnPremFallback: the list is on-prem mastered (DirSync'd) and EXO rejected the cloud
+    //    add; retry the membership write on-prem.
+    //  - Surface: any other error — report as-is, no fallback, no masking.
+    // See docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
+    public enum RoomListAddAction { Surface, AdAttributeFix, OnPremFallback }
+
+    public static RoomListAddAction ClassifyRoomListAddFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return RoomListAddAction.Surface;
+        if (message.Contains("NonRoomMailboxAddToRoomList", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("isn't a room mailbox", StringComparison.OrdinalIgnoreCase))
+            return RoomListAddAction.AdAttributeFix;
+        if (IsOnPremMasteredWriteError(message))
+            return RoomListAddAction.OnPremFallback;
+        return RoomListAddAction.Surface;
+    }
+
+    // Success message for a room-list add, distinguishing the direct cloud add from the
+    // on-prem-mastered fallback (which only appears after the next directory sync). Pure +
+    // static for unit testing.
+    public static string BuildRoomListAddedMessage(string roomListName, bool viaOnPrem)
+        => viaOnPrem
+            ? $"Added to on-prem room list '{roomListName}'. Membership was written on-prem and will appear in Exchange/Room Finder after the next directory sync (typically ~30 min)."
+            : $"Added to room list '{roomListName}'.";
+
     // Step result for "Remove existing permissions": any captured error makes the
     // step fail so the failedSteps aggregation surfaces it. A CEO conversion must
     // never report success while previous permission holders retain access.
@@ -536,33 +566,56 @@ public class ConferenceRoomService : ExchangeServiceBase
 
         if (!opResult.Success)
         {
-            result.Success = false;
-            result.Message = opResult.Message;
+            switch (ClassifyRoomListAddFailure(opResult.Message))
+            {
+                // The room's own AD attributes are wrong (not a room mailbox). An on-prem
+                // membership add cannot fix this, so keep the existing guidance and do NOT
+                // fall back.
+                case RoomListAddAction.AdAttributeFix:
+                    result.Success = false;
+                    result.Message = opResult.Message;
+                    result.AdAttributeFixRequired = true;
+                    result.AdAttributeDetail = "Room has incorrect AD attributes (msExchRemoteRecipientType). " +
+                        "Recommended: Set msExchRemoteRecipientType to 36 and msExchRecipientDisplayType to -2147481850. " +
+                        "Contact an AD administrator to fix this before retrying.";
+                    result.Steps.Add(new RoomOperationStep
+                    {
+                        Stage = "AD attribute check",
+                        Success = false,
+                        Error = result.AdAttributeDetail
+                    });
+                    return result;
 
-            // Detect NonRoomMailboxAddToRoomListException
-            if (opResult.Message.Contains("NonRoomMailboxAddToRoomList", StringComparison.OrdinalIgnoreCase)
-                || opResult.Message.Contains("isn't a room mailbox", StringComparison.OrdinalIgnoreCase))
-            {
-                result.AdAttributeFixRequired = true;
-                result.AdAttributeDetail = "Room has incorrect AD attributes (msExchRemoteRecipientType). " +
-                    "Recommended: Set msExchRemoteRecipientType to 36 and msExchRecipientDisplayType to -2147481850. " +
-                    "Contact an AD administrator to fix this before retrying.";
-                result.Steps.Add(new RoomOperationStep
-                {
-                    Stage = "AD attribute check",
-                    Success = false,
-                    Error = result.AdAttributeDetail
-                });
+                // On-prem-mastered (DirSync'd) room list: EXO rejects the cloud add. Fall back
+                // to adding the membership on-prem, exactly as City/State/Country are written
+                // on-prem and synced up.
+                case RoomListAddAction.OnPremFallback:
+                    _operationTrace?.Step("AddToRoomListOnPrem", backend: "AD", command: "Add-ADGroupMember", target: roomEmail);
+                    var adError = await AddToRoomListViaAdAsync(roomEmail, roomListName);
+                    if (adError == null)
+                    {
+                        result.Success = true;
+                        result.Steps.Add(new RoomOperationStep { Stage = $"Add to '{roomListName}' (on-prem)", Success = true });
+                        result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: true);
+                        return result;
+                    }
+
+                    result.Success = false;
+                    result.Message = adError;
+                    result.Steps.Add(new RoomOperationStep { Stage = $"Add to '{roomListName}' (on-prem)", Success = false, Error = adError });
+                    return result;
+
+                // Any other error: surface as-is, no fallback, no masking.
+                default:
+                    result.Success = false;
+                    result.Message = opResult.Message;
+                    result.Steps.Add(new RoomOperationStep { Stage = "Add to room list", Success = false, Error = opResult.Message });
+                    return result;
             }
-            else
-            {
-                result.Steps.Add(new RoomOperationStep { Stage = "Add to room list", Success = false, Error = opResult.Message });
-            }
-            return result;
         }
 
         result.Success = true;
-        result.Message = $"Added to room list '{roomListName}'.";
+        result.Message = BuildRoomListAddedMessage(roomListName, viaOnPrem: false);
         return result;
     }
 
@@ -1326,6 +1379,84 @@ public class ConferenceRoomService : ExchangeServiceBase
         });
     }
 
+    // Adds a room mailbox to an on-prem-mastered (DirSync'd) room-list group via the on-prem
+    // AD object. Exchange Online refuses Add-DistributionGroupMember against a synced group
+    // ("out of the current user's write scope ... being synchronized from your on-premises
+    // organization"), so membership must be written on-prem and then syncs up (~30 min) — the
+    // same shape as the Set-ADUser City/State/Country handling. Returns null on success (incl.
+    // already-a-member no-op), or a non-null failure message. See
+    // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
+    private async Task<string?> AddToRoomListViaAdAsync(string roomEmail, string roomListName)
+    {
+        var creds = await GetModuleCredentialsAsync($"Add-ADGroupMember on-prem room list for {roomEmail}");
+        if (creds is null)
+            return "On-prem AD credential is not configured for Conference Rooms (set the AD Delinea Secret ID in Module Config). The room could not be added to the on-prem room list.";
+
+        return await Task.Run(() =>
+        {
+            try
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? "Failed to load the ActiveDirectory module.";
+                ps.Commands.Clear();
+
+                var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+
+                // Resolve BOTH objects to immutable GUIDs, fail-closed on not-found/ambiguous,
+                // before any write — so we never add the wrong member to the wrong group.
+                var (roomError, roomGuid) = ResolveAdObjectGuid(ps, roomEmail, credential);
+                if (roomError != null)
+                    return roomError;
+
+                var (groupError, groupGuid) = ResolveAdGroupGuid(ps, roomListName, credential);
+                if (groupError != null)
+                    return groupError;
+
+                // Idempotency: skip the add if the room is already a member (matches the cloud
+                // path's already-member no-op so a re-run is safe).
+                ps.AddCommand("Get-ADGroupMember")
+                  .AddParameter("Identity", groupGuid)
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                var members = ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? $"Failed to read membership of on-prem room list '{roomListName}'.";
+                ps.Commands.Clear();
+
+                var alreadyMember = members.Any(m =>
+                    string.Equals(m.Properties["ObjectGUID"]?.Value?.ToString(), roomGuid, StringComparison.OrdinalIgnoreCase));
+                if (alreadyMember)
+                    return null;
+
+                // Add by GUID on both sides (immutable identity), not by name/UPN.
+                ps.AddCommand("Add-ADGroupMember")
+                  .AddParameter("Identity", groupGuid)
+                  .AddParameter("Members", roomGuid)
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                ps.Invoke();
+                if (ps.HadErrors)
+                    return FirstError(ps) ?? $"Add-ADGroupMember failed for {roomEmail} on '{roomListName}'.";
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Add-ADGroupMember on-prem room-list write failed for {Room} on {List}", roomEmail, roomListName);
+                return $"Failed to add the room to the on-prem room list on the AD object: {ex.Message}";
+            }
+        });
+    }
+
     // Resolve a room's AD object by userPrincipalName to exactly one immutable
     // ObjectGUID. Shared by the pre-mutation preflight and the actual Set-ADUser write
     // so the two can never disagree about which object (or whether one exists). Returns
@@ -1351,6 +1482,34 @@ public class ConferenceRoomService : ExchangeServiceBase
         var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
         if (objectGuid is null)
             return ($"Resolved AD object for '{roomEmail}' has no ObjectGUID; refusing to write.", null);
+
+        return (null, objectGuid.ToString());
+    }
+
+    // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID.
+    // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous —
+    // same fail-closed posture as ResolveAdObjectGuid so an on-prem membership write can never
+    // target the wrong group. Assumes the ActiveDirectory module is already imported.
+    private static (string? error, string? objectGuid) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)
+    {
+        var escaped = roomListName.Replace("'", "''");
+        ps.AddCommand("Get-ADGroup")
+          .AddParameter("Filter", $"mail -eq '{escaped}' -or displayName -eq '{escaped}' -or name -eq '{escaped}'")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var found = ps.Invoke();
+        if (ps.HadErrors)
+            return (FirstError(ps) ?? $"AD lookup failed for room list '{roomListName}'.", null);
+        ps.Commands.Clear();
+
+        if (found.Count == 0)
+            return ($"No on-prem AD group found for room list '{roomListName}'. The room was not added to the list.", null);
+        if (found.Count > 1)
+            return ($"Multiple on-prem AD groups ({found.Count}) match room list '{roomListName}'. Refusing to write to avoid the wrong group.", null);
+
+        var objectGuid = found[0].Properties["ObjectGUID"]?.Value;
+        if (objectGuid is null)
+            return ($"Resolved on-prem AD group for room list '{roomListName}' has no ObjectGUID; refusing to write.", null);
 
         return (null, objectGuid.ToString());
     }

@@ -201,8 +201,19 @@ Live backlog only (DONE items moved out). All items need an approved plan before
 2. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
    bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
    invariant #6. Small, docs-only; tied to the module-packaging end state.
-3. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
-4. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
+3. **ConferenceRooms bulk-batch session timeout** (OPEN, 2026-07-01) — operator must split
+   Room Finder CSV batches to ~<40 rooms or "the session appears to time out before the job
+   completes." Bulk apply is a single server-side loop inside one Blazor circuit
+   (`ConferenceRooms.razor:743–768`), so batch size is bounded by connection lifetime. Suspected
+   layer: IIS/reverse-proxy WebSocket idle timeout (host config, not app); secondary candidates —
+   Blazor SignalR circuit defaults (`Program.cs:74–75`, no HubOptions/CircuitOptions set) and the
+   EXO pool 20-min idle / on-prem 15s OperationTimeout (`ExoConnectionPool.cs:61`,
+   `ExchangeServiceBase.cs:331`). Next step: reproduce on dev to pin the layer (browser
+   "reconnecting" vs specific error, seconds/rows in), then either raise the specific timeout or
+   decouple the batch from the browser connection (server-side job + poll) as the robust fix.
+   Needs approved plan before code.
+4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
+5. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
    user is notified, after the module is actually exercised on dev. See decisions.md 2026-06-30.
 
 Separate track (ops, not engineering): configure ConferenceRooms AD `DelineaSecretId` in the
