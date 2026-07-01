@@ -189,6 +189,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
         {
             ["Delinea:SecretServerUrl"] = "https://fake.local",
             ["Email:AdminNotificationEmail"] = "",
+            ["Audit:LogRoot"] = _tempDir,
             // No directory-read secret configured => ProtectedPrincipalService.ResolveWithStatusAsync
             // returns Unavailable => the gate fails closed.
         };

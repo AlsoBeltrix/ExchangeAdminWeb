@@ -41,7 +41,8 @@ public class M365GroupManagementServiceTests : IDisposable
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Delinea:SecretServerUrl"] = "https://fake.local"
+                ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = _tempDir
             })
             .Build();
 

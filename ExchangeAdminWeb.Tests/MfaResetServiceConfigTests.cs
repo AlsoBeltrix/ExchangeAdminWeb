@@ -52,7 +52,11 @@ public class MfaResetServiceConfigTests
     private static MfaResetService CreateService(string contentRoot, ModuleConfigService moduleConfig)
     {
         var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Delinea:SecretServerUrl"] = "https://fake.local" })
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = contentRoot
+            })
             .Build();
 
         var env = Substitute.For<IWebHostEnvironment>();
