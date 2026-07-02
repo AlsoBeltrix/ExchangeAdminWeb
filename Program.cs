@@ -59,6 +59,23 @@ try
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.AttributeEditorRepository>();
 
+    // Bulk job runner infrastructure (docs/BulkJobRunner-Plan.md). Durable server-side batches live
+    // in a SEPARATE operational SQLite database (exchangeadmin-jobs.db) in the same deploy-excluded
+    // config/ directory, distinct from the config DB: job state is environment-local, high-churn and
+    // MUST NEVER be promoted dev->prod (owner 2026-07-02). The repository gets its own connection
+    // factory pointed at that file. Processors are resolved per-job from a fresh scope via the
+    // registry, so the runner stays module-agnostic (no compile-time dependency on any module).
+    var jobsDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin-jobs.db");
+    builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Jobs.BulkJobRepository(
+        new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(jobsDbPath)));
+    builder.Services.AddSingleton(_ => new ExchangeAdminWeb.Services.Jobs.BulkJobProcessorRegistry(
+        new KeyValuePair<string, Type>[]
+        {
+            // module id -> processor type; the type is resolved per-job from a scope. First caller
+            // (ConferenceRoomService as IBulkJobProcessor) is wired in Slice 4.
+        }));
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
+
     builder.Services.AddSingleton<ModuleEnablementService>();
     builder.Services.AddSingleton<SectionAccessService>();
     builder.Services.AddSingleton<IAuthorizationHandler, GroupAuthorizationHandler>();
@@ -157,6 +174,15 @@ try
         // Graph modules, non-destructive. See docs/GraphSecretKeyMigration-Plan.md.
         var moduleConfig = app.Services.GetRequiredService<ModuleConfigService>();
         moduleConfig.MigrateGraphSecretKeys();
+
+        // Bulk job runner startup (docs/BulkJobRunner-Plan.md). A DI singleton is not constructed
+        // until first resolved, so this explicit call is required for orphan reconciliation to run:
+        // it migrates the jobs DB, prunes old terminal jobs, and — the load-bearing rule — flips
+        // every non-terminal job (Running OR Queued) to Interrupted. There is no resume; this is a
+        // one-shot startup call, NOT a background timer/hosted worker (consistent with the
+        // 2026-06-17 no-unattended-worker posture).
+        var bulkJobs = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
+        bulkJobs.InitializeAsync();
     }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');
