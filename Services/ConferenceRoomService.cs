@@ -7,7 +7,7 @@ using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
 
-public class ConferenceRoomService : ExchangeServiceBase
+public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBulkOperations
 {
     private readonly ModuleConfigService _moduleConfig;
     private const string ModuleId = "ConferenceRooms";

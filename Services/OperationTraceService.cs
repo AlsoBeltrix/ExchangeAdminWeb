@@ -19,6 +19,23 @@ public class OperationTraceService
 
     public bool HasCurrentOperation => Current.Value != null;
 
+    /// <summary>
+    /// Begins a trace operation as a CLEAN ROOT, ignoring any ambient parent context. The bulk job
+    /// runner needs this: AsyncLocal flows across Task.Run unless execution-context flow is
+    /// suppressed, so a job pump could otherwise inherit a stale parent context from whatever ran
+    /// before it and nest every row under it (codex review 2026-07-02). Each job row opens its own
+    /// root here so its trace is correctly parented to nothing, not to leaked context.
+    /// </summary>
+    public OperationScope BeginRootOperation(
+        string module,
+        string action,
+        string actor,
+        string ipAddress,
+        string? target = null,
+        string? ticket = null,
+        IReadOnlyDictionary<string, object?>? details = null)
+        => BeginOperation(module, action, actor, ipAddress, target, ticket, details, forceRoot: true);
+
     public OperationScope BeginOperation(
         string module,
         string action,
@@ -27,8 +44,21 @@ public class OperationTraceService
         string? target = null,
         string? ticket = null,
         IReadOnlyDictionary<string, object?>? details = null)
+        => BeginOperation(module, action, actor, ipAddress, target, ticket, details, forceRoot: false);
+
+    private OperationScope BeginOperation(
+        string module,
+        string action,
+        string actor,
+        string ipAddress,
+        string? target,
+        string? ticket,
+        IReadOnlyDictionary<string, object?>? details,
+        bool forceRoot)
     {
-        var parent = Current.Value;
+        // A root operation deliberately ignores any inherited ambient context so it parents to
+        // nothing; a normal operation nests under the current context as before.
+        var parent = forceRoot ? null : Current.Value;
         var context = new OperationContext(
             OperationId: Guid.NewGuid().ToString("N"),
             ParentOperationId: parent?.OperationId,

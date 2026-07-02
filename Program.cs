@@ -71,8 +71,9 @@ try
     builder.Services.AddSingleton(_ => new ExchangeAdminWeb.Services.Jobs.BulkJobProcessorRegistry(
         new KeyValuePair<string, Type>[]
         {
-            // module id -> processor type; the type is resolved per-job from a scope. First caller
-            // (ConferenceRoomService as IBulkJobProcessor) is wired in Slice 4.
+            // module id -> processor type; the type is resolved per-job from a fresh scope.
+            new(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName,
+                typeof(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor)),
         }));
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
 
@@ -110,6 +111,12 @@ try
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
+    // The bulk job processor talks to rooms through the narrow IConferenceRoomBulkOperations seam
+    // (implemented by ConferenceRoomService) so it is unit-testable without live EXO/AD.
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.IConferenceRoomBulkOperations>(
+        sp => sp.GetRequiredService<ConferenceRoomService>());
+    // Bulk job processor for ConferenceRooms (resolved per-job from a fresh scope by the runner).
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor>();
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<M365GroupManagementService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();

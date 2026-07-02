@@ -115,7 +115,9 @@ public class ProtectedPrincipalService
         }
     }
 
-    public async Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
+    // virtual: a test seam so the bulk job processor's protected-principal gate can be exercised
+    // without a live AD/Delinea backend (no behavior change). Mirrors the EmailService seam pattern.
+    public virtual async Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
     {
         var (cfg, legacyExclusions, loadError) = LoadEffectiveConfig();
 
@@ -206,7 +208,9 @@ public class ProtectedPrincipalService
     /// NotFound = AD lookup succeeded but found no match (safe for cloud-only fallback).
     /// Unavailable = resolver could not run (credential missing, throttle timeout, error).
     /// </summary>
-    public async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity)
+    // virtual: test seam (see CheckAsync). Lets the processor tests force Resolved/NotFound/
+    // Unavailable/Ambiguous outcomes without a live directory.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity)
     {
         if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
         {

@@ -242,7 +242,9 @@ public class AuditService
         WriteAuditEvent(evt);
     }
 
-    public void LogConferenceRoomAction(
+    // virtual: test seam so the bulk job processor's per-row audit calls can be observed in tests
+    // (no behavior change; mirrors the EmailService admin-notify seam from the notifications sweep).
+    public virtual void LogConferenceRoomAction(
         string performedBy,
         string ipAddress,
         string action,
