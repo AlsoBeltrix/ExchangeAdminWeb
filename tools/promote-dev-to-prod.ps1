@@ -19,6 +19,9 @@ $ErrorActionPreference = "Stop"
 # Shared SQLite config-DB backup / promote / integrity helpers (SqliteConfigStore-Plan Phase D).
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
+# Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
+Import-Module (Join-Path $PSScriptRoot 'JobStateWarning.psm1') -Force
+
 function Write-Step { param([string]$Message) Write-Host ">>> $Message" -ForegroundColor Cyan }
 function Write-Ok { param([string]$Message) Write-Host " OK  $Message" -ForegroundColor Green }
 function Write-Warn { param([string]$Message) Write-Host "  !  $Message" -ForegroundColor Yellow }
@@ -189,14 +192,20 @@ function Set-AppsettingsPathBase {
 }
 
 function Stop-AppPoolChecked {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [string]$ConfigDir
+    )
 
     if (-not $Apply) {
         Write-Plan "Stop-WebAppPool -Name $Name"
+        if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir -PlanOnly | Out-Null }
         return
     }
 
     Write-Step "Stopping prod app pool: $Name"
+    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir | Out-Null }
     Stop-WebAppPool -Name $Name -ErrorAction Stop
     Start-Sleep -Seconds 3
 }
@@ -263,6 +272,7 @@ if ($Refresh) {
     if (-not $Apply) {
         Write-Plan "Back up dev config DB (verified) into $backup"
         Write-Plan "Stop-WebAppPool -Name $DevAppPoolName"
+        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $devConfigDir -PlanOnly | Out-Null
         Write-Plan "Replace dev config DB with a consistent copy of $prodConfigDir\exchangeadmin.db (wholesale)"
         Write-Plan "Start-WebAppPool -Name $DevAppPoolName"
         Write-Warn "Dry run only. Re-run with -Apply to make changes. (Dev appsettings.json / PathBase are never touched.)"
@@ -277,6 +287,8 @@ if ($Refresh) {
     if ($devDbBackup) { Write-Ok "Dev config DB backed up (verified) to $devDbBackup" }
 
     Write-Step "Stopping dev app pool: $DevAppPoolName"
+    # Warn (do not block) if a durable bulk job is active on dev — recycling interrupts it.
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $devConfigDir | Out-Null
     Stop-WebAppPool -Name $DevAppPoolName -ErrorAction Stop
     Start-Sleep -Seconds 3
     try {
@@ -347,7 +359,7 @@ if ($Apply) {
     Write-Plan "Verified online backup of prod config DB (if present) into $backup"
 }
 
-Stop-AppPoolChecked -Name $ProdAppPoolName
+Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config")
 
 $promotionFailed = $false
 $rolledBack = $false

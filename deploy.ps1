@@ -137,6 +137,9 @@ $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
 # Shared SQLite config-DB backup/integrity helpers (SqliteConfigStore-Plan Phase D).
 Import-Module (Join-Path $PSScriptRoot 'tools\SqliteConfigBackup.psm1') -Force
 
+# Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
+Import-Module (Join-Path $PSScriptRoot 'tools\JobStateWarning.psm1') -Force
+
 if (-not $PathBase) { $PathBase = "/$AppAlias" }
 $PublishPath = $PublishPath.TrimEnd('\', '/')
 
@@ -472,6 +475,8 @@ if ($isUpgrade) {
     $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
 
     Write-Step "Stopping app pool"
+    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3
 
@@ -656,6 +661,8 @@ if ($isUpgrade) {
 
     # Stop pool before file swap
     Write-Step "Stopping app pool for file deployment"
+    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3
 
