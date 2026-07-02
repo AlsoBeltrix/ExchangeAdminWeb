@@ -81,18 +81,24 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             return Task.CompletedTask;
         }
 
+        // Claims-based match goes through the shared pure checker so the live handler and the bulk
+        // job runner's off-circuit re-check can never diverge (see GroupMembershipChecker). The
+        // IsInRole() checks remain here because they consult the live Windows principal's token
+        // roles, which only exist on a circuit — a job worker has only the captured role claims.
+        if (GroupMembershipChecker.IsMemberOfAny(roleClaims, groups))
+        {
+            _logger.LogInformation("User {User} authorized via a section-access group claim", userName);
+            context.Succeed(requirement);
+            return Task.CompletedTask;
+        }
+
         foreach (var allowedGroup in groups)
         {
             var normalizedAllowedGroup = allowedGroup.Contains('\\')
                 ? allowedGroup.Split('\\')[1]
                 : allowedGroup;
 
-            var hasRole = user.IsInRole(allowedGroup)
-                || user.IsInRole(normalizedAllowedGroup)
-                || roleClaims.Any(r => r.Equals(allowedGroup, StringComparison.OrdinalIgnoreCase))
-                || roleClaims.Any(r => r.Equals(normalizedAllowedGroup, StringComparison.OrdinalIgnoreCase));
-
-            if (hasRole)
+            if (user.IsInRole(allowedGroup) || user.IsInRole(normalizedAllowedGroup))
             {
                 _logger.LogInformation("User {User} authorized via group {Group}", userName, allowedGroup);
                 context.Succeed(requirement);
