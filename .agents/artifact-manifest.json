@@ -1,12 +1,22 @@
 {
   "validated_against": {
-    "commit": "3494ea4e7f71c1d6a5145175651ee3493a685aa5",
-    "date": "2026-06-24"
+    "commit": "430305ac3b913777efa6f0332b9f4db6e7235916",
+    "date": "2026-07-02"
   },
   "artifacts": [
     {
       "path": "AGENTS.md",
-      "purpose": "Canonical agent guidance",
+      "purpose": "Canonical, portable agent guidance (toolkit template, replaced whole on governance refresh)",
+      "custody": "tracked"
+    },
+    {
+      "path": ".agents/repo-guidance.md",
+      "purpose": "Repo-specific rules that extend AGENTS.md (mission, authority order, commands, verification, invariants)",
+      "custody": "tracked"
+    },
+    {
+      "path": ".agents/push-policy.md",
+      "purpose": "Push policy for this repo (ask before pushing)",
       "custody": "tracked"
     },
     {
@@ -70,18 +80,28 @@
       "custody": "tracked"
     },
     {
-      "path": ".claude/agents/reviewer.md",
-      "purpose": "Claude Code subagent: evidence-standard diff review",
-      "custody": "tracked"
-    },
-    {
       "path": ".claude/commands/playbook.md",
       "purpose": "Claude Code slash command: invoke a named playbook from .agents/playbooks/",
       "custody": "tracked"
     },
     {
+      "path": ".claude/commands/update-governance.md",
+      "purpose": "Claude Code slash command: refresh repo governance from the AgentGovernanceBootstrap toolkit",
+      "custody": "tracked"
+    },
+    {
+      "path": ".claude/agents/reviewer.md",
+      "purpose": "Claude Code subagent: evidence-standard diff review",
+      "custody": "tracked"
+    },
+    {
       "path": ".claude/settings.json",
-      "purpose": "Claude Code hook: re-grounds agent on AGENTS.md Prime Invariants after context compaction",
+      "purpose": "Claude Code hooks: re-ground on AGENTS.md after compaction (SessionStart) + advisory AGENTS.md pre-edit tripwire (PreToolUse)",
+      "custody": "tracked"
+    },
+    {
+      "path": ".claude/agents-md-tripwire.py",
+      "purpose": "Stdlib-Python advisory hook script backing the AGENTS.md pre-edit tripwire",
       "custody": "tracked"
     }
   ]

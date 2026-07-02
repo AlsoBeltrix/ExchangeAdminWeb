@@ -1,7 +1,7 @@
 {
   "validated_against": {
-    "commit": "7e7c9ac25cb5b96d507486a5fbd57ff1ffc6fb8f",
-    "date": "2026-06-11"
+    "commit": "430305ac3b913777efa6f0332b9f4db6e7235916",
+    "date": "2026-07-02"
   },
   "projects": [
     {
@@ -9,7 +9,7 @@
       "path": "ExchangeAdminWeb.csproj",
       "type": "aspnetcore-blazor-server",
       "framework": "net10.0-windows10.0.17763.0",
-      "role": "Main app: EXO / Graph / on-prem AD administration portal, 21 modules"
+      "role": "Main app: EXO / Graph / on-prem AD administration portal (descriptor-based modules in Modules/ModuleCatalog.cs; live count in .agents/state.md)"
     },
     {
       "name": "ExchangeAdminWeb.Tests",
@@ -21,9 +21,9 @@
   "verification": {
     "status": "confirmed",
     "commands": [
-      "dotnet build -c Release",
-      "dotnet test",
-      "dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore",
+      "dotnet build ExchangeAdminWeb.slnx -c Release",
+      "dotnet test ExchangeAdminWeb.slnx",
+      "dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore",
       "git diff --check HEAD",
       "Invoke-ScriptAnalyzer -Path . -Recurse",
       "Invoke-Pester tests/ps"
@@ -45,14 +45,17 @@
   ],
   "guidance_paths": [
     "AGENTS.md",
+    ".agents/repo-guidance.md",
     ".agents/state.md",
     ".agents/decisions.md",
     ".agents/repo-map.json",
-    ".agents/artifact-manifest.json"
+    ".agents/artifact-manifest.json",
+    ".agents/push-policy.md"
   ],
   "notes": [
-    "docs/ProjectConstitution.md is the highest engineering authority and is not duplicated in AGENTS.md.",
+    "AGENTS.md is the portable toolkit template; repo-specific rules live in .agents/repo-guidance.md.",
+    "docs/ProjectConstitution.md is the highest engineering authority and is not duplicated in AGENTS.md or repo-guidance.md.",
     "CLAUDE.md is a pointer shim that includes AGENTS.md for the Claude Code harness.",
-    "Two independent version bumps: app-wide changes bump ExchangeAdminWeb.csproj; module-scoped changes bump Modules/ModuleCatalog.cs."
+    "Two independent version bumps: app-wide changes bump ExchangeAdminWeb.csproj; module-scoped changes bump Modules/ModuleCatalog.cs (see the open new-module exception in .agents/state.md)."
   ]
 }
