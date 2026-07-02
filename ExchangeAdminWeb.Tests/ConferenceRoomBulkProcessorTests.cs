@@ -139,7 +139,8 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
     private static BulkJob MakeJob(string jobType, ConferenceRoomJobPayload payload, string authRoles)
     {
-        var snap = new JobAuthorizationSnapshot { Section = "ConferenceRooms", RoleClaims = authRoles.Split(',', StringSplitOptions.RemoveEmptyEntries) };
+        var groups = authRoles.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var snap = new JobAuthorizationSnapshot { Section = "ConferenceRooms", RoleClaims = groups, AuthorizedGroups = groups };
         return new BulkJob
         {
             Id = "j1",

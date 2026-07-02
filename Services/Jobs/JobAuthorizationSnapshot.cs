@@ -24,24 +24,57 @@ public sealed class JobAuthorizationSnapshot
     /// <summary>The policy alias / section the job authorizes against (e.g. "ConferenceRooms").</summary>
     public required string Section { get; init; }
 
-    /// <summary>The submitter's role-claim values captured at submit time.</summary>
+    /// <summary>The submitter's role-claim values captured at submit time (kept for audit/debug).</summary>
     public required IReadOnlyList<string> RoleClaims { get; init; }
 
-    /// <summary>Captures the role claims (and section) from a live principal at submit time.</summary>
-    public static JobAuthorizationSnapshot Capture(ClaimsPrincipal user, string section)
+    /// <summary>
+    /// The section's allowed groups the submitter actually satisfied at submit time — the captured
+    /// authorization DECISION, not raw claims. Computed on the circuit using the same match the live
+    /// handler uses (role claims AND <see cref="ClaimsPrincipal.IsInRole"/>), so a user authorized
+    /// only via a Windows token role (common when role claims are SIDs but groups are configured by
+    /// name) is captured correctly and does not fail closed off-circuit.
+    /// </summary>
+    public required IReadOnlyList<string> AuthorizedGroups { get; init; }
+
+    /// <summary>
+    /// Captures the authorization decision from a live principal at submit time: evaluates each of
+    /// <paramref name="allowedGroupsForSection"/> with the full check (claims + IsInRole) and records
+    /// the groups the user satisfied. Must be called on the circuit, where the principal is live.
+    /// </summary>
+    public static JobAuthorizationSnapshot Capture(ClaimsPrincipal user, string section, IReadOnlyList<string> allowedGroupsForSection)
     {
         ArgumentNullException.ThrowIfNull(user);
+        ArgumentNullException.ThrowIfNull(allowedGroupsForSection);
+
         var roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        return new JobAuthorizationSnapshot { Section = section, RoleClaims = roles };
+
+        var authorized = new List<string>();
+        foreach (var group in allowedGroupsForSection)
+        {
+            if (string.IsNullOrWhiteSpace(group))
+                continue;
+            var normalized = group.Contains('\\') ? group.Split('\\')[1] : group;
+            // Full live check: token roles (IsInRole) OR role claims — mirrors GroupAuthorizationHandler.
+            if (user.IsInRole(group) || user.IsInRole(normalized) || GroupMembershipChecker.IsMemberOfAny(roles, [group]))
+                authorized.Add(group);
+        }
+
+        return new JobAuthorizationSnapshot { Section = section, RoleClaims = roles, AuthorizedGroups = authorized };
     }
 
     /// <summary>
-    /// Re-evaluates the captured snapshot against the section's current allowed-group set. Returns
-    /// true only if the snapshot still matches an allowed group — fail closed on an empty/unknown
-    /// group set (mirrors the handler). This is the per-row gate the runner applies before any write.
+    /// Re-evaluates the captured decision against the section's CURRENT allowed-group set: still
+    /// authorized only if a group that authorized the submitter at submit time is still allowed now.
+    /// Fails closed when nothing was captured or the authorizing group was removed from config. This
+    /// is the per-row gate the runner applies before any write.
     /// </summary>
     public bool IsStillAuthorized(IReadOnlyList<string> allowedGroupsForSection)
-        => GroupMembershipChecker.IsMemberOfAny(RoleClaims, allowedGroupsForSection);
+    {
+        if (AuthorizedGroups is null || AuthorizedGroups.Count == 0 || allowedGroupsForSection is null)
+            return false;
+        return AuthorizedGroups.Any(captured =>
+            allowedGroupsForSection.Any(current => current.Equals(captured, StringComparison.OrdinalIgnoreCase)));
+    }
 
     public string ToJson() => JsonSerializer.Serialize(this);
 

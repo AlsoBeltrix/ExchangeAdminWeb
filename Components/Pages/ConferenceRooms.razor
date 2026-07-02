@@ -15,6 +15,9 @@
 @inject IJSRuntime JS
 @inject ILogger<ConferenceRooms> Logger
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject SectionAccessService SectionAccess
+@inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
+@implements IDisposable
 
 <PageTitle>Conference Rooms</PageTitle>
 
@@ -35,6 +38,62 @@
         <small>All conference room operations are logged for audit purposes. CSV operations show a preview before applying changes.</small>
     </div>
     <h1 class="mb-4">Conference Rooms<ModuleVersion /></h1>
+
+    @* ===== Bulk jobs panel — durable, server-side, shared across operators ===== *@
+    @if (activeJobs.Count > 0 || recentJobs.Count > 0)
+    {
+        <div class="card mb-3">
+            <div class="card-header"><strong>Bulk Jobs</strong> <small class="text-muted">— these run on the server and keep going if you close this tab</small></div>
+            <div class="card-body p-0" style="overflow-x:auto">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            <th>Kind</th><th>Submitted by</th><th>Ticket</th><th>Status</th>
+                            <th>Progress</th><th>Success</th><th>Partial</th><th>Failed</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var job in activeJobs)
+                        {
+                            var status = JobDisplayStatus(job);
+                            <tr class="@(status == "Stalled" ? "table-warning" : status == "Running" ? "table-info" : "")">
+                                <td><small>@JobKindLabel(job)</small></td>
+                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                <td><small>@job.Ticket</small></td>
+                                <td>
+                                    <span class="badge @(status == "Running" ? "bg-info" : status == "Stalled" ? "bg-warning text-dark" : "bg-secondary")">@status</span>
+                                    @if (status == "Queued") { <span class="text-muted"><small> (position @(activeJobs.Where(j => j.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued).ToList().IndexOf(job) + 1))</small></span> }
+                                </td>
+                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                <td><small class="text-success">@job.SuccessCount</small></td>
+                                <td><small class="text-warning">@job.PartialCount</small></td>
+                                <td><small class="text-danger">@job.FailedCount</small></td>
+                                <td>
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job.Id)">
+                                        @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued ? "Remove" : "Cancel")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var job in recentJobs)
+                        {
+                            <tr>
+                                <td><small>@JobKindLabel(job)</small></td>
+                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                <td><small>@job.Ticket</small></td>
+                                <td><span class="badge @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed && job.FailedCount == 0 && job.PartialCount == 0 ? "bg-success" : job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed ? "bg-warning text-dark" : "bg-secondary")">@job.Status</span></td>
+                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                <td><small class="text-success">@job.SuccessCount</small></td>
+                                <td><small class="text-warning">@job.PartialCount</small></td>
+                                <td><small class="text-danger">@job.FailedCount</small></td>
+                                <td></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
 
     <ul class="nav nav-tabs mb-3">
         <li class="nav-item">
@@ -208,44 +267,24 @@
             </div>
         }
 
-        @* Finder Results *@
-        @if (finderResults.Count > 0)
+        @* Live per-row results stream for the running/most-recent Finder job. *@
+        @if (finderJob is not null && finderRows.Count > 0)
         {
             <div class="card mt-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <strong>Results</strong>
-                    <small class="text-muted">@finderResults.Count(r => r.Success) / @finderResults.Count succeeded</small>
+                    <strong>Results — @JobKindLabel(finderJob)</strong>
+                    <small class="text-muted">@finderJob.SuccessCount ok, @finderJob.PartialCount partial, @finderJob.FailedCount failed of @finderJob.TotalRows</small>
                 </div>
                 <div class="card-body p-0" style="overflow-x:auto">
                     <table class="table table-sm mb-0">
-                        <thead><tr><th>Room</th><th>Status</th><th>Steps</th><th>Message</th></tr></thead>
+                        <thead><tr><th>Room</th><th>Status</th><th>Message</th></tr></thead>
                         <tbody>
-                            @foreach (var r in finderResults)
+                            @foreach (var r in finderRows)
                             {
-                                <tr class="@(r.Success ? "" : (r.AdAttributeFixRequired || r.Partial) ? "table-warning" : "table-danger")">
-                                    <td><small>@r.Email</small></td>
-                                    <td>
-                                        @if (r.AdAttributeFixRequired)
-                                        { <span class="badge bg-warning text-dark">AD Fix Required</span> }
-                                        else if (r.Success) { <span class="text-success">OK</span> }
-                                        else if (r.Partial) { <span class="badge bg-warning text-dark">PARTIAL</span> }
-                                        else { <span class="text-danger">FAILED</span> }
-                                    </td>
-                                    <td>
-                                        @foreach (var s in r.Steps)
-                                        {
-                                            <small class="d-block @(s.Success ? "text-muted" : "text-danger")">
-                                                @(s.Success ? "+" : "x") @s.Stage @(s.Error != null ? $"— {s.Error}" : "")
-                                            </small>
-                                        }
-                                    </td>
-                                    <td>
-                                        <small>@r.Message</small>
-                                        @if (r.AdAttributeFixRequired)
-                                        {
-                                            <br /><small class="text-warning">@r.AdAttributeDetail</small>
-                                        }
-                                    </td>
+                                <tr class="@RowStatusCss(r.Status)">
+                                    <td><small>@r.Target</small></td>
+                                    <td>@RowStatusLabel(r.Status)</td>
+                                    <td><small>@r.Message</small></td>
                                 </tr>
                             }
                         </tbody>
@@ -409,31 +448,23 @@
             </div>
         }
 
-        @* Type Results *@
-        @if (typeResults.Count > 0)
+        @* Live per-row results stream for the running/most-recent Type job. *@
+        @if (typeJob is not null && typeRows.Count > 0)
         {
             <div class="card mt-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
-                    <strong>Results</strong>
-                    <small class="text-muted">@typeResults.Count(r => r.Success) / @typeResults.Count succeeded</small>
+                    <strong>Results — @JobKindLabel(typeJob)</strong>
+                    <small class="text-muted">@typeJob.SuccessCount ok, @typeJob.PartialCount partial, @typeJob.FailedCount failed of @typeJob.TotalRows</small>
                 </div>
                 <div class="card-body p-0" style="overflow-x:auto">
                     <table class="table table-sm mb-0">
-                        <thead><tr><th>Room</th><th>Status</th><th>Steps</th><th>Message</th></tr></thead>
+                        <thead><tr><th>Room</th><th>Status</th><th>Message</th></tr></thead>
                         <tbody>
-                            @foreach (var r in typeResults)
+                            @foreach (var r in typeRows)
                             {
-                                <tr class="@(r.Success ? "" : "table-danger")">
-                                    <td><small>@r.Email</small></td>
-                                    <td>@(r.Success ? "OK" : "FAILED")</td>
-                                    <td>
-                                        @foreach (var s in r.Steps)
-                                        {
-                                            <small class="d-block @(s.Success ? "text-muted" : "text-danger")">
-                                                @(s.Success ? "+" : "x") @s.Stage @(s.Error != null ? $"— {s.Error}" : "")
-                                            </small>
-                                        }
-                                    </td>
+                                <tr class="@RowStatusCss(r.Status)">
+                                    <td><small>@r.Target</small></td>
+                                    <td>@RowStatusLabel(r.Status)</td>
                                     <td><small>@r.Message</small></td>
                                 </tr>
                             }
@@ -497,7 +528,6 @@
     // Finder CSV
     private string csvFinderTicket = "";
     private List<RoomFinderPreviewRow> finderPreview = new();
-    private List<RoomOperationResult> finderResults = new();
     private bool finderApplied;
     private List<FinderCsvRow> finderCsvData = new();
 
@@ -513,11 +543,25 @@
     // Type CSV
     private string csvTypeTicket = "";
     private List<RoomTypePreviewRow> typePreview = new();
-    private List<RoomOperationResult> typeResults = new();
     private bool typeApplied;
     private List<TypeCsvRow> typeCsvData = new();
 
     private RoomOperationResult? result;
+
+    // Off-circuit authorization snapshot (option a): captured once at page load from the live
+    // principal, stamped onto every job this operator submits so the runner can re-check per row.
+    private ExchangeAdminWeb.Services.Jobs.JobAuthorizationSnapshot? authSnapshot;
+
+    // Bulk jobs view (durable, server-side — survives closing this tab). Refreshed from the store
+    // on load and whenever any job changes (subscribed to BulkJobService.JobChanged).
+    private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJob> activeJobs = new List<ExchangeAdminWeb.Services.Jobs.BulkJob>();
+    private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJob> recentJobs = new List<ExchangeAdminWeb.Services.Jobs.BulkJob>();
+
+    // The selected (active-or-most-recent) job of each kind + its rows, for the live results table.
+    private ExchangeAdminWeb.Services.Jobs.BulkJob? finderJob;
+    private ExchangeAdminWeb.Services.Jobs.BulkJob? typeJob;
+    private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJobRow> finderRows = Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>();
+    private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJobRow> typeRows = Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>();
 
     protected override async Task OnInitializedAsync()
     {
@@ -535,7 +579,87 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+
+        // Capture the authorization DECISION now, while the live principal is present (records which
+        // allowed groups the user actually satisfied, via claims or Windows token roles), for
+        // off-circuit re-check on every bulk job this operator submits (option a).
+        authSnapshot = ExchangeAdminWeb.Services.Jobs.JobAuthorizationSnapshot.Capture(
+            user, "ConferenceRooms", SectionAccess.GetGroupsForSection("ConferenceRooms"));
+
+        // Subscribe to job-state changes so the live view refreshes as rows stream in, and load the
+        // current jobs (which may include jobs submitted from another tab/operator).
+        BulkJobs.JobChanged += OnJobChanged;
+        RefreshJobs();
+
         authChecked = true;
+    }
+
+    // =========================================================================
+    // Bulk jobs view — durable, server-side, shared across operators
+    // =========================================================================
+
+    private void RefreshJobs()
+    {
+        activeJobs = BulkJobs.GetActiveJobs();
+        recentJobs = BulkJobs.GetRecentJobs();
+
+        finderJob = SelectedJobOfKind(ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType);
+        typeJob = SelectedJobOfKind(ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.TypeJobType);
+        finderRows = finderJob is null ? Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>() : BulkJobs.GetRows(finderJob.Id);
+        typeRows = typeJob is null ? Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>() : BulkJobs.GetRows(typeJob.Id);
+    }
+
+    private bool _disposed;
+
+    // Fired from the runner's thread; marshal onto the render thread and refresh the view. This is
+    // an event handler, so async void is the sanctioned form; the body is fully guarded (a throw in
+    // async void would crash the process) and skips work after dispose (no render after teardown).
+    private async void OnJobChanged(string jobId)
+    {
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed)
+                    return;
+                RefreshJobs();
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to refresh bulk job view on job change");
+        }
+    }
+
+    private void CancelJob(string jobId) => BulkJobs.CancelJob(jobId);
+
+    private string JobDisplayStatus(ExchangeAdminWeb.Services.Jobs.BulkJob job)
+        => BulkJobs.DisplayStatus(job, DateTime.UtcNow);
+
+    private static string JobKindLabel(ExchangeAdminWeb.Services.Jobs.BulkJob job)
+        => job.JobType == ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType
+            ? "Room Finder (bulk)"
+            : "Room Type (bulk)";
+
+    // The most relevant job of a given kind to show detailed rows for: the active one if any,
+    // otherwise the most recent finished one.
+    private ExchangeAdminWeb.Services.Jobs.BulkJob? SelectedJobOfKind(string jobType)
+        => activeJobs.FirstOrDefault(j => j.JobType == jobType)
+           ?? recentJobs.FirstOrDefault(j => j.JobType == jobType);
+
+    private static string RowStatusCss(ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus s)
+        => s == ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus.Success ? ""
+           : s == ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus.Partial ? "table-warning" : "table-danger";
+
+    private static string RowStatusLabel(ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus s)
+        => s == ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus.Success ? "OK"
+           : s == ExchangeAdminWeb.Services.Jobs.BulkJobRowStatus.Partial ? "PARTIAL" : "FAILED";
+
+    public void Dispose()
+    {
+        _disposed = true;
+        BulkJobs.JobChanged -= OnJobChanged;
     }
 
     // =========================================================================
@@ -607,7 +731,6 @@
     private async Task HandleFinderCsvUpload(InputFileChangeEventArgs e)
     {
         finderPreview = new();
-        finderResults = new();
         finderApplied = false;
         finderCsvData = new();
         result = null;
@@ -719,11 +842,16 @@
         finally { isLoading = false; }
     }
 
+    // Submits the parsed Finder CSV as a DURABLE server-side job and returns immediately. The batch
+    // then runs off this browser connection (survives closing the tab); progress streams back via the
+    // jobs panel. Only resolvable rows are submitted; unresolved rows are reported up front. Ticket
+    // validation and authorization are done here on the circuit (submission-time gate); the runner
+    // re-checks the captured auth snapshot and the protected-principal gate per row.
     private async Task ApplyFinderCsv()
     {
         isLoading = true;
         isCsvProcessing = true;
-        finderResults = new();
+        result = null;
         await Task.Yield();
 
         try
@@ -738,49 +866,40 @@
             }
             if (!await ReauthorizeAsync()) return;
 
-            for (int i = 0; i < finderCsvData.Count; i++)
+            // Submit only rows that resolved in the preview (same guard the old inline loop applied).
+            var rows = finderCsvData
+                .Where((_, i) => i < finderPreview.Count && finderPreview[i].RoomResolved)
+                .ToList();
+            var skipped = finderCsvData.Count - rows.Count;
+
+            if (rows.Count == 0)
             {
-                var row = finderCsvData[i];
-                var preview = finderPreview[i];
-                if (!preview.RoomResolved)
-                {
-                    finderResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = preview.ResolveError ?? "Not resolved" });
-                    continue;
-                }
-
-                try
-                {
-                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata_Bulk", currentUser, clientIpAddress, row.Email, ticket);
-                    var r = await RoomService.SetRoomMetadataAndListAsync(
-                        row.Email, row.City, row.Building, row.Capacity,
-                        row.Floor, row.FloorLabel, row.DisplayDeviceName, row.VideoDeviceName,
-                        row.CountryOrRegion, row.State, row.TimeZone);
-                    op.Complete(r.Success, r.Message);
-
-                    finderResults.Add(r);
-                    AuditFinderAction(row.Email, r.Success, ticket, r.Success ? null : r.Message);
-                }
-                catch (Exception ex)
-                {
-                    finderResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = ex.Message });
-                    AuditFinderAction(row.Email, false, ticket, ex.Message);
-                }
-                StateHasChanged();
+                result = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
+                return;
             }
 
+            var jobId = EnqueueConferenceRoomJob(
+                ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType,
+                new ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload
+                {
+                    Kind = ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType,
+                    FinderRows = rows
+                },
+                ticket);
+
             finderApplied = true;
-            var success = finderResults.Count(r => r.Success);
+            var skipNote = skipped > 0 ? $" ({skipped} unresolved row(s) were not submitted.)" : "";
             result = new RoomOperationResult
             {
-                Success = success == finderResults.Count,
-                Message = $"{success}/{finderResults.Count} rooms configured."
+                Success = true,
+                Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata_Bulk", $"{finderResults.Count} room(s)", result.Success, ticket, result.Message);
+            RefreshJobs();
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
-            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata_Bulk", "(bulk)", false, csvFinderTicket.Trim(), ex.Message);
+            AuditFinderAction("(bulk)", false, csvFinderTicket.Trim(), ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
     }
@@ -850,7 +969,6 @@
     private async Task HandleTypeCsvUpload(InputFileChangeEventArgs e)
     {
         typePreview = new();
-        typeResults = new();
         typeApplied = false;
         typeCsvData = new();
         result = null;
@@ -942,11 +1060,14 @@
         finally { isLoading = false; }
     }
 
+    // Submits the parsed Type CSV as a durable server-side job (see ApplyFinderCsv). The protected-
+    // principal gate and per-row auth re-check now run inside the job, on every row, for BOTH the
+    // Type and Finder paths.
     private async Task ApplyTypeCsv()
     {
         isLoading = true;
         isCsvProcessing = true;
-        typeResults = new();
+        result = null;
         await Task.Yield();
 
         try
@@ -961,65 +1082,61 @@
             }
             if (!await ReauthorizeAsync()) return;
 
-            for (int i = 0; i < typeCsvData.Count; i++)
+            var rows = typeCsvData
+                .Where((_, i) => i < typePreview.Count && typePreview[i].RoomResolved)
+                .ToList();
+            var skipped = typeCsvData.Count - rows.Count;
+
+            if (rows.Count == 0)
             {
-                var row = typeCsvData[i];
-                var preview = typePreview[i];
-                if (!preview.RoomResolved)
-                {
-                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = preview.ResolveError ?? "Not resolved" });
-                    continue;
-                }
-
-                if (!Enum.TryParse<RoomType>(row.Type, true, out var roomType))
-                {
-                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = $"Invalid type: {row.Type}" });
-                    continue;
-                }
-
-                try
-                {
-                    // Protected principal check
-                    var ppResult = await CheckProtectedPrincipalAsync(row.Email, ticket, "ConferenceRooms_SetType_Bulk");
-                    if (ppResult != null)
-                    {
-                        typeResults.Add(ppResult);
-                        continue;
-                    }
-
-                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType_Bulk", currentUser, clientIpAddress, row.Email, ticket);
-                    var r = await RoomService.SetRoomTypeAsync(row.Email, roomType, row.TimeZone,
-                        row.Site, string.IsNullOrWhiteSpace(row.Arbiter) ? null : row.Arbiter,
-                        row.RemoveExistingPermissions);
-                    op.Complete(r.Success, r.Message);
-
-                    typeResults.Add(r);
-                    AuditTypeAction(row.Email, r.Success, ticket, r.Success ? null : r.Message,
-                        newValues: new() { ["roomType"] = row.Type, ["timezone"] = row.TimeZone, ["site"] = row.Site });
-                }
-                catch (Exception ex)
-                {
-                    typeResults.Add(new RoomOperationResult { Email = row.Email, Success = false, Message = ex.Message });
-                    AuditTypeAction(row.Email, false, ticket, ex.Message);
-                }
-                StateHasChanged();
+                result = new RoomOperationResult { Success = false, Message = "No resolvable rooms to submit." };
+                return;
             }
 
+            EnqueueConferenceRoomJob(
+                ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.TypeJobType,
+                new ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload
+                {
+                    Kind = ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.TypeJobType,
+                    TypeRows = rows
+                },
+                ticket);
+
             typeApplied = true;
-            var success = typeResults.Count(r => r.Success);
+            var skipNote = skipped > 0 ? $" ({skipped} unresolved row(s) were not submitted.)" : "";
             result = new RoomOperationResult
             {
-                Success = success == typeResults.Count,
-                Message = $"{success}/{typeResults.Count} rooms configured."
+                Success = true,
+                Message = $"Submitted {rows.Count} room(s) as a background job. It will keep running if you close this tab — watch progress below.{skipNote}"
             };
-            await NotifyRoomAdminAsync("ConferenceRooms_SetType_Bulk", $"{typeResults.Count} room(s)", result.Success, ticket, result.Message);
+            RefreshJobs();
         }
         catch (Exception ex)
         {
             result = new RoomOperationResult { Success = false, Message = ex.Message };
-            await NotifyRoomAdminAsync("ConferenceRooms_SetType_Bulk", "(bulk)", false, csvTypeTicket.Trim(), ex.Message);
+            AuditTypeAction("(bulk)", false, csvTypeTicket.Trim(), ex.Message);
         }
         finally { isLoading = false; isCsvProcessing = false; }
+    }
+
+    // Builds a BulkJob from the captured submission context and enqueues it. Returns the job id.
+    private string EnqueueConferenceRoomJob(string jobType, ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload payload, string ticket)
+    {
+        var job = new ExchangeAdminWeb.Services.Jobs.BulkJob
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            ModuleId = ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName,
+            JobType = jobType,
+            Status = ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued,
+            SubmittedBy = currentUser,
+            SubmittedByDisplay = currentUser,
+            SubmittedIp = clientIpAddress,
+            Ticket = ticket,
+            AuthSnapshotJson = authSnapshot?.ToJson(),
+            PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
+            SubmittedAtUtc = DateTime.UtcNow
+        };
+        return BulkJobs.Enqueue(job);
     }
 
     // =========================================================================
