@@ -6,6 +6,25 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Bulk Job Runner — APPROVED, NOT STARTED (2026-07-02; `docs/BulkJobRunner-Plan.md`,
+  Approved).** Big base-app change: bulk room apply moves off the Blazor circuit into a durable
+  server-side job so batches of any size (1000+) survive a dropped browser connection (fixes the
+  ~40-room split workaround). Decisions locked: reusable `BulkJobService` (ConferenceRooms first
+  caller, per-row work behind `IBulkRoomProcessor` seam); **separate operational SQLite `.db`**
+  (`config/exchangeadmin-jobs.db`, env-local, NEVER promoted, excluded from config
+  backup/promote); **no resume across restart** (startup flips Running+Queued → Interrupted);
+  second job **queued** (one at a time — shared `ExoConnectionPool`); always cancellable;
+  self-pumping singleton runner via `IServiceScopeFactory` (NOT a hosted timer — narrows, not
+  overturns, 2026-06-17); explicit `InitializeAsync()` startup hook in Program.cs seeding block;
+  completion email moves page→job; deploy scripts (`deploy.ps1`, `deploy-pipeline.ps1`,
+  `promote-dev-to-prod.ps1`) warn (not block) on Running/Queued before recycle.
+  **Authorization: option (a)** — submission-time `AuthorizeAsync` + captured role-claim
+  snapshot re-checked per row via a shared pure group-checker (app has no SAM→groups lookup;
+  jobs have no live principal). **Protected-principal: keep + add to BOTH Finder and Type**
+  (no carve-out) — this also fixes a **pre-existing gap** (Finder bulk had NO PP check today;
+  only Type did — the 2026-06-29 sweep entry that called ConferenceRooms gated was wrong for
+  Finder). Plan reviewed via codex loop (8 findings→resolved). App version + ConferenceRooms
+  module version both bump on implementation. NO CODE until owner says go.
 - **Migration eligibility protected-principal flag DONE (2026-06-30; module `Migration`
   1.2.0→1.3.0, app version unchanged; `docs/MigrationEligibilityProtectedFlag-Plan.md`,
   Implemented; commits `acf877d`, `2fb842c`, + docs/version slice).** Check Eligibility now
@@ -201,17 +220,9 @@ Live backlog only (DONE items moved out). All items need an approved plan before
 2. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
    bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
    invariant #6. Small, docs-only; tied to the module-packaging end state.
-3. **ConferenceRooms bulk-batch session timeout** (OPEN, 2026-07-01) — operator must split
-   Room Finder CSV batches to ~<40 rooms or "the session appears to time out before the job
-   completes." Bulk apply is a single server-side loop inside one Blazor circuit
-   (`ConferenceRooms.razor:743–768`), so batch size is bounded by connection lifetime. Suspected
-   layer: IIS/reverse-proxy WebSocket idle timeout (host config, not app); secondary candidates —
-   Blazor SignalR circuit defaults (`Program.cs:74–75`, no HubOptions/CircuitOptions set) and the
-   EXO pool 20-min idle / on-prem 15s OperationTimeout (`ExoConnectionPool.cs:61`,
-   `ExchangeServiceBase.cs:331`). Next step: reproduce on dev to pin the layer (browser
-   "reconnecting" vs specific error, seconds/rows in), then either raise the specific timeout or
-   decouple the batch from the browser connection (server-side job + poll) as the robust fix.
-   Needs approved plan before code.
+3. **Bulk Job Runner** — APPROVED, ready to implement (see "Now" block + `docs/BulkJobRunner-Plan.md`).
+   Root cause of the ~40-room split was the bulk loop living inside the Blazor circuit; the fix is
+   the durable server-side job, not a timeout tweak. NO CODE until owner says go.
 4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
 5. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
    user is notified, after the module is actually exercised on dev. See decisions.md 2026-06-30.
