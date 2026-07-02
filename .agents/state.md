@@ -6,6 +6,29 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 ## Now
 
 - App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Git posture (2026-07-02):** `master` clean except this state.md. Two commits landed this
+  session, **not yet pushed** — `430305a` (ConferenceRooms on-prem room-list add) and `f3dde5f`
+  (Bulk Job Runner approved plan). Untracked `.claude/commands/update-governance.md` appeared
+  from a governance-skill update (not this work) — intentionally left out of both commits; leave
+  or handle separately. Push needs explicit owner go.
+- **ConferenceRooms on-prem room-list add DONE (2026-07-01; module `ConferenceRooms`
+  2.0.12→2.1.0, app version unchanged; `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md`,
+  Implemented; commit `430305a`).** Room Finder apply failed the "Add to room list" step for
+  any room list that is an on-prem-mastered (DirSync'd) DL — EXO refuses
+  `Add-DistributionGroupMember` on a synced group ("out of the current user's write scope …
+  being synchronized from your on-premises organization"), so those rows returned PARTIAL.
+  `AddToRoomListAsync` now classifies the failed cloud add (`ClassifyRoomListAddFailure`) and,
+  on that specific synced-from-on-prem rejection, falls back to writing membership on-prem via
+  `Add-ADGroupMember` (`AddToRoomListViaAdAsync` + `ResolveAdGroupGuid`; both room and group
+  resolved to immutable ObjectGUIDs, fail-closed on not-found/ambiguous, idempotent
+  already-member check), then it syncs up (~30 min) — mirroring the existing City/State/Country
+  on-prem write. Non-room-mailbox attribute errors keep their own guidance (no fallback); any
+  other error surfaces as-is. Scope (owner 2026-07-01): app-CREATED lists stay cloud-only (no
+  reversal of 2026-06-18); this only covers EXISTING lists, which may be either mastering. 5 new
+  pure tests, proven non-vacuous; 605/605 green, format/diff-check clean. **NOT YET VALIDATED ON
+  DEV.** Hard external dependency: the ConferenceRooms on-prem AD service account must have
+  **write-members** rights on the target synced room-list groups, or the on-prem add fails with
+  a clear permission error (row → PARTIAL). Verify/grant that delegation during dev testing.
 - **Bulk Job Runner — APPROVED, NOT STARTED (2026-07-02; `docs/BulkJobRunner-Plan.md`,
   Approved).** Big base-app change: bulk room apply moves off the Blazor circuit into a durable
   server-side job so batches of any size (1000+) survive a dropped browser connection (fixes the
@@ -212,17 +235,21 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Next up (prioritized)
 
-Live backlog only (DONE items moved out). All items need an approved plan before code.
+Live backlog only (DONE items moved out). Items 2+ need an approved plan before code; item 1
+is already approved.
 
-1. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
+1. **Bulk Job Runner** — APPROVED, ready to implement (see "Now" block + `docs/BulkJobRunner-Plan.md`).
+   The clearest next coding action once owner says go. Root cause of the ~40-room split was the
+   bulk loop living inside the Blazor circuit; fix is the durable server-side job, not a timeout
+   tweak. Also closes protected-principal GAP 3 (Finder). Suggested first slice: the base-app
+   `BulkJobService` + separate `.db` repo + `InitializeAsync()` orphan reconciliation, with tests,
+   before touching ConferenceRooms UI. NO CODE until owner says go.
+2. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
    End state confirmed 2026-06-29 (UI `.zip` upload, no full rebuild; precompiled-vs-runtime
    open). First leg = module contract / self-registration seam. See Queued work + decisions.md.
-2. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
+3. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
    bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
    invariant #6. Small, docs-only; tied to the module-packaging end state.
-3. **Bulk Job Runner** — APPROVED, ready to implement (see "Now" block + `docs/BulkJobRunner-Plan.md`).
-   Root cause of the ~40-room split was the bulk loop living inside the Blazor circuit; the fix is
-   the durable server-side job, not a timeout tweak. NO CODE until owner says go.
 4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
 5. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
    user is notified, after the module is actually exercised on dev. See decisions.md 2026-06-30.
@@ -321,9 +348,20 @@ prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround 
 
 ## Known issues (pre-existing, NOT SQLite-caused)
 
-- **Protected-principal gating gaps — BOTH CLOSED (sweep 2026-06-29).** The 2026-06-29
+- **Protected-principal gating — GAP 3 OPEN (ConferenceRooms Room Finder), GAPs 1 & 2 CLOSED.**
+  - **GAP 3 — `ConferenceRooms` Room Finder — OPEN, found 2026-07-02 (codex review).** The PP
+    check is page-local (`ConferenceRooms.razor:1059 CheckProtectedPrincipalAsync`) and wired
+    ONLY into the Room **Type** paths (single `:818–819`, bulk `:982–983`). The Room **Finder**
+    paths (single `:564`, bulk `:739`) have NO PP check, and `ConferenceRoomService` has none.
+    So Finder bulk apply is currently ungated — a standing violation of the 2026-06-29
+    "no carve-outs" rule. The earlier "BOTH CLOSED" note and the 2026-06-29 sweep entry were
+    WRONG for the Finder path. Fix is bundled into the approved **Bulk Job Runner** plan
+    (PP gate enforced in-job on BOTH paths, per row, fail-closed, tested non-vacuously); do not
+    fix it separately unless the Bulk Job Runner is deferred. Owner decision 2026-07-02: keep
+    the check and add it to both (no room-mailbox carve-out).
+- **Protected-principal gating gaps 1 & 2 — BOTH CLOSED (sweep 2026-06-29).** The 2026-06-29
   decision requires every mutating module to gate its write target through the
-  protected-principal check; a read-only sweep found two modules that did not. Both are now
+  protected-principal check; the original sweep found two modules that did not. Both are now
   fixed.
   - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29.** Member/owner add/remove now
     gates the target through the protected-principal check before any Graph write (module
