@@ -1,6 +1,12 @@
 # Bulk Job Runner — durable server-side batches decoupled from the browser connection
 
-Status: Approved (owner, 2026-07-02) — not yet started
+Status: Implemented (2026-07-02). App version 2.3.27→2.3.28; ConferenceRooms module 2.1.0→2.2.0.
+Delivered in 7 reviewed slices (commits on master): jobs DB foundation, self-pumping runner,
+off-circuit auth + shared group checker, ConferenceRooms processor (PP gate on both paths, GAP 3
+closed), UI rewire, deploy recycle warning, version/docs. Automated verification green
+(build/format/diff-check clean; ~671 xUnit + 65 Pester). **Manual dev validation still pending
+(owner)** — see the Manual validation section; the UI and end-to-end job lifecycle are not
+covered by automated tests.
 
 Authorization model: **option (a) locked** (owner, 2026-07-02) — submission-time
 `AuthorizeAsync` + captured role-claim snapshot re-checked per row via a shared pure

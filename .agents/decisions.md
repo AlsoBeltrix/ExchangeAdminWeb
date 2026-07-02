@@ -5,6 +5,70 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-02 - Bulk operations run as durable, user-initiated, ticketed, audited server-side jobs
+
+Status: Active
+
+The Bulk Job Runner (`docs/BulkJobRunner-Plan.md`, Implemented) is built. ConferenceRooms bulk
+apply (Room Finder / Room Type CSV) no longer runs an inline loop inside the Blazor circuit; it is
+submitted as a durable server-side job that survives the submitting browser closing. Several
+durable decisions this locks in:
+
+1. **A durable job runner narrows — does not overturn — the 2026-06-17 no-background-worker
+   posture.** `BulkJobService` is a self-pumping singleton, not an `IHostedService`/timer. The
+   2026-06-17 decision removed the app's only hosted service because it mutated AD *unattended*
+   under a synthetic actor with no ticket. This runner is different in kind: every job is
+   user-initiated, carries a real submitter + IP + ServiceNow ticket, is fully audited per row,
+   and is always cancellable. It does nothing on a schedule — on startup it runs exactly one
+   one-shot reconciliation (via an explicit `InitializeAsync()` call in Program.cs, because a DI
+   singleton is not constructed until resolved), then only acts when an operator submits.
+
+2. **Job state lives in a SEPARATE operational SQLite database, `config/exchangeadmin-jobs.db`,
+   never the config DB.** Rationale: job state is environment-local (a dev job must never appear
+   in prod), high-churn, and prunable; the config DB is promoted dev→prod and backed up before
+   every deploy. Mixing them would reintroduce the "many concerns in one store" coupling the
+   2026-06-12 SQLite migration exists to kill. The jobs DB inherits the `config/` deploy
+   exclusion + ACL but is **excluded from the config backup/promote path** — it is never promoted
+   and never restored. Consistent with the 2026-06-12 "operational state → SQLite" decision.
+
+3. **No resume across restart.** On startup every non-terminal job (Running OR Queued) is flipped
+   to `Interrupted` — full stop. An interrupted job is a truthful record an operator can inspect
+   and re-submit, never something that silently resumes or sits stuck "Running". Queue promotion
+   happens only within a live process. This, plus always-cancellable jobs and a display-only
+   "Stalled" classification for a stale heartbeat, is the load-bearing anti-brittleness rule: no
+   job state a human cannot clear, and nothing claims to be running when it isn't. Known honest
+   limit: an in-flight PowerShell cmdlet cannot be aborted mid-call (no cancellation-token path),
+   so cancel stops a job *before its next row*; a genuinely wedged call clears on the next recycle
+   via orphan reconciliation.
+
+4. **Off-circuit authorization = option (a): capture the authorization DECISION at submit,
+   re-check per row.** The app has no SAM→groups lookup — authorization is entirely
+   `ClaimsPrincipal`-based (role claims + `IsInRole` on the live Windows principal), which a job
+   worker thread does not have. At submit (on the circuit) the job records which of the section's
+   allowed groups the submitter actually satisfied (via claims OR `IsInRole`), and the runner
+   re-checks that captured decision against the section's *current* allowed set per row, fail
+   closed. This authorizes the submission and re-checks the snapshot; it does **not** detect
+   mid-job group-membership revocation — parity with today's one-check-per-loop model, not a
+   regression. The group-match logic is extracted into a shared pure `GroupMembershipChecker` used
+   by both the live `GroupAuthorizationHandler` and the job re-check so they cannot diverge.
+   (Option (b), live per-row SAM→groups re-resolution, was not built.)
+
+5. **Protected-principal gate enforced in the job, per row, on BOTH Room Finder AND Room Type
+   paths — no carve-out.** This closes **GAP 3** (see below): the Room Finder bulk path previously
+   had no protected-principal check at all. Fail closed on Unavailable/Ambiguous/CheckFailed/
+   exception, audited as a denial, reported in the row result. Applies the 2026-06-29 "protected
+   principals are off-limits to every mutating module — no carve-outs" decision to this surface.
+
+6. **Deploy scripts warn (not block) on active jobs before recycle.** `tools/JobStateWarning.psm1`
+   is called by every script that stops the app pool (`deploy.ps1`, `tools/promote-dev-to-prod.ps1`;
+   `deploy-pipeline.ps1` is covered transitively as it delegates to both). It lists Running/Queued
+   jobs and proceeds — a wedged job must never block the recycle that clears it.
+
+Generalization (owner, 2026-07-02): the runner is a thin general `BulkJobService` with
+ConferenceRooms as the first caller behind an `IBulkJobProcessor` seam, so other bulk modules
+(Migration, Licensing) can reuse it later. The job service, store, queue and lifecycle are
+module-agnostic.
+
 ### 2026-06-30 - Notifications enforcement sweep: three rule-1 gaps fixed; rule-2 read-alerting classified non-applicable and deferred
 
 Status: Active

@@ -5,12 +5,26 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
 
 ## Now
 
-- App version `2.3.27` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **Git posture (2026-07-02):** `master` clean except this state.md. Two commits landed this
-  session, **not yet pushed** — `430305a` (ConferenceRooms on-prem room-list add) and `f3dde5f`
-  (Bulk Job Runner approved plan). Untracked `.claude/commands/update-governance.md` appeared
-  from a governance-skill update (not this work) — intentionally left out of both commits; leave
-  or handle separately. Push needs explicit owner go.
+- App version `2.3.28` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Git posture (2026-07-02, later session):** `master` has the Bulk Job Runner landed in 7
+  commits (Slice 1–7) on top of the earlier 3 pushed commits. Owner authorized this session to
+  implement, review each slice with codex, and commit as each slice lands, without waiting.
+  **Not yet pushed** (owner will push / review on return). Untracked
+  `.claude/commands/update-governance.md` remains intentionally uncommitted (governance-skill
+  artifact, not this work). Push needs explicit owner go.
+- **Bulk Job Runner DONE (2026-07-02; app `2.3.27`→`2.3.28`, ConferenceRooms module
+  `2.1.0`→`2.2.0`; `docs/BulkJobRunner-Plan.md`, Implemented; `.agents/decisions.md` 2026-07-02).**
+  ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job that survives
+  the browser closing, in a separate operational SQLite DB (`config/exchangeadmin-jobs.db`, never
+  promoted). Self-pumping singleton runner (not a hosted timer — narrows 2026-06-17 posture);
+  single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no resume);
+  always cancellable; per-row failure aggregation; completion admin email fires from the job.
+  Off-circuit auth = option (a) (capture the authorization decision at submit, re-check per row via
+  shared pure `GroupMembershipChecker`). **Protected-principal gate now enforced in-job per row on
+  BOTH Finder AND Type paths — closes GAP 3.** Deploy scripts warn (not block) on active jobs
+  before recycle (`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green; build/format/
+  diff-check clean; each slice codex-reviewed (findings fixed before commit). **Manual dev
+  validation PENDING (owner)** — UI + end-to-end job lifecycle are not automated.
 - **ConferenceRooms on-prem room-list add DONE (2026-07-01; module `ConferenceRooms`
   2.0.12→2.1.0, app version unchanged; `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md`,
   Implemented; commit `430305a`).** Room Finder apply failed the "Add to room list" step for
@@ -29,25 +43,6 @@ repo facts change. Resolved work lives in the plan/decision/incident docs, not h
   DEV.** Hard external dependency: the ConferenceRooms on-prem AD service account must have
   **write-members** rights on the target synced room-list groups, or the on-prem add fails with
   a clear permission error (row → PARTIAL). Verify/grant that delegation during dev testing.
-- **Bulk Job Runner — APPROVED, NOT STARTED (2026-07-02; `docs/BulkJobRunner-Plan.md`,
-  Approved).** Big base-app change: bulk room apply moves off the Blazor circuit into a durable
-  server-side job so batches of any size (1000+) survive a dropped browser connection (fixes the
-  ~40-room split workaround). Decisions locked: reusable `BulkJobService` (ConferenceRooms first
-  caller, per-row work behind `IBulkRoomProcessor` seam); **separate operational SQLite `.db`**
-  (`config/exchangeadmin-jobs.db`, env-local, NEVER promoted, excluded from config
-  backup/promote); **no resume across restart** (startup flips Running+Queued → Interrupted);
-  second job **queued** (one at a time — shared `ExoConnectionPool`); always cancellable;
-  self-pumping singleton runner via `IServiceScopeFactory` (NOT a hosted timer — narrows, not
-  overturns, 2026-06-17); explicit `InitializeAsync()` startup hook in Program.cs seeding block;
-  completion email moves page→job; deploy scripts (`deploy.ps1`, `deploy-pipeline.ps1`,
-  `promote-dev-to-prod.ps1`) warn (not block) on Running/Queued before recycle.
-  **Authorization: option (a)** — submission-time `AuthorizeAsync` + captured role-claim
-  snapshot re-checked per row via a shared pure group-checker (app has no SAM→groups lookup;
-  jobs have no live principal). **Protected-principal: keep + add to BOTH Finder and Type**
-  (no carve-out) — this also fixes a **pre-existing gap** (Finder bulk had NO PP check today;
-  only Type did — the 2026-06-29 sweep entry that called ConferenceRooms gated was wrong for
-  Finder). Plan reviewed via codex loop (8 findings→resolved). App version + ConferenceRooms
-  module version both bump on implementation. NO CODE until owner says go.
 - **Migration eligibility protected-principal flag DONE (2026-06-30; module `Migration`
   1.2.0→1.3.0, app version unchanged; `docs/MigrationEligibilityProtectedFlag-Plan.md`,
   Implemented; commits `acf877d`, `2fb842c`, + docs/version slice).** Check Eligibility now
@@ -348,17 +343,28 @@ prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround 
 
 ## Known issues (pre-existing, NOT SQLite-caused)
 
-- **Protected-principal gating — GAP 3 OPEN (ConferenceRooms Room Finder), GAPs 1 & 2 CLOSED.**
-  - **GAP 3 — `ConferenceRooms` Room Finder — OPEN, found 2026-07-02 (codex review).** The PP
-    check is page-local (`ConferenceRooms.razor:1059 CheckProtectedPrincipalAsync`) and wired
-    ONLY into the Room **Type** paths (single `:818–819`, bulk `:982–983`). The Room **Finder**
-    paths (single `:564`, bulk `:739`) have NO PP check, and `ConferenceRoomService` has none.
-    So Finder bulk apply is currently ungated — a standing violation of the 2026-06-29
-    "no carve-outs" rule. The earlier "BOTH CLOSED" note and the 2026-06-29 sweep entry were
-    WRONG for the Finder path. Fix is bundled into the approved **Bulk Job Runner** plan
-    (PP gate enforced in-job on BOTH paths, per row, fail-closed, tested non-vacuously); do not
-    fix it separately unless the Bulk Job Runner is deferred. Owner decision 2026-07-02: keep
-    the check and add it to both (no room-mailbox carve-out).
+- **Protected-principal gating — GAPs 1, 2 & 3 ALL CLOSED.**
+  - **GAP 3 — `ConferenceRooms` Room Finder — CLOSED 2026-07-02 (Bulk Job Runner).** Found by
+    codex review 2026-07-02: the page-local PP check was wired ONLY into the Room **Type** bulk
+    path; the Room **Finder** bulk path had NO protected-principal check (the 2026-06-29 sweep
+    entry that called ConferenceRooms "gated" was inaccurate for Finder — drift now corrected).
+    Fixed by the Bulk Job Runner: the PP gate is enforced **in-job, per row, before any write, on
+    BOTH Finder and Type paths** (`ConferenceRoomBulkProcessor.CheckProtectedPrincipalAsync`),
+    fail-closed on Unavailable/Ambiguous/CheckFailed/exception, audited as a denial. Proven
+    non-vacuous (revert the Finder gate → protected Finder target processes → restore → blocked).
+    Owner decision 2026-07-02 (decisions.md): keep the check and apply to both bulk paths, no
+    room-mailbox carve-out.
+  - **NEW GAP found 2026-07-02 (single-room Finder path) — OPEN, NOT in Bulk Job Runner scope.**
+    While closing GAP 3, discovered the **single-room** Room Finder page path
+    (`ConferenceRooms.razor:SetupSingleRoom` → `SetRoomMetadataAndListAsync`) has **no**
+    protected-principal check — it goes straight from `ReauthorizeAsync` to the write. The
+    single-room **Type** path (`:938`) does gate. The Bulk Job Runner only covered the *bulk*
+    Finder/Type paths (its approved scope), so this single-room Finder gap is **still open**. It is
+    the same class of violation as GAP 3 (2026-06-29 "no carve-outs"), small to fix (add the
+    existing page-local `CheckProtectedPrincipalAsync` call before the write in `SetupSingleRoom`),
+    but it is **outside the approved plan** — flagged for owner rather than fixed unilaterally.
+    Practical risk is low (rooms are non-person mailboxes rarely on protected lists), same as the
+    GAP 3 rationale, but for uniformity it should be closed. Needs a one-line owner go.
 - **Protected-principal gating gaps 1 & 2 — BOTH CLOSED (sweep 2026-06-29).** The 2026-06-29
   decision requires every mutating module to gate its write target through the
   protected-principal check; the original sweep found two modules that did not. Both are now
