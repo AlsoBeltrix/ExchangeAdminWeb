@@ -1,463 +1,123 @@
 # Agent State
 
-First place to read for current repo state. Keep it short; update it when important
-repo facts change. Resolved work lives in the plan/decision/incident docs, not here.
+First place to read for current repo state. Keep it short; update it when important repo facts
+change. Resolved work lives in the plan/decision/incident docs, not here — this file records only
+what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
 ## Now
 
-- App version `2.3.28` (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **Git posture (2026-07-02, later session):** `master` has the Bulk Job Runner landed in 7
-  commits (Slice 1–7) on top of the earlier 3 pushed commits. Owner authorized this session to
-  implement, review each slice with codex, and commit as each slice lands, without waiting.
-  **Not yet pushed** (owner will push / review on return). Untracked
-  `.claude/commands/update-governance.md` remains intentionally uncommitted (governance-skill
-  artifact, not this work). Push needs explicit owner go.
-- **Bulk Job Runner DONE (2026-07-02; app `2.3.27`→`2.3.28`, ConferenceRooms module
-  `2.1.0`→`2.2.0`; `docs/BulkJobRunner-Plan.md`, Implemented; `.agents/decisions.md` 2026-07-02).**
-  ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job that survives
-  the browser closing, in a separate operational SQLite DB (`config/exchangeadmin-jobs.db`, never
-  promoted). Self-pumping singleton runner (not a hosted timer — narrows 2026-06-17 posture);
-  single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no resume);
-  always cancellable; per-row failure aggregation; completion admin email fires from the job.
-  Off-circuit auth = option (a) (capture the authorization decision at submit, re-check per row via
-  shared pure `GroupMembershipChecker`). **Protected-principal gate now enforced in-job per row on
-  BOTH Finder AND Type paths — closes GAP 3.** Deploy scripts warn (not block) on active jobs
-  before recycle (`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green; build/format/
-  diff-check clean; each slice codex-reviewed (findings fixed before commit). **Manual dev
-  validation PENDING (owner)** — UI + end-to-end job lifecycle are not automated.
-- **ConferenceRooms on-prem room-list add DONE (2026-07-01; module `ConferenceRooms`
-  2.0.12→2.1.0, app version unchanged; `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md`,
-  Implemented; commit `430305a`).** Room Finder apply failed the "Add to room list" step for
-  any room list that is an on-prem-mastered (DirSync'd) DL — EXO refuses
-  `Add-DistributionGroupMember` on a synced group ("out of the current user's write scope …
-  being synchronized from your on-premises organization"), so those rows returned PARTIAL.
-  `AddToRoomListAsync` now classifies the failed cloud add (`ClassifyRoomListAddFailure`) and,
-  on that specific synced-from-on-prem rejection, falls back to writing membership on-prem via
-  `Add-ADGroupMember` (`AddToRoomListViaAdAsync` + `ResolveAdGroupGuid`; both room and group
-  resolved to immutable ObjectGUIDs, fail-closed on not-found/ambiguous, idempotent
-  already-member check), then it syncs up (~30 min) — mirroring the existing City/State/Country
-  on-prem write. Non-room-mailbox attribute errors keep their own guidance (no fallback); any
-  other error surfaces as-is. Scope (owner 2026-07-01): app-CREATED lists stay cloud-only (no
-  reversal of 2026-06-18); this only covers EXISTING lists, which may be either mastering. 5 new
-  pure tests, proven non-vacuous; 605/605 green, format/diff-check clean. **NOT YET VALIDATED ON
-  DEV.** Hard external dependency: the ConferenceRooms on-prem AD service account must have
-  **write-members** rights on the target synced room-list groups, or the on-prem add fails with
-  a clear permission error (row → PARTIAL). Verify/grant that delegation during dev testing.
-- **Migration eligibility protected-principal flag DONE (2026-06-30; module `Migration`
-  1.2.0→1.3.0, app version unchanged; `docs/MigrationEligibilityProtectedFlag-Plan.md`,
-  Implemented; commits `acf877d`, `2fb842c`, + docs/version slice).** Check Eligibility now
-  flags protected principals as an axis **orthogonal** to the Ex/AD verdict (does NOT change
-  Eligible/Ineligible). Owner decision (2026-06-30, decisions.md): protected+eligible shows
-  **Eligible**+escalate flag; protected+ineligible shows **Ineligible**+escalate flag.
-  **Single-user**: protected ⇒ Create Migration Batch button suppressed (same as ineligible).
-  **Bulk/group**: create flow unchanged (GAP 2 gate still filters+reports at creation); table
-  just shows the protected marker. Fail-closed on Unavailable/Ambiguous/CheckFailed. Reuses
-  existing `CheckProtectedAsync` via new `ApplyProtectionFlagAsync` seam in
-  `CheckMigrationEligibilityAsync`; check is a read — no new denial audit/alert at check time
-  (GAP 2 does that at create), existing check audit/notification record protected status. 4 new
-  unit tests, proven non-vacuous; 593/593 green, format/diff-check clean. **Manual validation
-  on dev DONE (owner, 2026-06-30).**
-- **GAP 2 — Migration protected-principal gate DONE (2026-06-30; module `Migration`
-  1.1.3→1.2.0, app version unchanged; `docs/MigrationProtectedPrincipalGate-Plan.md`,
-  Implemented; commits `0b855ac`, `5d72978`, + docs/version slice).** Closes the last
-  protected-principal gap from the 2026-06-29 sweep. `CreateMigrationBatchAsync` now
-  partitions every target through the protected-principal gate **before** any side effect
-  (CSV build / `New-MigrationBatch`), on both ToCloud and ToOnPrem. Owner decision
-  (2026-06-30, decisions.md): protected targets are **filtered out and reported, never
-  silently**, and **one protected target never blocks the whole batch** — the rest migrate;
-  exclusions show in a persistent UI warning, get their own audit denial rows, and are listed
-  in the admin notification. All-protected (incl. single target) ⇒ nothing created, plain
-  refusal. Fail-closed on Unavailable/Ambiguous/exception. Same accepted cloud-only `NotFound`
-  limitation as GroupManagement/M365 (most relevant on move-back). New `PermissionResult.
-  ExcludedTargets` field (backward compatible). 4 new tests, proven non-vacuous; 589/589 green,
-  format/diff-check clean. **Manual validation on dev DONE (owner, 2026-06-30).**
-- **Comms-10k replace UX clarity DONE (2026-06-29; module 1.0.3→1.0.4, app version
-  unchanged; `docs/Comms10kReplaceUx-Plan.md`, Approved).** Bug report: comms team said
-  membership "did not sync" (validated 4309 but Entra still showed old 4307). Logs
-  (`E:\WWWOutput\ExchangeAdminWeb`) proved no write occurred — only a `Comms10k_Export`
-  on 2026-06-29; last real `Comms10k_Replace` was 2026-06-11. Root cause: UX trap — user
-  stopped after Validate, read "resolved" as "applied". Fix (Razor only, no service/logic
-  change): (1) relabel post-Validate result "Validated — not applied yet … list has not
-  changed"; (2) persistent "Pending apply — list unchanged" badge; (3) stronger
-  Replace CTA (btn-lg + helper text); (4) success note that Entra count updates on next
-  directory sync, not instantly; (5) **ticket number made optional** (owner: comms team
-  won't always have one) — Validate no longer disabled without a ticket; an entered ticket
-  is still validated where ServiceNow is on (Constitution:104 — ticket is plain audit
-  metadata unless validation requested). 585/585 green, format/diff-check clean. Manual
-  validation on dev pending.
-- **Notifications now mandatory (decision 2026-06-29, docs-only).** Every mutating action
-  → admin notification; every security-sensitive read → admin alert; every permission/access
-  change → also notify the affected user. Always via the shared `Services/EmailService.cs`
-  (no bespoke mailers). Canonical rule: `docs/ProjectConstitution.md` §Auditing And Tracing →
-  Notifications; Guide/Spec point to it. `.agents/decisions.md` 2026-06-29 has the full record
-  and names the superseded discretionary guidance. **Enforcement sweep DONE 2026-06-30** — see
-  the Notifications enforcement sweep entry below.
-- **Notifications enforcement sweep DONE (2026-06-30; `docs/NotificationsEnforcementSweep-Plan.md`,
-  Implemented; decisions.md 2026-06-30; commits `bd68d10`, `6e83ef9`, `14c6219`, + docs slice).**
-  Read-only audit of all 20 non-system modules: rule 1 (admin-notify on mutation) mostly already
-  honoured; 3 silent gaps fixed — `MfaReset` (1.0.3→1.0.4), `ConferenceRooms` (2.0.11→2.0.12),
-  `AccountLockoutRemediation` (1.0.0→1.0.1, +3 non-vacuous tests). All **patch** bumps (conformance,
-  not capability; owner). App version unchanged. `EmailService` admin overloads made `virtual`
-  (test seam, no behaviour change). Rule 3: gap modules are admins-only; **AccountLockout
-  user-notify OPEN, gated on real testing**. Rule 2 (alert on security reads): classified
-  **non-applicable** for this app (reads only expose AD/address-book data, all audit) — alerting
-  **deferred indefinitely**, never user-notify; Constitution §Notifications rule-2 wording narrowed
-  to match. **Manual dev validation pending** for MfaReset + ConferenceRooms (page changes).
-- **EmergencyDisable synced-user fix DONE (2026-06-29, commit `c1c80a3`; module 1.0.4→1.0.5,
-  app version unchanged; `docs/EmergencyDisableSyncedUser-Plan.md`, Implemented).** For users
-  synced from on-prem AD, `accountEnabled` is on-prem mastered and Entra rejects a direct Graph
-  PATCH; the module already disables the AD master + revokes Entra sessions but then attempted
-  the doomed PATCH and marked the whole op failed. Now reads `onPremisesSyncEnabled` in the
-  existing pre-read; synced users skip the PATCH and record the Entra-disable step as SKIPPED
-  (not failed); overall success accepts OK or SKIPPED for that step. Cloud-only users unchanged.
-  Also added `GraphTokenClient.PatchWithStatusAsync` (status + sanitized error.code/message, no
-  tokens/raw bodies) to surface the real Graph error on a genuine PATCH failure; `PatchAsync`
-  kept as wrapper. +13 tests, non-vacuous verified. **Manual validation DONE on dev 2.3.27
-  (owner, 2026-06-29) — synced-user path good.**
-- **BlockedSenders module added DONE (2026-06-29, commit `5e4172e`; module 1.0.0, app version
-  unchanged — new-module bump deferred per owner; `docs/BlockedSenders-Plan.md`, Implemented).**
-  New cloud-only module: view EXO blocked senders (`Get-BlockedSenderAddress`) and unblock one
-  by address (`Remove-BlockedSenderAddress`). Rides the shared EXO pool via `ExchangeServiceBase`,
-  `DependsOn ExchangeOnline`, no module credential. Split permissions: `BlockedSenders` (view,
-  fail-closed) + `BlockedSendersUnblock` (write, fail-closed, re-checked before the cmdlet).
-  Audit on list/unblock/denied, operation trace on the write, admin email notification on
-  success/failure. Ticket + explicit confirmation required before unblock. **Catalog now 22
-  modules / 31 configurable aliases** (was 21 / 29). 553/553 green (14 new), non-vacuous verified.
-  **Manual validation on dev 2.3.27 (owner, 2026-06-29): functionally good. Found slow/blank
-  page load on open — fixed, see BlockedSenders load-timing fix below.**
-- **BlockedSenders load-timing fix DONE (2026-06-29, commit `17910f3`; module 1.0.0→1.0.1,
-  app version unchanged; `docs/BlockedSendersLoadTiming-Plan.md`, Approved).**
-  The module was the only page that auto-called EXO in `OnInitializedAsync`; under
-  InteractiveServer prerender that blocked the whole page for the 10-15s `Get-BlockedSenderAddress`
-  round-trip before any HTML (or the spinner) reached the browser — clicking the sidebar item
-  gave no feedback for 10-15s. Moved the list load to `OnAfterRenderAsync(firstRender)` (one-shot
-  `loadStarted` guard); page + spinner now render immediately, list fills in after. Spinner-only
-  feedback, as before (owner). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
-  format/diff-check clean.
-- **BlockedSenders refresh-hang fix DONE (2026-06-29, commit `cde778f`; module 1.0.1→1.0.2,
-  app version unchanged).** Follow-on to the load-timing fix above: owner reported the page
-  loads but the spinner never stops and Refresh stays greyed out. Root cause — the list load
-  runs from `OnAfterRenderAsync`, after which Blazor does NOT auto-render, so `isLoading=false`
-  never reached the UI (data arrived in memory but the screen stayed frozen on the loading
-  state). Added `StateHasChanged()` in `LoadBlockedSenders`' `finally` (harmless on the
-  button-click path). One file (`BlockedSenders.razor`) + version bump. 585/585 green,
-  format/diff-check clean. **Validated on dev (owner, 2026-06-29) — refresh completes, button
-  re-enables. NOTE: prod still runs BlockedSenders 1.0.0** (the 1.0.1/1.0.2 fixes are module
-  bumps, not app bumps, so the 2.3.27 prod cutover did not necessarily include them — confirm
-  the prod build commit if the fix is needed in prod).
-- **AccountLockoutRemediation module incorporated DONE (2026-06-26, app 2.3.26→2.3.27;
-  `docs/AccountLockoutRemediation-Incorporation-Plan.md`, Status: Implemented; commits
-  `0ca909a`, `2550c55`, + docs/version slice).** The validated package was spliced into the
-  host tree (page/service/models/test/doc moved, catalog descriptor at SortOrder 780, DI
-  line, catalog count tests 20→21 modules / 27→29 configurable aliases). Two compile errors
-  the package shape-validator does NOT catch were fixed during incorporation (CS0136
-  method-vs-block `message` collision → renamed `summary`; CS8030/CS9174 collection-expr
-  ternary in `DiscoverPdcAsync` → `Array.Empty<string>()`). Added 10 service unit tests
-  (throttle clamp proven non-vacuous; guard paths). Module ships at 1.0.0; 22 modules total
-  now. 539/539 green; build/format/diff-check clean. **Manual validation still DEFERRED by
-  owner (2026-06-29) even though dev is on 2.3.27** (live 4740 read, WinRM, quser/logoff
-  parsing, real dry-run+logoff, protected-block) — run the package's own Manual Validation
-  steps when ready. Staged copy under
-  `_not_for_github/example_scripts/AccountLockoutRemediation/` left in place (gitignored).
-- **Graph secret key migration DONE (2026-06-26, app 2.3.25→2.3.26;
-  `docs/GraphSecretKeyMigration-Plan.md`, Status: Implemented; commits `2eb9c98`,
-  `063964e`).** Resolves the "MFA Reset stranded config key" issue and the identical latent
-  bug in two sibling Graph modules. Catalog-driven, idempotent startup migration
-  (`ModuleConfigService.MigrateGraphSecretKeys()`, run in `Program.cs` after seeding) moves
-  any value stranded under the renamed old key `DelineaSecretId` to `GraphDelineaSecretId`
-  for every module that declares the new key (MfaReset, NamedLocations, M365GroupManagement,
-  EmergencyDisable); on-prem modules using `DelineaSecretId` as their current key are
-  untouched. The `?? DelineaSecretId` service fallback was then removed from all six read
-  sites (MfaReset/NamedLocations/M365GroupManagement). Module versions →1.0.3 for the three
-  changed; EmergencyDisable unchanged. 6 new tests, all proven non-vacuous; 527/527 green;
-  build/format/diff-check clean. **Deployed to dev and verified by owner 2026-06-26:** the
-  recovered Secret ID shows correctly on the module config page. Fully closed.
-- **Final whole-branch review DONE (2026-06-26, app 2.3.24→2.3.25).** SDD review of the
-  whole `e8b155c~1..HEAD` range (3 streams: EXO retry, SQLite store, guide+validator),
-  one `reviewer` subagent per stream + cross-cutting pass. All three verdicts SHIP; build
-  clean, format clean, `git diff --check` clean. One security-relevant finding fixed before
-  done (owner: "fix before done"):
-  - **Fail-closed parity fix (commits `cb4b984`, `eed13f4`):** during the one-time
-    JSON→SQLite legacy import, `SectionAccessService` and `ModuleEnablementService` failed
-    *open* when the DB write threw (e.g. SQLite busy) — they fell through to the permissive
-    appsettings/`EnabledByDefault` path instead of denying. The two sibling authorization
-    stores (`ProtectedPrincipal`, `ADAttributeEditor`) already guarded this. Wrapped both
-    `ImportIfMissing` calls so a DB-write throw fails closed and leaves the legacy file for
-    the next startup to retry. Two new tests, each proven non-vacuous. 521/521 xUnit green.
-  - **Deferred review nits — DONE (commit `940a125`):** `AdminModuleSpec.md` section-access
-    location corrected to each module's config page (`/module-config/{ModuleId}`) +
-    "regardless of stored state" DB-era wording; `IConfigStore.cs`/`ConfigChangeToken.cs`
-    comments corrected to state the change token is advisory and NOT consulted by the
-    TTL-caching readers (they accept ≤30s staleness, plan-permitted). Wiring the readers to
-    the token remains an unscheduled future option, not a defect.
-- **PowerShell 5.1 ASCII fix for ops scripts (commit `46acddc`, 2026-06-26).** The SQLite
-  Phase D deploy scripts had em dashes (U+2014) / section signs (U+00A7) in comments/strings
-  and are UTF-8 *without BOM*. Windows PowerShell 5.1 (required by `deploy.ps1` — the IIS
-  `WebAdministration` provider won't load under PS7) reads BOM-less files as ANSI, mangling
-  those chars into cascading parse errors; PS7 (UTF-8 default) was unaffected, so it stayed
-  latent until the first 5.1 dev deploy this session. Fixed six files: `deploy.ps1`,
-  `tools/SqliteConfigBackup.psm1` (imported by deploy.ps1 — would have broken the deploy even
-  after fixing deploy.ps1 alone), `tools/promote-dev-to-prod.ps1` (prod promote),
-  `tools/Install-ExchangeAdminWeb.ps1`, and two Pester files — all now pure ASCII, verified
-  parsing under a simulated 5.1 ANSI read; Pester 59/59 green. **This bug would also have hit
-  the prod cutover** (prod on 2.3.11 has never run these scripts); now cleared.
-- **CR-BUG-1 (EXO pool dead-runspace) FIXED** (`docs/ExoDeadConnectionRetry-Plan.md`,
-  Status: *Implemented*, app 2.3.23→2.3.24). The pool auto-retries a dead EXO session once on
-  a fresh borrow, gated to read-only + single-write ops (opt-in `allowRetry`, default off);
-  the 7 multi-write delegates keep discard-and-fail so a committed write is never repeated.
-  All 10 pool callers route through one `ExoConnectionPool.RunWithRetryAsync` helper (incl.
-  `PermissionValidator`).
-  - **Review #2 (2026-06-26, app 2.3.24):** retry trigger narrowed — DISCARD on any
-    connection error (broad), but RETRY only on the pre-cmdlet "must call Connect-ExchangeOnline"
-    signature (`IsRetriablePrecheckError`), so a single write whose session drops *after*
-    Exchange accepted it is never re-submitted. Also excluded git-ignored `_not_for_github\`
-    from csproj compile globs (was breaking local builds; not part of the bug fix).
-- **SQLite config store work stream COMPLETE** (`docs/SqliteConfigStore-Plan.md`, Status:
-  *Implemented*). All Phases A–E done (app 2.3.21, 2026-06-24). 508/508 tests green.
-  - Phase E note: all service test rewrites were completed inline during Phases B-D;
-    Phase E delivered the docs sweep (Constitution, AGENTS.md, AdminModuleSpec.md,
-    example JSON retired) and version bump to 2.3.21.
+- **App version `2.3.28`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **Deployed:** dev and prod were both on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28`
+  (Bulk Job Runner) is **built and committed but NOT yet deployed** and **NOT manually validated**.
+- **Git posture:** `master` has **8 unpushed commits** — the Bulk Job Runner (7 slices) plus a
+  governance-reconcile commit (`1b8febb`, authored by owner, interleaved). Working tree clean.
+  Push needs explicit owner go (pushing publishes).
+- **No code change is in progress.** The last work stream (Bulk Job Runner) is complete pending
+  manual validation.
 
-- **Module Developer Guide Rewrite COMPLETE** (`docs/ModuleDeveloperGuideRewrite-Plan.md`,
-  Status: *Implemented*, app 2.3.22, 2026-06-25). Re-verified + rewrote
-  `docs/AdminModuleDeveloperGuide.md` and `docs/AdminModuleSpec.md` against the SQLite-era
-  codebase, and added `<ModuleVersion />` validator enforcement (Error `PAGE009` in
-  `tools/validate-module-package.ps1` + execution test `tests/ps/ValidatorChecks.Tests.ps1`,
-  proven non-vacuous). A Codex review pass was folded in (one-pass, owner-approved): Graph
-  credential key corrected to `GraphDelineaSecretId` in spec + guide, guide host baseline →
-  2.3.22, this state block repaired. 508/508 xUnit + 59/59 Pester green.
-  - Final whole-branch review now DONE (see top of Now). Branch is review-complete.
+## Last work stream — Bulk Job Runner (DONE, pending dev validation)
+
+`docs/BulkJobRunner-Plan.md` (Status: Implemented) · `.agents/decisions.md` 2026-07-02.
+App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`. 8 unpushed commits.
+
+ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job (separate
+`config/exchangeadmin-jobs.db`, never promoted). Self-pumping singleton runner (not a hosted timer);
+single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no resume); always
+cancellable; per-row failure aggregation; completion email fires from the job. Off-circuit auth =
+option (a) (capture the authorization decision at submit, re-check per row via shared pure
+`GroupMembershipChecker`). Protected-principal gate enforced in-job per row on **both** Finder and
+Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs before recycle
+(`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green; build/format/diff-check clean; each
+slice codex-reviewed with findings fixed before commit.
+
+**Next action:** deploy `2.3.28` to dev and run manual validation (below) — the UI and end-to-end
+job lifecycle are not covered by automated tests.
 
 ## Next up (prioritized)
 
-Live backlog only (DONE items moved out). Items 2+ need an approved plan before code; item 1
-is already approved.
+Live backlog only. Items need an approved plan before code unless noted.
 
-1. **Bulk Job Runner** — APPROVED, ready to implement (see "Now" block + `docs/BulkJobRunner-Plan.md`).
-   The clearest next coding action once owner says go. Root cause of the ~40-room split was the
-   bulk loop living inside the Blazor circuit; fix is the durable server-side job, not a timeout
-   tweak. Also closes protected-principal GAP 3 (Finder). Suggested first slice: the base-app
-   `BulkJobService` + separate `.db` repo + `InitializeAsync()` orphan reconciliation, with tests,
-   before touching ConferenceRooms UI. NO CODE until owner says go.
-2. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved.
-   End state confirmed 2026-06-29 (UI `.zip` upload, no full rebuild; precompiled-vs-runtime
-   open). First leg = module contract / self-registration seam. See Queued work + decisions.md.
-3. **Versioning-rule fix** (OPEN blocker, below): record a `decision` that new modules do not
-   bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md
-   invariant #6. Small, docs-only; tied to the module-packaging end state.
-4. **GM-3** self-service group management — needs own plan; depends on M365 work (done).
-5. **AccountLockout user-notification** (OPEN, gated on testing) — decide whether a logged-off
-   user is notified, after the module is actually exercised on dev. See decisions.md 2026-06-30.
+1. **Manual-validate the Bulk Job Runner on dev** (no plan needed — it's validation). Cover:
+   submit a bulk CSV → close the tab → reopen and see the job still running/finished; recycle the
+   app pool mid-job → job shows Interrupted (not stuck Running); cancel a running job; queue a
+   second job while one runs; confirm the completion admin email; confirm a protected room is
+   blocked on **both** Finder and Type bulk paths.
+2. **Single-room Finder protected-principal gap** — OPEN, small, needs owner go (see Blockers /
+   Open gaps). One-line fix, but outside the Bulk Job Runner's approved scope.
+3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved. End state
+   (owner, 2026-06-29): UI `.zip` upload, no full rebuild; precompiled-vs-runtime still open. First
+   leg = module contract / self-registration seam. See `.agents/decisions.md` 2026-06-18 & 06-29.
+4. **Versioning-rule fix** (docs-only; see Blockers) — record a `decision` that new modules do not
+   bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md #6.
+   Tied to the module-packaging end state.
+5. **AccountLockout user-notification** — OPEN, gated on real testing: decide whether a logged-off
+   user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
+   2026-06-30).
+6. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
 
-Separate track (ops, not engineering): configure ConferenceRooms AD `DelineaSecretId` in the
-prod instance (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround exists).
+Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in the prod instance
+(gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround: `deploy-pipeline -PlanOnly`).
 
-## Blockers
+## Blockers / open gaps
 
-- None blocking current work.
-- **OPEN — versioning rule is wrong for new modules (owner, 2026-06-26; not yet fixed).**
-  Current rule (Constitution §Deployment And Versioning; AGENTS.md invariant #6) bumps the
-  base app version for any "shared/app-wide" change, and this session bumped 2.3.26→2.3.27
-  for *adding* the AccountLockoutRemediation module. Owner: **bumping the base app version
-  for every new module is wrong.** End-state intent: modules distributed as `.zip` and
-  uploaded via the web UI — installing a module must NOT require a recompile or an app
-  version bump (only the module's own `Version` moves). This is the deferred
-  runtime-upload/dynamic-load capability from `.agents/decisions.md` 2026-06-18; the
-  versioning rule must change in step with it. Not yet actioned (owner: "address later").
-  When actioned: record a `decision` ("new modules do not bump base app version") and fix
-  the Constitution + AGENTS.md #6 wording. The 2.3.27 bump is already committed (`3e84d50`).
-- **RESOLVED 2026-06-29 — protected principals are off-limits to every mutating module, no
-  carve-outs.** (Recorded in `.agents/decisions.md` 2026-06-29; Constitution §Protected
-  Principals updated with an explicit bullet.) The earlier owner position ("protection is only
-  about granting permissions, not routine group management") was reversed: the end state is that
-  no module may mutate a protected principal — account state, permissions, group membership,
-  directory attributes, anything — across EmergencyDisable, AD Attribute Editor, Group
-  Management, and the planned M365 member/owner feature. The guard binds to the *target* of the
-  write; it must refuse, fail closed, and audit the denial. The on-prem `GroupManagementService`
-  `CheckProtectedAsync` gate is therefore correct and stays. **Follow-up (read-only sweep,
-  pending):** verify every mutating module actually routes its target through the
-  protected-principal check before writing — confirm there is no module that writes without
-  gating. Findings go below; any gap becomes its own planned fix.
-  - **Sweep DONE 2026-06-29 (read-only audit; two gaps found, both verified in source).** Of
-    14 mutating modules, 12 gate the write target through the protected-principal check
-    (`ProtectedPrincipalService.CheckAsync` / `PermissionValidator.ValidateTargetMailboxAsync`
-    / a local `CheckProtectedAsync`): EmergencyDisable, ADAttributeEditor (+Undo),
-    GroupManagement, AccountLockoutRemediation, ConferenceRooms, LicensingUpdates, MfaReset,
-    OutOfOffice, MailboxPermissions, CalendarPermissions, Comms10k. BlockedSenders targets a
-    sender address (not a principal) — N/A.
-  - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29 (principal-write surface).**
-    The M365 member/owner management feature shipped (module 1.1.0; commits `211c6eb`,
-    `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`, Implemented). Member/owner add/remove
-    now routes the target identity through an in-service protected-principal gate
-    (`CheckProtectedAsync` → `ProtectedPrincipalService.CheckAsync`, fail closed on
-    Unavailable/Ambiguous/CheckFailed) before any Graph write, mirroring GroupManagement.
-    Group create/update/delete remain ungated **by design** (owner decision 2026-06-29:
-    member/owner only, no protected-*group* gating; see `.agents/decisions.md`). Known
-    accepted limitation: AD-based resolution treats a cloud-only NotFound as not protected.
-  - **GAP 2 — `MigrationService` — CLOSED 2026-06-30** (module `Migration` 1.1.3→1.2.0,
-    app version unchanged; commits `0b855ac`, `5d72978`, + docs/version slice;
-    `docs/MigrationProtectedPrincipalGate-Plan.md`, Implemented). `CreateMigrationBatchAsync`
-    now partitions every target through the protected-principal gate **before** any side
-    effect (CSV build / `New-MigrationBatch`); protected targets are filtered out, the rest
-    are migrated, and exclusions are reported in the UI (always-visible warning), audited as
-    denial rows, and listed in the admin notification. All-protected (incl. single target) ⇒
-    nothing created, clear refusal. Fail-closed on Unavailable/Ambiguous/exception. Owner
-    decision (2026-06-30, decisions.md): filter-and-report, never silent, one protected target
-    never blocks the batch. Same accepted cloud-only NotFound limitation as the other modules.
-    4 new tests, proven non-vacuous; 589/589 green.
-  - **GAP 1 and GAP 2 both CLOSED. No protected-principal gating gaps remain.**
-- **Prod-deploy hold LIFTED — prod cut over to 2.3.27 (owner, 2026-06-29).** The deferred
-  prod hold (owner direction 2026-06-18) is done: prod moved from 2.3.11 (pre-SQLite) straight
-  to app **`2.3.27`**, so the full JSON→SQLite legacy import ran on first startup (the path the
-  fail-closed parity fix hardens). Sub-TODO that still gates CR-1 in prod: configure the
-  ConferenceRooms AD `DelineaSecretId` in the deployed prod instance.
-- **Deployed versions (confirmed by owner 2026-06-29):** dev and prod are both on app
-  **`2.3.27`**, validated good (GM-1, M365 member/owner, EmergencyDisable synced-user,
-  BlockedSenders all confirmed on dev; AccountLockoutRemediation manual validation still
-  deferred by owner). The BlockedSenders refresh fix is validated on dev (commit `cde778f`,
-  module 1.0.2). **Unverified detail:** the two BlockedSenders module-version fixes
-  (`17910f3` → 1.0.1, `cde778f` → 1.0.2) are module bumps, not app bumps, so "prod = app
-  2.3.27" does not by itself confirm prod was built from a commit that includes them — confirm
-  the prod build commit if the BlockedSenders behaviour matters in prod.
+- **None blocking current work.**
+- **OPEN — single-room Finder has no protected-principal check (found 2026-07-02).** The
+  single-room Room Finder page path (`ConferenceRooms.razor` `SetupSingleRoom` →
+  `SetRoomMetadataAndListAsync`) goes straight from `ReauthorizeAsync` to the write with no PP
+  gate. Single-room **Type** does gate. Same class as the now-closed GAP 3, but outside the Bulk
+  Job Runner's (bulk-only) approved scope, so flagged not fixed. Fix = add the existing page-local
+  `CheckProtectedPrincipalAsync` before the write. Low practical risk (rooms are non-person
+  mailboxes rarely protected). Needs a one-line owner go.
+- **OPEN — versioning rule is wrong for new modules (owner, 2026-06-26; not yet fixed).** The rule
+  (Constitution §Deployment And Versioning; AGENTS.md #6) bumps the base app version for any
+  shared/app-wide change; owner: adding a *new module* should not bump the base app version — only
+  the module's own `Version` moves. Ties to the deferred runtime-upload capability
+  (`.agents/decisions.md` 2026-06-18). When actioned: record a `decision` and fix the Constitution
+  + AGENTS.md #6 wording. Owner said "address later."
+- **OPEN — AccountLockoutRemediation not yet exercised on dev** (owner deferred, 2026-06-29). Run
+  the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
+  dry-run+logoff, protected-block) when ready. Gates the rule-3 user-notify decision above.
+- **Prod BlockedSenders version uncertainty:** the two BlockedSenders fixes (`17910f3`→1.0.1,
+  `cde778f`→1.0.2) are module bumps, not app bumps, so "prod = app 2.3.27" does not confirm prod
+  includes them. Confirm the prod build commit if BlockedSenders behaviour matters in prod.
+- **All protected-principal sweep gaps CLOSED for the bulk/module surfaces:** GAP 1
+  (`M365GroupManagementService`, 2026-06-29), GAP 2 (`MigrationService`, 2026-06-30), GAP 3
+  (ConferenceRooms Finder bulk, 2026-07-02). The only remaining PP gap is the single-room Finder
+  path above. Governing rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected
+  Principals.
 
 ## Verification
 
-- Code: `dotnet build ExchangeAdminWeb.slnx -c Release` then
-  `dotnet test ExchangeAdminWeb.slnx`. Add `dotnet format ExchangeAdminWeb.csproj
-  --verify-no-changes --no-restore` and `git diff --check HEAD` where practical.
-  (Always target the `.slnx`; bare `dotnet test` runs zero tests.)
-- PowerShell: `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps`.
-  Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
-- When a change ships with a new test, prove it non-vacuous (revert the fix, see the test
-  fail, restore). Full policy + manual-check list: `.agents/repo-map.json`, `AGENTS.md`.
+- **Code:** `dotnet build ExchangeAdminWeb.slnx -c Release` then `dotnet test ExchangeAdminWeb.slnx`
+  (always target the `.slnx`; bare `dotnet test` runs zero tests). Add
+  `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore` and
+  `git diff --check HEAD` where practical.
+- **PowerShell:** `Invoke-ScriptAnalyzer -Path . -Recurse` (CI fails on Error severity only) and
+  `Invoke-Pester tests/ps`. Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
+- **Non-vacuous rule:** a change shipping with a new test must be proven — revert the fix, see the
+  test fail, restore. Full policy + manual-check list: `.agents/repo-map.json`, `AGENTS.md`.
 
 ## Findings (environment / CI — still live)
 
-- CI is real: a failing test fails the run. Trust it.
-- On local macOS, a missing Windows COM DLL can nondeterministically drop xUnit
-  collections (totals vary) — trust the failure *list*, not the total. `windows-latest`
-  CI is unaffected. macOS builds need `-p:EnableWindowsTargeting=true`; Pester needs
-  `pwsh` + `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec`.
+- CI is real: a failing test fails the run. Trust it. (`.github/workflows/ci.yml`, `windows-latest`.)
+- On local macOS, a missing Windows COM DLL can nondeterministically drop xUnit collections (totals
+  vary) — trust the failure *list*, not the total. `windows-latest` CI is unaffected. macOS builds
+  need `-p:EnableWindowsTargeting=true`; Pester needs `pwsh` +
+  `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec`.
+- On this Windows dev box, `sqlite3.exe` is on PATH via winget; Pester runs under `pwsh`.
 - `deploy.ps1` still lacks a native `-PlanOnly` (deferred with owner visibility;
   `deploy-pipeline -PlanOnly` covers the prod dry-run requirement).
 
-## Known issues (pre-existing, NOT SQLite-caused)
+## Active sources
 
-- **Protected-principal gating — GAPs 1, 2 & 3 ALL CLOSED.**
-  - **GAP 3 — `ConferenceRooms` Room Finder — CLOSED 2026-07-02 (Bulk Job Runner).** Found by
-    codex review 2026-07-02: the page-local PP check was wired ONLY into the Room **Type** bulk
-    path; the Room **Finder** bulk path had NO protected-principal check (the 2026-06-29 sweep
-    entry that called ConferenceRooms "gated" was inaccurate for Finder — drift now corrected).
-    Fixed by the Bulk Job Runner: the PP gate is enforced **in-job, per row, before any write, on
-    BOTH Finder and Type paths** (`ConferenceRoomBulkProcessor.CheckProtectedPrincipalAsync`),
-    fail-closed on Unavailable/Ambiguous/CheckFailed/exception, audited as a denial. Proven
-    non-vacuous (revert the Finder gate → protected Finder target processes → restore → blocked).
-    Owner decision 2026-07-02 (decisions.md): keep the check and apply to both bulk paths, no
-    room-mailbox carve-out.
-  - **NEW GAP found 2026-07-02 (single-room Finder path) — OPEN, NOT in Bulk Job Runner scope.**
-    While closing GAP 3, discovered the **single-room** Room Finder page path
-    (`ConferenceRooms.razor:SetupSingleRoom` → `SetRoomMetadataAndListAsync`) has **no**
-    protected-principal check — it goes straight from `ReauthorizeAsync` to the write. The
-    single-room **Type** path (`:938`) does gate. The Bulk Job Runner only covered the *bulk*
-    Finder/Type paths (its approved scope), so this single-room Finder gap is **still open**. It is
-    the same class of violation as GAP 3 (2026-06-29 "no carve-outs"), small to fix (add the
-    existing page-local `CheckProtectedPrincipalAsync` call before the write in `SetupSingleRoom`),
-    but it is **outside the approved plan** — flagged for owner rather than fixed unilaterally.
-    Practical risk is low (rooms are non-person mailboxes rarely on protected lists), same as the
-    GAP 3 rationale, but for uniformity it should be closed. Needs a one-line owner go.
-- **Protected-principal gating gaps 1 & 2 — BOTH CLOSED (sweep 2026-06-29).** The 2026-06-29
-  decision requires every mutating module to gate its write target through the
-  protected-principal check; the original sweep found two modules that did not. Both are now
-  fixed.
-  - **GAP 1 — `M365GroupManagementService` — CLOSED 2026-06-29.** Member/owner add/remove now
-    gates the target through the protected-principal check before any Graph write (module
-    1.1.0; commits `211c6eb`, `03c443a`; `docs/M365MemberOwnerManagement-Plan.md`). Group
-    create/update/delete intentionally ungated (owner decision; see Now section + decisions.md).
-  - **GAP 2 — `MigrationService` — CLOSED 2026-06-30.** Batch creation now partitions targets
-    through the protected-principal gate before any write; protected targets filtered out and
-    reported (UI/audit/email), all-protected ⇒ nothing created (module 1.2.0; commits
-    `0b855ac`, `5d72978`; `docs/MigrationProtectedPrincipalGate-Plan.md`). See Now section +
-    decisions.md.
-  - Full sweep result (12/14 modules already gated; the other 2 now fixed) is in the Now section.
+- `AGENTS.md` — process/behavioral contract (Prime Invariants first).
+- `docs/ProjectConstitution.md` — highest engineering authority.
+- `.agents/decisions.md` — durable decisions (most recent: Bulk Job Runner, 2026-07-02).
+- `.agents/repo-map.json` — automated verification map.
+- Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, pending dev validation). No plan is
+  currently `In progress`.
 
-- **MFA Reset stranded legacy config key — RESOLVED 2026-06-26 (app 2.3.26).** The Graph
-  Delinea secret was renamed `DelineaSecretId` → `GraphDelineaSecretId`; environments
-  configured before the rename held the value under the OLD key, so the config page showed
-  blank while the service worked via a `?? DelineaSecretId` fallback. Fixed by a catalog-driven
-  idempotent startup migration plus removal of the fallback — see the Now section and
-  `docs/GraphSecretKeyMigration-Plan.md` (Status: Implemented). Code path verified by tests;
-  deployed to dev and the recovered Secret ID confirmed on the config page (owner,
-  2026-06-26). The same fix also cleared the identical latent bug in NamedLocations and
-  M365GroupManagement.
+## Unrecorded repo memory
 
-## Queued work (forward-looking — no other doc home)
-
-These have no plan doc yet; do not start without the noted plan/approval.
-
-- **Module packaging/import.** Near-term direction set 2026-06-18 (`.agents/decisions.md`):
-  `.zip` package + validator, rebuild-to-install, runtime upload deferred. **End state
-  confirmed by owner 2026-06-29 (`.agents/decisions.md`): the main app loads a module from
-  the UI as a `.zip` upload, no full app rebuild for that module; precompiled-vs-runtime left
-  open.** Motivated by a one-line BlockedSenders fix being unable to reach prod (prod still
-  runs BlockedSenders 1.0.0) because a module is not an installable unit today. Long-term —
-  nothing to build now. Needs `docs/ModulePackaging-Plan.md` written + approved before any
-  implementation; the prereq first leg is a module contract / self-registration seam. Related:
-  the OPEN versioning-rule blocker (new modules should not bump the base app version).
-- **GM-1 — DONE 2026-06-29** (module 2.1.0; commits `c2ac624`, `d8bd2a6`;
-  `docs/GroupManagementSearch-Plan.md`, Implemented). Search now ranks exact-first (then
-  prefix, then contains; alphabetical within tier) via the pure `RankGroups` in
-  `GroupManagementService`; fetches up to 200 from AD, shows top 100 in a scrollable frame.
-  Page reordered so controls stay on top and results scroll below. Manual validation deferred
-  to next dev deploy.
-- **GM-2 (investigated 2026-06-26 — NOT the originally-reported bug).** Live test on dev
-  (2.3.26) showed search *works*: it returns only Unified/M365 groups by design
-  (`M365GroupManagementService.SearchGroupsAsync` filters
-  `groupTypes/any(g:g eq 'Unified') and startsWith(displayName,...)`). The earlier
-  "finds no groups at all" report was a synced **security** group (Source: Windows Server AD,
-  not Unified) being correctly excluded — the grey "No M365 groups found" message, not the
-  red HTTP-status error banner, confirms a clean 200 with empty `value`. Verified the query
-  needs no `ConsistencyLevel: eventual`/`$count` per MS advanced-queries table (group
-  `displayName`/`startsWith` and `groupTypes/any`/`eq` are both Default-supported). The
-  failure-masking fix (`7048a3e`, app 2.3.5) is already in dev, so failures now surface as
-  errors, not empty lists. The separate member/owner management gap this investigation also
-  surfaced is now BUILT (2026-06-29, module 1.1.0) — see Now section #1 and Blockers GAP 1.
-- **GM-3 (new module, needs own plan — DECIDE LATER): self-service group management.**
-  Owner direction 2026-06-17, plan separately (`docs/SelfServiceGroupManagement-Plan.md`),
-  nothing built until approved. Key requirements: likely a separate module; do NOT preload
-  the user's manageable groups (explicit "show groups I manage" button with a slow-load
-  warning); search restricted to groups the user manages with GM-1 fixes applied; reject
-  any modification to non-managed groups at the service/authorization layer (UI hiding is
-  not security). Open: how "manages" is determined, on-prem vs M365 vs both, making the
-  lookup tolerable. Depends on GM-1/GM-2 being understood first.
-
-## Recently completed (pointers only — full detail in the named docs)
-
-- **AccountLockoutRemediation module** — incorporated 2026-06-26 (app 2.3.27),
-  `docs/AccountLockoutRemediation-Incorporation-Plan.md` (Implemented). Manual validation
-  (live AD 4740 read, WinRM, quser/logoff, real dry-run+logoff, protected-block) still
-  pending its first dev deploy — run the package's own Manual Validation steps then.
-
-- **CR-BUG-1 EXO pool dead-runspace auto-retry** — `docs/ExoDeadConnectionRetry-Plan.md`
-  (Implemented, app 2.3.23, commit `39ce87a`).
-- **SQLite Phases A–D** — `docs/SqliteConfigStore-Plan.md` + git log (`e8b155c`..`cf837e8`).
-- **ProdReadiness work stream** — COMPLETE, plan Status **Implemented**
-  (`docs/ProdReadiness-Plan.md` §10 round 17, `a5ab6aa`); all AC1–AC16 met.
-- **2026-06-12 dev config-loss incident** — Remediated
-  (`docs/Incident-2026-06-12-DevConfigLoss.md`); real cause `f7df81a` FailClosed on a dev
-  box lacking `sectionaccess.json`. Much of the deploy-hardening it produced is
-  obsoleted-by-design by the SQLite store.
-- **TestAccountPool module removed** (app 2.3.10), **Conference Rooms** RoomListOU removal
-  + partial-apply reporting (`8d4f0d6`, module 2.0.10) — decisions in `.agents/decisions.md`.
-
-## Active Sources
-
-- `AGENTS.md`
-- `docs/ProjectConstitution.md` (highest engineering authority)
-- `docs/SqliteConfigStore-Plan.md` (active work stream)
-- `.agents/decisions.md`
-- `.agents/repo-map.json`
-
-## Unrecorded Repo Memory
-
-- None known. Engineering rules: `docs/ProjectConstitution.md`; module contract:
-  `docs/AdminModuleSpec.md`; work-stream history: `docs/*-Plan.md`.
+- None known. Engineering rules → `docs/ProjectConstitution.md`; module contract →
+  `docs/AdminModuleSpec.md`; work-stream history → `docs/*-Plan.md` + git log.
