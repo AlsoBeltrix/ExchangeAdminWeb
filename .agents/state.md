@@ -7,10 +7,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Now
 
 - **App version `2.3.28`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
-- **Deployed:** dev and prod were both on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28`
-  (Bulk Job Runner) is **built and committed but NOT yet deployed** and **NOT manually validated**.
+- **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
+  is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
+  manually validated** and **NOT in prod**.
 - **No code change is in progress.** The last work stream (Bulk Job Runner) is complete pending
-  manual validation.
+  manual validation on dev.
+- Deploy required a fix first: `tools/JobStateWarning.psm1` had em-dashes with no BOM and broke the
+  5.1 deploy import (Known Failure Class #6); fixed to pure ASCII in `8938da2`.
 
 ## Last work stream — Bulk Job Runner (DONE, pending dev validation)
 
@@ -27,8 +30,8 @@ Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs b
 (`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green (as of `9d26b5f`); build/format/diff-check
 clean; each slice codex-reviewed with findings fixed before commit.
 
-**Next action:** deploy `2.3.28` to dev and run manual validation (below) — the UI and end-to-end
-job lifecycle are not covered by automated tests.
+**Next action:** run manual validation on dev (below) — the UI and end-to-end job lifecycle are not
+covered by automated tests. (Dev deploy done 2026-07-20.)
 
 ## Next up (prioritized)
 
