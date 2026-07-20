@@ -6,17 +6,17 @@
     Shared by every deploy/promote script that stops or recycles the app pool (deploy.ps1,
     tools/deploy-pipeline.ps1, tools/promote-dev-to-prod.ps1). The Bulk Job Runner
     (docs/BulkJobRunner-Plan.md) runs durable batches server-side; a recycle INTERRUPTS any
-    Running or Queued job (there is no resume — startup flips them to Interrupted). Operators
+    Running or Queued job (there is no resume - startup flips them to Interrupted). Operators
     should know that before they recycle.
 
     Policy (owner-requested): WARN, do not hard-block. The warning is loud and lists the jobs,
-    but the deploy proceeds — a stuck/wedged job must never be able to prevent the very recycle
+    but the deploy proceeds - a stuck/wedged job must never be able to prevent the very recycle
     that clears it (that would defeat the anti-brittleness design).
 
     The jobs database (config/exchangeadmin-jobs.db) is a separate operational SQLite file, NOT
     the config DB, and is environment-local (never promoted). We read it out-of-process with
     sqlite3.exe (already a declared deploy dependency for SqliteConfigBackup). If sqlite3.exe is
-    missing or the DB is unreadable we surface that as a soft note rather than failing — an
+    missing or the DB is unreadable we surface that as a soft note rather than failing - an
     unreadable job DB must not abort a deploy either.
 
     Honors plan mode: pass -PlanOnly to report what WOULD be checked without side effects (there
@@ -50,7 +50,7 @@ function Get-ActiveBulkJobs {
 
     $dbPath = Join-Path $ConfigDir 'exchangeadmin-jobs.db'
     if (-not (Test-Path -LiteralPath $dbPath -PathType Leaf)) {
-        # No jobs DB yet (e.g. the runner has never persisted a job) — nothing to warn about.
+        # No jobs DB yet (e.g. the runner has never persisted a job) - nothing to warn about.
         return @()
     }
 
@@ -127,7 +127,7 @@ function Assert-NoActiveBulkJobsBeforeRecycle {
     if ($jobs.Count -gt 0) {
         Write-Warning "=============================================================="
         Write-Warning " $($jobs.Count) bulk job(s) are ACTIVE. Recycling the app pool will"
-        Write-Warning " INTERRUPT them (there is no resume — they become 'Interrupted')."
+        Write-Warning " INTERRUPT them (there is no resume - they become 'Interrupted')."
         foreach ($j in $jobs) {
             Write-Warning "   [$($j.Status)] $($j.Kind) by $($j.SubmittedBy) ticket=$($j.Ticket) progress=$($j.Progress)"
         }
