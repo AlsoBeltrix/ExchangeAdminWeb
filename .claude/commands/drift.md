@@ -1,4 +1,11 @@
-Compare a doc, decision, or guidance claim against current repo evidence (code, tests,
-CI). Fix the lower-authority source or report the unresolved conflict. Quote exact
-`file:line` for any control-flow claim. See the "Operator Requests" section of
-`AGENTS.md` for the canonical definition.
+---
+description: Compare a doc, decision, or guidance claim against repo evidence and fix or report the conflict; also the deliberate state-hygiene pass. Use when the owner says drift.
+# toolkit-owned; edits are drift — see AGENTS.md
+---
+
+Run the `drift` operator defined in this repo's `AGENTS.md` (Operator Requests):
+compare a doc, decision, or guidance claim against repo evidence and fix the
+lower-authority source, or report the unresolved conflict. Guidance files
+(`AGENTS.md`, `.agents/*`) are in scope as drift targets, not just sources.
+The operator also owns the deliberate state-hygiene pass as defined there.
+`AGENTS.md` is the authoritative definition; this file is only a pointer.
