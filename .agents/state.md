@@ -10,8 +10,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
   is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
   manually validated** and **NOT in prod**.
-- **No code change is in progress.** The last work stream (Bulk Job Runner) is complete pending
-  manual validation on dev.
+- **No code change is in progress.** The Bulk Job Runner is code-complete; manual validation is
+  **deferred** (no dev/QA AD or Exchange tenant, no test data — owner, 2026-07-20). See Next up #1.
 - Deploy required a fix first: `tools/JobStateWarning.psm1` had em-dashes with no BOM and broke the
   5.1 deploy import (Known Failure Class #6); fixed to pure ASCII in `8938da2`.
 
@@ -37,11 +37,14 @@ covered by automated tests. (Dev deploy done 2026-07-20.)
 
 Live backlog only. Items need an approved plan before code unless noted.
 
-1. **Manual-validate the Bulk Job Runner on dev** (no plan needed — it's validation). Cover:
-   submit a bulk CSV → close the tab → reopen and see the job still running/finished; recycle the
-   app pool mid-job → job shows Interrupted (not stuck Running); cancel a running job; queue a
-   second job while one runs; confirm the completion admin email; confirm a protected room is
-   blocked on **both** Finder and Type bulk paths.
+1. **Manual-validate the Bulk Job Runner on dev — DEFERRED (owner, 2026-07-20).** No test data and
+   no dev/QA tenant for AD or Exchange, so a real end-to-end run is not possible here. The runner
+   *logic* is already covered by xUnit without a live tenant — lifecycle (FIFO queue, cancel,
+   recycle→Interrupted via `Initialize_FlipsOrphanedNonTerminalJobsToInterrupted`), per-row failure
+   aggregation, completion notification (all variants), and the protected-principal block on **both**
+   Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays unvalidated
+   until a real tenant run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
+   write. Revisit when a controlled prod run is possible; do not close out until then.
 2. **Single-room Finder protected-principal gap** — OPEN, small, needs owner go (see Blockers /
    Open gaps). One-line fix, but outside the Bulk Job Runner's approved scope.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved. End state
