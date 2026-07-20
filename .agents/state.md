@@ -9,16 +9,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **App version `2.3.28`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **Deployed:** dev and prod were both on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28`
   (Bulk Job Runner) is **built and committed but NOT yet deployed** and **NOT manually validated**.
-- **Git posture:** `master` has **8 unpushed commits** — the Bulk Job Runner (7 slices) plus a
-  governance-reconcile commit (`1b8febb`, authored by owner, interleaved). Working tree clean.
-  Push needs explicit owner go (pushing publishes).
 - **No code change is in progress.** The last work stream (Bulk Job Runner) is complete pending
   manual validation.
 
 ## Last work stream — Bulk Job Runner (DONE, pending dev validation)
 
 `docs/BulkJobRunner-Plan.md` (Status: Implemented) · `.agents/decisions.md` 2026-07-02.
-App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`. 8 unpushed commits.
+App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`.
 
 ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job (separate
 `config/exchangeadmin-jobs.db`, never promoted). Self-pumping singleton runner (not a hosted timer);
@@ -27,8 +24,8 @@ cancellable; per-row failure aggregation; completion email fires from the job. O
 option (a) (capture the authorization decision at submit, re-check per row via shared pure
 `GroupMembershipChecker`). Protected-principal gate enforced in-job per row on **both** Finder and
 Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs before recycle
-(`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green; build/format/diff-check clean; each
-slice codex-reviewed with findings fixed before commit.
+(`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green (as of `9d26b5f`); build/format/diff-check
+clean; each slice codex-reviewed with findings fixed before commit.
 
 **Next action:** deploy `2.3.28` to dev and run manual validation (below) — the UI and end-to-end
 job lifecycle are not covered by automated tests.
