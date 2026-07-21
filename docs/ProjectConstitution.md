@@ -109,6 +109,8 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 - Shared infrastructure changes bump the base app version.
 - Module-scoped behavior changes bump that module's version in `ModuleCatalog`.
+- Adding a new module does not bump the base app version; only the new module's own
+  version is set. A new module is not a shared-infrastructure change.
 - Deployment scripts must support dry-run behavior for destructive promotion steps.
 - Production promotion should preserve prod appsettings and prod-specific config values unless explicitly told to overwrite them.
 

@@ -104,9 +104,9 @@ Versioning). Shared/app-wide changes bump the base app version (`<VersionPrefix>
 `AssemblyVersion` + `FileVersion` in `ExchangeAdminWeb.csproj`; the sidebar reads it
 via `BuildInfo`). Module-scoped behavior changes bump that module's `Version` in
 `Modules/ModuleCatalog.cs`. A change touching both layers gets both bumps; each rule
-fires on its own. **Open exception** (see `.agents/state.md` Blockers): the owner has
-directed that *adding a new module* should not bump the base app version; that rule
-change is pending and not yet applied to the Constitution.
+fires on its own. **Exception:** adding a new module does not bump the base app version --
+only the new module's own version is set (Constitution "Deployment And Versioning";
+`.agents/decisions.md` 2026-07-21).
 
 ## Architectural Invariants
 

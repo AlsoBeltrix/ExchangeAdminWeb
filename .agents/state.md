@@ -17,7 +17,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   non-vacuity verified. Commits `2a97d09` (fix) + `747f7d6` (version/docs). Plan Implemented
   (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). Live-tenant/UI validation NOT run
   (no dev tenant). Also: pure-ASCII rule adopted repo-wide (`9592f5d`/`550cfa4`) — cleanup+lint
-  deferred (Next up #7).
+  deferred (Next up #6).
 - **9 commits unpushed on `master`** (from `8938da2` through `550cfa4`). No push done — needs a go.
 - Bulk Job Runner (`2.3.28`) still deployed to dev, manual validation still deferred (Next up #1).
 - Deploy earlier required a fix: `tools/JobStateWarning.psm1` em-dashes with no BOM broke the 5.1
@@ -62,14 +62,11 @@ Live backlog only. Items need an approved plan before code unless noted.
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved. End state
    (owner, 2026-06-29): UI `.zip` upload, no full rebuild; precompiled-vs-runtime still open. First
    leg = module contract / self-registration seam. See `.agents/decisions.md` 2026-06-18 & 06-29.
-4. **Versioning-rule fix** (docs-only; see Blockers) — record a `decision` that new modules do not
-   bump the base app version, then fix Constitution §Deployment And Versioning + AGENTS.md #6.
-   Tied to the module-packaging end state.
-5. **AccountLockout user-notification** — OPEN, gated on real testing: decide whether a logged-off
+4. **AccountLockout user-notification** — OPEN, gated on real testing: decide whether a logged-off
    user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
    2026-06-30).
-6. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
-7. **ASCII cleanup sweep + enforcement lint** — deferred until things settle (owner, 2026-07-21).
+5. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
+6. **ASCII cleanup sweep + enforcement lint** — deferred until things settle (owner, 2026-07-21).
    Two parts, one work stream:
    (a) Replace all existing non-ASCII characters (em-dashes, smart quotes, etc.) across the codebase
    with ASCII, per the 2026-07-21 pure-ASCII decision (`.agents/decisions.md`). Not a freebie: some
@@ -95,12 +92,6 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   672 tests pass; non-vacuity verified. Plan Implemented
   (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). **Live-tenant/UI validation not
   run** (no dev tenant) — deferred to a future controlled run, same as the Bulk Job Runner.
-- **OPEN — versioning rule is wrong for new modules (owner, 2026-06-26; not yet fixed).** The rule
-  (Constitution §Deployment And Versioning; AGENTS.md #6) bumps the base app version for any
-  shared/app-wide change; owner: adding a *new module* should not bump the base app version — only
-  the module's own `Version` moves. Ties to the deferred runtime-upload capability
-  (`.agents/decisions.md` 2026-06-18). When actioned: record a `decision` and fix the Constitution
-  + AGENTS.md #6 wording. Owner said "address later."
 - **OPEN — AccountLockoutRemediation not yet exercised on dev** (owner deferred, 2026-06-29). Run
   the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
   dry-run+logoff, protected-block) when ready. Gates the rule-3 user-notify decision above.

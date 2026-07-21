@@ -5,6 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-21 - Adding a new module does not bump the base app version
+
+Status: Active
+
+Adding a new module bumps only that module's own `Version` in `Modules/ModuleCatalog.cs`;
+it does not bump the base app version (`<VersionPrefix>` / `AssemblyVersion` / `FileVersion`
+in `ExchangeAdminWeb.csproj`). A new module is not a shared-infrastructure change. The two
+independent versioning rules (shared/app-wide -> base app version; module-scoped behavior ->
+module version) are otherwise unchanged; this only carves out module *addition* from the
+shared-change rule.
+
+Reason:
+A new module is self-contained -- it adds a catalog descriptor, its own service/page, and its
+own module version. Bumping the app-wide version for it overstates the blast radius of the
+change and couples every new module to an app-version increment that signals nothing about
+shared behavior. Owner directed this 2026-06-26; recorded and applied 2026-07-21.
+
+Supersedes: the prior reading of Constitution Section "Deployment And Versioning" under which any
+app-wide addition (including a new module) bumped the base app version. Applied to
+`docs/ProjectConstitution.md` Section "Deployment And Versioning" and `.agents/repo-guidance.md`
+Section "Versioning".
+
 ### 2026-07-21 - All source is pure ASCII (no non-ASCII characters anywhere)
 
 Status: Active
