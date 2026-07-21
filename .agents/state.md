@@ -9,21 +9,33 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **App version `2.3.28`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
   is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
-  manually validated** and **NOT in prod**.
-- **No code change is in progress.**
-- **Last landed (2026-07-21):** single-room Finder protected-principal gap CLOSED — consolidated the
-  ConferenceRooms PP check into one `ConferenceRoomProtectionGate` (C2-G guarded-execution helper);
-  page Finder/Type + each bulk row route through it; module `2.2.0`→`2.3.0`; 672 tests pass,
-  non-vacuity verified. Commits `2a97d09` (fix) + `747f7d6` (version/docs). Plan Implemented
-  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). Live-tenant/UI validation NOT run
-  (no dev tenant). Also: pure-ASCII rule adopted repo-wide (`9592f5d`/`550cfa4`) — cleanup+lint
-  deferred (Next up #6).
-- **9 commits unpushed on `master`** (from `8938da2` through `550cfa4`). No push done — needs a go.
-- Bulk Job Runner (`2.3.28`) still deployed to dev, manual validation still deferred (Next up #1).
-- Deploy earlier required a fix: `tools/JobStateWarning.psm1` em-dashes with no BOM broke the 5.1
-  deploy import (Known Failure Class #6); fixed to pure ASCII in `8938da2`.
-- **Untracked:** `.agents/review/*.prompt.txt|schema.json|result.json` (11 codex dispatch scratch
-  files) left uncommitted pending owner commit-vs-clean decision.
+  manually validated** and **NOT in prod**. This session's commits are NOT yet deployed to dev.
+- **No code change in progress.** Working tree clean; `master` pushed to both remotes and
+  **CI green** (as of `71d1daa`) -- first green since 2026-07-20.
+- **OPEN for next session (owner to choose):** (1) implement the Approved log-root plan
+  `docs/RemoveHardcodedLogRoot-Plan.md`, or (2) dev-deploy `2.3.28` (now on green master). Neither
+  started.
+- **This session landed (2026-07-21), all pushed + CI green:**
+  - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
+    decisions.md + repo-guidance; resolved the long-open versioning exception).
+  - `c2e2f6f` -- ASCII sweep of code/logging (77 `.cs`/`.ps1`, 329/329 char swaps). Scope narrowed
+    by owner to code/logging only; docs, `.razor` UI, `EmailService.cs` email emoji excluded.
+  - `502dd0e` -- ASCII CI lint gate `tools/Test-AsciiOnly.ps1` (excludes `EmailService.cs`), wired
+    into `.github/workflows/ci.yml` powershell job.
+  - `8c6f83f` -- fixed xUnit1051 warning that had reddened CI since 2026-07-20 (format check treats
+    analyzer warnings as fatal).
+  - `9dd39cd` -- state note recording that format-warning trap.
+  - `b978362` -- fixed `ConferenceRoomProtectionGateTests` hardcoded `E:\WWWOutput` log path (was
+    masked until format gate went green; failed only on CI, not the ADI dev box).
+  - `71d1daa` -- Approved plan `docs/RemoveHardcodedLogRoot-Plan.md`.
+- **AccountLockoutRemediation: does NOT work in this environment.** Live-tested this session:
+  WinRM reaches only ~5 of 38 domain controllers (HTTP 400 / Access denied / unreachable);
+  confirmed permanent (owner: "won't be changed"). Discovery hides unreachable DCs (looks like
+  "no lockouts found"); sweep silently drops the ~33 it can't reach. Owner decided the module is
+  unusable here and will be turned OFF. NOT yet actioned -- decision pending: leave disabled
+  (default) vs remove from catalog. See Next-up.
+- **Toolkit bug filed:** roethlar/AgentGovernanceBootstrap#7 -- completing a tracked item should
+  auto-update the state record, not gate it behind an owner ask.
 
 ## Last work stream — Bulk Job Runner (DONE, pending dev validation)
 
@@ -46,6 +58,14 @@ covered by automated tests. (Dev deploy done 2026-07-20.)
 ## Next up (prioritized)
 
 Live backlog only. Items need an approved plan before code unless noted.
+
+0. **Implement log-root fail-fast** -- `docs/RemoveHardcodedLogRoot-Plan.md` (Status: Approved).
+   Remove hardcoded `E:\WWWOutput` from `ExtendedLogService`/`JsonlLogService`/
+   `EmergencyDisableService`; add a startup guard that fails to start if `Audit:LogRoot` is unset.
+   Ready to implement; owner to confirm doing it now vs later.
+0b. **Turn off AccountLockoutRemediation** -- owner decided it is unusable here (WinRM reaches ~5
+   of 38 DCs, permanent). Decision pending: leave disabled (default; reversible) vs remove from
+   catalog (code change, needs a small plan). Not started.
 
 1. **Manual-validate the Bulk Job Runner on dev — DEFERRED (owner, 2026-07-20).** No test data and
    no dev/QA tenant for AD or Exchange, so a real end-to-end run is not possible here. The runner
