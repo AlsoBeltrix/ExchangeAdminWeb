@@ -59,6 +59,12 @@ Live backlog only. Items need an approved plan before code unless noted.
    user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
    2026-06-30).
 6. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
+7. **ASCII cleanup sweep** — deferred until things settle (owner, 2026-07-21). Replace all existing
+   non-ASCII characters (em-dashes, smart quotes, etc.) across the codebase with ASCII, per the
+   2026-07-21 pure-ASCII decision (`.agents/decisions.md`). Not a freebie: some are in audit strings
+   that tests assert on, so audit-log text moves — update those tests in the same change and treat
+   it as its own small plan + commit. New/edited code already follows the rule; this is the
+   backfill. Find candidates with a non-ASCII byte scan across tracked files.
 
 Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in the prod instance
 (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround: `deploy-pipeline -PlanOnly`).

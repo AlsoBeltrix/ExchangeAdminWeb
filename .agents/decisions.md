@@ -5,6 +5,26 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-21 - All source is pure ASCII (no non-ASCII characters anywhere)
+
+Status: Active
+
+New and edited source in this repo is pure ASCII — no em-dashes, smart quotes, or other
+non-ASCII characters, in any file type (`.cs`, `.razor`, `.ps1`/`.psm1`, `.md`, JSON, config).
+Use `--` or `-` for dashes, straight quotes, plain `...` for ellipsis. This generalizes the
+existing PowerShell-only rule (`.agents/repo-guidance.md` Architectural Invariants #6 / Known
+Failure Class #6, which required ASCII for 5.1-read scripts) to the whole codebase.
+
+Reason:
+Non-ASCII carries no benefit and real, already-realized cost. A BOM-less em-dash in
+`tools/JobStateWarning.psm1` broke a Windows PowerShell 5.1 deploy this session (5.1 reads it as
+ANSI and mangles it into parse errors). Beyond scripts: audit strings flow into logs and the
+SQLite audit DB where encoding can drift or render wrong; em-dash-vs-hyphen is invisible in review
+and survives or dies silently through copy-paste, terminals, and tooling. `.cs`/`.razor` compile
+fine under Roslyn so the hazard is latent there, not absent — "won't break today" is not a reason
+to keep a zero-benefit risk. Existing non-ASCII is left in place for now (changing audit-log text
+is a behavior change with test impact); a deliberate cleanup is tracked in `.agents/state.md`.
+
 ### 2026-07-21 - ConferenceRooms protected-principal check is one guarded-execution enforcement point
 
 Status: Active
