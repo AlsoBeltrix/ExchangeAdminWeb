@@ -111,6 +111,10 @@ try
     builder.Services.AddSingleton<MfaResetService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
+    // Single protected-principal enforcement point for every ConferenceRooms room-mutating write
+    // (page Finder/Type + each bulk row). Guarded-execution: the write runs only through its
+    // onAllowed delegate, so the gate cannot be bypassed and is decided before any side effect.
+    builder.Services.AddScoped<ConferenceRoomProtectionGate>();
     // The bulk job processor talks to rooms through the narrow IConferenceRoomBulkOperations seam
     // (implemented by ConferenceRoomService) so it is unit-testable without live EXO/AD.
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.IConferenceRoomBulkOperations>(

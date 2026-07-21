@@ -14,7 +14,7 @@
 @inject OperationTraceService OpTrace
 @inject IJSRuntime JS
 @inject ILogger<ConferenceRooms> Logger
-@inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ConferenceRoomProtectionGate ProtectionGate
 @inject SectionAccessService SectionAccess
 @inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @implements IDisposable
@@ -687,33 +687,47 @@
 
             if (!await ReauthorizeAsync()) return;
 
-            // Capture old values
-            Dictionary<string, object?>? oldValues = null;
-            try
-            {
-                var existing = await RoomService.GetRoomInfoAsync(email);
-                if (existing != null)
-                    oldValues = new() { ["city"] = existing.City, ["building"] = existing.Building, ["capacity"] = existing.Capacity, ["floor"] = existing.Floor, ["timezone"] = existing.TimeZone };
-            }
-            catch { }
+            // Protected-principal gate: the metadata write runs only inside onAllowed, so a protected
+            // or fail-closed target never reaches old-value capture, the trace scope, or Set-Place.
+            // A denial is audited here under the Finder (SetMetadata) action. This closes the
+            // single-room Finder gap via the same shared gate the Type and bulk paths use.
+            result = await ProtectionGate.GuardThenRunAsync(email,
+                onDenied: denial =>
+                {
+                    AuditFinderAction(email, false, ticket, denial.AuditDetail);
+                    return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
+                },
+                onAllowed: async () =>
+                {
+                    // Capture old values
+                    Dictionary<string, object?>? oldValues = null;
+                    try
+                    {
+                        var existing = await RoomService.GetRoomInfoAsync(email);
+                        if (existing != null)
+                            oldValues = new() { ["city"] = existing.City, ["building"] = existing.Building, ["capacity"] = existing.Capacity, ["floor"] = existing.Floor, ["timezone"] = existing.TimeZone };
+                    }
+                    catch { }
 
-            using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
+                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetMetadata", currentUser, clientIpAddress, email, ticket);
 
-            result = await RoomService.SetRoomMetadataAndListAsync(
-                email, city.Trim(), building.Trim(), capacity,
-                floor.Trim(), floorLabel.Trim(), displayDevice.Trim(), videoDevice.Trim(),
-                countryOrRegion.Trim(), state.Trim(), timezone.Trim());
+                    var r = await RoomService.SetRoomMetadataAndListAsync(
+                        email, city.Trim(), building.Trim(), capacity,
+                        floor.Trim(), floorLabel.Trim(), displayDevice.Trim(), videoDevice.Trim(),
+                        countryOrRegion.Trim(), state.Trim(), timezone.Trim());
 
-            op.Complete(result.Success, result.Message);
+                    op.Complete(r.Success, r.Message);
 
-            var newValues = new Dictionary<string, object?>
-            {
-                ["city"] = city, ["building"] = building, ["capacity"] = capacity,
-                ["floor"] = floor, ["floorLabel"] = floorLabel, ["timezone"] = timezone,
-                ["countryOrRegion"] = countryOrRegion, ["state"] = state
-            };
-            AuditFinderAction(email, result.Success, ticket, result.Success ? null : result.Message, oldValues, newValues);
-            await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, result.Success, ticket, result.Message);
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        ["city"] = city, ["building"] = building, ["capacity"] = capacity,
+                        ["floor"] = floor, ["floorLabel"] = floorLabel, ["timezone"] = timezone,
+                        ["countryOrRegion"] = countryOrRegion, ["state"] = state
+                    };
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues);
+                    await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
+                    return r;
+                });
         }
         catch (Exception ex)
         {
@@ -934,24 +948,33 @@
                 return;
             }
 
-            // Protected principal check
-            var ppResult = await CheckProtectedPrincipalAsync(email, ticket, "ConferenceRooms_SetType");
-            if (ppResult != null) { result = ppResult; return; }
+            // Protected-principal gate: the write runs only inside onAllowed, so a protected or
+            // fail-closed target never reaches the trace scope or Set-* write. A denial is audited
+            // here under the Type action; the shared gate is the single enforcement point.
+            result = await ProtectionGate.GuardThenRunAsync(email,
+                onDenied: denial =>
+                {
+                    AuditTypeAction(email, false, ticket, denial.AuditDetail);
+                    return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
+                },
+                onAllowed: async () =>
+                {
+                    using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
+                    var r = await RoomService.SetRoomTypeAsync(email, roomType, typeTimezone.Trim(),
+                        selectedRoomType == "Restricted" ? typeSite : "none",
+                        string.IsNullOrWhiteSpace(typeArbiter) ? null : typeArbiter.Trim(),
+                        typeRemovePerms);
+                    op.Complete(r.Success, r.Message);
 
-            using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
-            result = await RoomService.SetRoomTypeAsync(email, roomType, typeTimezone.Trim(),
-                selectedRoomType == "Restricted" ? typeSite : "none",
-                string.IsNullOrWhiteSpace(typeArbiter) ? null : typeArbiter.Trim(),
-                typeRemovePerms);
-            op.Complete(result.Success, result.Message);
-
-            var newValues = new Dictionary<string, object?>
-            {
-                ["roomType"] = selectedRoomType, ["timezone"] = typeTimezone,
-                ["site"] = typeSite, ["removePerms"] = typeRemovePerms
-            };
-            AuditTypeAction(email, result.Success, ticket, result.Success ? null : result.Message, newValues: newValues);
-            await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, result.Success, ticket, result.Message);
+                    var newValues = new Dictionary<string, object?>
+                    {
+                        ["roomType"] = selectedRoomType, ["timezone"] = typeTimezone,
+                        ["site"] = typeSite, ["removePerms"] = typeRemovePerms
+                    };
+                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues);
+                    await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
+                    return r;
+                });
         }
         catch (Exception ex)
         {
@@ -1171,43 +1194,6 @@
             return false;
         }
         return true;
-    }
-
-    private async Task<RoomOperationResult?> CheckProtectedPrincipalAsync(string identity, string ticket, string action)
-    {
-        try
-        {
-            var (resolved, status) = await ProtectedPrincipalService.ResolveWithStatusAsync(identity);
-            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
-            {
-                var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous — matches multiple AD users."
-                    : "Protection check unavailable.";
-                AuditTypeAction(identity, false, ticket, $"{reason} — blocked");
-                return new RoomOperationResult { Email = identity, Success = false, Message = reason };
-            }
-            if (resolved != null)
-            {
-                var check = await ProtectedPrincipalService.CheckAsync(resolved);
-                if (check.CheckFailed)
-                {
-                    AuditTypeAction(identity, false, ticket, $"Protection check failed: {check.Reason}");
-                    return new RoomOperationResult { Email = identity, Success = false, Message = $"Protection check failed: {check.Reason}" };
-                }
-                if (check.IsProtected)
-                {
-                    AuditTypeAction(identity, false, ticket, $"Protected principal — matched rules: {string.Join(", ", check.MatchedRules)}");
-                    return new RoomOperationResult { Email = identity, Success = false, Message = "This is a protected principal. Operation not permitted." };
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
-            AuditTypeAction(identity, false, ticket, $"Protection check exception: {ex.Message}");
-            return new RoomOperationResult { Email = identity, Success = false, Message = $"Protection check error: {ex.Message}" };
-        }
-        return null;
     }
 
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,

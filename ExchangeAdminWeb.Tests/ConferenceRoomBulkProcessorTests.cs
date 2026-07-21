@@ -49,10 +49,13 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     }
 
     // A fake PP service overriding the two virtual seam methods to a scripted verdict.
+    // EvalCount records how many times the resolve seam is hit — the anti-double-check probe:
+    // exactly one protection evaluation must occur per processed row.
     private sealed class FakePpService : ProtectedPrincipalService
     {
         public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.NotFound;
         public ProtectedPrincipalResult Verdict = ProtectedPrincipalResult.NotProtected();
+        public int EvalCount;
 
         public FakePpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
             ProtectedPrincipalRepository repo, DelineaService delinea)
@@ -61,6 +64,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
         public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity)
         {
+            EvalCount++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
                 ? new ResolvedDirectoryPrincipal("AD", identity, identity, identity, identity, null, "guid", null)
                 : null;
@@ -113,11 +117,12 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         });
 
         var pp = new FakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
+        var gate = new ConferenceRoomProtectionGate(pp, NullLogger<ConferenceRoomProtectionGate>.Instance);
         var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace);
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var rooms = new FakeRoomOps();
 
-        var processor = new ConferenceRoomBulkProcessor(rooms, pp, sectionAccess, trace, audit, email,
+        var processor = new ConferenceRoomBulkProcessor(rooms, gate, sectionAccess, trace, audit, email,
             NullLogger<ConferenceRoomBulkProcessor>.Instance);
 
         return new Fixture { Rooms = rooms, Pp = pp, Audit = audit, Email = email, SectionAccess = sectionAccess, Processor = processor };
@@ -166,6 +171,8 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
         Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
         Assert.Equal(["room1@x"], f.Rooms.FinderCalls);
+        // Exactly one protection evaluation per row — the consolidation guarantee (no double-check).
+        Assert.Equal(1, f.Pp.EvalCount);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());
     }

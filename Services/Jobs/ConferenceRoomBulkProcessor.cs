@@ -11,10 +11,12 @@ namespace ExchangeAdminWeb.Services.Jobs;
 ///
 /// Per row it: (1) re-checks the submitter's captured authorization snapshot against the section's
 /// current allowed groups (option (a)); (2) enforces the protected-principal gate on BOTH Finder and
-/// Type paths — closing the pre-existing Finder gap (GAP 3); (3) opens a CLEAN ROOT trace scope so
-/// the row is not nested under leaked async-local context; (4) calls the SAME ConferenceRoomService
-/// methods the live page uses (per-row Exchange/AD logic is unchanged); (5) audits per row with the
-/// captured actor/ip/ticket. The completion admin notification fires from the job at terminal state.
+/// Type paths via the shared <see cref="ConferenceRoomProtectionGate"/> (one enforcement point for
+/// the whole module) — the write runs only inside the gate's onAllowed delegate, so a protected
+/// target never reaches a side effect; (3) opens a CLEAN ROOT trace scope so the row is not nested
+/// under leaked async-local context; (4) calls the SAME ConferenceRoomService methods the live page
+/// uses (per-row Exchange/AD logic is unchanged); (5) audits per row with the captured
+/// actor/ip/ticket. The completion admin notification fires from the job at terminal state.
 ///
 /// Registered scoped so ConferenceRoomService (scoped) can be a dependency; the runner resolves this
 /// from a fresh scope per job.
@@ -22,7 +24,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 {
     private readonly IConferenceRoomBulkOperations _rooms;
-    private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ConferenceRoomProtectionGate _protectionGate;
     private readonly SectionAccessService _sectionAccess;
     private readonly OperationTraceService _trace;
     private readonly AuditService _audit;
@@ -36,7 +38,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
 
     public ConferenceRoomBulkProcessor(
         IConferenceRoomBulkOperations rooms,
-        ProtectedPrincipalService protectedPrincipals,
+        ConferenceRoomProtectionGate protectionGate,
         SectionAccessService sectionAccess,
         OperationTraceService trace,
         AuditService audit,
@@ -44,7 +46,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         ILogger<ConferenceRoomBulkProcessor> logger)
     {
         _rooms = rooms;
-        _protectedPrincipals = protectedPrincipals;
+        _protectionGate = protectionGate;
         _sectionAccess = sectionAccess;
         _trace = trace;
         _audit = audit;
@@ -82,40 +84,48 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         }
 
         // 2) Protected-principal gate — enforced on BOTH Finder AND Type paths (no carve-out;
-        // owner 2026-07-02). This is the in-job home of the check, closing the pre-existing Finder
-        // gap. Fail closed on Unavailable/Ambiguous/CheckFailed/exception, audited as a denial.
-        var ppDenial = await CheckProtectedPrincipalAsync(job, actionAudit, target, ticket);
-        if (ppDenial is not null)
-            return ppDenial;
-
-        // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses.
-        var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";
-        using var op = _trace.BeginRootOperation(ModuleName, traceAction, job.SubmittedBy, job.SubmittedIp, target, ticket);
-        try
-        {
-            RoomOperationResult r = isFinder
-                ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex])
-                : await ApplyTypeRowAsync(payload.TypeRows![rowIndex]);
-
-            op.Complete(r.Success, r.Message);
-
-            // 5) Per-row audit with captured actor/ip/ticket (same as the live page).
-            Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
-                newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]));
-
-            return new BulkJobRowOutcome
+        // owner 2026-07-02), through the SHARED ConferenceRoomProtectionGate so the check runs
+        // exactly once per row and no path can write without it. The write (steps 3-5) lives inside
+        // onAllowed, so a protected/fail-closed target never reaches the trace scope or any side
+        // effect (Known Failure Class #1). A denial is audited here under the _Bulk action with the
+        // captured job actor/ip/ticket.
+        return await _protectionGate.GuardThenRunAsync(target,
+            onDenied: denial =>
             {
-                Target = target,
-                Status = r.Partial ? BulkJobRowStatus.Partial : (r.Success ? BulkJobRowStatus.Success : BulkJobRowStatus.Failed),
-                Message = r.Message
-            };
-        }
-        catch (Exception ex)
-        {
-            op.Complete(false, ex.Message, ex);
-            Audit(job, actionAudit, target, success: false, ticket, ex.Message);
-            return Failed(target, ex.Message);
-        }
+                Audit(job, actionAudit, target, success: false, ticket, denial.AuditDetail);
+                return Failed(target, denial.Message);
+            },
+            onAllowed: async () =>
+            {
+                // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses.
+                var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";
+                using var op = _trace.BeginRootOperation(ModuleName, traceAction, job.SubmittedBy, job.SubmittedIp, target, ticket);
+                try
+                {
+                    RoomOperationResult r = isFinder
+                        ? await ApplyFinderRowAsync(payload.FinderRows![rowIndex])
+                        : await ApplyTypeRowAsync(payload.TypeRows![rowIndex]);
+
+                    op.Complete(r.Success, r.Message);
+
+                    // 5) Per-row audit with captured actor/ip/ticket (same as the live page).
+                    Audit(job, actionAudit, target, r.Success, ticket, r.Success ? null : r.Message,
+                        newValues: isFinder ? FinderNewValues(payload.FinderRows![rowIndex]) : TypeNewValues(payload.TypeRows![rowIndex]));
+
+                    return new BulkJobRowOutcome
+                    {
+                        Target = target,
+                        Status = r.Partial ? BulkJobRowStatus.Partial : (r.Success ? BulkJobRowStatus.Success : BulkJobRowStatus.Failed),
+                        Message = r.Message
+                    };
+                }
+                catch (Exception ex)
+                {
+                    op.Complete(false, ex.Message, ex);
+                    Audit(job, actionAudit, target, success: false, ticket, ex.Message);
+                    return Failed(target, ex.Message);
+                }
+            });
     }
 
     public async Task OnJobCompletedAsync(BulkJob job)
@@ -163,47 +173,6 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             row.Email, roomType, row.TimeZone,
             row.Site, string.IsNullOrWhiteSpace(row.Arbiter) ? null : row.Arbiter,
             row.RemoveExistingPermissions);
-    }
-
-    // -------------------------------------------------------------------------
-    // Protected-principal gate (mirrors the page's CheckProtectedPrincipalAsync, off-circuit).
-    // -------------------------------------------------------------------------
-
-    private async Task<BulkJobRowOutcome?> CheckProtectedPrincipalAsync(BulkJob job, string action, string identity, string ticket)
-    {
-        try
-        {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
-            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
-            {
-                var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous — matches multiple AD users."
-                    : "Protection check unavailable.";
-                Audit(job, action, identity, success: false, ticket, $"{reason} — blocked");
-                return Failed(identity, reason);
-            }
-            if (resolved != null)
-            {
-                var check = await _protectedPrincipals.CheckAsync(resolved);
-                if (check.CheckFailed)
-                {
-                    Audit(job, action, identity, success: false, ticket, $"Protection check failed: {check.Reason}");
-                    return Failed(identity, $"Protection check failed: {check.Reason}");
-                }
-                if (check.IsProtected)
-                {
-                    Audit(job, action, identity, success: false, ticket, $"Protected principal — matched rules: {string.Join(", ", check.MatchedRules)}");
-                    return Failed(identity, "This is a protected principal. Operation not permitted.");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
-            Audit(job, action, identity, success: false, ticket, $"Protection check exception: {ex.Message}");
-            return Failed(identity, $"Protection check error: {ex.Message}");
-        }
-        return null;
     }
 
     // -------------------------------------------------------------------------
