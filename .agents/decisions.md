@@ -25,6 +25,11 @@ fine under Roslyn so the hazard is latent there, not absent — "won't break tod
 to keep a zero-benefit risk. Existing non-ASCII is left in place for now (changing audit-log text
 is a behavior change with test impact); a deliberate cleanup is tracked in `.agents/state.md`.
 
+Enforcement (owner, 2026-07-21): the rule gets a CI/lint gate — a non-ASCII byte scan over tracked
+source that fails the build on any hit — so it bites rather than relying on discipline. The lint
+lands with the cleanup sweep (`.agents/state.md` backlog), only after existing non-ASCII is removed,
+or CI would go red immediately. Until then this decision is guidance enforced by review.
+
 ### 2026-07-21 - ConferenceRooms protected-principal check is one guarded-execution enforcement point
 
 Status: Active
