@@ -284,7 +284,7 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
     "CertificateSubject": "CN=EXO-Automation"
   },
   "Audit": {
-    "LogRoot": "E:\\WWWOutput",
+    "LogRoot": "D:\\Logs\\ExchangeAdminWeb",
     "RotationPeriod": "daily",
     "MaxFileMB": 50,
     "MaxFilesPerPeriod": 5
@@ -315,6 +315,12 @@ Copy `appsettings.json.sample` to `appsettings.json` and configure:
 ```
 
 **Important:** `appsettings.json` is excluded from git for security. Never commit production credentials.
+
+**Required:** `Audit:LogRoot` must be set to an absolute path **outside the deploy folder**
+(the app deploys to `D:\inetpub\<app name>`, which is the content root; logs must not live
+under it or under `wwwroot`). There is no baked-in default: **the app will not start** if
+`Audit:LogRoot` is unset or blank, so audit logs are never silently misplaced. Each
+environment sets its own value.
 
 ### 4. Deploy to IIS
 
@@ -451,9 +457,11 @@ C-Suite, Board of Directors, ceo@example.com
 
 All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:
 
-**Audit location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
+**Audit location:** `<Audit:LogRoot>\ExchangeAdminWeb\exchangeadmin_YYYYMMDD.jsonl`
 
-**Trace location:** `E:\WWWOutput\ExchangeAdminWeb\exchangeadmin_YYYYMMDD_trace.jsonl`
+**Trace location:** `<Audit:LogRoot>\ExchangeAdminWeb\exchangeadmin_YYYYMMDD_trace.jsonl`
+
+(`Audit:LogRoot` is a required setting; see the configuration section above.)
 
 **Common audit fields:** `eventType`, `operationId`, `ts`, `user`, `ip`, `action`, `category`, `result`, `ticket`
 

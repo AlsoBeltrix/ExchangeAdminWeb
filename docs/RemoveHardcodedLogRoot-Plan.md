@@ -1,8 +1,9 @@
 # Remove hardcoded E:\WWWOutput log-root fallback (fail-fast on unset Audit:LogRoot)
 
-Status: Approved
+Status: Implemented
 Owner: Michael Coelho
 Created: 2026-07-21
+Implemented: 2026-07-21 (commits fa40485 helper+guard, b14fce6 services, docs slice)
 
 ## Problem
 

@@ -10,11 +10,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
   is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
   manually validated** and **NOT in prod**. This session's commits are NOT yet deployed to dev.
-- **No code change in progress.** Working tree clean; `master` pushed to both remotes and
-  **CI green** (as of `71d1daa`) -- first green since 2026-07-20.
-- **OPEN for next session (owner to choose):** (1) implement the Approved log-root plan
-  `docs/RemoveHardcodedLogRoot-Plan.md`, or (2) dev-deploy `2.3.28` (now on green master). Neither
-  started.
+- **Log-root fail-fast IMPLEMENTED** (2026-07-21, `docs/RemoveHardcodedLogRoot-Plan.md`). Hardcoded
+  `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if `Audit:LogRoot`
+  is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services), docs slice below. Build +
+  all 676 tests green locally; NOT yet pushed.
+- **OPEN for next session:** dev-deploy `2.3.28` + this session's log-root work (on master, not pushed).
 - **This session landed (2026-07-21), all pushed + CI green:**
   - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
     decisions.md + repo-guidance; resolved the long-open versioning exception).
@@ -28,12 +28,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   - `b978362` -- fixed `ConferenceRoomProtectionGateTests` hardcoded `E:\WWWOutput` log path (was
     masked until format gate went green; failed only on CI, not the ADI dev box).
   - `71d1daa` -- Approved plan `docs/RemoveHardcodedLogRoot-Plan.md`.
-- **AccountLockoutRemediation: does NOT work in this environment.** Live-tested this session:
-  WinRM reaches only ~5 of 38 domain controllers (HTTP 400 / Access denied / unreachable);
-  confirmed permanent (owner: "won't be changed"). Discovery hides unreachable DCs (looks like
-  "no lockouts found"); sweep silently drops the ~33 it can't reach. Owner decided the module is
-  unusable here and will be turned OFF. NOT yet actioned -- decision pending: leave disabled
-  (default) vs remove from catalog. See Next-up.
+- **AccountLockoutRemediation: TURNED OFF by owner** (2026-07-21). Does not work in this environment:
+  WinRM reaches only ~5 of 38 domain controllers (HTTP 400 / Access denied / unreachable); permanent
+  (owner: "won't be changed"). Discovery hides unreachable DCs (looks like "no lockouts found"); sweep
+  silently drops the ~33 it can't reach. Owner disabled the module (runtime enablement, no code change).
 - **Toolkit bug filed:** roethlar/AgentGovernanceBootstrap#7 -- completing a tracked item should
   auto-update the state record, not gate it behind an owner ask.
 
@@ -58,14 +56,6 @@ covered by automated tests. (Dev deploy done 2026-07-20.)
 ## Next up (prioritized)
 
 Live backlog only. Items need an approved plan before code unless noted.
-
-0. **Implement log-root fail-fast** -- `docs/RemoveHardcodedLogRoot-Plan.md` (Status: Approved).
-   Remove hardcoded `E:\WWWOutput` from `ExtendedLogService`/`JsonlLogService`/
-   `EmergencyDisableService`; add a startup guard that fails to start if `Audit:LogRoot` is unset.
-   Ready to implement; owner to confirm doing it now vs later.
-0b. **Turn off AccountLockoutRemediation** -- owner decided it is unusable here (WinRM reaches ~5
-   of 38 DCs, permanent). Decision pending: leave disabled (default; reversible) vs remove from
-   catalog (code change, needs a small plan). Not started.
 
 1. **Manual-validate the Bulk Job Runner on dev — DEFERRED (owner, 2026-07-20).** No test data and
    no dev/QA tenant for AD or Exchange, so a real end-to-end run is not possible here. The runner
