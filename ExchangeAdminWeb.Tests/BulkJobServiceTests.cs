@@ -201,7 +201,7 @@ public class BulkJobServiceTests
         // 'C' blocks until cancelled; the drain runs on a background task so we can cancel it.
         h.Repository.Insert(h.NewJob("j1", "CCCC"));
 
-        var drain = Task.Run(() => h.Service.DrainQueueAsync(CancellationToken.None));
+        var drain = Task.Run(() => h.Service.DrainQueueAsync(TestContext.Current.CancellationToken), TestContext.Current.CancellationToken);
 
         // Wait until the job is actually Running.
         await WaitUntil(() => h.Repository.Get("j1")?.Status == BulkJobStatus.Running);
