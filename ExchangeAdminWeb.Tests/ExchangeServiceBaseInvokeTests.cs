@@ -9,7 +9,7 @@ namespace ExchangeAdminWeb.Tests;
 /// against (Defect B in docs/ConferenceRooms-SyncedRoomSetMailbox-Plan.md): on a failure,
 /// Invoke previously threw WITHOUT clearing the PowerShell command queue or error stream, so
 /// the failed command stayed queued on the shared pooled runspace and re-ran on every
-/// subsequent step — turning one expected failure into a cascade.
+/// subsequent step - turning one expected failure into a cascade.
 ///
 /// Invoke is invoked via a test subclass because it is protected. A real in-process runspace
 /// is used (no Exchange) so command-queue/stream semantics match production.

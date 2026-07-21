@@ -9,7 +9,7 @@ namespace ExchangeAdminWeb.Tests;
 /// Catalog integration + deterministic-helper coverage for the BlockedSenders module. The live
 /// EXO read/unblock run through the shared <see cref="ExoConnectionPool"/>, which is sealed and
 /// cannot be unit-hosted (see ExoConnectionPool remarks), so the PowerShell paths are
-/// manual-validation-only — see docs/BlockedSenders.md. What is covered here: the descriptor wiring
+/// manual-validation-only - see docs/BlockedSenders.md. What is covered here: the descriptor wiring
 /// the authorization model depends on, and the pure mapping/normalization helpers.
 /// </summary>
 public sealed class BlockedSendersTests

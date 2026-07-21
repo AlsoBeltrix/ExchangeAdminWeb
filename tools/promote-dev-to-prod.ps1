@@ -204,7 +204,7 @@ function Stop-AppPoolChecked {
     }
 
     Write-Step "Stopping prod app pool: $Name"
-    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     if ($ConfigDir) { Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $ConfigDir | Out-Null }
     Stop-WebAppPool -Name $Name -ErrorAction Stop
     Start-Sleep -Seconds 3
@@ -287,7 +287,7 @@ if ($Refresh) {
     if ($devDbBackup) { Write-Ok "Dev config DB backed up (verified) to $devDbBackup" }
 
     Write-Step "Stopping dev app pool: $DevAppPoolName"
-    # Warn (do not block) if a durable bulk job is active on dev — recycling interrupts it.
+    # Warn (do not block) if a durable bulk job is active on dev - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $devConfigDir | Out-Null
     Stop-WebAppPool -Name $DevAppPoolName -ErrorAction Stop
     Start-Sleep -Seconds 3

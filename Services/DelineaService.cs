@@ -70,7 +70,7 @@ public class DelineaService
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
-                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} — forcing token refresh", response.StatusCode, secretId);
+                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} - forcing token refresh", response.StatusCode, secretId);
                 InvalidateToken();
                 token = await GetAccessTokenAsync();
 
@@ -138,7 +138,7 @@ public class DelineaService
             if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 response.StatusCode == System.Net.HttpStatusCode.Forbidden)
             {
-                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} — forcing token refresh and retrying", response.StatusCode, secretId);
+                _logger.LogWarning("Delinea returned {Status} for secret {SecretId} - forcing token refresh and retrying", response.StatusCode, secretId);
                 InvalidateToken();
                 token = await GetAccessTokenAsync();
 
@@ -186,7 +186,7 @@ public class DelineaService
 
             if (string.IsNullOrEmpty(domain))
             {
-                _logger.LogError("Secret {SecretId} missing Domain field — cannot construct credential", secretId);
+                _logger.LogError("Secret {SecretId} missing Domain field - cannot construct credential", secretId);
                 _extLog.Write(LogEventLevel.Error, "Delinea credential secret missing Domain field", "Delinea", () => $"SecretId={secretId}");
                 _operationTrace.Step("VaultCredentialParsed", "Failed", backend: "Delinea", details: new Dictionary<string, object?> { ["secretId"] = secretId, ["reason"] = "Missing domain" });
                 return null;
@@ -260,7 +260,7 @@ public class DelineaService
             {
                 var errorBody = await authResponse.Content.ReadAsStringAsync();
                 var oauthError = GetOAuthErrorCode(errorBody);
-                _logger.LogWarning("Delinea auth failed: {Status} | OAuthError: {OAuthError} — reloading credentials and retrying",
+                _logger.LogWarning("Delinea auth failed: {Status} | OAuthError: {OAuthError} - reloading credentials and retrying",
                     authResponse.StatusCode, oauthError);
 
                 LoadCredentials();

@@ -67,7 +67,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
 
         var logger = Substitute.For<ILogger<ProtectedPrincipalService>>();
         // The service imports any legacy protected-principals.json (written above) into this
-        // repo's DB at construction, then reads back from it — same store throughout. Tests can
+        // repo's DB at construction, then reads back from it - same store throughout. Tests can
         // inject a custom store (e.g. an unreadable one) to exercise DB-integrity failure.
         var ppRepo = protectedStore != null
             ? new ProtectedPrincipalRepository(protectedStore)
@@ -426,7 +426,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
     [Theory]
     [InlineData("CN=Domain Admins,CN=Users,DC=ad,DC=analog,DC=com", "Domain Admins")]
     [InlineData("CN=Test Group,OU=Groups,DC=contoso,DC=com", "Test Group")]
-    [InlineData("CN=SimpleGroup", "SimpleGroup")] // No comma — entire value
+    [InlineData("CN=SimpleGroup", "SimpleGroup")] // No comma - entire value
     [InlineData("", null)]
     [InlineData("OU=Users,DC=contoso,DC=com", null)] // Not a CN-prefixed DN
     public void ExtractCnFromDn_ExtractsCorrectly(string dn, string? expected)
@@ -553,7 +553,7 @@ public class ProtectedPrincipalServiceTests : IDisposable
         public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) => throw new InvalidOperationException("store unreadable");
     }
 
-    // Reads succeed (returns empty/unconfigured) but writes throw — simulates SQLite busy during
+    // Reads succeed (returns empty/unconfigured) but writes throw - simulates SQLite busy during
     // the one-time import.
     private sealed class WriteFailsStore : ExchangeAdminWeb.Services.Storage.IConfigStore
     {

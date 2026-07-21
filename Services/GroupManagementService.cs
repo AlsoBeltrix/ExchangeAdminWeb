@@ -45,7 +45,7 @@ public class GroupManagementService
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous — matches multiple AD users."
+                    ? "Identity is ambiguous - matches multiple AD users."
                     : "Protection check unavailable. Cannot verify if this member is protected.");
             }
 
@@ -62,7 +62,7 @@ public class GroupManagementService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Protected principal check failed for member {Member} — blocking as precaution", member);
+            _logger.LogWarning(ex, "Protected principal check failed for member {Member} - blocking as precaution", member);
             return PermissionResult.Fail($"Protection check error: {ex.Message}");
         }
     }
@@ -94,7 +94,7 @@ public class GroupManagementService
               .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
               .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description" })
               .AddParameter("Credential", credential)
-              // Fetch wider than we display so ranking sees more than the shown set —
+              // Fetch wider than we display so ranking sees more than the shown set -
               // guarantees an exact match is fetched even when many groups share the
               // substring. RankGroups then promotes it to the top; the page shows 100.
               .AddParameter("ResultSetSize", 200)

@@ -71,7 +71,7 @@ public class ConferenceRoomSyncedRoomTests
     [InlineData("NonRoomMailboxAddToRoomListException: bad recipient type")]
     public void ClassifyRoomListAddFailure_NonRoomMailbox_IsAdAttributeFix_NotFallback(string msg)
     {
-        // A room-attribute problem the on-prem membership add cannot fix — must NOT fall back.
+        // A room-attribute problem the on-prem membership add cannot fix - must NOT fall back.
         Assert.Equal(ConferenceRoomService.RoomListAddAction.AdAttributeFix,
             ConferenceRoomService.ClassifyRoomListAddFailure(msg));
     }

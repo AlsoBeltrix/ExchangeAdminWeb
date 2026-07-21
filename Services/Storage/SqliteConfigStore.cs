@@ -4,8 +4,8 @@ namespace ExchangeAdminWeb.Services.Storage;
 
 /// <summary>
 /// SQLite-backed <see cref="IConfigStore"/>. Opens a fresh connection per operation via
-/// <see cref="SqliteConnectionFactory"/> (never a shared long-lived connection — §5B.1) and
-/// bumps the change token inside every write transaction (§5B.2).
+/// <see cref="SqliteConnectionFactory"/> (never a shared long-lived connection - Section 5B.1) and
+/// bumps the change token inside every write transaction (Section 5B.2).
 /// </summary>
 public sealed class SqliteConfigStore : IConfigStore
 {

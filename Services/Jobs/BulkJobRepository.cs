@@ -7,7 +7,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// Thin hand-written repository for the operational jobs database (Microsoft.Data.Sqlite, no EF),
 /// mirroring the Services/Storage/*Repository pattern. Opens a short-lived connection per operation
 /// via <see cref="SqliteConnectionFactory"/>. Constructed with a jobs-specific factory (its own
-/// exchangeadmin-jobs.db), NOT the config-store factory — the two databases are deliberately
+/// exchangeadmin-jobs.db), NOT the config-store factory - the two databases are deliberately
 /// separate (docs/BulkJobRunner-Plan.md).
 /// </summary>
 public sealed class BulkJobRepository
@@ -49,9 +49,9 @@ public sealed class BulkJobRepository
     }
 
     // Job state changes are deliberately expressed as narrow, guarded operations rather than a
-    // single blind "write the whole object back". A job is mutated from more than one place — the
+    // single blind "write the whole object back". A job is mutated from more than one place - the
     // runner on its worker thread, an operator's cancel from a different circuit, and startup
-    // reconciliation — so overwriting every column from one caller's stale copy could silently drop
+    // reconciliation - so overwriting every column from one caller's stale copy could silently drop
     // a concurrent cancel or resurrect a terminal job (codex review 2026-07-02). Every transition
     // below is compare-and-swap on the current status; aggregate counts are derived from the rows
     // table (single source of truth) so they can never drift from the actual row outcomes.
@@ -81,7 +81,7 @@ public sealed class BulkJobRepository
 
     /// <summary>
     /// Requests cancellation of a still-active job (Queued or Running). Targeted write of the flag
-    /// only — never overwrites status or any other field, so it cannot race with the runner's own
+    /// only - never overwrites status or any other field, so it cannot race with the runner's own
     /// updates. The runner observes the flag and stops before its next row; a Queued job is finished
     /// as Cancelled by the caller via <see cref="TryFinish"/>. No-op on a terminal job.
     /// </summary>

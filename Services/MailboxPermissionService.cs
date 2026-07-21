@@ -88,7 +88,7 @@ public class MailboxPermissionService : ExchangeServiceBase
 
     public Task<PermissionResult> RemoveMailboxPermissionsAsync(string targetMailbox, string user, bool fullAccess, bool sendAs)
     {
-        // Per-right try/catch with aggregation — see AddMailboxPermissionsAsync for why
+        // Per-right try/catch with aggregation - see AddMailboxPermissionsAsync for why
         // the previous single-Fail RunAsync shape lost partial-success information.
         return RunPooledQueryAsync((ps, tracker) =>
         {

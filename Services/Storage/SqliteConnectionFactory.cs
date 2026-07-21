@@ -5,7 +5,7 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// <summary>
 /// Opens short-lived SQLite connections to the config database. Registered as a singleton,
 /// but it deliberately does NOT hold a single shared <see cref="SqliteConnection"/>: config
-/// consumers are a mix of Singleton and Scoped services (see SqliteConfigStore-Plan §5B.1),
+/// consumers are a mix of Singleton and Scoped services (see SqliteConfigStore-Plan Section 5B.1),
 /// and a long-lived shared connection is not safe across those lifetimes. Every operation
 /// opens its own connection and disposes it; SQLite WAL mode + busy timeout handle the
 /// single-writer/multiple-reader concurrency this app produces.

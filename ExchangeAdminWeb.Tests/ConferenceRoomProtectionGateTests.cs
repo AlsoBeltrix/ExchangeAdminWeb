@@ -8,10 +8,10 @@ using NSubstitute;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Guards ConferenceRoomProtectionGate — the single protected-principal enforcement point for every
+/// Guards ConferenceRoomProtectionGate - the single protected-principal enforcement point for every
 /// ConferenceRooms room-mutating write. These drive the PRODUCTION GuardThenRunAsync executor with a
 /// spy write delegate: the write must be reachable only on the allow path, and never on protected or
-/// any fail-closed outcome. This is the non-vacuity home for the single-room Finder gap fix — with
+/// any fail-closed outcome. This is the non-vacuity home for the single-room Finder gap fix - with
 /// the denial branch present, a protected target leaves the write delegate uncalled; removing that
 /// branch makes the "protected => write not invoked" assertions fail.
 /// </summary>

@@ -60,7 +60,7 @@ public sealed class ModuleCatalog
         // Fallback policy for endpoints that declare NO authorization metadata.
         // True deny-by-default: an undeclared endpoint (a future health check, download,
         // or minimal API added without an [Authorize] attribute) is blocked for EVERY
-        // user until it declares its own catalog-backed policy — not merely opened to any
+        // user until it declares its own catalog-backed policy - not merely opened to any
         // authenticated user. Do NOT reuse groupPolicy here either: that would silently
         // subject undeclared endpoints to the legacy app-wide AllowedGroups gate the
         // Constitution removed. An endpoint that needs access must declare its own policy.
@@ -147,7 +147,7 @@ public sealed class ModuleCatalog
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by mailbox permission operations", Required: false),
-                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves — applies to all permission operations (true/false)", Required: false, DefaultValue: "true")
+                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves - applies to all permission operations (true/false)", Required: false, DefaultValue: "true")
             ]
         },
         new()

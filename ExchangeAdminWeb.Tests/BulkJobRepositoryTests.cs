@@ -101,7 +101,7 @@ public class BulkJobRepositoryTests
         repo.RequestCancel("j1");
 
         Assert.True(repo.IsCancelRequested("j1"));
-        // Cancel is a targeted flag write — it must not itself change the status.
+        // Cancel is a targeted flag write - it must not itself change the status.
         Assert.Equal(BulkJobStatus.Running, repo.Get("j1")!.Status);
     }
 

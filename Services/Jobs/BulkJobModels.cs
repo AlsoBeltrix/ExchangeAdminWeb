@@ -3,7 +3,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// <summary>
 /// Lifecycle state of a bulk job. Only these values are persisted. "Stalled" is intentionally
 /// NOT here: it is a display-only classification derived from a stale <see cref="BulkJob.HeartbeatAtUtc"/>
-/// (see <c>BulkJobService</c>), never a stored terminal state — a job whose worker is wedged
+/// (see <c>BulkJobService</c>), never a stored terminal state - a job whose worker is wedged
 /// mid-call is still <see cref="Running"/> in the store and only surfaces as stalled in the UI.
 /// See docs/BulkJobRunner-Plan.md (Anti-brittleness).
 /// </summary>
@@ -56,7 +56,7 @@ public sealed class BulkJob
 
     public BulkJobStatus Status { get; set; }
 
-    // --- Captured submission context (option (a) authorization — see plan). The live circuit is
+    // --- Captured submission context (option (a) authorization - see plan). The live circuit is
     // gone once the job runs, so who/ip/ticket and the authorization snapshot are captured at
     // submit time and re-used per row. ---
 
@@ -75,7 +75,7 @@ public sealed class BulkJob
     /// <summary>
     /// JSON snapshot of the submitter's authorization decision + role claims, captured on the
     /// circuit where the principal is present. Re-evaluated per row against the section's group set
-    /// (option (a)). Does not detect mid-job group-membership revocation — matches today's model.
+    /// (option (a)). Does not detect mid-job group-membership revocation - matches today's model.
     /// </summary>
     public string? AuthSnapshotJson { get; init; }
 
@@ -103,12 +103,12 @@ public sealed class BulkJob
     /// <summary>Optional terminal-state message (e.g. reconciliation note).</summary>
     public string? Message { get; set; }
 
-    /// <summary>True for any state a job cannot leave on its own (no resume — owner direction).</summary>
+    /// <summary>True for any state a job cannot leave on its own (no resume - owner direction).</summary>
     public bool IsTerminal => Status is BulkJobStatus.Completed or BulkJobStatus.Cancelled or BulkJobStatus.Interrupted;
 }
 
 /// <summary>A single persisted per-row outcome. Only row-level outcome is durable; live grey step
-/// detail stays in memory on the watching circuit (keeps the durable footprint small — see plan).</summary>
+/// detail stays in memory on the watching circuit (keeps the durable footprint small - see plan).</summary>
 public sealed class BulkJobRow
 {
     public required string JobId { get; init; }

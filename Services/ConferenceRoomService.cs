@@ -30,13 +30,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // -------------------------------------------------------------------------
-    // Config helpers — all group addresses come from module config with fallbacks
+    // Config helpers - all group addresses come from module config with fallbacks
     // -------------------------------------------------------------------------
 
     private string Cfg(string key, string fallback = "")
         => _moduleConfig.GetValue(ModuleId, key) ?? fallback;
 
-    // Environment-specific values come from module config — no hardcoded defaults. When a
+    // Environment-specific values come from module config - no hardcoded defaults. When a
     // required group is unconfigured the operation fails closed (see SetRoomTypeAsync
     // preflight); the real values live in deploy-path config/module-config-ConferenceRooms.json.
     private string ArbiterGroup => Cfg("DefaultArbiterGroup");
@@ -128,13 +128,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     public static string BuildLegacyRoomListName(string key) => $"RoomList-{key.Trim()}";
 
     // -------------------------------------------------------------------------
-    // Room Finder synced-attribute mapping (City/State/Country → on-prem AD)
+    // Room Finder synced-attribute mapping (City/State/Country -> on-prem AD)
     // -------------------------------------------------------------------------
     // City, StateOrProvince and CountryOrRegion are on-prem-AD-mastered and dir-synced, so
     // EXO Set-User rejects them ("being synchronized from your on-premises organization").
     // They are written on-prem with Set-ADUser instead. EXO Set-User -CountryOrRegion wrote
-    // THREE AD attributes as a unit — c (alpha-2), co (English name), countryCode (ISO
-    // numeric) — so the replacement must set all three to match existing rooms. See
+    // THREE AD attributes as a unit - c (alpha-2), co (English name), countryCode (ISO
+    // numeric) - so the replacement must set all three to match existing rooms. See
     // docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md.
 
     /// <summary>
@@ -218,7 +218,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Whether an on-prem write that was SKIPPED (on-prem not configured) should count as
     // success. It is success only when the cloud write already set the attribute. If the
     // cloud write was deferred because the room is on-prem mastered, a skip means the
-    // attribute is written nowhere — that is a failure. Pure + static for unit testing.
+    // attribute is written nowhere - that is a failure. Pure + static for unit testing.
     public static bool OnPremSkipCountsAsSuccess(bool cloudAttrDeferredToOnPrem)
         => !cloudAttrDeferredToOnPrem;
 
@@ -228,7 +228,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     //    membership add cannot fix it, so keep the existing guidance and do NOT fall back.
     //  - OnPremFallback: the list is on-prem mastered (DirSync'd) and EXO rejected the cloud
     //    add; retry the membership write on-prem.
-    //  - Surface: any other error — report as-is, no fallback, no masking.
+    //  - Surface: any other error - report as-is, no fallback, no masking.
     // See docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
     public enum RoomListAddAction { Surface, AdAttributeFix, OnPremFallback }
 
@@ -292,7 +292,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     /// <summary>
     /// Resolve the target room list for a room, keyed on <paramref name="building"/>.
     /// <paramref name="city"/> is used only to detect a stray city-named list that differs
-    /// from the building target (so the UI can warn the operator — Option ii). Returns the
+    /// from the building target (so the UI can warn the operator - Option ii). Returns the
     /// canonical-or-legacy target name, whether it already exists, whether the match was the
     /// legacy form, and the name of any differing city-named list found (else null).
     /// </summary>
@@ -354,7 +354,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // -------------------------------------------------------------------------
-    // Room Finder — set metadata + add to room list
+    // Room Finder - set metadata + add to room list
     // -------------------------------------------------------------------------
 
     public async Task<RoomOperationResult> SetRoomMetadataAndListAsync(
@@ -387,7 +387,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         // metadata; if the AD prerequisites for Step 2 are bad (unmappable country, missing/
         // unavailable credential, no/ambiguous AD object) we must fail the row here so EXO is
         // never partially written. Without this guard a bad-AD row was reported failed but had
-        // already committed Set-Place — the partial-apply defect from the 2026-06-17 review.
+        // already committed Set-Place - the partial-apply defect from the 2026-06-17 review.
         var adPreflightError = await PreflightSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
         if (adPreflightError != null)
         {
@@ -397,7 +397,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return result;
         }
 
-        // Step 1: Set-Place (EXO) — Building/Capacity/Floor/devices are NOT dir-synced, so
+        // Step 1: Set-Place (EXO) - Building/Capacity/Floor/devices are NOT dir-synced, so
         // EXO accepts them. City is intentionally NOT sent here; it is a synced attribute
         // written on-prem in Step 2.
         // Single-write (Set-Place): safe to retry on a dead pooled session. This is the step
@@ -429,7 +429,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             return result;
         }
 
-        // Step 2: Set-ADUser (on-prem AD) — City/State/Country are dir-synced AD attributes
+        // Step 2: Set-ADUser (on-prem AD) - City/State/Country are dir-synced AD attributes
         // that EXO Set-User rejects. Written on the on-prem object instead (the bug fix).
         _operationTrace?.Step("SetADUser", backend: "AD", command: "Set-ADUser", target: roomEmail);
         var adError = await SetSyncedAttributesViaAdAsync(roomEmail, city, state, countryOrRegion);
@@ -444,7 +444,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         result.Steps.Add(new RoomOperationStep { Stage = "Set-ADUser (City/State/Country)", Success = true });
 
-        // Step 3: Timezone + WorkDays (EXO) — mailbox regional config is not synced.
+        // Step 3: Timezone + WorkDays (EXO) - mailbox regional config is not synced.
         if (!string.IsNullOrWhiteSpace(timezone))
         {
             var tzResult = await RunAsync((ps, tracker) =>
@@ -476,7 +476,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             }
         }
 
-        // Step 4: Room list — keyed on building (the room list IS the building; city is
+        // Step 4: Room list - keyed on building (the room list IS the building; city is
         // metadata only). A room with no building is not added to any list.
         if (!string.IsNullOrWhiteSpace(building))
         {
@@ -525,7 +525,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // EXO pool), so NO -OrganizationalUnit is set: Exchange Online does not know
                 // on-prem OUs and rejects an on-prem OU path ("organizational unit not found").
                 // The list is created in EXO's default location. This makes the room list a
-                // cloud-only object (not synced from on-prem like other DLs) — accepted by the
+                // cloud-only object (not synced from on-prem like other DLs) - accepted by the
                 // owner 2026-06-18, consistent with the pending on-prem Exchange decommission.
                 _operationTrace?.Step("CreateRoomList", backend: "EXO", command: "New-DistributionGroup", target: roomListName);
                 ps.AddCommand("New-DistributionGroup")
@@ -620,7 +620,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // -------------------------------------------------------------------------
-    // Room Type — full 6-type implementation matching PS script
+    // Room Type - full 6-type implementation matching PS script
     // -------------------------------------------------------------------------
 
     public async Task<RoomOperationResult> SetRoomTypeAsync(
@@ -668,7 +668,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
         // Set when the cloud CustomAttribute9/MailTip write was rejected because the room is
         // on-prem mastered (DirSync'd). When true, the on-prem Set-RemoteMailbox (Step 9)
-        // becomes the ONLY path that writes these attributes, so it is mandatory — see Step 9.
+        // becomes the ONLY path that writes these attributes, so it is mandatory - see Step 9.
         bool cloudAttrDeferredToOnPrem = false;
 
         var opResult = await RunAsync((ps, tracker) =>
@@ -771,7 +771,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
             // Step 5: Set CustomAttribute9 + MailTip on cloud mailbox
             // Step 5: Set CustomAttribute9 + MailTip on the cloud mailbox. For a DirSync'd
             // (on-prem mastered) room this write is rejected cloud-side and must be done
-            // on-prem via Set-RemoteMailbox (Step 9) — so run it best-effort and classify the
+            // on-prem via Set-RemoteMailbox (Step 9) - so run it best-effort and classify the
             // result. The cloud rejection is expected and informational; any OTHER error is a
             // real failure and is surfaced as such. Best-effort also avoids leaving a failed
             // command queued on the shared pipeline (which previously poisoned later steps).
@@ -795,13 +795,13 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 // (RoomOperationStep has no info severity; represent as Success=true with text.)
                 result.Steps.Add(new RoomOperationStep
                 {
-                    Stage = "CustomAttribute9/MailTip set on-prem (synced room — cloud write skipped)",
+                    Stage = "CustomAttribute9/MailTip set on-prem (synced room - cloud write skipped)",
                     Success = true
                 });
             }
             else
             {
-                // Unexpected cloud error — keep it visible as a failure.
+                // Unexpected cloud error - keep it visible as a failure.
                 result.Steps.Add(new RoomOperationStep
                 {
                     Stage = "Set-Mailbox (CustomAttribute9/MailTip)",
@@ -868,7 +868,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // -------------------------------------------------------------------------
-    // CSV parsing — shared, testable. Email selection matches SetupRoomType.ps1:
+    // CSV parsing - shared, testable. Email selection matches SetupRoomType.ps1:
     // first non-blank identifier column wins; no '@' requirement (Exchange
     // resolves SMTP/alias/DN/canonical). Skipped rows carry a reason and the
     // header names found, and are never silently dropped.
@@ -923,7 +923,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 results.Add(new FinderCsvParseResult
                 {
                     RowIndex = rowNum++,
-                    SkipReason = "Missing identity — no value in any of: " + string.Join(", ", IdentityColumns),
+                    SkipReason = "Missing identity - no value in any of: " + string.Join(", ", IdentityColumns),
                     AvailableColumns = columns
                 });
                 continue;
@@ -975,7 +975,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 results.Add(new TypeCsvParseResult
                 {
                     RowIndex = rowNum++,
-                    SkipReason = "Missing identity — no value in any of: " + string.Join(", ", IdentityColumns),
+                    SkipReason = "Missing identity - no value in any of: " + string.Join(", ", IdentityColumns),
                     AvailableColumns = columns
                 });
                 continue;
@@ -1059,7 +1059,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         if (removeExisting && type != RoomType.CEO)
             preview.Warnings.Add("Existing calendar permissions will be removed before applying new ones.");
 
-        // Signal (don't throw) when the module isn't configured — Apply will fail closed.
+        // Signal (don't throw) when the module isn't configured - Apply will fail closed.
         var missingGroups = FindMissingRequiredGroups(key => _moduleConfig.GetValue(ModuleId, key));
         if (missingGroups.Count > 0)
             preview.Warnings.Add($"Module not configured: set {string.Join(", ", missingGroups)} in Module Config before applying.");
@@ -1068,7 +1068,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // -------------------------------------------------------------------------
-    // Type-specific settings — mirrors SetupRoomType.ps1 switch block
+    // Type-specific settings - mirrors SetupRoomType.ps1 switch block
     // -------------------------------------------------------------------------
 
     private void ApplyTypeSpecificProcessingSettings(
@@ -1216,7 +1216,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
             result.Steps.Add(new RoomOperationStep
             {
-                Stage = $"Permission: {user} → {accessRights}",
+                Stage = $"Permission: {user} -> {accessRights}",
                 Success = true
             });
         }
@@ -1224,7 +1224,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         {
             result.Steps.Add(new RoomOperationStep
             {
-                Stage = $"Permission: {user} → {accessRights}",
+                Stage = $"Permission: {user} -> {accessRights}",
                 Success = false,
                 Error = ex.Message
             });
@@ -1253,7 +1253,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
 
     // Writes the dir-synced location attributes (City/State/Country) on the on-prem AD
     // object via Set-ADUser. These attributes are AD-mastered, so EXO Set-User rejects them
-    // ("being synchronized from your on-premises organization") — the root cause of the
+    // ("being synchronized from your on-premises organization") - the root cause of the
     // Room Finder apply failure (docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md).
     // Returns null on success; a non-null string is the failure message for the row.
     // Runs in its own AD runspace (mirrors Comms10k / CheckAdGroupMembership), not through
@@ -1261,8 +1261,8 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // forest-unique), asserts EXACTLY ONE match, and writes by the returned objectGUID so the
     // mutation targets an immutable identity and can never hit the wrong object.
     // Pre-mutation validation for the AD step. Runs every check that can be made WITHOUT
-    // mutating anything — country mapping, credential availability, and resolving the AD
-    // object to exactly one ObjectGUID — so the caller can fail the row BEFORE the EXO
+    // mutating anything - country mapping, credential availability, and resolving the AD
+    // object to exactly one ObjectGUID - so the caller can fail the row BEFORE the EXO
     // Set-Place write commits. This is the all-or-nothing guard: without it, a row whose
     // AD prerequisites are bad (unmappable country, missing/unavailable credential, no/
     // ambiguous AD object) would already have committed EXO metadata before failing.
@@ -1278,11 +1278,11 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         catch (ArgumentException ex)
         {
-            return ex.Message; // unmappable country — fail the row closed
+            return ex.Message; // unmappable country - fail the row closed
         }
 
         if (attrs.Count == 0)
-            return null; // nothing synced to write for this row — AD step will be a no-op
+            return null; // nothing synced to write for this row - AD step will be a no-op
 
         var creds = await GetModuleCredentialsAsync($"Set-ADUser preflight for {roomEmail}");
         if (creds is null)
@@ -1326,7 +1326,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
         }
         catch (ArgumentException ex)
         {
-            return ex.Message; // unmappable country — fail the row closed
+            return ex.Message; // unmappable country - fail the row closed
         }
 
         if (attrs.Count == 0)
@@ -1382,7 +1382,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     // Adds a room mailbox to an on-prem-mastered (DirSync'd) room-list group via the on-prem
     // AD object. Exchange Online refuses Add-DistributionGroupMember against a synced group
     // ("out of the current user's write scope ... being synchronized from your on-premises
-    // organization"), so membership must be written on-prem and then syncs up (~30 min) — the
+    // organization"), so membership must be written on-prem and then syncs up (~30 min) - the
     // same shape as the Set-ADUser City/State/Country handling. Returns null on success (incl.
     // already-a-member no-op), or a non-null failure message. See
     // docs/ConferenceRooms-OnPremRoomListAdd-Plan.md.
@@ -1412,7 +1412,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
                 var credential = CreateAdCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
                 // Resolve BOTH objects to immutable GUIDs, fail-closed on not-found/ambiguous,
-                // before any write — so we never add the wrong member to the wrong group.
+                // before any write - so we never add the wrong member to the wrong group.
                 var (roomError, roomGuid) = ResolveAdObjectGuid(ps, roomEmail, credential);
                 if (roomError != null)
                     return roomError;
@@ -1487,7 +1487,7 @@ public class ConferenceRoomService : ExchangeServiceBase, Jobs.IConferenceRoomBu
     }
 
     // Resolve a room list (distribution group) to exactly one immutable on-prem ObjectGUID.
-    // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous —
+    // Matches on mail first, then displayName/name, and refuses on not-found or ambiguous -
     // same fail-closed posture as ResolveAdObjectGuid so an on-prem membership write can never
     // target the wrong group. Assumes the ActiveDirectory module is already imported.
     private static (string? error, string? objectGuid) ResolveAdGroupGuid(PowerShell ps, string roomListName, PSCredential credential)

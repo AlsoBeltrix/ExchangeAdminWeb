@@ -4,7 +4,7 @@ namespace ExchangeAdminWeb.Services.Storage;
 
 /// <summary>
 /// Repository for the row-per-group <c>section_access</c> table (policy_alias, group_value) plus
-/// a single <c>section_access_present</c> marker. Backs <see cref="SectionAccessService"/> — the
+/// a single <c>section_access_present</c> marker. Backs <see cref="SectionAccessService"/> - the
 /// authorization store. Row-per-group means a single bad value can never take down a whole
 /// alias. The presence marker preserves the file-world distinction between "configured but
 /// empty" (deny all) and "never configured" (fall back), exactly like module-config presence.
@@ -18,7 +18,7 @@ public sealed class SectionAccessRepository
 
     /// <summary>
     /// Attempts to read all section access. Returns false if the read throws (DB-integrity
-    /// failure — the analogue of an unreadable fragment); the service then fails closed.
+    /// failure - the analogue of an unreadable fragment); the service then fails closed.
     /// </summary>
     public bool TryGetAll(out Dictionary<string, string[]> access)
     {
@@ -59,7 +59,7 @@ public sealed class SectionAccessRepository
 
     /// <summary>
     /// Reads both the access map AND the configured flag in a single guarded operation. Returns
-    /// false if EITHER read fails (a damaged/partial schema — e.g. a missing marker table while
+    /// false if EITHER read fails (a damaged/partial schema - e.g. a missing marker table while
     /// section_access is still readable). Callers in the authorization path use this so a partial
     /// corruption fails closed rather than throwing through. Both out-params are safe-defaulted
     /// on failure.
@@ -93,7 +93,7 @@ public sealed class SectionAccessRepository
 
     /// <summary>
     /// Replaces the entire section-access set (delete-then-insert) and sets the presence marker,
-    /// in one transaction — matching the file version's whole-fragment overwrite.
+    /// in one transaction - matching the file version's whole-fragment overwrite.
     /// </summary>
     public void SaveAll(IReadOnlyDictionary<string, string[]> access)
     {

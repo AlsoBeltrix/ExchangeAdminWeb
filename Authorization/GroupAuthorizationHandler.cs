@@ -57,7 +57,7 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             var module = _catalog.GetByPolicyAlias(requirement.SectionName);
             if (module != null && !_enablement.IsModuleEnabled(module.Id))
             {
-                _logger.LogWarning("User {User} denied access to {Section} — module {Module} is disabled",
+                _logger.LogWarning("User {User} denied access to {Section} - module {Module} is disabled",
                     userName, requirement.SectionName, module.Id);
                 context.Fail(new AuthorizationFailureReason(this, $"Module {module.DisplayName} is currently disabled."));
                 return Task.CompletedTask;
@@ -74,9 +74,9 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
         if (groups.Length == 0)
         {
             if (requirement.SectionName == "Application")
-                _logger.LogError("Security:AllowedGroups is empty — denying all access until configured");
+                _logger.LogError("Security:AllowedGroups is empty - denying all access until configured");
             else
-                _logger.LogError("SectionAccess:{Section} has no groups configured — denying all access", requirement.SectionName);
+                _logger.LogError("SectionAccess:{Section} has no groups configured - denying all access", requirement.SectionName);
             context.Fail(new AuthorizationFailureReason(this, $"No groups configured for {requirement.SectionName}. Contact your administrator."));
             return Task.CompletedTask;
         }
@@ -84,7 +84,7 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
         // Claims-based match goes through the shared pure checker so the live handler and the bulk
         // job runner's off-circuit re-check can never diverge (see GroupMembershipChecker). The
         // IsInRole() checks remain here because they consult the live Windows principal's token
-        // roles, which only exist on a circuit — a job worker has only the captured role claims.
+        // roles, which only exist on a circuit - a job worker has only the captured role claims.
         if (GroupMembershipChecker.IsMemberOfAny(roleClaims, groups))
         {
             _logger.LogInformation("User {User} authorized via a section-access group claim", userName);
@@ -106,7 +106,7 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             }
         }
 
-        _logger.LogWarning("User {User} denied access to {Section} — not in groups: {Groups}",
+        _logger.LogWarning("User {User} denied access to {Section} - not in groups: {Groups}",
             userName, requirement.SectionName, string.Join(", ", groups));
 
         context.Fail(new AuthorizationFailureReason(this, $"User {userName} is not a member of any allowed group for {requirement.SectionName}"));

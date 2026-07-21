@@ -117,7 +117,7 @@ public class CalendarPermissionPreview
 //
 // Email selection mirrors the working SetupRoomType.ps1 reference: take the
 // first non-blank identifier column and hand it to Exchange (Get-Mailbox), which
-// resolves SMTP, alias, DN, or canonical name. We do NOT require an '@' — real
+// resolves SMTP, alias, DN, or canonical name. We do NOT require an '@' - real
 // Exchange exports put a non-SMTP canonical name in the Identity column, and
 // rejecting those was the cause of the "no Apply button" bug (rows silently
 // dropped -> empty preview). See docs/ConferenceRooms-CsvFix-Plan.md.

@@ -86,7 +86,7 @@ public class ADDirectorySearchServiceTests
     {
         // In a test environment without RSAT, IsAvailable should be false
         var svc = CreateService();
-        // Access IsAvailable — this triggers the lazy probe
+        // Access IsAvailable - this triggers the lazy probe
         var available = svc.IsAvailable;
         // We can't guarantee the test host has RSAT, so just verify no exception
         Assert.IsType<bool>(available);

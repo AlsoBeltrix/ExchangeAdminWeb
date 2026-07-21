@@ -141,7 +141,7 @@ public class ConferenceRoomCsvParseTests
         Assert.Equal("c@analog.com", results[2].Row!.Email);
     }
 
-    // ---- Room Finder (parity — works today, hardened against same bug) ------
+    // ---- Room Finder (parity - works today, hardened against same bug) ------
 
     [Fact]
     public async Task FinderCsv_DnOnlyIdentity_NoAtSign_IsParsedNotSkipped()
@@ -210,7 +210,7 @@ public class ConferenceRoomCsvParseTests
     {
         // A preview row built for a parse/validation failure leaves Type unset.
         // It must read as "no type" (null), not the enum's first value (Standard),
-        // so failed rows render "—" instead of a misleading "Standard" while the
+        // so failed rows render "-" instead of a misleading "Standard" while the
         // Status column reports the type as empty/invalid.
         var row = new RoomTypePreviewRow();
 

@@ -82,7 +82,7 @@ public class ModuleAdminService
     }
 
     // One-time import of the legacy module-admins.json into the module_admins table, then
-    // archive the file (SqliteConfigStore-Plan §4). Only fills modules absent from the DB.
+    // archive the file (SqliteConfigStore-Plan Section 4). Only fills modules absent from the DB.
     private void ImportLegacyIfPresent(string legacyPath)
     {
         try

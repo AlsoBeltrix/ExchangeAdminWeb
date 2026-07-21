@@ -5,14 +5,14 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// <summary>
 /// A monotonically increasing version stamp stored in <c>schema_meta</c> and bumped on every
 /// config write. Readers that cache config compare the current token against the one they
-/// cached under; a mismatch means an out-of-band write happened (the prod→dev refresh tool, a
+/// cached under; a mismatch means an out-of-band write happened (the prod->dev refresh tool, a
 /// manual DB edit, or simply a different service instance) and the cache must be reloaded.
 ///
 /// This is the intended replacement for the per-instance TTL/cache-until-save model that would
 /// silently drift once a shared database has writers outside the caching instance
-/// (SqliteConfigStore-Plan §5B.2). It is bumped on every write, but no production reader consults
-/// it yet — the TTL caches (ProtectedPrincipalService, ADAttributeEditorService) currently accept
-/// a ≤30s staleness window, which §5B.2 permitted. Read is a single indexed primary-key lookup, so
+/// (SqliteConfigStore-Plan Section 5B.2). It is bumped on every write, but no production reader consults
+/// it yet - the TTL caches (ProtectedPrincipalService, ADAttributeEditorService) currently accept
+/// a <=30s staleness window, which Section 5B.2 permitted. Read is a single indexed primary-key lookup, so
 /// callers can check it cheaply on every read once they are wired to it.
 /// </summary>
 public sealed class ConfigChangeToken

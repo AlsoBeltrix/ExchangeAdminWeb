@@ -16,7 +16,7 @@ namespace ExchangeAdminWeb.Tests;
 /// and config-driven helpers that do not require live AD / WinRM / Delinea. The PowerShell
 /// session-query/logoff, 4740 event read, AD computer enumeration, and the protected-principal
 /// guard (which run only once credentials resolve against a real Delinea secret) are
-/// manual-validation-only and not exercised here — see
+/// manual-validation-only and not exercised here - see
 /// docs/AccountLockoutRemediation-Incorporation-Plan.md.
 /// </summary>
 public sealed class AccountLockoutRemediationServiceTests : IDisposable
@@ -62,7 +62,7 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("at least one target user", result.Message, StringComparison.OrdinalIgnoreCase);
-        // Validation precedes authorization — the authz service must not even be consulted.
+        // Validation precedes authorization - the authz service must not even be consulted.
         await authorization.DidNotReceiveWithAnyArgs().AuthorizeAsync(default!, default, default(string)!);
     }
 
@@ -128,7 +128,7 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         Assert.Contains("credentials", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    // ---- Admin notification on executed logoff (Constitution §Notifications) ----------------
+    // ---- Admin notification on executed logoff (Constitution Section Notifications) ----------------
 
     [Fact]
     public async Task LogoffSources_Executed_NotifiesAdmins()
@@ -150,7 +150,7 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
     [Fact]
     public async Task LogoffSources_DryRun_DoesNotNotifyAdmins()
     {
-        // Execute:false is a dry run — no state change, so no admin notification.
+        // Execute:false is a dry run - no state change, so no admin notification.
         var service = CreateService(out _, out var email, moduleConfigValues: new Dictionary<string, string>());
 
         await service.LogoffLockoutSourcesAsync(

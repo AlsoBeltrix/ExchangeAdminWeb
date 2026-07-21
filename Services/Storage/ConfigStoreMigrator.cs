@@ -6,12 +6,12 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// Creates and evolves the config database schema using <c>PRAGMA user_version</c> as the
 /// version cursor. Each migration is an idempotent step applied in order inside a single
 /// transaction; re-running against an up-to-date database is a no-op. This is the only place
-/// schema DDL lives (SqliteConfigStore-Plan §3c, §5A).
+/// schema DDL lives (SqliteConfigStore-Plan Section 3c, Section 5A).
 ///
 /// Every text column that backs an ID / alias / key is declared <c>COLLATE NOCASE</c> so the
 /// case-insensitive comparisons the service layer relies on (OrdinalIgnoreCase throughout)
-/// keep working — without it, "ExchangeOnline" and "exchangeonline" would become two rows
-/// (plan §5B.3).
+/// keep working - without it, "ExchangeOnline" and "exchangeonline" would become two rows
+/// (plan Section 5B.3).
 /// </summary>
 public sealed class ConfigStoreMigrator
 {
@@ -19,10 +19,10 @@ public sealed class ConfigStoreMigrator
 
     // Ordered schema steps. The array index + 1 is the resulting user_version, so appending a
     // new step is the only supported way to evolve the schema. Never edit or reorder an
-    // existing step — that would diverge already-migrated databases from fresh ones.
+    // existing step - that would diverge already-migrated databases from fresh ones.
     private static readonly string[] Migrations =
     [
-        // v1 — initial schema.
+        // v1 - initial schema.
         """
         CREATE TABLE IF NOT EXISTS schema_meta (
             key   TEXT PRIMARY KEY COLLATE NOCASE,
@@ -88,7 +88,7 @@ public sealed class ConfigStoreMigrator
         );
         """,
 
-        // v2 — module-config presence marker. Preserves the file world's semantics where an
+        // v2 - module-config presence marker. Preserves the file world's semantics where an
         // empty module-config-{Id}.json STILL counted as "configured" (HasModuleConfigFile=true)
         // and therefore suppressed the legacy appsettings fallback. With per-row storage an empty
         // module has no rows, so presence must be tracked separately or saving an empty config
@@ -99,9 +99,9 @@ public sealed class ConfigStoreMigrator
         );
         """,
 
-        // v3 — section-access presence marker. Same reasoning as v2 for the single section_access
+        // v3 - section-access presence marker. Same reasoning as v2 for the single section_access
         // store: an admin who clears ALL access must still count as "configured" (the file-world
-        // Fragment source — everything denied), NOT fall back to the None source which grants
+        // Fragment source - everything denied), NOT fall back to the None source which grants
         // read-only sections the AllowedGroups list. A single sentinel row marks "configured".
         """
         CREATE TABLE IF NOT EXISTS section_access_present (
@@ -109,7 +109,7 @@ public sealed class ConfigStoreMigrator
         );
         """,
 
-        // v4 — protected-principal presence marker. HasCentralConfig must distinguish "a
+        // v4 - protected-principal presence marker. HasCentralConfig must distinguish "a
         // protected-principals config exists" (even if all four lists are empty) from "never
         // configured" (legacy ExcludedUsers fallback applies), exactly like the file world's
         // File.Exists check. A single sentinel row marks "configured".
@@ -119,7 +119,7 @@ public sealed class ConfigStoreMigrator
         );
         """,
 
-        // v5 — AD-attribute-editor presence markers. The allowlist is NULL-on-corrupt but EMPTY
+        // v5 - AD-attribute-editor presence markers. The allowlist is NULL-on-corrupt but EMPTY
         // when never configured; the marker lets an explicitly-empty allowlist read back as empty
         // (not null). The legend marker drives one-time import. Both are single sentinel rows.
         """

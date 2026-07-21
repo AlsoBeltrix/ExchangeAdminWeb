@@ -67,8 +67,8 @@ public class GroupManagementServiceTests : IDisposable
 
     [Theory]
     [InlineData("user@contoso.com")]
-    [InlineData("sAMName")]          // no '@' — the page's old gate skipped this entirely
-    [InlineData("CONTOSO\\sAMName")] // DOMAIN\user — also skipped by the old gate
+    [InlineData("sAMName")]          // no '@' - the page's old gate skipped this entirely
+    [InlineData("CONTOSO\\sAMName")] // DOMAIN\user - also skipped by the old gate
     public async Task AddMemberAsync_ResolverUnavailable_FailsClosed(string member)
     {
         var service = CreateServiceWithUnavailableResolver();

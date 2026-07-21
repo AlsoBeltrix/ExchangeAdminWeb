@@ -54,7 +54,7 @@ public sealed class ProtectedPrincipalRepository
 
     /// <summary>
     /// Replaces the entire protected-principal config (clear + insert all four lists) and sets
-    /// the presence marker, in one transaction — matching the file version's whole-file save.
+    /// the presence marker, in one transaction - matching the file version's whole-file save.
     /// </summary>
     public void Save(ProtectedPrincipalData data)
     {

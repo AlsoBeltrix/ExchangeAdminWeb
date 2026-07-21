@@ -140,7 +140,7 @@ public class PermissionValidatorTests
     [Fact]
     public async Task ValidateTargetMailbox_EmptyExclusions_AllowsOperations()
     {
-        // No exclusions configured at all — init succeeds with empty set
+        // No exclusions configured at all - init succeeds with empty set
         var validator = CreateValidator(excludedUsers: Array.Empty<string>());
 
         var result = await validator.ValidateTargetMailboxAsync("anyone@company.com");

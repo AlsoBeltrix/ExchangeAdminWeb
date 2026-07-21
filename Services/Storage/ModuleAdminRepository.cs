@@ -25,7 +25,7 @@ public sealed class ModuleAdminRepository
         });
     }
 
-    /// <summary>Returns the full map of module_id → admin groups (only modules with rows).</summary>
+    /// <summary>Returns the full map of module_id -> admin groups (only modules with rows).</summary>
     public Dictionary<string, string[]> GetAll()
     {
         return _store.Read(connection =>
@@ -59,7 +59,7 @@ public sealed class ModuleAdminRepository
     }
 
     /// <summary>
-    /// One-time import of a legacy module_id → groups map. Only writes modules that have no
+    /// One-time import of a legacy module_id -> groups map. Only writes modules that have no
     /// rows yet, so existing DB state always wins. Returns the number of modules imported.
     /// </summary>
     public int ImportIfMissing(IReadOnlyDictionary<string, string[]> legacy)

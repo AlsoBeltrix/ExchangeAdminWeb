@@ -15,7 +15,7 @@ public class ModuleEnablementService
     private bool _startupCheckDone;
 
     // Set when a legacy modules-enabled.json exists but cannot be parsed. We must NOT silently
-    // fall through to an empty (healthy) DB and let modules default to EnabledByDefault — that
+    // fall through to an empty (healthy) DB and let modules default to EnabledByDefault - that
     // would downgrade the file world's fail-closed corrupt behavior during the upgrade window.
     // The corrupt file stays on disk, so this re-trips on every startup until it is repaired or
     // removed (an admin save is also blocked while it is set; see IsStoreCorrupt).
@@ -40,26 +40,26 @@ public class ModuleEnablementService
     }
 
     /// <summary>
-    /// Startup self-registration (SqliteConfigStore-Plan §3d): non-destructively seed a
+    /// Startup self-registration (SqliteConfigStore-Plan Section 3d): non-destructively seed a
     /// <see cref="module_enablement"/> row for every catalog module that has none yet, at the
     /// descriptor's <c>EnabledByDefault</c>. Existing rows are never modified, so this does NOT
     /// reintroduce the banned destructive startup write (the 2026-06-12 incident). System
     /// modules are always-on and not stored, so they are skipped. No-op (and intentionally so)
-    /// when the store is corrupt — we must not seed over an unreadable/legacy-corrupt store.
+    /// when the store is corrupt - we must not seed over an unreadable/legacy-corrupt store.
     /// Returns the IDs newly seeded.
     /// </summary>
     public IReadOnlyList<string> SeedMissingModules()
     {
         if (_legacyFileCorrupt)
         {
-            _logger.LogWarning("Skipping module enablement seeding — legacy store is corrupt (failing closed)");
+            _logger.LogWarning("Skipping module enablement seeding - legacy store is corrupt (failing closed)");
             return Array.Empty<string>();
         }
 
         // If the store can't even be read, don't try to write to it.
         if (!_repository.TryGetAll(out _))
         {
-            _logger.LogWarning("Skipping module enablement seeding — store is unreadable");
+            _logger.LogWarning("Skipping module enablement seeding - store is unreadable");
             return Array.Empty<string>();
         }
 
@@ -77,9 +77,9 @@ public class ModuleEnablementService
         catch (Exception ex)
         {
             // Seeding is a non-essential convenience. A write failure here (read-only ACL,
-            // exclusive/WAL lock, etc.) must NOT abort app startup — log and move on; the
+            // exclusive/WAL lock, etc.) must NOT abort app startup - log and move on; the
             // fail-closed read paths handle whatever state the store is actually in.
-            _logger.LogError(ex, "Module enablement seeding failed — continuing startup without seeding");
+            _logger.LogError(ex, "Module enablement seeding failed - continuing startup without seeding");
             return Array.Empty<string>();
         }
     }
@@ -151,7 +151,7 @@ public class ModuleEnablementService
     public bool IsStoreCorrupt()
     {
         // Corrupt if either the DB cannot be read (DB-integrity failure) OR an unparseable
-        // legacy modules-enabled.json is still present (upgrade window — must stay fail-closed
+        // legacy modules-enabled.json is still present (upgrade window - must stay fail-closed
         // until it is repaired/removed rather than fall through to an empty healthy DB).
         return _legacyFileCorrupt || !_repository.TryGetAll(out _);
     }
@@ -175,7 +175,7 @@ public class ModuleEnablementService
     }
 
     // Read-only startup check. Enablement state is written ONLY by SaveEnablement from
-    // Admin Settings — never at startup (owner direction, incident 2026-06-12).
+    // Admin Settings - never at startup (owner direction, incident 2026-06-12).
     private void WarnIfExchangeOnlineUnset()
     {
         if (_startupCheckDone) return;
@@ -203,7 +203,7 @@ public class ModuleEnablementService
     {
         // FAIL-CLOSED: if the store cannot be read, OR an unparseable legacy file is still
         // present, return an explicit all-disabled map for every non-system module (NOT an empty
-        // map — empty would let modules fall back to EnabledByDefault). This preserves the file
+        // map - empty would let modules fall back to EnabledByDefault). This preserves the file
         // version's corrupt-store behavior, including during the upgrade window.
         if (!_legacyFileCorrupt && _repository.TryGetAll(out var state))
             return state;
@@ -216,7 +216,7 @@ public class ModuleEnablementService
     }
 
     // One-time import of legacy modules-enabled.json into module_enablement, then archive the
-    // file (SqliteConfigStore-Plan §4). Only fills if the table is empty (DB wins). Returns true
+    // file (SqliteConfigStore-Plan Section 4). Only fills if the table is empty (DB wins). Returns true
     // if the legacy file exists but is unparseable: it is left in place (not archived) AND the
     // service treats the store as corrupt (fail closed) until it is repaired/removed, so the
     // upgrade window does not silently downgrade to EnabledByDefault.
@@ -247,10 +247,10 @@ public class ModuleEnablementService
                 catch (Exception ex)
                 {
                     // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
-                    // Do NOT archive and do NOT fall through to a readable-but-empty store — that
+                    // Do NOT archive and do NOT fall through to a readable-but-empty store - that
                     // would let modules silently default to EnabledByDefault. Fail closed (all
                     // modules disabled); the file stays on disk so the next startup retries.
-                    _logger.LogError(ex, "Failed to import legacy modules-enabled.json into the store — failing closed (all modules disabled) until import succeeds");
+                    _logger.LogError(ex, "Failed to import legacy modules-enabled.json into the store - failing closed (all modules disabled) until import succeeds");
                     return true;
                 }
             }
@@ -260,9 +260,9 @@ public class ModuleEnablementService
         }
         catch (Exception ex)
         {
-            // Reached only if reading the file itself failed (not a parse error — those return
+            // Reached only if reading the file itself failed (not a parse error - those return
             // true above). A valid file we could not even read must also fail closed.
-            _logger.LogError(ex, "Failed to process legacy modules-enabled.json — failing closed (all modules disabled)");
+            _logger.LogError(ex, "Failed to process legacy modules-enabled.json - failing closed (all modules disabled)");
             return true;
         }
     }

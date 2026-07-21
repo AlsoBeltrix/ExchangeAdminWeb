@@ -24,9 +24,9 @@ public sealed class PooledRunspace
 /// <summary>
 /// Result of running a delegate on a borrowed connection.
 /// <para><see cref="ConnectionFailure"/>: the delegate returned normally (RunAsync swallows
-/// the throw) but a dead/suspect session was detected — gates DISCARD.</para>
+/// the throw) but a dead/suspect session was detected - gates DISCARD.</para>
 /// <para><see cref="RetriablePrecheck"/>: the captured failure was the narrow
-/// "must call Connect-ExchangeOnline" pre-cmdlet signature, proving the cmdlet never ran —
+/// "must call Connect-ExchangeOnline" pre-cmdlet signature, proving the cmdlet never ran -
 /// gates RETRY. Strictly implies <see cref="ConnectionFailure"/>. A mid-flight drop sets
 /// ConnectionFailure (discard) but NOT RetriablePrecheck (no replay).</para>
 /// Connection failures that surface as a thrown exception are classified by the orchestrator
@@ -40,7 +40,7 @@ internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailur
 /// clear the pipeline before throwing, so the connection is clean and can be returned.
 /// PermissionValidator uses raw <c>ps.Invoke()</c> and cannot guarantee a clean pipeline,
 /// so it discards (preserving its prior behavior; avoids poisoning the next borrow).
-/// Connection errors ALWAYS discard regardless of this policy — the session is dead.
+/// Connection errors ALWAYS discard regardless of this policy - the session is dead.
 /// </summary>
 internal enum PoolFailurePolicy { Return, Discard }
 
@@ -200,7 +200,7 @@ public sealed class ExoConnectionPool : IDisposable
     /// <para><paramref name="allowRetry"/> MUST be true only for read-only or single-write
     /// delegates. Re-running a delegate that already committed an earlier write would repeat
     /// it (double-grant, duplicate batch, etc.), so multi-write delegates pass false. The
-    /// default at every layer is false (no retry) — the safe default.</para>
+    /// default at every layer is false (no retry) - the safe default.</para>
     /// </summary>
     internal Task<T> RunWithRetryAsync<T>(
         Func<PooledRunspace, Task<PooledOutcome<T>>> run,
@@ -210,7 +210,7 @@ public sealed class ExoConnectionPool : IDisposable
             IsConnectionError, IsRetriablePrecheckError, allowRetry, nonConnectionFailurePolicy);
 
     /// <summary>
-    /// Broad classifier for "the pooled EXO session is dead/suspect" — gates DISCARD. Any of
+    /// Broad classifier for "the pooled EXO session is dead/suspect" - gates DISCARD. Any of
     /// these means the connection must not return to the pool. <see cref="ExchangeServiceBase.IsConnectionError"/>
     /// delegates here so the rule lives in one place.
     /// </summary>
@@ -223,7 +223,7 @@ public sealed class ExoConnectionPool : IDisposable
 
     /// <summary>
     /// Narrow classifier for "the borrowed session was already dead BEFORE the first cmdlet ran"
-    /// — gates RETRY (review #2, 2026-06-26). The EXO module's pre-flight context check throws
+    /// - gates RETRY (review #2, 2026-06-26). The EXO module's pre-flight context check throws
     /// "You must call Connect-ExchangeOnline before calling any other cmdlet" /
     /// "GetCurrentConnectionContext" only before a cmdlet executes, so the operation provably did
     /// nothing and replay is safe. This is STRICTLY NARROWER than <see cref="IsConnectionError"/>:
@@ -268,7 +268,7 @@ public sealed class ExoConnectionPool : IDisposable
             catch (Exception ex) when (isConnectionError(ex))
             {
                 // Dead/suspect session surfaced as a throw. Always discard. Retry ONLY if the
-                // error proves the cmdlet never ran (narrow pre-check signature) — a mid-flight
+                // error proves the cmdlet never ran (narrow pre-check signature) - a mid-flight
                 // drop discards but must not replay a possibly-committed write.
                 discard(pooled);
                 if (canRetry && isRetriablePrecheckError(ex)) continue;

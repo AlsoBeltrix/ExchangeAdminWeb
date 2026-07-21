@@ -177,7 +177,7 @@ public class LicensingUpdatesService
             }
             catch (Exception auditEx)
             {
-                _logger.LogError(auditEx, "Audit write failed for {User} — AD writes already committed", row.InputIdentity);
+                _logger.LogError(auditEx, "Audit write failed for {User} - AD writes already committed", row.InputIdentity);
             }
         }
 

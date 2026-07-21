@@ -47,7 +47,7 @@ public class SectionAccessService
         // Do NOT swallow exceptions here. This set is the list of sections that must
         // deny access when section-access config is absent (GetGroupsForSection). An
         // empty/partial set would silently downgrade those sections to the
-        // AllowedGroups fallback — fail-OPEN — which is the opposite of the intent.
+        // AllowedGroups fallback - fail-OPEN - which is the opposite of the intent.
         // Let any failure propagate and abort startup rather than serve a permissive
         // catalog. The catalog is the injected DI singleton, not a fresh instance.
         var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -96,7 +96,7 @@ public class SectionAccessService
         if (_legacyFileCorrupt)
             return true;
         // Corrupt if either the data OR the presence marker cannot be read (partial schema
-        // damage) — same guarded read the runtime path uses.
+        // damage) - same guarded read the runtime path uses.
         return !_repository.TryRead(out _, out _);
     }
 
@@ -105,7 +105,7 @@ public class SectionAccessService
     private (Dictionary<string, string[]> data, SectionAccessSource source) ReadSectionAccess()
     {
         // FAIL-CLOSED: an unparseable legacy fragment still on disk keeps the store corrupt
-        // (empty Fragment source — everything denied) during the upgrade window, rather than
+        // (empty Fragment source - everything denied) during the upgrade window, rather than
         // falling through to the appsettings/AllowedGroups fallback.
         if (_legacyFileCorrupt)
             return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
@@ -116,7 +116,7 @@ public class SectionAccessService
         // closed as an empty Fragment rather than throwing through the authorization path.
         if (!_repository.TryRead(out var data, out var configured))
         {
-            _logger.LogError("Section access store unreadable — failing closed");
+            _logger.LogError("Section access store unreadable - failing closed");
             return (new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase), SectionAccessSource.Fragment);
         }
 
@@ -145,7 +145,7 @@ public class SectionAccessService
     }
 
     // One-time import of the legacy sectionaccess.json into section_access, then archive the
-    // file (SqliteConfigStore-Plan §4). Only fills if not yet configured (DB wins). Returns true
+    // file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins). Returns true
     // if the legacy file exists but is unparseable / missing the Security:SectionAccess node: it
     // is left in place (not archived) AND the store stays fail-closed until repaired/removed.
     private bool ImportLegacyIfPresent(string legacyPath)
@@ -162,7 +162,7 @@ public class SectionAccessService
                 var sectionAccess = doc?["Security"]?["SectionAccess"];
                 if (sectionAccess == null)
                 {
-                    _logger.LogError("Legacy sectionaccess.json exists but Security:SectionAccess is missing — failing closed until repaired/removed");
+                    _logger.LogError("Legacy sectionaccess.json exists but Security:SectionAccess is missing - failing closed until repaired/removed");
                     return true;
                 }
 
@@ -171,7 +171,7 @@ public class SectionAccessService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Legacy sectionaccess.json is unparseable — failing closed until repaired/removed");
+                _logger.LogError(ex, "Legacy sectionaccess.json is unparseable - failing closed until repaired/removed");
                 return true;
             }
 
@@ -182,11 +182,11 @@ public class SectionAccessService
             catch (Exception ex)
             {
                 // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
-                // Do NOT archive and do NOT fall through to an unconfigured store — that would
+                // Do NOT archive and do NOT fall through to an unconfigured store - that would
                 // silently drop the section-access rules and fall back to the permissive
                 // appsettings/_allowedGroups path. Fail closed; the file stays on disk so the
                 // next startup retries the import.
-                _logger.LogError(ex, "Failed to import legacy sectionaccess.json into the store — failing closed until import succeeds");
+                _logger.LogError(ex, "Failed to import legacy sectionaccess.json into the store - failing closed until import succeeds");
                 return true;
             }
 
@@ -195,9 +195,9 @@ public class SectionAccessService
         }
         catch (Exception ex)
         {
-            // Reached only if reading the file itself failed (not a parse error — those return
+            // Reached only if reading the file itself failed (not a parse error - those return
             // true above). A valid file we could not even read must also fail closed.
-            _logger.LogError(ex, "Failed to process legacy sectionaccess.json — failing closed");
+            _logger.LogError(ex, "Failed to process legacy sectionaccess.json - failing closed");
             return true;
         }
     }

@@ -31,7 +31,7 @@ try
 
     var adminGroups = builder.Configuration.GetSection("Security:AdminGroups").Get<string[]>() ?? Array.Empty<string>();
     if (adminGroups.Length == 0)
-        Log.Warning("Security:AdminGroups is empty or missing — admin settings page will be inaccessible until configured");
+        Log.Warning("Security:AdminGroups is empty or missing - admin settings page will be inaccessible until configured");
 
     var catalog = new ModuleCatalog();
 
@@ -42,7 +42,7 @@ try
 
     // Config store infrastructure (SqliteConfigStore-Plan Phase A). The DB lives in the
     // persistent, deploy-excluded config/ directory (decision 2026-06-18, Option A), one per
-    // environment. The path is derived from the content root — not a new appsettings key and
+    // environment. The path is derived from the content root - not a new appsettings key and
     // not hardcoded. The factory opens short-lived connections (never a shared singleton
     // connection), so it is safe across the mix of Singleton/Scoped consumers. No existing
     // service reads from the DB yet; Phase B moves the stores over one at a time.
@@ -165,16 +165,16 @@ try
 
     // Ensure the config database schema exists / is current before serving requests
     // (SqliteConfigStore-Plan Phase A). Idempotent: a no-op once the DB is at the target
-    // version. Fail fast — a config store that cannot be opened/migrated is not a state we
+    // version. Fail fast - a config store that cannot be opened/migrated is not a state we
     // should serve in.
     {
         var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
         var schemaVersion = migrator.Migrate();
         Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);
 
-        // Startup self-registration (SqliteConfigStore-Plan §3d): non-destructively seed
+        // Startup self-registration (SqliteConfigStore-Plan Section 3d): non-destructively seed
         // enablement rows for any catalog modules missing one (e.g. a newly added module), at
-        // their EnabledByDefault. Never overwrites existing rows — the banned destructive
+        // their EnabledByDefault. Never overwrites existing rows - the banned destructive
         // startup write stays banned. No-op on a corrupt store.
         var enablement = app.Services.GetRequiredService<ModuleEnablementService>();
         enablement.SeedMissingModules();
@@ -188,7 +188,7 @@ try
 
         // Bulk job runner startup (docs/BulkJobRunner-Plan.md). A DI singleton is not constructed
         // until first resolved, so this explicit call is required for orphan reconciliation to run:
-        // it migrates the jobs DB, prunes old terminal jobs, and — the load-bearing rule — flips
+        // it migrates the jobs DB, prunes old terminal jobs, and - the load-bearing rule - flips
         // every non-terminal job (Running OR Queued) to Interrupted. There is no resume; this is a
         // one-shot startup call, NOT a background timer/hosted worker (consistent with the
         // 2026-06-17 no-unattended-worker posture).

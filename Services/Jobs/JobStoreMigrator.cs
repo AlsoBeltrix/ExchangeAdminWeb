@@ -5,12 +5,12 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// <summary>
 /// Creates and evolves the SEPARATE operational jobs database schema (config/exchangeadmin-jobs.db),
 /// distinct from the config database. Job state is environment-local, high-churn, and MUST NEVER be
-/// promoted dev→prod or mixed into the config store (owner, 2026-07-02; docs/BulkJobRunner-Plan.md).
+/// promoted dev->prod or mixed into the config store (owner, 2026-07-02; docs/BulkJobRunner-Plan.md).
 /// It reuses <see cref="SqliteConnectionFactory"/> (path-parameterized, WAL + busy timeout) but keeps
 /// its own <c>PRAGMA user_version</c> cursor so the two databases evolve independently.
 ///
 /// Same discipline as <see cref="ConfigStoreMigrator"/>: ordered, idempotent steps applied in order,
-/// each in its own transaction; never edit or reorder an existing step — append only.
+/// each in its own transaction; never edit or reorder an existing step - append only.
 /// </summary>
 public sealed class JobStoreMigrator
 {
@@ -18,7 +18,7 @@ public sealed class JobStoreMigrator
 
     private static readonly string[] Migrations =
     [
-        // v1 — initial jobs schema.
+        // v1 - initial jobs schema.
         //
         // status/module_id/job_type are COLLATE NOCASE for the same reason the config store uses it
         // (OrdinalIgnoreCase comparisons in the service layer). Row results cascade-delete with their

@@ -5,7 +5,7 @@ namespace ExchangeAdminWeb.Services;
 
 /// <summary>
 /// Enumerates Active Directory Organizational Units using the app pool's ambient identity.
-/// No Delinea credential is needed — standard domain membership is sufficient for
+/// No Delinea credential is needed - standard domain membership is sufficient for
 /// <c>Get-ADOrganizationalUnit -Filter *</c>.
 /// </summary>
 public sealed class ADOrganizationalUnitService
@@ -99,7 +99,7 @@ public sealed class ADOrganizationalUnitService
         ps.Invoke();
         ps.Commands.Clear();
 
-        // Enumerate all OUs — runs under the app pool identity (no credential parameter)
+        // Enumerate all OUs - runs under the app pool identity (no credential parameter)
         ps.AddCommand("Get-ADOrganizationalUnit")
           .AddParameter("Filter", "*")
           .AddParameter("Properties", new[] { "Name", "DistinguishedName" })

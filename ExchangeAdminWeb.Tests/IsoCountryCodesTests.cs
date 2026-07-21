@@ -3,7 +3,7 @@ using ExchangeAdminWeb.Services;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Integrity guard for the hardcoded ISO 3166-1 alpha-2 → numeric table. The table is
+/// Integrity guard for the hardcoded ISO 3166-1 alpha-2 -> numeric table. The table is
 /// authoritative for AD's countryCode attribute (which .NET cannot supply). These tests pin
 /// the table's completeness and known anchors so accidental corruption or truncation fails
 /// CI. They do NOT detect a genuinely new ISO country (that surfaces as a fail-closed

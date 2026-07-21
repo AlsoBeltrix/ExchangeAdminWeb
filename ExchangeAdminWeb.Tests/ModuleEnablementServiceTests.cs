@@ -55,7 +55,7 @@ public class ModuleEnablementServiceTests : IDisposable
     // Seeds enablement state into the shared store (the DB analogue of writing the file).
     private void SeedEnablement(Dictionary<string, bool> state) => _repository.SaveAll(state);
 
-    // A store whose reads throw — the DB-integrity analogue of an unparseable file.
+    // A store whose reads throw - the DB-integrity analogue of an unparseable file.
     private sealed class UnreadableStore : IConfigStore
     {
         public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
@@ -213,9 +213,9 @@ public class ModuleEnablementServiceTests : IDisposable
 
         var service = CreateService();
 
-        // AdminSettings is a system module — always enabled regardless of file
+        // AdminSettings is a system module - always enabled regardless of file
         Assert.True(service.IsModuleEnabled("AdminSettings"));
-        // AdminEventLog is no longer a system module — respects the file setting
+        // AdminEventLog is no longer a system module - respects the file setting
         Assert.False(service.IsModuleEnabled("AdminEventLog"));
     }
 
@@ -351,7 +351,7 @@ public class ModuleEnablementServiceTests : IDisposable
         service.IsModuleRawEnabled("MailboxPermissions");
 
         // No write means the change token is unchanged and no rows were created.
-        // (Seeding is a SEPARATE explicit call — SeedMissingModules — not part of construction
+        // (Seeding is a SEPARATE explicit call - SeedMissingModules - not part of construction
         // or reads, so construction+reads must still write nothing.)
         Assert.Equal(tokenBefore, _store.GetChangeToken());
         Assert.False(_repository.HasAny());
@@ -447,7 +447,7 @@ public class ModuleEnablementServiceTests : IDisposable
         Assert.Empty(seeded); // logged and swallowed, not thrown
     }
 
-    // Reads succeed but writes throw — simulates a readable-but-unwritable store at startup.
+    // Reads succeed but writes throw - simulates a readable-but-unwritable store at startup.
     private sealed class WriteFailsStore : IConfigStore
     {
         private readonly SqliteConfigStore _inner;

@@ -15,8 +15,8 @@ namespace ExchangeAdminWeb.Tests;
 /// by the broad IsConnectionError and retry by the narrow IsRetriablePrecheckError.
 ///
 /// These exercise <see cref="ExoConnectionPool.RunWithRetryCoreAsync{T}"/>, the pure orchestration
-/// core, with fake borrow/return/discard delegates — the real pool needs a live EXO connection and
-/// cannot be unit-hosted. The core owns the borrow↔return/discard pairing and the retry decision,
+/// core, with fake borrow/return/discard delegates - the real pool needs a live EXO connection and
+/// cannot be unit-hosted. The core owns the borrow<->return/discard pairing and the retry decision,
 /// which is exactly the logic under test.
 /// </summary>
 public class ExoConnectionPoolRetryTests
@@ -132,7 +132,7 @@ public class ExoConnectionPoolRetryTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             Run<string>(pool, _ => { attempts++; throw MidFlightConnectionDrop(); }, allowRetry: true));
 
-        Assert.Equal(1, attempts);       // NO retry despite being eligible — error isn't pre-check
+        Assert.Equal(1, attempts);       // NO retry despite being eligible - error isn't pre-check
         Assert.Equal(1, pool.Borrows);
         Assert.Equal(1, pool.Discards);  // still discarded (broad connection error)
         Assert.Equal(0, pool.Returns);

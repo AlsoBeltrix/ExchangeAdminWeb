@@ -82,9 +82,9 @@ public sealed class ModuleEnablementRepository
     }
 
     /// <summary>
-    /// Non-destructive startup seeding (SqliteConfigStore-Plan §3d): inserts a row for each
+    /// Non-destructive startup seeding (SqliteConfigStore-Plan Section 3d): inserts a row for each
     /// supplied module ONLY if it has no row yet (INSERT ... ON CONFLICT DO NOTHING). Existing
-    /// rows are never touched — the destructive startup write that caused the 2026-06-12 incident
+    /// rows are never touched - the destructive startup write that caused the 2026-06-12 incident
     /// (flipping ExchangeOnline to false) stays forbidden. Returns the list of module IDs that
     /// were newly seeded (empty if all already had rows).
     /// </summary>

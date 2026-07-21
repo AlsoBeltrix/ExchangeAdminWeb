@@ -1,11 +1,11 @@
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
-/// ISO 3166-1 alpha-2 → numeric country-code table. Last updated 2026-06-17 from the
+/// ISO 3166-1 alpha-2 -> numeric country-code table. Last updated 2026-06-17 from the
 /// published ISO 3166-1 standard (249 officially assigned entries).
 ///
 /// WHY THIS IS HARDCODED: AD's <c>countryCode</c> attribute stores the ISO 3166-1 numeric
-/// code (e.g. 372 for Ireland). .NET cannot supply it — <c>RegionInfo.GeoId</c> is a
+/// code (e.g. 372 for Ireland). .NET cannot supply it - <c>RegionInfo.GeoId</c> is a
 /// Microsoft GeoId (68 for Ireland), NOT the ISO number. ADUC and Exchange
 /// <c>Set-User -CountryOrRegion</c> both populate <c>countryCode</c> from a fixed table
 /// baked into Windows/Exchange; this table replicates that authoritative source so a room
@@ -13,20 +13,20 @@ namespace ExchangeAdminWeb.Services;
 /// legacy SetupRoomFinder.ps1. See docs/ConferenceRooms-RoomFinderMetadataApply-Plan.md.
 ///
 /// MAINTENANCE: ISO 3166-1 numeric codes are extremely stable (last new country: South
-/// Sudan/728 in 2011). If a NEW country must be supported, add its alpha-2 → numeric row
+/// Sudan/728 in 2011). If a NEW country must be supported, add its alpha-2 -> numeric row
 /// here and update IsoCountryCodesTests. Lookups fail closed: an alpha-2 not in this table
 /// throws (callers fail the affected row with a clear message), so a stale table can never
-/// silently write a wrong code — it surfaces as a named "unmappable country" error.
+/// silently write a wrong code - it surfaces as a named "unmappable country" error.
 /// </summary>
 public static class IsoCountryCodes
 {
-    // alpha-2 (uppercase) → ISO 3166-1 numeric. Comment is the English short name for
+    // alpha-2 (uppercase) -> ISO 3166-1 numeric. Comment is the English short name for
     // reference only; the authoritative display name (AD `co`) comes from
     // RegionInfo.EnglishName at runtime to match existing directory objects.
     private static readonly IReadOnlyDictionary<string, int> NumericByAlpha2 = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
     {
         ["AF"] = 4, // Afghanistan
-        ["AX"] = 248, // Åland Islands
+        ["AX"] = 248, // Aland Islands
         ["AL"] = 8, // Albania
         ["DZ"] = 12, // Algeria
         ["AS"] = 16, // American Samoa

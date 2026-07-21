@@ -106,7 +106,7 @@ public class PermissionValidator
 
             if (loadError != null)
             {
-                _logger.LogWarning("Blocking operation on {Target} — protected-principal config load failed: {Reason}", targetMailbox, loadError);
+                _logger.LogWarning("Blocking operation on {Target} - protected-principal config load failed: {Reason}", targetMailbox, loadError);
                 return $"Access denied: {loadError}";
             }
 
@@ -122,7 +122,7 @@ public class PermissionValidator
                 if (resolved == null)
                 {
                     _logger.LogWarning(
-                        "Blocking operation on {Target} — cannot resolve full identity but Group/OU/Pattern rules are configured",
+                        "Blocking operation on {Target} - cannot resolve full identity but Group/OU/Pattern rules are configured",
                         targetMailbox);
                     return "Access denied: Protected-principal identity resolution is unavailable. Contact your administrator.";
                 }
@@ -144,7 +144,7 @@ public class PermissionValidator
             var result = await _protectedPrincipalService.CheckAsync(principal);
             if (result.CheckFailed)
             {
-                _logger.LogWarning("Blocking operation on {Target} — protected-principal check failed: {Reason}", targetMailbox, result.Reason);
+                _logger.LogWarning("Blocking operation on {Target} - protected-principal check failed: {Reason}", targetMailbox, result.Reason);
                 return $"Access denied: {result.Reason}";
             }
             if (result.IsProtected)
@@ -158,7 +158,7 @@ public class PermissionValidator
 
         if (_initFailed)
         {
-            _logger.LogWarning("Blocking operation on {Target} — protected-user list failed to load", targetMailbox);
+            _logger.LogWarning("Blocking operation on {Target} - protected-user list failed to load", targetMailbox);
             return "Access denied: Protected-user list is unavailable. Contact your administrator.";
         }
 
@@ -208,7 +208,7 @@ public class PermissionValidator
                 if (currentId != null && affectedId != null &&
                     string.Equals(currentId, affectedId, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) — resolved via ObjectId", currentUser, affectedUser);
+                    _logger.LogWarning("User {User} attempted to grant permissions to themselves ({Affected}) - resolved via ObjectId", currentUser, affectedUser);
                     return "Access denied: You cannot grant permissions to yourself.";
                 }
             }
@@ -255,7 +255,7 @@ public class PermissionValidator
                 _initFailed = true;
                 _initialized = true;
                 _lastRefresh = DateTime.UtcNow;
-                _logger.LogError("Module config file is corrupt — blocking all protected-target operations until file is fixed");
+                _logger.LogError("Module config file is corrupt - blocking all protected-target operations until file is fixed");
                 return;
             }
 
@@ -298,7 +298,7 @@ public class PermissionValidator
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to resolve some excluded-user ObjectIds — string matching will be used as fallback");
+                _logger.LogWarning(ex, "Failed to resolve some excluded-user ObjectIds - string matching will be used as fallback");
             }
 
             _excludedUsers = newExcluded.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
@@ -315,7 +315,7 @@ public class PermissionValidator
             _initFailed = true;
             _initialized = true;
             _lastRefresh = DateTime.UtcNow;
-            _logger.LogError(ex, "Failed to initialize permission validator — all operations on protected targets will be blocked until app pool recycle.");
+            _logger.LogError(ex, "Failed to initialize permission validator - all operations on protected targets will be blocked until app pool recycle.");
         }
         finally
         {
@@ -363,7 +363,7 @@ public class PermissionValidator
             catch (Exception ex) when (ex.Message.Contains("couldn't be found"))
             {
                 ps.Commands.Clear();
-                _logger.LogInformation("Excluded entry '{Identity}' not found in EXO — kept as literal match", identity);
+                _logger.LogInformation("Excluded entry '{Identity}' not found in EXO - kept as literal match", identity);
                 return new PooledOutcome<List<string>>(found, false);
             }
 

@@ -49,7 +49,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
     }
 
     // A fake PP service overriding the two virtual seam methods to a scripted verdict.
-    // EvalCount records how many times the resolve seam is hit — the anti-double-check probe:
+    // EvalCount records how many times the resolve seam is hit - the anti-double-check probe:
     // exactly one protection evaluation must occur per processed row.
     private sealed class FakePpService : ProtectedPrincipalService
     {
@@ -171,7 +171,7 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
 
         Assert.Equal(BulkJobRowStatus.Success, outcome.Status);
         Assert.Equal(["room1@x"], f.Rooms.FinderCalls);
-        // Exactly one protection evaluation per row — the consolidation guarantee (no double-check).
+        // Exactly one protection evaluation per row - the consolidation guarantee (no double-check).
         Assert.Equal(1, f.Pp.EvalCount);
         f.Audit.Received().LogConferenceRoomAction("jdoe", "10.0.0.9", "ConferenceRooms_SetMetadata_Bulk",
             "room1@x", true, "INC1", errorDetail: Arg.Any<string?>(), oldValues: Arg.Any<Dictionary<string, object?>?>(), newValues: Arg.Any<Dictionary<string, object?>?>());

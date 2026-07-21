@@ -3,7 +3,7 @@ using ExchangeAdminWeb.Services;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Guards GroupManagementService.RankGroups — the pure ranking that GM-1 introduced so the
+/// Guards GroupManagementService.RankGroups - the pure ranking that GM-1 introduced so the
 /// on-prem group search surfaces the exact match first, then prefix, then substring matches,
 /// alphabetical within each tier. The live AD query in SearchGroupsAsync is not unit-testable;
 /// the logic-bearing ranking is. Plan: docs/GroupManagementSearch-Plan.md (slice 1).

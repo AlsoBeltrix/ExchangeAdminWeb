@@ -475,7 +475,7 @@ if ($isUpgrade) {
     $preAppSettingsKeys = @((Get-Content $configPath -Raw | ConvertFrom-Json).PSObject.Properties.Name)
 
     Write-Step "Stopping app pool"
-    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3
@@ -661,7 +661,7 @@ if ($isUpgrade) {
 
     # Stop pool before file swap
     Write-Step "Stopping app pool for file deployment"
-    # Warn (do not block) if a durable bulk job is active — recycling interrupts it.
+    # Warn (do not block) if a durable bulk job is active - recycling interrupts it.
     Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $runtimeConfigDir | Out-Null
     try { Stop-WebAppPool -Name $AppPoolName -ErrorAction Stop } catch {}
     Start-Sleep -Seconds 3

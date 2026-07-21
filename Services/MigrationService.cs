@@ -270,7 +270,7 @@ public class MigrationService : ExchangeServiceBase
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous — matches multiple AD users."
+                    ? "Identity is ambiguous - matches multiple AD users."
                     : "Protection check unavailable. Cannot verify if this mailbox is protected.");
             }
 
@@ -287,14 +287,14 @@ public class MigrationService : ExchangeServiceBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Protected principal check failed for migration target {Identity} — excluding as precaution", identity);
+            _logger.LogWarning(ex, "Protected principal check failed for migration target {Identity} - excluding as precaution", identity);
             return PermissionResult.Fail($"Protection check error: {ex.Message}");
         }
     }
 
     /// <summary>
     /// Splits migration targets into those clear to migrate and those excluded by the
-    /// protected-principal gate. Each excluded entry is an operator-facing "identity — reason"
+    /// protected-principal gate. Each excluded entry is an operator-facing "identity - reason"
     /// string. Runs before any batch side effect, so a protected target never reaches the write
     /// path. The <paramref name="checker"/> seam exists for unit testing; production passes null
     /// and the real gate is used.
@@ -314,7 +314,7 @@ public class MigrationService : ExchangeServiceBase
             if (block == null)
                 allowed.Add(target);
             else
-                excluded.Add($"{target} — {block.Message}");
+                excluded.Add($"{target} - {block.Message}");
         }
 
         return (allowed, excluded);
@@ -322,7 +322,7 @@ public class MigrationService : ExchangeServiceBase
 
     /// <summary>
     /// Flags an eligibility result if its target is a protected principal (or protection
-    /// cannot be verified — fail-closed). Sets <see cref="MigrationEligibilityResult.IsProtected"/>
+    /// cannot be verified - fail-closed). Sets <see cref="MigrationEligibilityResult.IsProtected"/>
     /// and <see cref="MigrationEligibilityResult.ProtectionNote"/> but never changes
     /// <see cref="MigrationEligibilityResult.Status"/>: protection is an orthogonal axis to the
     /// Exchange/AD eligibility verdict. The <paramref name="checker"/> seam exists for unit
@@ -356,7 +356,7 @@ public class MigrationService : ExchangeServiceBase
         // mutating module). Partition the targets BEFORE building the CSV or invoking
         // New-MigrationBatch so a protected mailbox can never reach the write path. Per owner
         // decision (2026-06-30): one protected target must not block the whole batch and the
-        // exclusion must never be silent — filter the protected targets out, migrate the rest,
+        // exclusion must never be silent - filter the protected targets out, migrate the rest,
         // and report the exclusions back clearly.
         var (allowedEmails, excludedTargets) = await PartitionByProtectionAsync(eligibleEmails);
 
@@ -461,7 +461,7 @@ Auto-Complete: {autoComplete}";
             {
                 details += $@"
 
-EXCLUDED — protected principals, NOT migrated ({excludedTargets.Count}):
+EXCLUDED - protected principals, NOT migrated ({excludedTargets.Count}):
 {string.Join("\n", excludedTargets)}
 Escalate these to an administrator outside this tool if migration is required.";
             }

@@ -6,12 +6,12 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// Repository for the AD Attribute Editor allowlist (<c>editable_attribute</c>) and choice
 /// legend (<c>attribute_legend</c>). Backs <see cref="ADAttributeEditorService"/>.
 ///
-/// Behavioral parity notes (SqliteConfigStore-Plan §2a):
+/// Behavioral parity notes (SqliteConfigStore-Plan Section 2a):
 /// - The allowlist is NULL-on-corrupt (a distinct fail-closed signal), EMPTY when there is no
 ///   config (a valid "nothing allowlisted" state). The presence marker distinguishes the two so
 ///   an explicitly-empty allowlist reads back as empty, never null.
 /// - Validation that REJECTS a config (denylist removal, contradictory flags, empty Choice list)
-///   stays in the service — this repository only stores/loads rows.
+///   stays in the service - this repository only stores/loads rows.
 /// - The legend is fail-open: absent or unreadable yields an empty legend.
 /// </summary>
 public sealed class AttributeEditorRepository
@@ -22,7 +22,7 @@ public sealed class AttributeEditorRepository
 
     /// <summary>
     /// Reads the raw allowlist rows and the configured flag in one guarded operation. Returns
-    /// false if the read throws (DB-integrity failure → the service treats it as corrupt/null).
+    /// false if the read throws (DB-integrity failure -> the service treats it as corrupt/null).
     /// </summary>
     public bool TryReadAllowlist(out List<AttributeRow> rows, out bool configured)
     {

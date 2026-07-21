@@ -161,7 +161,7 @@ public class BulkJobServiceTests
 
         Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("first")!.Status);
         Assert.Equal(BulkJobStatus.Completed, h.Repository.Get("second")!.Status);
-        // Each job got its own scope → its own processor instance.
+        // Each job got its own scope -> its own processor instance.
         Assert.Equal(2, h.CreatedProcessors.Count);
         Assert.NotEqual(h.CreatedProcessors[0].ScopeMarker, h.CreatedProcessors[1].ScopeMarker);
     }
@@ -268,7 +268,7 @@ public class BulkJobServiceTests
 
         h.Service.CancelJob("j1");
 
-        // A queued cancel is terminal → the completion hook must fire (from a fresh scope).
+        // A queued cancel is terminal -> the completion hook must fire (from a fresh scope).
         Assert.Single(h.CreatedProcessors);
         Assert.Equal(1, h.CreatedProcessors[0].CompletionCalls);
         Assert.Equal(BulkJobStatus.Cancelled, h.Repository.Get("j1")!.Status);

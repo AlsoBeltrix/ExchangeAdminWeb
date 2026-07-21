@@ -259,7 +259,7 @@ public class EmergencyDisableService
         }
 
         // Determine overall success. AD disable / reset / revoke must each be OK; the Entra
-        // disable may be OK or SKIPPED (skipped for synced users — see ShouldSkipEntraDisable).
+        // disable may be OK or SKIPPED (skipped for synced users - see ShouldSkipEntraDisable).
         var allMutationsSucceeded = IsOverallSuccess(
             disableAdResult.Status, resetPwResult.Status, revokeResult.Status, disableEntraResult.Status);
 
@@ -353,7 +353,7 @@ public class EmergencyDisableService
 
         // onPremisesSyncEnabled is true only for directory-synced users; absent or null means
         // cloud-only. accountEnabled is on-prem mastered for synced users, so a direct Graph
-        // PATCH of it is rejected — see ShouldSkipEntraDisable.
+        // PATCH of it is rejected - see ShouldSkipEntraDisable.
         var isSynced = doc.RootElement.TryGetProperty("onPremisesSyncEnabled", out var syncProp)
             && syncProp.ValueKind == JsonValueKind.True;
 

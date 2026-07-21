@@ -5,14 +5,14 @@ namespace ExchangeAdminWeb.Services.Jobs;
 
 /// <summary>
 /// The ConferenceRooms per-row work behind the bulk job runner (docs/BulkJobRunner-Plan.md, Slice 4).
-/// The runner owns lifecycle/queue/persistence; this owns "what one row does" — off the browser
+/// The runner owns lifecycle/queue/persistence; this owns "what one row does" - off the browser
 /// circuit, using ONLY the submission context captured on the job (submitter, ip, ticket, auth
 /// snapshot), never any ambient circuit which no longer exists.
 ///
 /// Per row it: (1) re-checks the submitter's captured authorization snapshot against the section's
 /// current allowed groups (option (a)); (2) enforces the protected-principal gate on BOTH Finder and
 /// Type paths via the shared <see cref="ConferenceRoomProtectionGate"/> (one enforcement point for
-/// the whole module) — the write runs only inside the gate's onAllowed delegate, so a protected
+/// the whole module) - the write runs only inside the gate's onAllowed delegate, so a protected
 /// target never reaches a side effect; (3) opens a CLEAN ROOT trace scope so the row is not nested
 /// under leaked async-local context; (4) calls the SAME ConferenceRoomService methods the live page
 /// uses (per-row Exchange/AD logic is unchanged); (5) audits per row with the captured
@@ -73,7 +73,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         var actionAudit = isFinder ? "ConferenceRooms_SetMetadata_Bulk" : "ConferenceRooms_SetType_Bulk";
 
         // 1) Off-circuit authorization re-check (option (a)): the submitter's captured claims must
-        // still satisfy the section's allowed groups. Fail closed — a job whose snapshot lacks
+        // still satisfy the section's allowed groups. Fail closed - a job whose snapshot lacks
         // access is denied on every row and audited, never processed.
         var snapshot = JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson);
         var allowed = _sectionAccess.GetGroupsForSection(Section);
@@ -83,7 +83,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
             return Failed(target, "Authorization denied.");
         }
 
-        // 2) Protected-principal gate — enforced on BOTH Finder AND Type paths (no carve-out;
+        // 2) Protected-principal gate - enforced on BOTH Finder AND Type paths (no carve-out;
         // owner 2026-07-02), through the SHARED ConferenceRoomProtectionGate so the check runs
         // exactly once per row and no path can write without it. The write (steps 3-5) lives inside
         // onAllowed, so a protected/fail-closed target never reaches the trace scope or any side
@@ -135,7 +135,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         var action = job.JobType == ConferenceRoomJobPayload.FinderJobType
             ? "ConferenceRooms_SetMetadata_Bulk"
             : "ConferenceRooms_SetType_Bulk";
-        // Success only when the job ran to completion AND every row fully succeeded — a partial row
+        // Success only when the job ran to completion AND every row fully succeeded - a partial row
         // is not a success (matches the live page, which reports bulk success only when all rows
         // succeed). A cancelled/interrupted job, or any failed/partial row, notifies as not-success.
         var success = job.Status == BulkJobStatus.Completed && job.FailedCount == 0 && job.PartialCount == 0;
@@ -155,7 +155,7 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
     }
 
     // -------------------------------------------------------------------------
-    // Per-row application — delegates to the unchanged ConferenceRoomService methods.
+    // Per-row application - delegates to the unchanged ConferenceRoomService methods.
     // -------------------------------------------------------------------------
 
     private async Task<RoomOperationResult> ApplyFinderRowAsync(FinderCsvRow row) =>

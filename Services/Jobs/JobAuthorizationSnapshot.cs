@@ -5,11 +5,11 @@ using ExchangeAdminWeb.Authorization;
 namespace ExchangeAdminWeb.Services.Jobs;
 
 /// <summary>
-/// Off-circuit authorization for bulk jobs — option (a) (owner, 2026-07-02; docs/BulkJobRunner-Plan.md).
+/// Off-circuit authorization for bulk jobs - option (a) (owner, 2026-07-02; docs/BulkJobRunner-Plan.md).
 ///
 /// The app authorizes entirely against a live <see cref="ClaimsPrincipal"/>'s role claims; there is
-/// no SAM→groups lookup, so a job worker thread (no live principal) cannot re-run the exact live
-/// check. Instead, at submit time — on the circuit, where the principal is present — we capture the
+/// no SAM->groups lookup, so a job worker thread (no live principal) cannot re-run the exact live
+/// check. Instead, at submit time - on the circuit, where the principal is present - we capture the
 /// submitter's role claims and the section (policy alias) into this snapshot, persisted on the job.
 /// The runner then re-checks the snapshot against the section's current allowed-group set per row
 /// using the same <see cref="GroupMembershipChecker"/> the live handler uses.
@@ -28,7 +28,7 @@ public sealed class JobAuthorizationSnapshot
     public required IReadOnlyList<string> RoleClaims { get; init; }
 
     /// <summary>
-    /// The section's allowed groups the submitter actually satisfied at submit time — the captured
+    /// The section's allowed groups the submitter actually satisfied at submit time - the captured
     /// authorization DECISION, not raw claims. Computed on the circuit using the same match the live
     /// handler uses (role claims AND <see cref="ClaimsPrincipal.IsInRole"/>), so a user authorized
     /// only via a Windows token role (common when role claims are SIDs but groups are configured by
@@ -54,7 +54,7 @@ public sealed class JobAuthorizationSnapshot
             if (string.IsNullOrWhiteSpace(group))
                 continue;
             var normalized = group.Contains('\\') ? group.Split('\\')[1] : group;
-            // Full live check: token roles (IsInRole) OR role claims — mirrors GroupAuthorizationHandler.
+            // Full live check: token roles (IsInRole) OR role claims - mirrors GroupAuthorizationHandler.
             if (user.IsInRole(group) || user.IsInRole(normalized) || GroupMembershipChecker.IsMemberOfAny(roles, [group]))
                 authorized.Add(group);
         }

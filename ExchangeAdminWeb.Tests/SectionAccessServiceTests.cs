@@ -65,7 +65,7 @@ public class SectionAccessServiceTests : IDisposable
     // Seeds section access into the shared store (the DB analogue of writing the fragment file).
     private void SeedSectionAccess(Dictionary<string, string[]> sections) => _repository.SaveAll(sections);
 
-    // A store whose reads throw — the DB-integrity analogue of an unreadable fragment.
+    // A store whose reads throw - the DB-integrity analogue of an unreadable fragment.
     private sealed class UnreadableStore : IConfigStore
     {
         public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
@@ -169,7 +169,7 @@ public class SectionAccessServiceTests : IDisposable
     [Fact]
     public void GetGroupsForSection_ConfiguredEmpty_MutatingSection_DeniesNotFallsBack()
     {
-        // An admin who clears ALL access (configured-but-empty) must deny mutating sections —
+        // An admin who clears ALL access (configured-but-empty) must deny mutating sections -
         // the Fragment source, NOT the None source that would grant read-only AllowedGroups.
         // Guards the same parity break the presence marker fixes in module-config (B.3).
         SeedSectionAccess(new Dictionary<string, string[]>());
@@ -307,11 +307,11 @@ public class SectionAccessServiceTests : IDisposable
         Assert.True(service.IsFragmentCorrupt());
         Assert.Empty(service.GetGroupsForSection("MailboxPermissions"));
         Assert.Empty(service.GetGroupsForSection("DelegationReport")); // even read-only denied
-        Assert.True(File.Exists(_legacyFilePath)); // not archived — next startup retries
+        Assert.True(File.Exists(_legacyFilePath)); // not archived - next startup retries
         Assert.Empty(Directory.GetFiles(_configDir, "sectionaccess.json.imported-*"));
     }
 
-    // Reads succeed (returns empty/unconfigured) but writes throw — simulates SQLite busy during
+    // Reads succeed (returns empty/unconfigured) but writes throw - simulates SQLite busy during
     // the one-time import.
     private sealed class WriteFailsStore : IConfigStore
     {

@@ -6,14 +6,14 @@ namespace ExchangeAdminWeb.Tests;
 /// Guards the audit-category-misfiling fix (ProdReadiness review finding
 /// "[audit] EmergencyDisable, Comms10k, and LicensingUpdates write audit events under
 /// wrong categories via borrowed audit methods"). Those modules used to call
-/// category-hardcoding helpers (LogMigrationAction → "MigrationAction",
-/// LogLookupAction → "Lookup"), so a security-critical EmergencyDisable filed as a
+/// category-hardcoding helpers (LogMigrationAction -> "MigrationAction",
+/// LogLookupAction -> "Lookup"), so a security-critical EmergencyDisable filed as a
 /// migration and license mutations filed as read-only lookups, and a compliance query
 /// by category missed them. They must use the generic LogModuleAction with their own
 /// module category, and the AdminEventLog filter must offer those categories.
 ///
 /// These are source-text guards because the call sites run live AD / Blazor circuit
-/// code with no injection seam, and the plan (§2) forbids a testability refactor outside
+/// code with no injection seam, and the plan (Section 2) forbids a testability refactor outside
 /// a named finding. The scan walks up from the test base directory to the repo source,
 /// mirroring ModuleCatalogTests.GetPagesDirectory.
 /// </summary>
@@ -51,7 +51,7 @@ public class AuditCategoryFilingTests
     {
         var text = File.ReadAllText(FindRepoFile("Services", "LicensingUpdatesService.cs"));
 
-        // LogLookupAction hardcodes category "Lookup" — an AD attribute WRITE must not
+        // LogLookupAction hardcodes category "Lookup" - an AD attribute WRITE must not
         // be filed as a read-only lookup.
         Assert.DoesNotContain("LogLookupAction", text);
         Assert.Matches(

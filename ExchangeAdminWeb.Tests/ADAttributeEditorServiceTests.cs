@@ -468,7 +468,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.True(service.IsAllowlistCorrupt());
     }
 
-    // Reads succeed but writes throw — simulates SQLite busy during the one-time import.
+    // Reads succeed but writes throw - simulates SQLite busy during the one-time import.
     private sealed class WriteFailsStore : ExchangeAdminWeb.Services.Storage.IConfigStore
     {
         private readonly ExchangeAdminWeb.Services.Storage.SqliteConfigStore _inner;
@@ -497,7 +497,7 @@ public class ADAttributeEditorServiceTests : IDisposable
         Assert.NotNull(first);
         Assert.Single(first!);
 
-        // Corrupt the store directly within the TTL (drop the table — partial schema damage),
+        // Corrupt the store directly within the TTL (drop the table - partial schema damage),
         // simulating an operator/promote clobber.
         _attrStore!.Write((connection, tx) =>
         {

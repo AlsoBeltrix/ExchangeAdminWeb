@@ -87,7 +87,7 @@ public class ModuleConfigService
     /// One-time remap of the renamed Graph credential key: for every catalog module that declares
     /// a <c>GraphDelineaSecretId</c> ConfigField, move a value stranded under the old
     /// <c>DelineaSecretId</c> key to the new key (and drop the stale row). Catalog-driven so it is
-    /// scoped to Graph modules only — on-prem modules that legitimately use <c>DelineaSecretId</c>
+    /// scoped to Graph modules only - on-prem modules that legitimately use <c>DelineaSecretId</c>
     /// as their current key are never touched. Idempotent and non-destructive (never overwrites an
     /// existing new-key value); a module with nothing to remap performs no write. Returns the IDs
     /// actually changed. See docs/GraphSecretKeyMigration-Plan.md.
@@ -137,8 +137,8 @@ public class ModuleConfigService
     }
 
     // One-time import of legacy config into module_config, then archive the files
-    // (SqliteConfigStore-Plan §4). Folds in BOTH legacy shapes: the per-module
-    // module-config-{Id}.json files AND the older single module-config.json (module → values).
+    // (SqliteConfigStore-Plan Section 4). Folds in BOTH legacy shapes: the per-module
+    // module-config-{Id}.json files AND the older single module-config.json (module -> values).
     // Only modules absent from the DB are imported, so existing DB state always wins.
     private void ImportLegacyConfig(string configDir)
     {
@@ -173,7 +173,7 @@ public class ModuleConfigService
                 LegacyConfigImport.ArchiveFile(file, _logger);
             }
 
-            // Older single-file shape: module-config.json (module → key → value)
+            // Older single-file shape: module-config.json (module -> key -> value)
             var legacyPath = Path.Combine(configDir, "module-config.json");
             if (File.Exists(legacyPath))
             {

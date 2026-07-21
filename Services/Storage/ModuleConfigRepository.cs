@@ -8,7 +8,7 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// their config through. Sits on <see cref="IConfigStore"/>.
 ///
 /// Corruption in the file world meant an unparseable JSON file; with per-row storage that
-/// failure class is gone — a "corrupt" probe now means the table cannot be opened/read at all
+/// failure class is gone - a "corrupt" probe now means the table cannot be opened/read at all
 /// (a DB-integrity failure), surfaced by <see cref="TryReadModule"/> returning false.
 /// </summary>
 public sealed class ModuleConfigRepository
@@ -42,7 +42,7 @@ public sealed class ModuleConfigRepository
     }
 
     /// <summary>
-    /// True if the module has been configured — i.e. saved or imported at least once, even if
+    /// True if the module has been configured - i.e. saved or imported at least once, even if
     /// its config is empty. Backed by the presence marker, not row count, so an explicitly
     /// empty config still suppresses the legacy appsettings fallback (file-world parity).
     /// </summary>

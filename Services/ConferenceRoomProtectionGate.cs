@@ -16,7 +16,7 @@ public sealed record ProtectionDenial(string Message, string AuditDetail);
 /// no path can write without passing it.
 ///
 /// The write is reachable only through the <c>onAllowed</c> delegate, which the caller invokes to open
-/// its own trace scope and perform the mutation — so the protection decision is fully made BEFORE any
+/// its own trace scope and perform the mutation - so the protection decision is fully made BEFORE any
 /// side effect (Known Failure Class #1, fail-closed authorization). This is module-scoped on purpose:
 /// keeping the combined check-then-run out of the shared <see cref="ProtectedPrincipalService"/> keeps
 /// this a ConferenceRooms-only change (module-version bump, no app-version bump).
@@ -54,7 +54,7 @@ public sealed class ConferenceRoomProtectionGate
     /// <summary>
     /// The protection decision. Returns a <see cref="ProtectionDenial"/> to block, or null to allow.
     /// Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception all deny. NotFound (AD could
-    /// not resolve, e.g. a cloud-only mailbox) is treated as not protected — an accepted, documented
+    /// not resolve, e.g. a cloud-only mailbox) is treated as not protected - an accepted, documented
     /// limitation consistent with the other gated modules.
     /// </summary>
     private async Task<ProtectionDenial?> EvaluateAsync(string identity)
@@ -65,9 +65,9 @@ public sealed class ConferenceRoomProtectionGate
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "Identity is ambiguous — matches multiple AD users."
+                    ? "Identity is ambiguous - matches multiple AD users."
                     : "Protection check unavailable.";
-                return new ProtectionDenial(reason, $"{reason} — blocked");
+                return new ProtectionDenial(reason, $"{reason} - blocked");
             }
             if (resolved != null)
             {
@@ -80,12 +80,12 @@ public sealed class ConferenceRoomProtectionGate
                 if (check.IsProtected)
                     return new ProtectionDenial(
                         "This is a protected principal. Operation not permitted.",
-                        $"Protected principal — matched rules: {string.Join(", ", check.MatchedRules)}");
+                        $"Protected principal - matched rules: {string.Join(", ", check.MatchedRules)}");
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
+            _logger.LogWarning(ex, "Protected principal check failed for {Identity} - blocking as precaution", identity);
             return new ProtectionDenial($"Protection check error: {ex.Message}", $"Protection check exception: {ex.Message}");
         }
         return null;

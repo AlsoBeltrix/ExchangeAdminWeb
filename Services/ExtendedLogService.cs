@@ -266,7 +266,7 @@ public class ExtendedLogService : IDisposable
     }
 
     // One-time import of the legacy config/extended-log-level.txt into app_setting, then archive
-    // the file (SqliteConfigStore-Plan §4). Only writes if the DB has no level yet, so a value
+    // the file (SqliteConfigStore-Plan Section 4). Only writes if the DB has no level yet, so a value
     // already in the DB always wins over the (now stale) file.
     private void ImportLegacyLevelIfPresent()
     {

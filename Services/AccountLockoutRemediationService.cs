@@ -804,7 +804,7 @@ if (-not $found) {
         => new(false, message, execute, 0, 0, 0, []);
 
     // Mandatory admin notification on every executed logoff operation (Constitution
-    // §Notifications) — session-state change. One summary notification per operation
+    // Section Notifications) - session-state change. One summary notification per operation
     // (counts), not one per session row. Dry-runs (Executed == false) do not notify.
     // Fail-safe: a send failure logs but never changes the returned result.
     private async Task NotifyLogoffAdminAsync(

@@ -3,7 +3,7 @@ using ExchangeAdminWeb.Models;
 namespace ExchangeAdminWeb.Services.Jobs;
 
 /// <summary>
-/// The serialized payload for a ConferenceRooms bulk job — the opaque <see cref="BulkJob.PayloadJson"/>
+/// The serialized payload for a ConferenceRooms bulk job - the opaque <see cref="BulkJob.PayloadJson"/>
 /// the runner carries and the <see cref="ConferenceRoomBulkProcessor"/> deserializes. Exactly one of
 /// <see cref="FinderRows"/> / <see cref="TypeRows"/> is populated, selected by <see cref="Kind"/>.
 /// The parsed CSV rows are captured at submit time so a queued job is a real, inspectable record and

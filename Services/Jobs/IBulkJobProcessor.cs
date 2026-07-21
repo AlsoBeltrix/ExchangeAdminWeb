@@ -26,13 +26,13 @@ public interface IBulkJobProcessor
     /// <summary>
     /// Processes a single row (0-based <paramref name="rowIndex"/>) of the job and returns its
     /// durable outcome. The processor performs its own per-row authorization, protected-principal
-    /// gate, Exchange/AD work, audit and trace — all using the captured submission context on
+    /// gate, Exchange/AD work, audit and trace - all using the captured submission context on
     /// <paramref name="job"/> (submitter, ip, ticket, auth snapshot), NOT any ambient circuit,
     /// which no longer exists off-connection.
     ///
     /// <paramref name="cancellationToken"/> is the cooperative cancel signal. The runner checks it
     /// between rows; a long-running processor may also observe it, but an in-flight Exchange call
-    /// cannot be aborted mid-cmdlet (documented limitation — see docs/BulkJobRunner-Plan.md).
+    /// cannot be aborted mid-cmdlet (documented limitation - see docs/BulkJobRunner-Plan.md).
     /// A processor should let a genuine failure surface as a Failed/Partial <see cref="BulkJobRowOutcome"/>
     /// rather than throwing; a throw is caught by the runner and recorded as a Failed row so one bad
     /// row never aborts the batch.
@@ -44,7 +44,7 @@ public interface IBulkJobProcessor
     /// Interrupted). This is where a module sends its completion admin notification, moving the
     /// email off the (now-closed) browser circuit into the job. <paramref name="job"/> carries the
     /// final aggregated counts. Default no-op so processors that need no completion hook opt out.
-    /// Per the fail-safe rule, a notification failure here must not change the job result — the
+    /// Per the fail-safe rule, a notification failure here must not change the job result - the
     /// runner has already persisted the terminal state before calling this, and swallows throws.
     /// </summary>
     Task OnJobCompletedAsync(BulkJob job) => Task.CompletedTask;

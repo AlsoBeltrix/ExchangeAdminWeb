@@ -96,7 +96,7 @@ public abstract class ExchangeServiceBase
                 result = PermissionResult.Fail(primary, detail);
             }
 
-            // RunAsync never re-throws — a connection failure is reported via the tracker so the
+            // RunAsync never re-throws - a connection failure is reported via the tracker so the
             // pool can discard and (if eligible) retry. The base helper already cleared the
             // pipeline in Invoke, so a non-connection failure leaves the connection returnable.
             return new PooledOutcome<PermissionResult>(result, tracker.HasConnectionError, tracker.HasRetriablePrecheckError);
@@ -135,11 +135,11 @@ public abstract class ExchangeServiceBase
 
     protected internal sealed class ConnectionErrorTracker
     {
-        /// <summary>Any dead/suspect-session error was seen — gates DISCARD.</summary>
+        /// <summary>Any dead/suspect-session error was seen - gates DISCARD.</summary>
         public bool HasConnectionError { get; set; }
 
         /// <summary>
-        /// The narrow "must call Connect-ExchangeOnline" pre-cmdlet error was seen — gates RETRY.
+        /// The narrow "must call Connect-ExchangeOnline" pre-cmdlet error was seen - gates RETRY.
         /// Implies <see cref="HasConnectionError"/>. See
         /// <see cref="ExoConnectionPool.IsRetriablePrecheckError"/>.
         /// </summary>
@@ -173,7 +173,7 @@ public abstract class ExchangeServiceBase
 
     /// <summary>
     /// Recover the captured PowerShell error messages from an exception thrown by
-    /// <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/> — the structured detail in
+    /// <see cref="Invoke(PowerShell, ConnectionErrorTracker)"/> - the structured detail in
     /// <see cref="PsErrorsDataKey"/> if present, else the exception message.
     /// </summary>
     internal static (string primary, string? detail) ResolvePsErrors(Exception ex)
@@ -380,7 +380,7 @@ public abstract class ExchangeServiceBase
     {
         if (string.IsNullOrEmpty(_onPremServerUri))
         {
-            _logger.LogError("OnPremExchange:ServerUri is not configured — cannot check mailbox size");
+            _logger.LogError("OnPremExchange:ServerUri is not configured - cannot check mailbox size");
             return null;
         }
 

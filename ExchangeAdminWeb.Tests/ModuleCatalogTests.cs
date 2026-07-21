@@ -129,7 +129,7 @@ public class ModuleCatalogTests
     {
         // Endpoints that declare no authorization metadata fall under FallbackPolicy.
         // True deny-by-default: the policy must DENY every principal (a failing
-        // assertion), not merely require authentication — so an undeclared endpoint is
+        // assertion), not merely require authentication - so an undeclared endpoint is
         // blocked for all users until it declares its own catalog-backed policy. It must
         // also NOT carry the legacy AllowedGroups group requirement (which would silently
         // resurrect the removed app-wide group gate on any undeclared endpoint).

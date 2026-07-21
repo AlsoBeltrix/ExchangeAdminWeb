@@ -125,7 +125,7 @@ public class SqliteConfigStoreTests
 
         // Simulate the mixed Singleton/Scoped readers: many overlapping reads must all succeed
         // against their own short-lived connections (the factory must not hand out one shared
-        // connection — §5B.1).
+        // connection - Section 5B.1).
         Parallel.For(0, 32, _ =>
         {
             var value = store.Read(connection =>

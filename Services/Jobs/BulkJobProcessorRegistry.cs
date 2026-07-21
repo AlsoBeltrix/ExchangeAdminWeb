@@ -6,7 +6,7 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// DI scope per job (so scoped module services are constructed and disposed with the job).
 ///
 /// This keeps the runner module-agnostic: it never references ConferenceRoomService (or any module)
-/// directly — it looks the processor up by the job's <see cref="BulkJob.ModuleId"/>.
+/// directly - it looks the processor up by the job's <see cref="BulkJob.ModuleId"/>.
 /// </summary>
 public sealed class BulkJobProcessorRegistry
 {

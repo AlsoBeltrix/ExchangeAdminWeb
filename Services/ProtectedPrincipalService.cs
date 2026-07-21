@@ -90,7 +90,7 @@ public class ProtectedPrincipalService
     // legacy file also counts as "has config" so PermissionValidator routes through the
     // (fail-closed) load path rather than skipping protection entirely. A DB-integrity failure
     // ALSO counts as "has config" (true) so the caller routes into LoadEffectiveConfig, which
-    // returns the controlled fail-closed error — never let this probe throw through to a 500.
+    // returns the controlled fail-closed error - never let this probe throw through to a 500.
     public bool HasCentralConfig
     {
         get
@@ -176,7 +176,7 @@ public class ProtectedPrincipalService
         // integrity / partial schema damage) fails closed, never silently empty.
         if (!_repository.TryRead(out var data, out var configured))
         {
-            _logger.LogError("Protected-principals store unreadable — failing closed");
+            _logger.LogError("Protected-principals store unreadable - failing closed");
             lock (_cacheLock) { _configCorrupt = true; }
             return (null, [], "Protected-principals configuration is corrupt. Contact your administrator.");
         }
@@ -214,14 +214,14 @@ public class ProtectedPrincipalService
     {
         if (DateTime.UtcNow - _lastCredentialFailure < CredentialFailureTtl)
         {
-            _logger.LogDebug("Skipping principal resolution — credential recently failed");
+            _logger.LogDebug("Skipping principal resolution - credential recently failed");
             return (null, ResolutionStatus.Unavailable);
         }
 
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
-            _logger.LogDebug("Cannot resolve principal — directory-read credential not configured");
+            _logger.LogDebug("Cannot resolve principal - directory-read credential not configured");
             return (null, ResolutionStatus.Unavailable);
         }
 
@@ -253,7 +253,7 @@ public class ProtectedPrincipalService
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Ambiguous", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning(ex, "Ambiguous resolution for {Identity} — blocking", identity);
+            _logger.LogWarning(ex, "Ambiguous resolution for {Identity} - blocking", identity);
             return (null, ResolutionStatus.Ambiguous);
         }
         catch (Exception ex)
@@ -264,7 +264,7 @@ public class ProtectedPrincipalService
     }
 
     /// <summary>
-    /// Legacy wrapper — returns null for both NotFound and Unavailable.
+    /// Legacy wrapper - returns null for both NotFound and Unavailable.
     /// Prefer ResolveWithStatusAsync for new code.
     /// </summary>
     public async Task<ResolvedDirectoryPrincipal?> ResolveDirectoryPrincipalAsync(string identity)
@@ -303,7 +303,7 @@ public class ProtectedPrincipalService
 
         if (users.Count > 1)
         {
-            _logger.LogWarning("Ambiguous identity resolution for '{Identity}': matched {Count} AD users — failing closed", identity, users.Count);
+            _logger.LogWarning("Ambiguous identity resolution for '{Identity}': matched {Count} AD users - failing closed", identity, users.Count);
             throw new InvalidOperationException($"Ambiguous: '{identity}' matches {users.Count} AD users.");
         }
 
@@ -333,7 +333,7 @@ public class ProtectedPrincipalService
     }
 
     // One-time import of the legacy protected-principals.json into protected_principal, then
-    // archive the file (SqliteConfigStore-Plan §4). Only fills if not yet configured (DB wins).
+    // archive the file (SqliteConfigStore-Plan Section 4). Only fills if not yet configured (DB wins).
     // Returns true if the legacy file exists but is unparseable / missing the ProtectedPrincipals
     // node: it is left in place (not archived) AND the store stays fail-closed until repaired.
     private bool ImportLegacyIfPresent(string legacyPath)
@@ -352,13 +352,13 @@ public class ProtectedPrincipalService
                 parsed = wrapper?.ProtectedPrincipals;
                 if (parsed == null)
                 {
-                    _logger.LogError("Legacy protected-principals.json exists but ProtectedPrincipals node is missing — failing closed until repaired/removed");
+                    _logger.LogError("Legacy protected-principals.json exists but ProtectedPrincipals node is missing - failing closed until repaired/removed");
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Legacy protected-principals.json is unparseable — failing closed until repaired/removed");
+                _logger.LogError(ex, "Legacy protected-principals.json is unparseable - failing closed until repaired/removed");
                 return true;
             }
 
@@ -373,10 +373,10 @@ public class ProtectedPrincipalService
             catch (Exception ex)
             {
                 // The file parsed fine but could not be committed to the DB (e.g. SQLite busy).
-                // Do NOT archive and do NOT fall through to an unconfigured DB — that would
+                // Do NOT archive and do NOT fall through to an unconfigured DB - that would
                 // silently drop the protection rules. Fail closed; the file stays on disk so the
                 // next startup retries the import.
-                _logger.LogError(ex, "Failed to import legacy protected-principals.json into the store — failing closed until import succeeds");
+                _logger.LogError(ex, "Failed to import legacy protected-principals.json into the store - failing closed until import succeeds");
                 return true;
             }
 
@@ -385,9 +385,9 @@ public class ProtectedPrincipalService
         }
         catch (Exception ex)
         {
-            // Reached only if reading the file itself failed (not a parse error — those return
+            // Reached only if reading the file itself failed (not a parse error - those return
             // true above). A valid file we could not even read must also fail closed.
-            _logger.LogError(ex, "Failed to process legacy protected-principals.json — failing closed");
+            _logger.LogError(ex, "Failed to process legacy protected-principals.json - failing closed");
             return true;
         }
     }
@@ -502,7 +502,7 @@ public class ProtectedPrincipalService
         var secretId = GetDirectoryReadSecretId();
         if (secretId == null)
         {
-            _logger.LogError("Directory-read credential is not configured but protected groups are defined — configure it on the Admin Settings page");
+            _logger.LogError("Directory-read credential is not configured but protected groups are defined - configure it on the Admin Settings page");
             return (matches, true, "Protected-principal directory-read credential is not configured. Configure it on the Admin Settings page.");
         }
 
@@ -529,7 +529,7 @@ public class ProtectedPrincipalService
                 // we cannot confirm the user is NOT in a protected group
                 if (expansionHadErrors && matches.Count == 0)
                 {
-                    _logger.LogWarning("Group expansion had errors and no matches found — failing closed for {Target}", target.UserPrincipalName);
+                    _logger.LogWarning("Group expansion had errors and no matches found - failing closed for {Target}", target.UserPrincipalName);
                     return (matches, true, "Group membership check was incomplete due to expansion errors. Cannot confirm target is not protected.");
                 }
             }
@@ -726,7 +726,7 @@ public class ProtectedPrincipalService
                 return dn[valueStart..i];
         }
 
-        // No comma found — entire remaining string is the CN value
+        // No comma found - entire remaining string is the CN value
         return dn[valueStart..];
     }
 

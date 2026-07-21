@@ -127,7 +127,7 @@ public sealed class GraphTokenClient
     /// <summary>
     /// Pulls the Graph <c>error.code</c>/<c>error.message</c> out of an error response body for
     /// safe logging. Returns null when the body is empty or unparseable. Never returns tokens or
-    /// other request data — input is only the response body.
+    /// other request data - input is only the response body.
     /// </summary>
     internal static string? ExtractGraphError(string? responseBody)
     {
@@ -147,7 +147,7 @@ public sealed class GraphTokenClient
         }
         catch (JsonException)
         {
-            // Non-JSON error body — fall through to null rather than echo arbitrary content.
+            // Non-JSON error body - fall through to null rather than echo arbitrary content.
         }
 
         return null;

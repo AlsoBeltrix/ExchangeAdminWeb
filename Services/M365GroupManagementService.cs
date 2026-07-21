@@ -172,7 +172,7 @@ public class M365GroupManagementService
     // against on-prem AD; fails closed on Unavailable/Ambiguous/CheckFailed and refuses
     // protected principals. Returns null when clear to mutate, or a Fail result to abort.
     // Known limitation (plan, owner 2026-06-29): a cloud-only account that AD cannot
-    // resolve returns NotFound and is treated as not protected — accepted risk.
+    // resolve returns NotFound and is treated as not protected - accepted risk.
     private async Task<M365GroupResult?> CheckProtectedAsync(string identity)
     {
         if (string.IsNullOrWhiteSpace(identity))
@@ -188,7 +188,7 @@ public class M365GroupManagementService
                 {
                     Success = false,
                     Message = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                        ? "Identity is ambiguous — matches multiple AD users."
+                        ? "Identity is ambiguous - matches multiple AD users."
                         : "Protection check unavailable. Cannot verify if this member is protected."
                 };
             }
@@ -206,7 +206,7 @@ public class M365GroupManagementService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Protected principal check failed for {Identity} — blocking as precaution", identity);
+            _logger.LogWarning(ex, "Protected principal check failed for {Identity} - blocking as precaution", identity);
             return new M365GroupResult { Success = false, Message = $"Protection check error: {ex.Message}" };
         }
     }

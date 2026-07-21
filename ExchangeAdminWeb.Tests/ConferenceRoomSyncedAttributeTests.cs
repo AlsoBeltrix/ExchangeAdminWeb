@@ -19,11 +19,11 @@ public class ConferenceRoomSyncedAttributeTests
     // --- Country mapping: CountryOrRegion -> c / co / countryCode ---
 
     // co (country name) must match what ADUC / on-prem Set-User already wrote on existing
-    // rooms — the Windows short name (RegionInfo.EnglishName), NOT the ISO 3166 long name.
+    // rooms - the Windows short name (RegionInfo.EnglishName), NOT the ISO 3166 long name.
     // Verified against live directory data (rooms_with_c_co_countrycode.csv): US rooms carry
     // co="United States" (not "United States of America"); GB carry "United Kingdom".
     // countryCode is the ISO 3166-1 numeric code, which .NET cannot supply (RegionInfo.GeoId
-    // is a Microsoft GeoId, e.g. 68 for IE, not the ISO 372) — it comes from a static table.
+    // is a Microsoft GeoId, e.g. 68 for IE, not the ISO 372) - it comes from a static table.
     [Theory]
     [InlineData("IE", "IE", "Ireland", 372)]
     [InlineData("US", "US", "United States", 840)]
@@ -66,7 +66,7 @@ public class ConferenceRoomSyncedAttributeTests
     [InlineData("XK")]     // Kosovo: RegionInfo ACCEPTS this (user-assigned), but it is NOT an
                            // officially-assigned ISO 3166-1 code, so it is absent from the
                            // IsoCountryCodes table. This case specifically guards the table
-                           // lookup — RegionInfo alone would let it through. If the table
+                           // lookup - RegionInfo alone would let it through. If the table
                            // guard is removed, this row fails (proven non-vacuous).
     public void BuildCountryAttributes_Unmappable_Throws(string input)
     {
