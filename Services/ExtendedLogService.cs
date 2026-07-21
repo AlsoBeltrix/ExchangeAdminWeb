@@ -35,7 +35,7 @@ public class ExtendedLogService : IDisposable
     {
         _logger = logger;
         _settings = settings;
-        var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
+        var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
         _maxFileBytes = GetMaxFileBytes(config);

@@ -557,7 +557,7 @@ public class EmergencyDisableService
 
     private void PersistSnapshot(DisableSnapshot snapshot)
     {
-        var logRoot = _config["Audit:LogRoot"] ?? @"E:\WWWOutput";
+        var logRoot = AuditLogRoot.Require(_config);
         var snapshotDir = Path.Combine(logRoot, "ExchangeAdminWeb", "snapshots");
         Directory.CreateDirectory(snapshotDir);
 

@@ -23,7 +23,7 @@ public class JsonlLogService
     public JsonlLogService(IConfiguration config, ILogger<JsonlLogService> logger)
     {
         _logger = logger;
-        var logRoot = config["Audit:LogRoot"] ?? @"E:\WWWOutput";
+        var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _rotationPeriod = config["Audit:RotationPeriod"]?.ToLowerInvariant() ?? "daily";
         _maxFileBytes = GetMaxFileBytes(config);
