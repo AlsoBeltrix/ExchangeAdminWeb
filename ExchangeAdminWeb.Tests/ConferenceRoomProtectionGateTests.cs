@@ -60,6 +60,7 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = _tempDir,
         }).Build();
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(_tempDir);
