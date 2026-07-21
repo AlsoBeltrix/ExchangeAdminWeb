@@ -112,7 +112,11 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 ## Findings (environment / CI — still live)
 
-- CI is real: a failing test fails the run. Trust it. (`.github/workflows/ci.yml`, `windows-latest`.)
+- CI is real: it fails on real problems. Trust it. (`.github/workflows/ci.yml`, `windows-latest`.)
+  Note: `dotnet format --verify-no-changes` treats analyzer *warnings* as fatal, so a stray
+  warning (not just a failing test) reddens build-test. This bit master 2026-07-20..07-21: the
+  Bulk Job Runner (`971555f`) left an xUnit1051 warning that kept build-test red for ~13 commits
+  until fixed in `8c6f83f` (2026-07-21). Lesson: run the format check locally, not just the tests.
 - On local macOS, a missing Windows COM DLL can nondeterministically drop xUnit collections (totals
   vary) — trust the failure *list*, not the total. `windows-latest` CI is unaffected. macOS builds
   need `-p:EnableWindowsTargeting=true`; Pester needs `pwsh` +
