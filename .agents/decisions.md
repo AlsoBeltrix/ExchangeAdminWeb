@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-21 - ConferenceRooms protected-principal check is one guarded-execution enforcement point
+
+Status: Active
+
+The ConferenceRooms module enforces the protected-principal gate through a single
+`ConferenceRoomProtectionGate.GuardThenRunAsync(identity, onDenied, onAllowed)` helper
+(`Services/ConferenceRoomProtectionGate.cs`), not per-path inline copies. Every room-mutating
+write — single-room Finder, single-room Type, and each bulk row — reaches its write only inside
+the gate's `onAllowed` delegate, so the check runs exactly once per write and no path can write
+without passing it. The write's trace scope opens inside `onAllowed`, so the protection decision is
+fully made before any side effect (fail-closed; Known Failure Class #1). Denial auditing stays with
+each caller so per-path action labels are preserved (Finder `ConferenceRooms_SetMetadata`, Type
+`ConferenceRooms_SetType`, bulk `_Bulk`-suffixed with captured job actor/ip/ticket).
+
+This supersedes the three prior near-duplicate inline checks (page Finder had none — the gap;
+page Type and the bulk processor each had their own copy). Closes the last known protected-principal
+gap (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`, Implemented; finding pp-finder-1).
+The guard is deliberately ConferenceRooms-scoped, not added to the shared `ProtectedPrincipalService`
+— keeping it module-local made this a module-version bump (`ConferenceRooms` 2.2.0 → 2.3.0) with no
+app-version bump, per the two-rule versioning policy.
+
+Reason:
+Duplicated authorization checks drift — the single-room Finder path was the copy that silently
+lacked the gate. A guarded-execution helper makes the write unreachable except through the gate, so
+the invariant is structural rather than maintained by discipline across call sites. Subordinate to
+the 2026-06-29 protected-principal decision and `docs/ProjectConstitution.md` §Protected Principals.
+
 ### 2026-07-02 - Bulk operations run as durable, user-initiated, ticketed, audited server-side jobs
 
 Status: Active

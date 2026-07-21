@@ -45,11 +45,10 @@ Live backlog only. Items need an approved plan before code unless noted.
    Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays unvalidated
    until a real tenant run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
    write. Revisit when a controlled prod run is possible; do not close out until then.
-2. **Single-room Finder protected-principal gap** — plan **reviewed & accepted**, awaiting owner
-   go to implement (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`, Status
-   Reviewed-accepted). Approach C2-G (consolidate the duplicated PP check to one guarded-execution
-   helper, no double-check). Finding + review trail: `.agents/review/` (finding pp-finder-1).
-   No code written. See Blockers / Open gaps.
+2. **Single-room Finder protected-principal gap** — **DONE** (2026-07-21, commit 2a97d09;
+   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` Implemented). Consolidated the
+   module PP check into one `ConferenceRoomProtectionGate` (C2-G). Only remaining follow-up is
+   live-tenant/UI validation (deferred, no dev tenant).
 3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved. End state
    (owner, 2026-06-29): UI `.zip` upload, no full rebuild; precompiled-vs-runtime still open. First
    leg = module contract / self-registration seam. See `.agents/decisions.md` 2026-06-18 & 06-29.
@@ -67,16 +66,15 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 ## Blockers / open gaps
 
 - **None blocking current work.**
-- **OPEN — single-room Finder has no protected-principal check (found 2026-07-02).** The
+- **CLOSED (2026-07-21, commit 2a97d09) — single-room Finder protected-principal gap.** The
   single-room Room Finder page path (`ConferenceRooms.razor` `SetupSingleRoom` →
-  `SetRoomMetadataAndListAsync`) goes straight from `ReauthorizeAsync` to the write with no PP
-  gate. Single-room **Type** does gate. Same class as the now-closed GAP 3. **Plan reviewed &
-  accepted** (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`; 4 review rounds, gpt-5.6
-  accepted the consolidation): fix consolidates the check (page Finder+Type and bulk per-row all
-  currently carry near-duplicate copies) into one C2-G guarded-execution helper — check once, run
-  the write delegate only when allowed, no double-check. **Awaiting explicit owner go to write
-  code** (owner delegated the design *shape* to the review, not the go-to-implement). Low practical
-  risk (rooms rarely protected).
+  `SetRoomMetadataAndListAsync`) previously wrote with no PP gate. Fixed by consolidating the
+  module's protected-principal check into one `ConferenceRoomProtectionGate` (C2-G
+  guarded-execution helper): page Finder+Type and each bulk row route through `GuardThenRunAsync`;
+  the write runs only when the gate clears; the two prior near-duplicate inline checks were removed.
+  672 tests pass; non-vacuity verified. Plan Implemented
+  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). **Live-tenant/UI validation not
+  run** (no dev tenant) — deferred to a future controlled run, same as the Bulk Job Runner.
 - **OPEN — versioning rule is wrong for new modules (owner, 2026-06-26; not yet fixed).** The rule
   (Constitution §Deployment And Versioning; AGENTS.md #6) bumps the base app version for any
   shared/app-wide change; owner: adding a *new module* should not bump the base app version — only
@@ -89,11 +87,11 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - **Prod BlockedSenders version uncertainty:** the two BlockedSenders fixes (`17910f3`→1.0.1,
   `cde778f`→1.0.2) are module bumps, not app bumps, so "prod = app 2.3.27" does not confirm prod
   includes them. Confirm the prod build commit if BlockedSenders behaviour matters in prod.
-- **All protected-principal sweep gaps CLOSED for the bulk/module surfaces:** GAP 1
-  (`M365GroupManagementService`, 2026-06-29), GAP 2 (`MigrationService`, 2026-06-30), GAP 3
-  (ConferenceRooms Finder bulk, 2026-07-02). The only remaining PP gap is the single-room Finder
-  path above. Governing rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected
-  Principals.
+- **All known protected-principal gaps CLOSED:** GAP 1 (`M365GroupManagementService`, 2026-06-29),
+  GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk, 2026-07-02), and the
+  single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated into
+  `ConferenceRoomProtectionGate`). No known open PP gap remains. Governing rule:
+  `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals.
 
 ## Verification
 
@@ -124,10 +122,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - `.agents/decisions.md` — durable decisions (most recent: Bulk Job Runner, 2026-07-02).
 - `.agents/repo-map.json` — automated verification map.
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, pending dev validation);
-  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Reviewed-accepted, awaiting owner go
-  to implement). No plan is currently `In progress`.
-- Active review loop: see `.agents/review/index.md` (finding pp-finder-1 — plan accepted, code not
-  started).
+  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21, pending
+  live-tenant validation). No plan is currently `In progress`.
+- Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
 

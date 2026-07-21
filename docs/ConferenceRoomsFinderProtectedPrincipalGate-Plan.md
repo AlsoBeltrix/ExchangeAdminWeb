@@ -1,10 +1,16 @@
 # ConferenceRooms Finder Protected-Principal Gate — Plan
 
-Status: Reviewed-accepted, awaiting owner go to implement (2026-07-20). Approach:
-C2-G (guarded-execution helper), recommended and accepted by gpt-5.6 review
-(effort max). OD-1 resolved. Prior page-seam design (Options A/B) reviewed & accepted
+Status: Implemented (2026-07-21, commit 2a97d09). Approach: C2-G (guarded-execution
+helper), recommended and accepted by gpt-5.6 review (effort max), owner-approved
+2026-07-20. OD-1 resolved. Prior page-seam design (Options A/B) reviewed & accepted
 codex xhigh round 3, then superseded by the owner's shared-code/no-double-check
-direction. Code implementation blocked on explicit owner approval.
+direction.
+
+Implementation notes: `ConferenceRoomProtectionGate` (new, module-scoped) is the
+single enforcement point; page Finder/Type and each bulk row route through
+`GuardThenRunAsync`; the two prior inline checks were removed. 672 tests pass;
+non-vacuity verified (bypassing the denial branch fails 9 tests). No live-tenant/UI
+validation (no dev tenant) — deferred to a future controlled run.
 App version at draft: 2.3.28 (unchanged — module-scoped change)
 Module: `ConferenceRooms` (Version `2.2.0` → `2.3.0`)
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
