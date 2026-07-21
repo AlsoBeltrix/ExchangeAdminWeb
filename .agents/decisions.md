@@ -27,30 +27,38 @@ app-wide addition (including a new module) bumped the base app version. Applied 
 `docs/ProjectConstitution.md` Section "Deployment And Versioning" and `.agents/repo-guidance.md`
 Section "Versioning".
 
-### 2026-07-21 - All source is pure ASCII (no non-ASCII characters anywhere)
+### 2026-07-21 - Code and logging source is pure ASCII (CI-enforced)
 
 Status: Active
 
-New and edited source in this repo is pure ASCII — no em-dashes, smart quotes, or other
-non-ASCII characters, in any file type (`.cs`, `.razor`, `.ps1`/`.psm1`, `.md`, JSON, config).
-Use `--` or `-` for dashes, straight quotes, plain `...` for ellipsis. This generalizes the
-existing PowerShell-only rule (`.agents/repo-guidance.md` Architectural Invariants #6 / Known
-Failure Class #6, which required ASCII for 5.1-read scripts) to the whole codebase.
+Code and logging source in this repo is pure ASCII: no em-dashes, smart quotes, arrows, or
+other non-ASCII characters in `.cs`, `.ps1`, or `.psm1` files -- comments, log messages, and
+audit/operator-facing string literals included. Use `--` or `-` for dashes, `->`/`=>` for
+arrows, straight quotes, plain `...` for ellipsis. This generalizes the existing
+PowerShell-only rule (`.agents/repo-guidance.md` Architectural Invariants #6 / Known Failure
+Class #6, which required ASCII for 5.1-read scripts) to all code and logging.
+
+Scope (owner, 2026-07-21): code and logging ONLY. Explicitly out of scope and NOT enforced:
+docs (`.md`), UI-rendered content (`.razor` markup), and `Services/EmailService.cs` (whose
+only non-ASCII is deliberate emoji/copyright inside HTML email bodies -- non-ASCII inside the
+rendered HTML is legitimate UI). Toolkit-owned files (`AGENTS.md`, `.agents/playbooks/*`) are
+never agent-edited and are not code/logging files anyway.
 
 Reason:
-Non-ASCII carries no benefit and real, already-realized cost. A BOM-less em-dash in
-`tools/JobStateWarning.psm1` broke a Windows PowerShell 5.1 deploy this session (5.1 reads it as
-ANSI and mangles it into parse errors). Beyond scripts: audit strings flow into logs and the
-SQLite audit DB where encoding can drift or render wrong; em-dash-vs-hyphen is invisible in review
-and survives or dies silently through copy-paste, terminals, and tooling. `.cs`/`.razor` compile
-fine under Roslyn so the hazard is latent there, not absent — "won't break today" is not a reason
-to keep a zero-benefit risk. Existing non-ASCII is left in place for now (changing audit-log text
-is a behavior change with test impact); a deliberate cleanup is tracked in `.agents/state.md`.
+Non-ASCII in code/logging carries no benefit and real, already-realized cost. A BOM-less
+em-dash in `tools/JobStateWarning.psm1` broke a Windows PowerShell 5.1 deploy this session
+(5.1 reads it as ANSI and mangles it into parse errors). Audit strings flow into logs and the
+SQLite audit DB where encoding can drift or render wrong; em-dash-vs-hyphen is invisible in
+review and survives or dies silently through copy-paste, terminals, and tooling. UI text is
+excluded because it renders through UTF-8 HTML/markup where encoding is safe and the glyphs
+are intentional.
 
-Enforcement (owner, 2026-07-21): the rule gets a CI/lint gate — a non-ASCII byte scan over tracked
-source that fails the build on any hit — so it bites rather than relying on discipline. The lint
-lands with the cleanup sweep (`.agents/state.md` backlog), only after existing non-ASCII is removed,
-or CI would go red immediately. Until then this decision is guidance enforced by review.
+Enforcement (owner, 2026-07-21; implemented 2026-07-21): a CI gate runs
+`tools/Test-AsciiOnly.ps1`, which scans tracked `.cs`/`.ps1`/`.psm1` (excluding
+`Services/EmailService.cs`) and fails the build on any non-ASCII byte. Wired into
+`.github/workflows/ci.yml` (`powershell` job, "ASCII lint" step). The sweep that made the
+tree ASCII-clean landed first (commit `c2e2f6f`), then this gate, so CI is green on
+introduction.
 
 ### 2026-07-21 - ConferenceRooms protected-principal check is one guarded-execution enforcement point
 

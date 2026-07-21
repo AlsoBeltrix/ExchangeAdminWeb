@@ -66,16 +66,11 @@ Live backlog only. Items need an approved plan before code unless noted.
    user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
    2026-06-30).
 5. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
-6. **ASCII cleanup sweep + enforcement lint** — deferred until things settle (owner, 2026-07-21).
-   Two parts, one work stream:
-   (a) Replace all existing non-ASCII characters (em-dashes, smart quotes, etc.) across the codebase
-   with ASCII, per the 2026-07-21 pure-ASCII decision (`.agents/decisions.md`). Not a freebie: some
-   are in audit strings that tests assert on, so audit-log text moves — update those tests in the
-   same change. Find candidates with a non-ASCII byte scan across tracked files.
-   (b) Add a CI/lint gate (owner, 2026-07-21) so the rule bites instead of rotting: a non-ASCII byte
-   scan over tracked source that fails the build on any hit. Add it to `.github/workflows/ci.yml`
-   (and, where practical, a local pre-check). Land the lint only AFTER the sweep is clean, or CI
-   goes red immediately. Its own small plan + commit(s).
+6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
+   code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
+   excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
+   (b) CI gate `tools/Test-AsciiOnly.ps1` wired into `.github/workflows/ci.yml` `powershell` job,
+   non-vacuity proven. See `.agents/decisions.md` 2026-07-21.
 
 Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in the prod instance
 (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround: `deploy-pipeline -PlanOnly`).

@@ -30,6 +30,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: ASCII lint
+        shell: pwsh
+        run: ./tools/Test-AsciiOnly.ps1
       - name: PSScriptAnalyzer
         shell: pwsh
         run: |
