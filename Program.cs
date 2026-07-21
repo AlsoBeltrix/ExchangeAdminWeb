@@ -168,6 +168,15 @@ try
     // version. Fail fast - a config store that cannot be opened/migrated is not a state we
     // should serve in.
     {
+        // Fail fast if the audit/operational log root is not configured. There is no baked-in
+        // default (docs/RemoveHardcodedLogRoot-Plan.md): silently misplacing audit logs is worse
+        // than a deploy that stops and says why. Runs before any logging service is resolved.
+        if (string.IsNullOrWhiteSpace(builder.Configuration["Audit:LogRoot"]))
+        {
+            Log.Fatal(ExchangeAdminWeb.Services.AuditLogRoot.UnsetMessage);
+            throw new InvalidOperationException(ExchangeAdminWeb.Services.AuditLogRoot.UnsetMessage);
+        }
+
         var migrator = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
         var schemaVersion = migrator.Migrate();
         Log.Information("Config store schema ready at version {SchemaVersion}", schemaVersion);
