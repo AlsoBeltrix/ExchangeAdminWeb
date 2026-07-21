@@ -10,10 +10,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
   is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
   manually validated** and **NOT in prod**.
-- **No code change is in progress.** The Bulk Job Runner is code-complete; manual validation is
-  **deferred** (no dev/QA AD or Exchange tenant, no test data — owner, 2026-07-20). See Next up #1.
-- Deploy required a fix first: `tools/JobStateWarning.psm1` had em-dashes with no BOM and broke the
-  5.1 deploy import (Known Failure Class #6); fixed to pure ASCII in `8938da2`.
+- **No code change is in progress.**
+- **Last landed (2026-07-21):** single-room Finder protected-principal gap CLOSED — consolidated the
+  ConferenceRooms PP check into one `ConferenceRoomProtectionGate` (C2-G guarded-execution helper);
+  page Finder/Type + each bulk row route through it; module `2.2.0`→`2.3.0`; 672 tests pass,
+  non-vacuity verified. Commits `2a97d09` (fix) + `747f7d6` (version/docs). Plan Implemented
+  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). Live-tenant/UI validation NOT run
+  (no dev tenant). Also: pure-ASCII rule adopted repo-wide (`9592f5d`/`550cfa4`) — cleanup+lint
+  deferred (Next up #7).
+- **9 commits unpushed on `master`** (from `8938da2` through `550cfa4`). No push done — needs a go.
+- Bulk Job Runner (`2.3.28`) still deployed to dev, manual validation still deferred (Next up #1).
+- Deploy earlier required a fix: `tools/JobStateWarning.psm1` em-dashes with no BOM broke the 5.1
+  deploy import (Known Failure Class #6); fixed to pure ASCII in `8938da2`.
+- **Untracked:** `.agents/review/*.prompt.txt|schema.json|result.json` (11 codex dispatch scratch
+  files) left uncommitted pending owner commit-vs-clean decision.
 
 ## Last work stream — Bulk Job Runner (DONE, pending dev validation)
 
