@@ -5,6 +5,89 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-22 - GM-3 self-service group management: design direction (delegated Entra auth for cloud ownership)
+
+Status: Active (design agreed; plan `docs/SelfServiceGroupManagement-Plan.md` still to be written
+and approved before any code)
+
+Owner direction 2026-07-22, after a codex-commercial design consult. GM-3 (self-service group
+management, queued 2026-06-17 commit `75e33be`) is designed as follows. This entry records the
+agreed shape; the implementation plan is not yet written and no code is approved.
+
+**Goal:** a user (ultimately all-staff, gated by the app's normal per-module access group) is
+presented an easy-to-navigate, UNIFIED list of the groups they can change, spanning BOTH on-prem
+AD and M365 — with columns for group type, location (on-prem/M365), and other owners. Admins can
+do the same for a specified user. The experience must not require the user to know where a group
+lives.
+
+**Load model:** an explicit "load all the groups I own" button (with a "this can take some time"
+note), NOT a preload on page open. Loads everything the user can update from both sources and
+presents one merged list. (Owner rejected search-then-validate: users must not have to know a
+group's exact name; the list must be presented up front.)
+
+**Cloud ownership lookup requires delegated Entra authentication (the decided fork):**
+- The app is `Negotiate` (Windows/Kerberos) only today, and its Graph access is APP-ONLY (client
+  credentials). Microsoft does NOT support `/users/{id}/ownedObjects` under application
+  permissions, so "list the groups this user owns" cannot be answered app-only without walking
+  every group in the tenant.
+- Tenant scale (~30k users, tens of thousands of groups) rules out load-all-and-filter / scanning.
+- Two viable paths were weighed: (A) add delegated Entra (OIDC) sign-in so the app queries Graph
+  AS THE USER and Microsoft returns exactly their owned groups; (B) a backend-maintained ownership
+  index refreshed periodically. **Owner chose A.** B was rejected as "brittle and messy" and it
+  cuts against the app's no-background-worker posture (2026-06-17).
+- Delegated sign-in is expected to be SILENT for most users (they already have a live O365 browser
+  session); it is standard OIDC authorization-code flow — the browser returns a one-time code, the
+  backend redeems it for a per-user token. The user's token is never shuttled from browser to
+  backend by the app.
+- This adds a SECOND auth scheme (Entra/OIDC) alongside the existing Windows/Negotiate one, for
+  this feature. That is the real cost and the reason a plan + security review are required.
+
+**Security requirements (hard, to be written into the plan):**
+- A delegated token acts only as that user, only within registered scopes — strictly LESS powerful
+  than the existing app-only credential. Register the NARROWEST Graph scopes that do the job.
+- Per-user tokens are kept only in the protected server-side session store, NEVER logged, NEVER
+  written unencrypted. Prefer NOT requesting offline_access (no refresh token to steal) unless a
+  concrete need appears; rely on short access-token lifetime.
+- Blazor Server circuit isolation: each circuit reads ONLY its own token; no shared/static token
+  field. Self-service owner is ALWAYS derived from the authenticated principal; any submitted
+  owner id is ignored (admin "manage for user X" is a SEPARATE trusted server entry point gated by
+  a granular admin permission, never a caller-supplied "isAdmin" flag).
+- Explicit security-review gate before this ships.
+
+**On-prem ownership (no scan needed):** AD answers "groups this user owns" via reverse lookup on
+both the single-valued `managedBy` and the Exchange multi-owner (co-managers / `msExchCoManagedByLink`)
+list — per-user server-side queries, not a tenant scan.
+
+**Codex consult findings folded into the design (2026-07-22):**
+- Ownership alone is NOT authorization. `managedBy`/owners is directory metadata; a user owning a
+  privileged group must not be able to self-escalate. Add a fail-closed "manageable group"
+  eligibility rule (e.g. allowlisted scope/OU) ON TOP of ownership. Every write re-checks:
+  re-read group, re-check eligibility, re-check ownership by immutable id, protected-principal
+  check on the affected member, re-check policy immediately before writing.
+- Structure: prefer ONE unified descriptor (main access = all-staff + admin groups; granular
+  `ManageOthers` permission = admin group for the owner-picker mode), over two descriptors, since
+  the main policy already accepts multiple AD groups. Two descriptors only if navigation truly
+  needs two front doors — then static wrapper pages over one shared component; NEVER let one
+  descriptor borrow another module's credential (Constitution).
+- Unify the EXPERIENCE, not the backends: query both concurrently behind adapters, merge
+  normalized results, preserve per-source capabilities (CanManageMembers/Owners, IsDynamic).
+  Partial failure (one backend down) shows healthy results + a prominent "incomplete - M365
+  unavailable" banner, NEVER "no groups found", NEVER a silent drop, disable stale selections.
+  Fail-closed per backend.
+- M365 search: use Graph `$search` (tokenized) with `ConsistencyLevel: eventual` + `$count=true`
+  + pagination + post-ranking over displayName/description; `contains()` is unsupported on
+  displayName. (The current M365 search is prefix-only single-field — the reported "can't find it"
+  bug.) Graph client needs explicit-header support first.
+- Pre-existing bugs codex flagged to fix as part of this: on-prem 200-result cap does not guarantee
+  the exact match was fetched; on-prem ranking searches email but ignores it when ranking; M365
+  add-member accepts UPN/email but Graph needs a directory object id (must resolve first).
+- First cut (ship value, no corner-painting): unified owned-groups surface; self + admin modes;
+  member add/remove ONLY. NO owner mutation, NO group create/update/delete/ownership transfer
+  (owner changes alter the authorization predicate itself); dynamic M365 groups read-only; keep
+  existing admin group pages as-is for legacy CRUD.
+- Repo rule to respect: the no-user-notification exception is scoped to M365 group changes only;
+  on-prem security-group membership changes may require affected-user notification.
+
 ### 2026-07-22 - Module packaging/import deferred as low-value/high-cost
 
 Status: Active

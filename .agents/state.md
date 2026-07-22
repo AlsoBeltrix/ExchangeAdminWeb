@@ -81,7 +81,12 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
-5. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
+5. **GM-3 self-service group management — DESIGN AGREED (owner, 2026-07-22), plan pending.**
+   Unified on-prem + M365 "groups I can change" list behind a "load all (may be slow)" button;
+   delegated Entra sign-in for cloud ownership (owner chose delegated auth over a maintained index);
+   fail-closed eligibility on top of ownership; first cut = member add/remove only. Full design +
+   codex consult findings + security requirements: `.agents/decisions.md` 2026-07-22. NEXT STEP:
+   write `docs/SelfServiceGroupManagement-Plan.md` and get approval before any code.
 6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
    code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
    excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
