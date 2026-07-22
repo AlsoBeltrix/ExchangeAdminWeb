@@ -22,11 +22,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   - **Reverted in-progress delegated code (slice-1 steps 1-2 from commits `4be93a3`, `22c0510`):**
     removed the Microsoft.Identity.Web package, `Services/SelfServiceGroups/DelegatedEntra*`, and the
     `ISecretFieldsReader` seam on `DelineaService`. Build green at clean baseline.
-  - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup → 2 fail-closed eligibility →
+  - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup ✅ → 2 fail-closed eligibility →
     3 module descriptor + page skeleton → 4 list + in-list filter (AC9) → 5 member add/remove with
     pre-write re-checks + audit/notify → 6 verification/manual-validation note.
-  - **NEXT: implement task 1** = on-prem ownership reverse-lookup (`managedBy` +
-    `msExchCoManagedByLink`), injection-safe, per-user, no scan. New xUnit before done.
+  - **Task 1 DONE** (commit `0afb2bf`): `Services/SelfServiceGroups/` — `ManageableGroup` (model,
+    `CanManageMembers` defaults false), `AdOwnershipFilter` (pure injection-safe RFC 4515 LDAP filter,
+    codex F11, 10 xUnit tests non-vacuous by exact-output assert), `SelfServiceGroupService.GetOwnedGroupsAsync`
+    (resolves caller once by immutable SID via bound -Identity, then bound -LDAPFilter query; own
+    module cred; throws on hard AD failure so page shows error not empty, AC8). Build + format + 10
+    tests green. Live AD query is manual-validation-on-dev (no dev tenant).
+  - **NEXT: implement task 2** = fail-closed eligibility rule (AC4). Admin-controlled immutable-ID
+    allowlist (NOT just OU/scope); denies role-assignable / nested-privileged / app-access groups;
+    unreadable store = deny all (Known Failure Class #3); flips `ManageableGroup.CanManageMembers`.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
