@@ -25,12 +25,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup ✅ → 2 fail-closed eligibility →
     3 module descriptor + page skeleton → 4 list + in-list filter (AC9) → 5 member add/remove with
     pre-write re-checks + audit/notify → 6 verification/manual-validation note.
-  - **Task 1 DONE** (commit `0afb2bf`): `Services/SelfServiceGroups/` — `ManageableGroup` (model,
-    `CanManageMembers` defaults false), `AdOwnershipFilter` (pure injection-safe RFC 4515 LDAP filter,
-    codex F11, 10 xUnit tests non-vacuous by exact-output assert), `SelfServiceGroupService.GetOwnedGroupsAsync`
-    (resolves caller once by immutable SID via bound -Identity, then bound -LDAPFilter query; own
-    module cred; throws on hard AD failure so page shows error not empty, AC8). Build + format + 10
-    tests green. Live AD query is manual-validation-on-dev (no dev tenant).
+  - **Task 1 DONE + codex-reviewed** (commits `0afb2bf`, `9633fa7`, `1f65674`, `7922d42`):
+    `Services/SelfServiceGroups/` — `ManageableGroup` (model, `CanManageMembers` defaults false),
+    `AdOwnershipFilter` (pure injection-safe RFC 4515 LDAP filter, codex F11, 10 xUnit tests
+    non-vacuous by exact-output assert), `SelfServiceGroupService.GetOwnedGroupsAsync` (resolves caller
+    once by immutable SID via bound -Identity, then bound -LDAPFilter query; own module cred; throws on
+    hard AD failure so page shows error not empty, AC8). Codex review fixes: F-high = SID provenance
+    (only a genuine Windows SID accepted, alternate identity forms rejected, AC6) + SID tests; F-med =
+    dropped silent 500-group cap (Known Failure Class #2). Codex F-med on `ResolveOwnerDisplay`
+    SilentlyContinue KEPT as designed — it is the plan's F12 fan-out behavior (one owner's failed
+    lookup shows the DN, not a whole-load failure; main query is still -Stop). Build + format +
+    diff-check clean; 697 tests green. Live AD query is manual-validation-on-dev (no dev tenant).
   - **NEXT: implement task 2** = fail-closed eligibility rule (AC4). Admin-controlled immutable-ID
     allowlist (NOT just OU/scope); denies role-assignable / nested-privileged / app-access groups;
     unreadable store = deny all (Known Failure Class #3); flips `ManageableGroup.CanManageMembers`.
