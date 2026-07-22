@@ -149,6 +149,10 @@ try
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
+    // Narrow secret-read seam over the same DelineaService singleton, for services that only need
+    // to pull secret fields (e.g. the SelfServiceGroups delegated-Entra settings provider).
+    builder.Services.AddSingleton<ISecretFieldsReader>(sp => sp.GetRequiredService<DelineaService>());
+    builder.Services.AddSingleton<ExchangeAdminWeb.Services.SelfServiceGroups.DelegatedEntraSettingsProvider>();
     builder.Services.AddSingleton<ExoConnectionPool>();
     builder.Services.AddScoped<MigrationService>();
     builder.Services.AddScoped<IIdentityResolver, ExchangeIdentityResolver>();

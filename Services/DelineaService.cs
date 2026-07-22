@@ -4,7 +4,7 @@ using Serilog.Events;
 
 namespace ExchangeAdminWeb.Services;
 
-public class DelineaService
+public class DelineaService : ISecretFieldsReader
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<DelineaService> _logger;
