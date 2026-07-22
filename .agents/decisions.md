@@ -5,6 +5,40 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-22 - GM-3 scope narrowed: self-service only, admin "manage for others" dropped
+
+Status: Active (refines the design-direction entry below the same date; plan
+`docs/SelfServiceGroupManagement-Plan.md` being revised to this scope)
+
+Owner direction 2026-07-22. GM-3 is a SELF-SERVICE feature only:
+
+- A signed-in user manages the groups THEY own -- both on-prem AD and M365 -- via the
+  unified "load the groups I can manage" surface. This works because a user querying
+  their OWN cloud ownership is a delegated call Microsoft supports.
+- Admins get NO new capability. For both AD and M365 groups an admin continues to use
+  the EXISTING search-by-name group-management screens (AD Group Management,
+  M365 Group Management) unchanged.
+- The admin "manage groups for a specified user X" path is DROPPED. Reason: Microsoft
+  Graph offers no efficient application-permission (app-only) way to answer "which
+  groups does user X own." Verified 2026-07-22 against current Microsoft Learn docs
+  three ways: (1) `/users/{id}/ownedObjects` (+ `/microsoft.graph.group` cast) lists
+  "Not supported" for Application permissions; (2) `/groups` has no server-side
+  `$filter` on the `owners` navigation property (only count-based `/$count` filters);
+  (3) the only app-only fallback is a full tenant group scan (tens of thousands of
+  groups) which is non-viable at ~30k-user scale. An admin cannot stand in for a user
+  app-side; only the signed-in user's own delegated token returns their owned groups.
+
+Consequence for the plan: the entire admin-path / actor-vs-subject / delegated-admin-role
+complexity (former task 8, codex F6) is REMOVED, not deferred. The `ManageOthers`
+granular permission is dropped from the module descriptor. Delegated Entra sign-in is
+retained ONLY for the user's own cloud-ownership query. This collapses much of the
+round-1/round-2 codex finding surface that existed solely to support the admin path.
+
+Supersedes: the "admin can do the same on behalf of a specified user" element of the
+2026-07-22 design-direction entry below, and its AC7 / admin-path tasks in the plan.
+The delegated-auth foundation, on-prem reverse-lookup, fail-closed eligibility, and
+member-add/remove-only first cut are UNCHANGED.
+
 ### 2026-07-22 - GM-3 self-service group management: design direction (delegated Entra auth for cloud ownership)
 
 Status: Active (design agreed; plan `docs/SelfServiceGroupManagement-Plan.md` still to be written
