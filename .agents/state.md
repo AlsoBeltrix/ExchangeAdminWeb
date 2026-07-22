@@ -6,15 +6,19 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **App version `2.3.28`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`).
+- **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
+  for the app-wide log-root fail-fast change (`3eac48a`).
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
   is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
-  manually validated** and **NOT in prod**. This session's commits are NOT yet deployed to dev.
-- **Log-root fail-fast IMPLEMENTED** (2026-07-21, `docs/RemoveHardcodedLogRoot-Plan.md`). Hardcoded
-  `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if `Audit:LogRoot`
-  is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services), docs slice below. Build +
-  all 676 tests green locally; NOT yet pushed.
-- **OPEN for next session:** dev-deploy `2.3.28` + this session's log-root work (on master, not pushed).
+  manually validated** and **NOT in prod**. `2.3.29` (this session's log-root work) is on `master`,
+  NOT yet deployed anywhere.
+- **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
+  Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
+  `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
+  `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
+  **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
+  `appsettings.json` must set it before deploying `2.3.29`.
+- **OPEN for next session:** dev-deploy `2.3.29` (needs owner go; deploy is script-only).
 - **This session landed (2026-07-21), all pushed + CI green:**
   - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
     decisions.md + repo-guidance; resolved the long-open versioning exception).
