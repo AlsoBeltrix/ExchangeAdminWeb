@@ -6,6 +6,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **IN FLIGHT: draft the GM-3 plan.** Task (owner, 2026-07-22): write the FULL
+  `docs/SelfServiceGroupManagement-Plan.md` covering the whole agreed design (not just first cut),
+  then review it with `codex-commercial.ps1` for **up to 2 rounds max**, then surface to the owner
+  whether the plan and codex have **converged or not** and stop for direction. Nothing drafted yet.
+  - Design authority: `.agents/decisions.md` 2026-07-22 "GM-3 self-service group management: design
+    direction" — read it in full; it carries the delegated-Entra-auth decision, security
+    requirements, on-prem reverse-lookup approach, codex findings, and first-cut scope.
+  - codex invocation that works: `pwsh -NoProfile -Command "$b = Get-Content -Raw '<file>'; &
+    codex-commercial.ps1 exec $b"` (wrapper takes the prompt as an ARG, NOT stdin; do NOT add
+    `--skip-git-repo-check`, it trips the safety classifier). The design-brief consult already
+    passed the auto-mode exfil classifier once this session, but it is non-deterministic - if it
+    hard-blocks, ask the owner to run it in-session with `! ...`.
+  - Plan must be agent-facing and implementable cold; delegated-auth foundation is slice 1 (riskiest,
+    everything depends on it). Get owner approval before ANY code (no code without an approved plan).
+
 - **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
   for the app-wide log-root fail-fast change (`3eac48a`).
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.29` (this session's
