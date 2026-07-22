@@ -8,17 +8,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 - **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
   for the app-wide log-root fail-fast change (`3eac48a`).
-- **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.28` (Bulk Job Runner)
-  is **deployed to dev** (owner, 2026-07-20; `D:\inetpub\ExchangeAdminWebDev`) but **NOT yet
-  manually validated** and **NOT in prod**. `2.3.29` (this session's log-root work) is on `master`,
-  NOT yet deployed anywhere.
+- **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.29` (this session's
+  log-root work) is **deployed to dev** (owner, 2026-07-22; `D:\inetpub\ExchangeAdminWebDev`) but
+  **NOT yet manually validated** and **NOT in prod**. (Dev started the day on `2.3.28`/Bulk Job
+  Runner, deployed 2026-07-20; `2.3.29` supersedes it in dev.)
 - **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
   Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
   `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
   `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
   **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
   `appsettings.json` must set it before deploying `2.3.29`.
-- **OPEN for next session:** dev-deploy `2.3.29` (needs owner go; deploy is script-only).
+- **OPEN:** manual dev validation of `2.3.29` (deferred, same tenant gap as Bulk Job Runner);
+  promote `2.3.29` to prod when validated (needs owner go; deploy is script-only).
 - **This session landed (2026-07-21), all pushed + CI green:**
   - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
     decisions.md + repo-guidance; resolved the long-open versioning exception).
@@ -73,9 +74,9 @@ Live backlog only. Items need an approved plan before code unless noted.
    `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` Implemented). Consolidated the
    module PP check into one `ConferenceRoomProtectionGate` (C2-G). Only remaining follow-up is
    live-tenant/UI validation (deferred, no dev tenant).
-3. **Module packaging/import** — needs `docs/ModulePackaging-Plan.md` written + approved. End state
-   (owner, 2026-06-29): UI `.zip` upload, no full rebuild; precompiled-vs-runtime still open. First
-   leg = module contract / self-registration seam. See `.agents/decisions.md` 2026-06-18 & 06-29.
+3. **Module packaging/import — DEFERRED (owner, 2026-07-22)** as low-value/high-cost. Not to be
+   worked on or raised as next; no plan. End-state direction retained only as history in
+   `.agents/decisions.md` (2026-07-22 deferral, refining 2026-06-29 & 06-18).
 4. **AccountLockout user-notification** — OPEN, gated on real testing: decide whether a logged-off
    user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
    2026-06-30).

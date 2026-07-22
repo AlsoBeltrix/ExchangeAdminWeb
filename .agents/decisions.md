@@ -5,6 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-22 - Module packaging/import deferred as low-value/high-cost
+
+Status: Active
+
+Decision (owner, 2026-07-22): module packaging/import is **deferred** — the owner judged it a
+**low-value, high-cost add**. No plan is to be written and no code is to be built. This is not a
+teardown of the recorded end-state direction (UI-driven `.zip` upload, see the 2026-06-29 and
+2026-06-18 entries below); those entries remain the durable record of *where it would go if
+revived*. This entry sets the current standing intent: **do not work on it**, do not raise it as
+the next backlog item, and do not treat the ~54 hand-wired `Program.cs` registrations or the
+compiled `ModuleCatalog` as debt to pay down for packaging's sake.
+
+Why: the only concrete friction it solves is that a module-scoped fix cannot reach prod without a
+full app rebuild+redeploy. The owner is the sole module author and the app deploys as one unit via
+script; the rebuild-to-ship cost is acceptable and does not justify the contract-refactor +
+per-module-assembly + package + UI-loader effort (and, at the runtime-load end, an arbitrary-code
+ACE surface in a privileged Exchange/AD tool).
+
+Revisit only if a real second deployment or a third-party module author appears. Until then this
+supersedes the "first leg = self-registration seam, agent's discretion on interim steps" framing
+of the 2026-06-29 entry: there are no interim steps to take now.
+
 ### 2026-07-21 - Adding a new module does not bump the base app version
 
 Status: Active
@@ -275,7 +297,8 @@ Plan: `docs/MigrationProtectedPrincipalGate-Plan.md` (Status: Implemented).
 
 ### 2026-06-29 - Module distribution end state: UI-driven .zip upload that installs/updates a module
 
-Status: Active (long-term direction; nothing to implement now, no plan yet)
+Status: Deferred (superseded as current intent by the 2026-07-22 deferral above; retained as the
+record of the end-state direction if the work is ever revived)
 
 Decision (owner direction 2026-06-29):
 The end state for module distribution is that the **main app can load a module from the UI as
@@ -514,9 +537,11 @@ them in its review log.
    readers detect a change and refresh immediately, and also makes the corrupt-store probes
    cheap.
 
-4. **Module packaging direction: modules are distributed as `.zip` packages with a
-   validation tool, but installation still requires a back-end rebuild. Runtime upload /
-   assembly loading is explicitly deferred.** Runtime `.zip`-upload-no-rebuild is the hardest
+4. **Module packaging direction** (NOTE: the whole packaging effort is now **deferred** as
+   low-value/high-cost — see the 2026-07-22 entry at the top of this file; the scope below is
+   retained only as the record of intended shape if revived): **modules are distributed as `.zip`
+   packages with a validation tool, but installation still requires a back-end rebuild. Runtime
+   upload / assembly loading is explicitly deferred.** Runtime `.zip`-upload-no-rebuild is the hardest
    and riskiest version of the feature (Blazor pages/routes are compiled ahead of time, and it
    means loading arbitrary code into a privileged Exchange/AD admin tool), and it solves a
    problem the owner does not currently have — the owner is the only module author today, and
