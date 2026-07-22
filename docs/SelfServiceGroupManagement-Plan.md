@@ -371,6 +371,85 @@ These are in the design authority's "codex findings folded into the design" and
 sequencing: ship these sibling-module search fixes inside this work stream, or as a
 separate commit. Listed once in open questions; not re-litigated here.
 
+### 6.8 Task 0 output — auth / permission matrix (owner-settled 2026-07-22)
+
+This section is the task-0 deliverable the plan requires before any slice-1 code
+(codex F8). It fixes the identity, credential, scopes, endpoints, token-cache model,
+and actor-binding rule. Owner decisions this session are marked (OWNER 2026-07-22).
+
+**A. Entra app registration.**
+- **Dedicated, separate from the app-only registration (OWNER 2026-07-22).** The
+  existing app-only registration (used by `GraphTokenClient` client-credentials for
+  every other Graph call) is NOT reused. A new registration is provisioned for this
+  module's delegated flow only, scoped to exactly the delegated permissions in (C).
+  Rationale: least privilege + the repo credential-isolation invariant (codex F3);
+  reusing the powerful app-only identity and widening it with a redirect URL + user
+  scopes is rejected.
+- **Confidential client, authenticating with a client secret stored in Delinea
+  (OWNER 2026-07-22).** Mirrors the existing Graph secret pattern exactly: a Delinea
+  secret whose fields are `Tenant ID`, `Application ID`, `Client Secret` (verified
+  against `M365GroupManagementService.cs:43-45`). Certificate auth was considered and
+  declined for now (ops parity with the current Delinea-secret flow). The delegated
+  secret is a DISTINCT Delinea secret id from any app-only module secret — never
+  shared (codex F3).
+- **Config field:** a new module config field on `SelfServiceGroups`, e.g.
+  `DelegatedGraphDelineaSecretId`, read the same way as
+  `M365GroupManagement/GraphDelineaSecretId` (`ModuleConfigService.GetValue`). This is
+  module-scoped config, not app-level. The authority (tenant) and client id come from
+  the Delinea secret fields, not appsettings.
+
+**B. Authentication scheme wiring (codex F2).**
+- Negotiate stays the EXPLICIT default authenticate + challenge scheme
+  (`Program.cs:38-39` unchanged in intent — Negotiate remains `DefaultScheme`). Two
+  uniquely-named auxiliary schemes are added via `Microsoft.Identity.Web`: an OIDC
+  challenge scheme (e.g. `"SsgEntra"`) and its companion cookie sign-in scheme (e.g.
+  `"SsgEntraCookie"`). Neither is ever a default; app + Blazor-hub authorization
+  policies continue to require the Negotiate identity, so the aux cookie can NEVER
+  satisfy app/hub auth.
+- Sign-in is driven by dedicated HTTP endpoints (challenge / callback / sign-out)
+  reached by FULL-PAGE navigation, never an in-circuit redirect (a Blazor Server
+  circuit cannot redirect after response headers start). Endpoint contract:
+  - `GET /ssg/signin` — MIW challenge on the aux OIDC scheme; `redirectUri` returns
+    to the SelfServiceGroups page.
+  - `GET /ssg/callback` — MIW-handled OIDC code redemption; on success performs the
+    actor-binding check (D) then establishes the aux cookie session; on binding
+    failure rejects and audits both identities.
+  - `POST /ssg/signout` — clears the aux cookie + evicts the token-cache entry (E).
+
+**C. Delegated scopes (self `/me` only; codex F8, narrowed by 2026-07-22 scope cut).**
+- `User.Read` — sign-in + read `/me` (bind actor, no directory-wide read).
+- `GroupMember.Read.All` — enumerate `/me/ownedObjects/microsoft.graph.group` and
+  read a group's members for the load list.
+- `GroupMember.ReadWrite.All` — add/remove a user member on an owned+eligible group
+  (the only mutation in first cut).
+- `offline_access` is NOT requested. Slice 1 ships a test proving no refresh token is
+  issued or cached (codex F8). Admin/`Directory.*`/application scopes are NOT
+  requested — the admin-for-others path is dropped (2026-07-22).
+- Delegated calls are still gated by the SAME fail-closed eligibility allowlist (6.3)
+  and protected-principal check (6.5); the Graph scope is the OUTER bound, the
+  allowlist the INNER bound.
+
+**D. Actor <-> Entra-account binding (codex F1, BLOCKER).**
+- The Windows/Negotiate principal is the ACTOR (all authorization + audit identity).
+  On `/ssg/callback`, map the Entra token's `(tid, oid)` to the Negotiate principal's
+  immutable SID/objectGUID via an authoritative directory lookup. On mismatch REJECT
+  the delegated session and audit BOTH identities. A user must not sign in as a
+  different Entra account and act under their Windows authorization.
+- Every ownership query and cloud write uses the bound actor; the Entra token is only
+  the mechanism. The self-service owner is ALWAYS the bound authenticated principal;
+  any submitted owner id is ignored (AC6).
+
+**E. Token cache / handle model (codex F3, BLOCKER).**
+- Tokens live ONLY in a bounded server-side MIW token cache. The circuit holds an
+  OPAQUE handle bound to (Windows SID + Entra `(tid,oid)` + an aux-session nonce);
+  the raw token never enters the circuit, a log, a trace, or an audit record (AC10).
+- Eviction: on `/ssg/signout`, on aux cookie expiry, and on circuit teardown. Access
+  token lifetime is the natural expiry (no refresh token by default); on expiry the
+  next M365 action re-challenges (§4 token-expiry row).
+- Single-node today; the design must not ASSUME single-node. For any multi-node
+  deployment the cache becomes encrypted distributed storage. Documented, not built,
+  in first cut.
+
 ### 6.7 Invariant conformance checklist
 
 - Fail-closed authorization + eligibility + protected-principal on every write
@@ -384,12 +463,13 @@ separate commit. Listed once in open questions; not re-litigated here.
 Ordered; slice 1 is foundational (everything M365 depends on it). Each task cites
 the ACs it serves.
 
-0. **Auth/permission matrix (design task, before any code).** Fix the exact
-   delegated scopes, the challenge/callback/sign-out endpoint contract, the
-   token-cache/handle model, and the actor↔Entra-account binding rule. Output is an
-   endpoint/object-type/scope matrix appended to §6. Closes the design ambiguity
-   behind codex F1/F2/F3/F8 before implementation. (all ACs) (F6's admin-role
-   question no longer applies -- admin-for-others dropped 2026-07-22.)
+0. **Auth/permission matrix (design task, before any code) — DONE 2026-07-22, see §6.8.**
+   Fixed the dedicated Entra registration + client-secret-via-Delinea credential
+   (owner), the exact `/me` delegated scopes, the challenge/callback/sign-out endpoint
+   contract, the token-cache/handle model, and the actor↔Entra-account binding rule.
+   Output is §6.8. Closes the design ambiguity behind codex F1/F2/F3/F8 before
+   implementation. (all ACs) (F6's admin-role question no longer applies -- admin-for-
+   others dropped 2026-07-22.)
 1. **Delegated Entra auth foundation** (AC1, AC3, AC6, AC10). Add uniquely-named
    OIDC + cookie schemes with Negotiate kept as the explicit default and the aux
    cookie unable to satisfy app/hub authorization (F2); challenge/callback/sign-out

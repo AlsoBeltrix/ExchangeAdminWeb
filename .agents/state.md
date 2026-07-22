@@ -27,11 +27,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     `/me` scopes -> task 0; F9 pre-write TOCTOU (close vs accept+document); F10 audit-intent/notify
     durability vs the no-background-worker non-goal; F12 "other owners" fan-out failure; NEW HIGH
     AC9 in-list filter has no design/task/test yet.
-  - **NEXT: task 0 (auth/permission matrix, design task — no code) then implement slice 1** =
-    delegated-Entra auth foundation (riskiest; everything depends on it). Task 0 output is the exact
-    `/me` delegated scopes + challenge/callback/sign-out endpoint contract + token-cache/handle model
-    + actor<->Entra binding rule, appended to plan §6. Task 0 is a hard prerequisite for slice 1 code
-    (codex F8).
+  - **Task 0 (auth/permission matrix) DONE 2026-07-22 — plan §6.8.** Owner-settled: dedicated Entra
+    app registration (NOT the app-only one) + confidential client with a client secret in Delinea
+    (fields `Tenant ID`/`Application ID`/`Client Secret`, own secret id via new module config field
+    `DelegatedGraphDelineaSecretId`). Scopes: `User.Read`, `GroupMember.Read.All`,
+    `GroupMember.ReadWrite.All`; NO `offline_access`. Endpoints `/ssg/signin|callback|signout`
+    (full-page nav); Negotiate stays explicit default; aux OIDC+cookie schemes via MIW; actor<->Entra
+    `(tid,oid)`<->SID binding; opaque circuit handle over a server-side MIW cache.
+  - **NEXT: implement slice 1** = delegated-Entra auth foundation (task 1). Ops prerequisite before
+    slice 1 can be TESTED (not before it can be written): provision the dedicated Entra registration +
+    Delinea secret per §6.8. Still-open per-slice items when their slice lands: F9 (TOCTOU) at task 7,
+    F10 (audit durability vs no-worker) at task 7, F12 (other-owners fan-out) at task 6, AC9 in-list
+    filter (needs design) at task 6.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
