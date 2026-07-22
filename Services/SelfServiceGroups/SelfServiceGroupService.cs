@@ -42,11 +42,19 @@ public class SelfServiceGroupService
     /// failure so the page surfaces a clear error rather than an empty list (AC8, never "no groups
     /// found" on failure).
     /// </summary>
-    /// <param name="callerSid">The authenticated Windows principal's SID (e.g. "S-1-5-21-...").</param>
+    /// <param name="callerSid">The authenticated Windows principal's SID (e.g. "S-1-5-21-..."). MUST be
+    /// a SID string taken from the authenticated principal at a trusted boundary. It is validated as a
+    /// SID here so an alternate identity form (DN, GUID, sAMAccountName) - which Get-ADUser -Identity
+    /// would otherwise happily accept and resolve to a DIFFERENT principal - is rejected. This is what
+    /// keeps the self-service owner always the authenticated caller (AC6), not any submitted id.</param>
     public async Task<IReadOnlyList<ManageableGroup>> GetOwnedGroupsAsync(string callerSid)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
 
         var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD ownership reverse-lookup");
         if (creds is null)
@@ -183,6 +191,26 @@ public class SelfServiceGroupService
 
         cache[ownerDn] = display;
         return display;
+    }
+
+    /// <summary>
+    /// True only when the value is a syntactically valid Windows SID (e.g. "S-1-5-21-...-1105").
+    /// Uses the framework SID parser so no other -Identity form (DN, GUID, sAMAccountName) passes.
+    /// Pure and static so it is unit-testable without AD.
+    /// </summary>
+    internal static bool IsSecurityIdentifier(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+        try
+        {
+            _ = new System.Security.Principal.SecurityIdentifier(value);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private async Task<T> ThrottledAdAsync<T>(Func<Task<T>> operation)
