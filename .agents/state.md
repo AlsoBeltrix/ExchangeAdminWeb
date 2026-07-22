@@ -77,9 +77,10 @@ Live backlog only. Items need an approved plan before code unless noted.
 3. **Module packaging/import — DEFERRED (owner, 2026-07-22)** as low-value/high-cost. Not to be
    worked on or raised as next; no plan. End-state direction retained only as history in
    `.agents/decisions.md` (2026-07-22 deferral, refining 2026-06-29 & 06-18).
-4. **AccountLockout user-notification** — OPEN, gated on real testing: decide whether a logged-off
-   user is notified, after the module is actually exercised on dev (`.agents/decisions.md`
-   2026-06-30).
+4. **AccountLockout user-notification — PARKED with the module (owner, 2026-07-22).** The whole
+   `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
+   user-notification question is parked with it and will be decided only if the module is picked
+   back up. Not to be worked on or raised as next.
 5. **GM-3 self-service group management** — needs its own plan; depends on M365 work (done).
 6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
    code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji

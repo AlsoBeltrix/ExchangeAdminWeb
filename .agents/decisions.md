@@ -202,6 +202,9 @@ gaps, and rule 2 (alert on security-sensitive reads) effectively unimplemented. 
 admins-only. **Open, gated on testing:** `AccountLockoutRemediation` user-notification (telling a
 logged-off user) is deferred until the module is actually exercised — nobody uses it yet and it is
 not validated. Revisit after real testing; record a follow-up decision then. Do not build it now.
+(Update 2026-07-22: the `AccountLockoutRemediation` module is disabled/deferred as unusable in
+this environment; this user-notification question is parked with the module and decided only if it
+is picked back up.)
 
 **Rule 2 (alert on security-sensitive reads): classified non-applicable for this app, alerting
 deferred.** Candidate reads (DelegationReport, MessageTrace, EventLog viewer, RecipientLookup,
