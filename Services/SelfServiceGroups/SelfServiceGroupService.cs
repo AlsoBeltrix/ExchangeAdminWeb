@@ -89,11 +89,13 @@ public class SelfServiceGroupService
                 throw new InvalidOperationException("Could not resolve the signed-in user in Active Directory.");
 
             var filter = AdOwnershipFilter.BuildOwnedGroupsFilter(callerDn);
+            // No ResultSetSize cap: this is already bounded to the groups ONE user owns, and a silent
+            // truncation would read as a complete list (Known Failure Class #2). Get-ADGroup pages
+            // internally (ResultPageSize) and returns all matches.
             ps.AddCommand("Get-ADGroup")
               .AddParameter("LDAPFilter", filter)
               .AddParameter("Properties", new[] { "Description", "managedBy", "msExchCoManagedByLink", "GroupCategory", "GroupScope" })
               .AddParameter("Credential", credential)
-              .AddParameter("ResultSetSize", 500)
               .AddParameter("ErrorAction", "Stop");
             var groups = ps.Invoke();
             ps.Commands.Clear();
