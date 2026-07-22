@@ -6,9 +6,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **GM-3 plan DRAFTED + committed (`bc80dd7`), Status: Draft — awaiting owner approval before ANY
-  code.** `docs/SelfServiceGroupManagement-Plan.md` written from the design decision and put through
-  the agreed 2 codex-commercial rounds (findings + resolutions in the plan's §10 review log).
+- **GM-3 plan APPROVED (owner, 2026-07-22 "okay, start implementing"), Status: Approved — implementing
+  self-service core.** `docs/SelfServiceGroupManagement-Plan.md` written from the design decision and
+  put through the agreed 2 codex-commercial rounds (findings + resolutions in the plan's §10 review
+  log). Parked open items (F8 task-0 scope/credential matrix, F9 TOCTOU, F10 audit-durability vs
+  no-worker, F12 other-owners fan-out, AC9 in-list filter) are resolved per-slice with the owner as
+  each slice lands; they did not block approval of the self-service core.
   - **Scope narrowed by owner this session (2026-07-22, `.agents/decisions.md` "GM-3 scope
     narrowed"): admin "manage for another user" is DROPPED, not deferred.** Verified against current
     Microsoft docs (3 ways) that no app-only Graph route returns "groups owned by user X"; an admin
@@ -24,8 +27,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     `/me` scopes -> task 0; F9 pre-write TOCTOU (close vs accept+document); F10 audit-intent/notify
     durability vs the no-background-worker non-goal; F12 "other owners" fan-out failure; NEW HIGH
     AC9 in-list filter has no design/task/test yet.
-  - **NEXT: owner approves the plan (flip Draft->Approved), then implement slice 1** = delegated-Entra
-    auth foundation (riskiest; everything depends on it). No code before approval.
+  - **NEXT: task 0 (auth/permission matrix, design task — no code) then implement slice 1** =
+    delegated-Entra auth foundation (riskiest; everything depends on it). Task 0 output is the exact
+    `/me` delegated scopes + challenge/callback/sign-out endpoint contract + token-cache/handle model
+    + actor<->Entra binding rule, appended to plan §6. Task 0 is a hard prerequisite for slice 1 code
+    (codex F8).
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).

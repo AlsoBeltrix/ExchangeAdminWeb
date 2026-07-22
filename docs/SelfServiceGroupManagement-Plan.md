@@ -1,8 +1,13 @@
 # Self-Service Group Management (GM-3) Plan
 
-Status: Draft
+Status: Approved
 Owner: Michael
 Last verified against code: 7b64b17 (2026-07-22)
+Approval: self-service core approved by owner 2026-07-22 ("okay, start implementing").
+The open items parked at the end of §10 (F8 task-0 scope/credential matrix, F9 TOCTOU
+choice, F10 audit-durability vs no-background-worker, F12 other-owners fan-out, AC9
+in-list filter) are resolved per-slice with the owner as each slice is implemented;
+they did not block approval of the self-service core.
 
 <!-- Sections marked [YOU] are written or approved by Michael, in plain language.
      Sections marked [MODEL] are drafted by the model and only skimmed by Michael.
