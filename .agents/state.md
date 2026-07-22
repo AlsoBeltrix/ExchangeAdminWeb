@@ -6,20 +6,32 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **IN FLIGHT: draft the GM-3 plan.** Task (owner, 2026-07-22): write the FULL
-  `docs/SelfServiceGroupManagement-Plan.md` covering the whole agreed design (not just first cut),
-  then review it with `codex-commercial.ps1` for **up to 2 rounds max**, then surface to the owner
-  whether the plan and codex have **converged or not** and stop for direction. Nothing drafted yet.
-  - Design authority: `.agents/decisions.md` 2026-07-22 "GM-3 self-service group management: design
-    direction" — read it in full; it carries the delegated-Entra-auth decision, security
-    requirements, on-prem reverse-lookup approach, codex findings, and first-cut scope.
-  - codex invocation that works: `pwsh -NoProfile -Command "$b = Get-Content -Raw '<file>'; &
-    codex-commercial.ps1 exec $b"` (wrapper takes the prompt as an ARG, NOT stdin; do NOT add
-    `--skip-git-repo-check`, it trips the safety classifier). The design-brief consult already
-    passed the auto-mode exfil classifier once this session, but it is non-deterministic - if it
-    hard-blocks, ask the owner to run it in-session with `! ...`.
-  - Plan must be agent-facing and implementable cold; delegated-auth foundation is slice 1 (riskiest,
-    everything depends on it). Get owner approval before ANY code (no code without an approved plan).
+- **GM-3 plan DRAFTED + committed (`bc80dd7`), Status: Draft — awaiting owner approval before ANY
+  code.** `docs/SelfServiceGroupManagement-Plan.md` written from the design decision and put through
+  the agreed 2 codex-commercial rounds (findings + resolutions in the plan's §10 review log).
+  - **Scope narrowed by owner this session (2026-07-22, `.agents/decisions.md` "GM-3 scope
+    narrowed"): admin "manage for another user" is DROPPED, not deferred.** Verified against current
+    Microsoft docs (3 ways) that no app-only Graph route returns "groups owned by user X"; an admin
+    cannot stand in for a user. Feature is now SELF-SERVICE ONLY: a signed-in user manages their OWN
+    on-prem AD + M365 groups (their own cloud-ownership query is a supported delegated call). Admins
+    keep the existing search-by-name screens, unchanged. Removed: `ManageOthers` permission, AC7,
+    former task 8, and the whole actor-vs-subject / delegated-admin-role surface (codex F6 resolved
+    by removal).
+  - **Codex verdict: NOT-CONVERGED at round 2 (final; budget spent).** Security CORE converged
+    (F1-F5,F7,F11: identity binding, scheme isolation, token-cache isolation, delegated-only cloud
+    write, immutable-ID eligibility, user-only members, injection-safe resolution — all folded into
+    §6). Still-open (owner decisions/design gaps, NOT blocking plan approval; all in §10): F8 exact
+    `/me` scopes -> task 0; F9 pre-write TOCTOU (close vs accept+document); F10 audit-intent/notify
+    durability vs the no-background-worker non-goal; F12 "other owners" fan-out failure; NEW HIGH
+    AC9 in-list filter has no design/task/test yet.
+  - **NEXT: owner approves the plan (flip Draft->Approved), then implement slice 1** = delegated-Entra
+    auth foundation (riskiest; everything depends on it). No code before approval.
+  - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
+    as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
+    it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
+    Do NOT pipe `2>&1 | Tee-Object` — trips the wrapper's stdout-encoding requirement. Run in
+    background (reasoning effort is "max", ~5-15 min/round, exceeds a 10-min foreground cap).
+    Do NOT add `--skip-git-repo-check` (trips the safety classifier).
 
 - **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
   for the app-wide log-root fail-fast change (`3eac48a`).
@@ -96,12 +108,10 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
-5. **GM-3 self-service group management — DESIGN AGREED (owner, 2026-07-22), plan pending.**
-   Unified on-prem + M365 "groups I can change" list behind a "load all (may be slow)" button;
-   delegated Entra sign-in for cloud ownership (owner chose delegated auth over a maintained index);
-   fail-closed eligibility on top of ownership; first cut = member add/remove only. Full design +
-   codex consult findings + security requirements: `.agents/decisions.md` 2026-07-22. NEXT STEP:
-   write `docs/SelfServiceGroupManagement-Plan.md` and get approval before any code.
+5. **GM-3 self-service group management — PLAN DRAFTED (Draft), awaiting owner approval.** See the
+   `## Now` block above for full current state. Plan `docs/SelfServiceGroupManagement-Plan.md`
+   (`bc80dd7`); scope narrowed to self-service only (`.agents/decisions.md` 2026-07-22 "GM-3 scope
+   narrowed"). NEXT: owner approval, then implement slice 1 (delegated-Entra auth foundation).
 6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
    code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
    excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
