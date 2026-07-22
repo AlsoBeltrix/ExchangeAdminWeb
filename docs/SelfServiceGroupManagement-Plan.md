@@ -1,13 +1,25 @@
 # Self-Service Group Management (GM-3) Plan
 
-Status: Approved
+Status: Approved (on-prem AD only — see 2026-07-22 scope-narrowed-again decision)
 Owner: Michael
-Last verified against code: 7b64b17 (2026-07-22)
+Last verified against code: 22c0510 (2026-07-22)
 Approval: self-service core approved by owner 2026-07-22 ("okay, start implementing").
-The open items parked at the end of §10 (F8 task-0 scope/credential matrix, F9 TOCTOU
-choice, F10 audit-durability vs no-background-worker, F12 other-owners fan-out, AC9
-in-list filter) are resolved per-slice with the owner as each slice is implemented;
-they did not block approval of the self-service core.
+
+**SCOPE NARROWED AGAIN 2026-07-22 (`.agents/decisions.md` "on-prem AD only"): the M365 /
+delegated-Entra half is DROPPED ENTIRELY.** GM-3 is now on-prem Active Directory
+self-service group management only. Reason: the delegated design forced an
+actor↔Entra-account binding decision (F1); the owner's real cross-identity need (Windows
+on-prem login acting on an Azure-only -CLD account's groups) is cross-identity management
+better served by the Microsoft portal, which already enforces proper auth. On-prem AD
+self-service is the value the portal does NOT give. DROPPED: second auth scheme,
+Microsoft.Identity.Web/MSAL, token cache, actor↔Entra binding, `/me/ownedObjects`,
+dedicated Entra registration, delegated security-review gate (codex F1/F2/F3/F4/F8/F12/F13
+moot). RETAINED and now the whole feature: on-prem ownership reverse-lookup, fail-closed
+eligibility (F5), user-only add/remove with pre-write re-checks + protected-principal (F7,
+F9), injection-safe resolution (F11), audit + affected-user notify (F10).
+
+Sections below still referencing M365/Graph/delegated auth are HISTORY as of this
+narrowing; the authoritative current scope is: on-prem AD only. Task 0 (§6.8) is moot.
 
 <!-- Sections marked [YOU] are written or approved by Michael, in plain language.
      Sections marked [MODEL] are drafted by the model and only skimmed by Michael.
@@ -26,35 +38,38 @@ they did not block approval of the self-service core.
 
 ## 1. Goal  [YOU — 3 to 6 sentences]
 
+(SCOPE: on-prem AD only, per the 2026-07-22 "on-prem AD only" decision. The M365
+paragraph below is superseded and kept for history.)
+
 A user (ultimately all staff, gated by this module's own per-module access group)
-can see one unified list of the groups they are allowed to change, spanning BOTH
-on-prem Active Directory groups and Microsoft 365 groups, without having to know
-where any group lives or what it is exactly called. The list is populated by an
-explicit "load the groups I can manage" button (with a "this can take some time"
-note), not preloaded on page open, and shows each group's type, its location
-(on-prem or M365), and its other owners. This is a SELF-SERVICE feature only: it
-always operates on the signed-in user's OWN groups. There is no admin
-"manage for another user" mode -- admins continue to use the existing
-search-by-name group-management screens for both AD and M365 (see §2 and the
-2026-07-22 scope decision). For this first cut the only change a user can make is
-adding or removing members; owner changes, group creation/deletion, and
-dynamic-group edits are out of scope. Cloud (M365) ownership must be discovered by
-signing the user in to Entra so Microsoft returns exactly the groups they own,
-because the app cannot answer "which groups does this user own" with its existing
-app-only Graph credential at any scale (verified 2026-07-22: no app-only Graph
-route exists for owned groups; delegated sign-in is the only efficient path).
+can see a list of the on-prem Active Directory groups they are allowed to change —
+the groups they own (via `managedBy` or the Exchange multi-owner
+`msExchCoManagedByLink`) — without having to know a group's exact name. The list is
+populated by an explicit "load the groups I can manage" button (with a "this can take
+some time" note), not preloaded on page open, and shows each group's type and its
+other owners. This is a SELF-SERVICE feature only: it always operates on the
+signed-in user's OWN on-prem groups (bound to their Windows/Negotiate identity).
+There is no admin "manage for another user" mode. For this first cut the only change
+a user can make is adding or removing USER members; owner changes, group
+creation/deletion, and any M365/cloud group management are out of scope (users manage
+their own M365 group membership directly in the Microsoft portal).
+
+~~[SUPERSEDED] ...one unified list spanning BOTH on-prem AD and M365, discovered via a
+delegated Entra sign-in...~~ Dropped 2026-07-22 — see the header banner and decision.
 
 ## 2. Non-goals  [YOU — bullets]
 
+(SCOPE: on-prem AD only, per 2026-07-22 decision.)
+
+- **No M365 / cloud group management of any kind.** Dropped entirely 2026-07-22. No
+  delegated Entra sign-in, no second auth scheme, no Graph ownership query, no
+  Microsoft.Identity.Web. Users manage their own M365 group membership in the
+  Microsoft portal.
 - No owner/manager mutation of any kind (adding, removing, or transferring group
   owners). Owner changes alter the authorization predicate itself and are excluded.
 - No group create, update (rename/description), or delete.
-- No editing of dynamic M365 groups — they are shown read-only.
 - No admin "manage groups for a specified user" mode. Admins use the existing
-  search-by-name AD Group Management and M365 Group Management screens, unchanged.
-  (Dropped 2026-07-22: Graph has no efficient app-only "groups owned by user X"
-  call, so an admin cannot stand in for a user; only the user's own delegated token
-  answers this.)
+  search-by-name AD Group Management screens, unchanged.
 - No change to the existing admin group-management pages; legacy CRUD stays where
   it is. This is an additive self-service surface, not a replacement.
 - No background worker, no periodically-refreshed ownership index (owner rejected
@@ -62,47 +77,42 @@ route exists for owned groups; delegated sign-in is the only efficient path).
   posture).
 - No search-then-validate UX where the user must type a group's exact name — the
   manageable list is presented up front.
-- Not requesting `offline_access` / refresh tokens unless a concrete need appears
-  (see §4 failure behavior); relying on short access-token lifetime instead.
+- First cut: member changes are USER members only (not nested groups, devices, or
+  service principals) — bounds blast radius (codex F7).
 
 ## 3. Acceptance criteria  [YOU approve each; model may propose]
 
-- AC1: An authorized user clicks "load the groups I can manage" and sees a single
-  merged list containing both the on-prem AD groups and the M365 groups they own,
-  each row showing group type, location (on-prem/M365), and other owners.
+(SCOPE: on-prem AD only. AC-numbering preserved; M365/delegated clauses struck.)
+
+- AC1: An authorized user clicks "load the groups I can manage" and sees the list of
+  on-prem AD groups they own (via `managedBy` or `msExchCoManagedByLink`), each row
+  showing group type and other owners.
 - AC2: The list is NOT loaded on page open; it loads only after the button is
   clicked, and a "this can take some time" note is shown before/while loading.
-- AC3: A user can add and remove members on a group they are eligible to manage;
-  the change is applied to the correct backend (AD or Graph) and reflected on
-  re-load.
+- AC3: A user can add and remove USER members on a group they are eligible to manage;
+  the change is applied to on-prem AD and reflected on re-load.
 - AC4: A user who owns a group they are NOT eligible to manage (fails the
   fail-closed manageable-group eligibility rule, e.g. a privileged/out-of-scope
   group) cannot change its membership — the group is either not offered or the
   action is refused. (Ownership alone never grants management.)
 - AC5: Every membership change re-checks, immediately before the write: the group
   still exists, the group is still eligible, the caller still owns it (by immutable
-  directory id), and the affected member passes the protected-principal check. Any
-  failed re-check blocks the write.
-- AC6: The self-service owner is ALWAYS the authenticated principal. A user cannot
-  manage another user's groups through the self-service path regardless of any
-  submitted identifier.
-- AC7: (REMOVED 2026-07-22.) There is no admin manage-for-others path. Admins use
-  the existing search-by-name group screens. This AC and its former admin-path tasks
-  are dropped, not deferred.
-- AC8: When one backend is unavailable, the list shows the healthy backend's
-  results plus a prominent "incomplete — <source> unavailable" banner, never "no
-  groups found" and never a silent drop; stale/unavailable selections are disabled.
+  directory id / objectGUID), and the affected member passes the protected-principal
+  check. Any failed re-check blocks the write.
+- AC6: The self-service owner is ALWAYS the authenticated Windows/Negotiate principal.
+  A user cannot manage another user's groups through the self-service path regardless
+  of any submitted identifier.
+- AC7: (REMOVED 2026-07-22.) There is no admin manage-for-others path.
+- AC8: (SUPERSEDED 2026-07-22.) Was: partial-failure banner across two backends. With
+  a single on-prem source there is no merge; an AD failure shows a clear error
+  ("couldn't load your groups"), never "no groups found" / silent drop.
 - AC9: Within the loaded manageable list, a user can filter/find a group by a
-  non-prefix term (a word in the middle of the name, or a description word) —
-  because the primary path loads owned groups rather than searching, this is
-  in-list filtering, not tenant search. The design authority also folds in a fix to
-  the sibling M365 module's prefix-only `startsWith(displayName)` search bug; see the
-  ONE open scope question on whether that sibling-module fix ships with this work or
-  separately.
-- AC10: Every membership change writes an audit record and sends notifications per
-  the Constitution (admin notification on the change; affected-user notification on
-  on-prem security-group membership changes). Per-user Entra tokens are never
-  written to any log or audit record.
+  non-prefix term (a word in the middle of the name, or a description word). Because
+  the list is already loaded, this is pure in-list client-side filtering. (The former
+  M365 `$search` sibling-module fix is out of scope — no M365 in this feature.)
+- AC10: Every membership change writes an audit record (`AuditService.LogModuleAction`)
+  and sends notifications per the Constitution: admin notification on the change, and
+  affected-user notification on on-prem security-group membership changes.
 
 ## 4. Failure behavior  [YOU own — this is the risk section of a change ticket]
 
@@ -460,60 +470,52 @@ and actor-binding rule. Owner decisions this session are marked (OWNER 2026-07-2
 
 ## 7. Task breakdown  [MODEL — Michael skims]
 
-Ordered; slice 1 is foundational (everything M365 depends on it). Each task cites
-the ACs it serves.
+(SCOPE: on-prem AD only, per 2026-07-22 decision. The former delegated-Entra tasks
+0/1/2/8/9 and the delegated security gate are DROPPED. Renumbered on-prem task set:)
 
-0. **Auth/permission matrix (design task, before any code) — DONE 2026-07-22, see §6.8.**
-   Fixed the dedicated Entra registration + client-secret-via-Delinea credential
-   (owner), the exact `/me` delegated scopes, the challenge/callback/sign-out endpoint
-   contract, the token-cache/handle model, and the actor↔Entra-account binding rule.
-   Output is §6.8. Closes the design ambiguity behind codex F1/F2/F3/F8 before
-   implementation. (all ACs) (F6's admin-role question no longer applies -- admin-for-
-   others dropped 2026-07-22.)
-1. **Delegated Entra auth foundation** (AC1, AC3, AC6, AC10). Add uniquely-named
-   OIDC + cookie schemes with Negotiate kept as the explicit default and the aux
-   cookie unable to satisfy app/hub authorization (F2); challenge/callback/sign-out
-   HTTP endpoints via full-page navigation (F2); actor↔Entra `(tid,oid)`↔SID binding
-   with mismatch rejection + dual-identity audit (F1); MIW server-side token cache
-   with opaque circuit-bound handle, eviction, sign-out (F3); narrowest scopes, no
-   `offline_access` with a test proving no refresh token (F8). Token never logged.
-2. **M365 ownership adapter, self path** (AC1). Delegated
-   `/me/ownedObjects/microsoft.graph.group` with full `@odata.nextLink` pagination,
-   `Retry-After` handling, and 401/403/claims-challenge distinction (F12);
-   normalized `ManageableGroup`; fail-closed on token absence.
-3. **On-prem ownership adapter** (AC1). New `managedBy` + `msExchCoManagedByLink`
-   reverse-lookup in/beside `GroupManagementService`; per-user query, no scan;
-   injection-safe single-resolution-to-immutable-id contract, LDAP escaping, no PS
-   interpolation (F11).
-4. **Fail-closed eligibility rule** (AC4). Admin-controlled immutable-ID allowlist
+1. **On-prem ownership reverse-lookup** (AC1). New `managedBy` + Exchange multi-owner
+   `msExchCoManagedByLink` reverse-lookup on/beside `GroupManagementService`. Resolve
+   the signed-in Windows principal ONCE to an immutable id (objectGUID/DN) and query
+   `Get-ADGroup` filtered to groups that principal owns — per-user query, NO tenant
+   scan. Injection-safe: parameterized/escaped, no PowerShell string interpolation
+   (F11). Returns a normalized `ManageableGroup` (id, name, type, other owners,
+   `CanManageMembers`). This is new code; the existing search-by-substring path is
+   untouched.
+2. **Fail-closed eligibility rule** (AC4). Admin-controlled immutable-ID allowlist
    (not just OU/scope); denies role-assignable / nested-privileged / app-access
    groups; AD write credential ACL/JEA constrained to the same set (F5); unreadable
-   store = deny all. Applied to both adapters.
-5. **Module descriptor + page skeleton** (AC1, AC2, AC6). `SelfServiceGroups`
-   descriptor with `Access` only (no granular permission); `SelfServiceGroups.razor`
-   with policy attribute, `OnInitializedAsync` re-check, `<ModuleVersion />`, the
-   load button (nothing on open). Single self-service surface; no admin entry point.
-6. **Unified merge + partial-failure banner** (AC1, AC8). Concurrent query behind
-   adapters; merged normalized list with type/location/other-owners columns;
-   per-backend fail-closed banner; cancel abandoned loads; disable stale selections.
-7. **Member add/remove with pre-write re-checks** (AC3, AC4, AC5, AC10). USER-ONLY
-   members, single immutable object id, contract-tested `.../$ref` removal (F7);
-   delegated-only cloud write, no app-only fallback (F4); re-query actor
-   permissions + re-read group + eligibility + ownership-by-id + protected-principal
-   before each write, serialize same-group ops, close-or-document TOCTOU (F9);
-   operationId + pre-write audit intent + post-write reconciliation + idempotent
-   desired-state + notify-retry (F10); per-row aggregation; audit + notify
-   (affected-user on on-prem changes).
-8. **(REMOVED 2026-07-22.)** Admin manage-for-user path is dropped, not deferred
-   (former AC7 / codex F6). No task.
-9. **M365 `$search` rewrite + Graph explicit-header support** (AC9). In scope per
-   design authority; sequencing (this work stream vs separate commit) is the one
-   open scope question.
-10. **On-prem search cap/ranking fixes** (AC9). Same sequencing question as task 9.
-11. **Security review gate** (all ACs). Explicit review before ship (design
-    decision); includes end-to-end validation in a NON-PRODUCTION Entra tenant —
-    stubbed tests cannot prove scheme isolation, account binding, cache separation,
-    Graph roles, or exact mutation behavior (F13). Not a code task; a required gate.
+   store = deny all (Known Failure Class #3).
+3. **Module descriptor + page skeleton** (AC1, AC2, AC6). `SelfServiceGroups`
+   descriptor: `Access` main permission only (FailClosed), `Category = "Directory &
+   Groups"`, `SortOrder ≈ 165`, `EnabledByDefault = false`, `Version = "1.0.0"`, an
+   on-prem `DelineaSecretId` config field for the AD write credential. Adding a module
+   does NOT bump the base app version (`.agents/decisions.md` 2026-07-21).
+   `SelfServiceGroups.razor` with `[Authorize(Policy="SelfServiceGroups")]`,
+   `OnInitializedAsync` re-check, `<ModuleVersion />`, the load button (nothing loads
+   on page open, AC2). Owner is always the bound Windows principal (AC6).
+4. **List + in-list filter** (AC1, AC9). Render the loaded owned-groups list with
+   type + other-owners columns; a load failure shows a clear error, never "no groups
+   found" (AC8 collapsed to single source). Client-side in-list filter matches a
+   mid-string name term or a description word (AC9) — pure filtering over the loaded
+   list, no directory round-trip.
+5. **Member add/remove with pre-write re-checks** (AC3, AC4, AC5, AC10). USER-ONLY
+   members; resolve exactly one immutable member id. Before each write re-check:
+   re-query the actor's module permission (a Blazor circuit principal can be stale —
+   F9), re-read the group, re-check eligibility, re-check ownership by immutable id,
+   and run the protected-principal check on the affected member
+   (`ProtectedPrincipalService.CheckAsync`). Fail-closed on any failed re-check.
+   Serialize same-group operations; the AD check→write TOCTOU is closed or explicitly
+   documented, with the ACL/JEA-constrained write credential as the least-privilege
+   backstop (F9). Idempotent desired-state (add-if-absent / remove-if-present) so a
+   retry is safe; per-row failure aggregation, never blanket success (Known Failure
+   Class #2). Audit via `AuditService.LogModuleAction` + admin notification +
+   affected-user notification on on-prem security-group changes (F10, AC10). No
+   background worker / outbox needed — single synchronous on-prem write with
+   post-write read-back reconciliation.
+6. **Verification + manual-validation note.** New service ⇒ xUnit before "done"
+   (repo-guidance). Fail-closed and pre-write-recheck paths proven non-vacuous. No
+   delegated security-review gate (no cloud tokens). Live AD write / Blazor UI remain
+   manual-validation-on-dev items (no dev tenant — same standing gap).
 
 ## 8. Test plan  [MODEL writes; YOU check the mapping only]
 

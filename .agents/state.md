@@ -6,39 +6,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **GM-3 plan APPROVED (owner, 2026-07-22 "okay, start implementing"), Status: Approved — implementing
-  self-service core.** `docs/SelfServiceGroupManagement-Plan.md` written from the design decision and
-  put through the agreed 2 codex-commercial rounds (findings + resolutions in the plan's §10 review
-  log). Parked open items (F8 task-0 scope/credential matrix, F9 TOCTOU, F10 audit-durability vs
-  no-worker, F12 other-owners fan-out, AC9 in-list filter) are resolved per-slice with the owner as
-  each slice lands; they did not block approval of the self-service core.
-  - **Scope narrowed by owner this session (2026-07-22, `.agents/decisions.md` "GM-3 scope
-    narrowed"): admin "manage for another user" is DROPPED, not deferred.** Verified against current
-    Microsoft docs (3 ways) that no app-only Graph route returns "groups owned by user X"; an admin
-    cannot stand in for a user. Feature is now SELF-SERVICE ONLY: a signed-in user manages their OWN
-    on-prem AD + M365 groups (their own cloud-ownership query is a supported delegated call). Admins
-    keep the existing search-by-name screens, unchanged. Removed: `ManageOthers` permission, AC7,
-    former task 8, and the whole actor-vs-subject / delegated-admin-role surface (codex F6 resolved
-    by removal).
-  - **Codex verdict: NOT-CONVERGED at round 2 (final; budget spent).** Security CORE converged
-    (F1-F5,F7,F11: identity binding, scheme isolation, token-cache isolation, delegated-only cloud
-    write, immutable-ID eligibility, user-only members, injection-safe resolution — all folded into
-    §6). Still-open (owner decisions/design gaps, NOT blocking plan approval; all in §10): F8 exact
-    `/me` scopes -> task 0; F9 pre-write TOCTOU (close vs accept+document); F10 audit-intent/notify
-    durability vs the no-background-worker non-goal; F12 "other owners" fan-out failure; NEW HIGH
-    AC9 in-list filter has no design/task/test yet.
-  - **Task 0 (auth/permission matrix) DONE 2026-07-22 — plan §6.8.** Owner-settled: dedicated Entra
-    app registration (NOT the app-only one) + confidential client with a client secret in Delinea
-    (fields `Tenant ID`/`Application ID`/`Client Secret`, own secret id via new module config field
-    `DelegatedGraphDelineaSecretId`). Scopes: `User.Read`, `GroupMember.Read.All`,
-    `GroupMember.ReadWrite.All`; NO `offline_access`. Endpoints `/ssg/signin|callback|signout`
-    (full-page nav); Negotiate stays explicit default; aux OIDC+cookie schemes via MIW; actor<->Entra
-    `(tid,oid)`<->SID binding; opaque circuit handle over a server-side MIW cache.
-  - **NEXT: implement slice 1** = delegated-Entra auth foundation (task 1). Ops prerequisite before
-    slice 1 can be TESTED (not before it can be written): provision the dedicated Entra registration +
-    Delinea secret per §6.8. Still-open per-slice items when their slice lands: F9 (TOCTOU) at task 7,
-    F10 (audit durability vs no-worker) at task 7, F12 (other-owners fan-out) at task 6, AC9 in-list
-    filter (needs design) at task 6.
+- **GM-3 SCOPE NARROWED AGAIN 2026-07-22 → on-prem AD ONLY. M365/delegated-Entra DROPPED entirely.**
+  (`.agents/decisions.md` "on-prem AD only"; plan `docs/SelfServiceGroupManagement-Plan.md` revised,
+  Status: Approved / on-prem only.) Trigger: the delegated design forced the actor↔Entra binding
+  decision (F1); the owner's real need was cross-identity (Windows on-prem login acting on an
+  Azure-only -CLD account's groups), which is better served by the Microsoft portal. On-prem AD
+  self-service is the value the portal doesn't give.
+  - **DROPPED (moot now):** second auth scheme, Microsoft.Identity.Web/MSAL, token cache,
+    actor↔Entra binding, `/me/ownedObjects`, dedicated Entra registration, task 0 (§6.8), delegated
+    security-review gate. Codex F1/F2/F3/F4/F8/F12/F13 moot.
+  - **RETAINED = the whole feature now:** on-prem ownership reverse-lookup (`managedBy` +
+    `msExchCoManagedByLink`), fail-closed eligibility allowlist (F5), user-only add/remove with
+    pre-write re-checks + protected-principal (F7, F9), injection-safe resolution (F11), audit +
+    affected-user notify on on-prem security-group changes (F10). No background worker needed.
+  - **Reverted in-progress delegated code (slice-1 steps 1-2 from commits `4be93a3`, `22c0510`):**
+    removed the Microsoft.Identity.Web package, `Services/SelfServiceGroups/DelegatedEntra*`, and the
+    `ISecretFieldsReader` seam on `DelineaService`. Build green at clean baseline.
+  - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup → 2 fail-closed eligibility →
+    3 module descriptor + page skeleton → 4 list + in-list filter (AC9) → 5 member add/remove with
+    pre-write re-checks + audit/notify → 6 verification/manual-validation note.
+  - **NEXT: implement task 1** = on-prem ownership reverse-lookup (`managedBy` +
+    `msExchCoManagedByLink`), injection-safe, per-user, no scan. New xUnit before done.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
@@ -121,10 +109,9 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
-5. **GM-3 self-service group management — PLAN DRAFTED (Draft), awaiting owner approval.** See the
-   `## Now` block above for full current state. Plan `docs/SelfServiceGroupManagement-Plan.md`
-   (`bc80dd7`); scope narrowed to self-service only (`.agents/decisions.md` 2026-07-22 "GM-3 scope
-   narrowed"). NEXT: owner approval, then implement slice 1 (delegated-Entra auth foundation).
+5. **GM-3 self-service group management — APPROVED, on-prem AD ONLY, IN PROGRESS.** See the `## Now`
+   block for full current state. Scope narrowed twice on 2026-07-22 (final: on-prem AD only, M365
+   dropped). NEXT: implement task 1 (on-prem ownership reverse-lookup). No delegated auth.
 6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
    code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
    excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).

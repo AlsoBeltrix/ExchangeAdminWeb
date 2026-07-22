@@ -5,6 +5,50 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-22 - GM-3 scope narrowed AGAIN: on-prem AD only, M365/delegated-Entra dropped entirely
+
+Status: Active (supersedes the delegated-Entra elements of both 2026-07-22 entries below;
+plan `docs/SelfServiceGroupManagement-Plan.md` revised to on-prem-only)
+
+Owner direction 2026-07-22, during slice-1 implementation. The M365 half of GM-3 is
+DROPPED. GM-3 is now on-prem Active Directory self-service group management ONLY.
+
+Reason: the delegated-Entra design forced a decision on actor<->Entra-account binding
+(codex F1). With hybrid identity, synced users bind Windows-SID -> Entra
+`onPremisesSecurityIdentifier`, but the owner's real need surfaced as "log into Windows
+as my on-prem account, manage groups my Azure-only -CLD privileged account owns." That
+is cross-identity management: the acting identity (Windows, drives authorization + audit)
+and the owning identity (Entra -CLD) are different privilege levels. Allowing it would
+re-open (in a self-driven form) the cross-identity path the earlier 2026-07-22 decision
+dropped, and would require dual-identity audit + authorization keyed off the signed-in
+Entra account + a fresh security review. Owner's ruling: not worth it -- users can already
+manage O365 group membership they own directly in the Microsoft portal, which enforces
+proper auth. The value the portal does NOT give self-service users is on-prem AD group
+management; that is what GM-3 now delivers.
+
+Consequence:
+- DROPPED: the second (Entra/OIDC) auth scheme, Microsoft.Identity.Web/MSAL, the token
+  cache, actor<->Entra binding, `/me/ownedObjects` cloud-ownership query, the dedicated
+  delegated Entra app registration, and the pre-ship security-review gate that existed
+  for the delegated tokens. Codex findings that existed solely for the delegated flow
+  (F1, F2, F3, F4, F8, F12, F13) are moot.
+- RETAINED: on-prem AD ownership reverse-lookup (`managedBy` + `msExchCoManagedByLink`),
+  fail-closed eligibility allowlist (codex F5), user-only member add/remove with
+  pre-write re-checks + protected-principal gate (codex F7, F9), injection-safe
+  identifier resolution (codex F11), audit + affected-user notification on on-prem
+  security-group changes (codex F10, now with no background-worker tension since there
+  is no cross-service token/outbox concern).
+- The "unified list spanning both backends" and the partial-failure banner (AC8) collapse
+  to a single on-prem source; no merge, no per-backend banner needed.
+
+Reverted in-progress code from the delegated flow (slice 1 steps 1-2): the
+Microsoft.Identity.Web package reference and the `DelegatedEntraSettings*` provider are
+removed; the `ISecretFieldsReader` seam on `DelineaService` is retained only if the
+on-prem path uses it, else removed.
+
+Supersedes: the delegated-Entra design direction (2026-07-22 entry below) and the
+"self-service spans BOTH on-prem AD and M365" element of the scope-narrowed entry below.
+
 ### 2026-07-22 - GM-3 scope narrowed: self-service only, admin "manage for others" dropped
 
 Status: Active (refines the design-direction entry below the same date; plan
