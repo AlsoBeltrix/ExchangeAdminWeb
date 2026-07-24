@@ -29,8 +29,15 @@ group in ADUC).
 New rule:
 - **Passive list = manager-can-update-membership only.** Show groups where the caller is the
   declared `managedBy` manager AND "Manager can update membership" is on (the WriteProperty-on-
-  `member` ACE that checkbox grants). This is what task 1 already built; task 1 becomes the list.
-  SelfMembership (self-only) does NOT qualify.
+  `member` ACE that checkbox grants). SelfMembership (self-only) does NOT qualify. **Enforced at
+  LIST TIME, not at write (owner, 2026-07-24):** task 1's `managedBy`/`msExchCoManagedByLink` LDAP
+  filter is necessary but not sufficient — a group can name the caller as manager with the checkbox
+  UNCHECKED. So for each candidate the filter returns, read its ACL and confirm the caller's
+  WriteProperty-on-`member` (or GenericWrite/GenericAll) ACE before including it; EXCLUDE any that
+  fail. This means task 1's current filter-only list must gain the per-group ACL check — task 1 is
+  the candidate set, not the final list. Cost is bounded (ACL read over the small per-user set, not
+  the 41k domain). A loading spinner is REQUIRED while the list builds (the per-group ACL read adds
+  latency) so users do not assume the page is dead and resubmit.
 - **On-demand single-group search.** A user who knows they can manage a group (per the discovery
   finding, `tools/Discover-GroupMembershipDelegation.ps1`: edit rights are almost all direct
   per-user ACEs, not helpdesk-group delegation) types the group name. Resolve once, injection-safe

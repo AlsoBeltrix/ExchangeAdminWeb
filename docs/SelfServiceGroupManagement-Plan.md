@@ -309,10 +309,22 @@ logged, never written unencrypted, never placed in audit/trace (AC10).
   manager). This is authorization, not mere ownership — the manager already holds the
   directory right to edit membership, so surfacing it confers nothing new (the owner's
   framing: they could do the same in ADUC). SelfMembership (self-only) does NOT
-  qualify. Still fail-closed: a group that cannot be confirmed manageable by the
-  caller is refused, and a hard AD read failure is an error, never an empty/allowed
-  result (Known Failure Class #3). The AD write credential's ACL/JEA rights remain the
-  least-privilege backstop.
+  qualify.
+  - **ENFORCED AT LIST TIME (owner, 2026-07-24), not just at write.** The `managedBy` /
+    `msExchCoManagedByLink` LDAP filter (task 1) is NECESSARY BUT NOT SUFFICIENT: a
+    group can name the caller as manager with the "Manager can update membership" box
+    UNCHECKED, in which case the caller cannot edit it. So the list step must, for each
+    candidate group the filter returns, read that group's security descriptor and
+    confirm the WriteProperty-on-`member` (or GenericWrite/GenericAll) ACE is present
+    for the caller before including it with `CanManageMembers = true`. A candidate that
+    fails this check is EXCLUDED from the list (not shown-then-rejected-on-save) — this
+    is what avoids showing users groups they cannot actually edit. Cost is bounded: the
+    ACL read is only over the small per-user set the manager filter already returned
+    (NOT the 41k domain), so it is cheap; the owner accepted the small added latency
+    (see the §6.4 spinner requirement). Fail-closed: a group whose ACL cannot be read
+    is EXCLUDED, and a hard AD read failure is an error, never an empty/allowed result
+    (Known Failure Class #3).
+  - The AD write credential's ACL/JEA rights remain the least-privilege backstop.
 - **On-demand single-group search (net-new, 2026-07-24):** because there is no
   domain-wide scan, a user who knows they can manage a group (e.g. via a direct
   per-group ACE — the discovery finding, `tools/Discover-GroupMembershipDelegation.ps1`,
@@ -330,6 +342,11 @@ logged, never written unencrypted, never placed in audit/trace (AC10).
   `@attribute [Authorize(Policy = "SelfServiceGroups")]`, `OnInitializedAsync`
   re-check + `<ModuleVersion />` in the heading (Spec §UI Rendering, REQUIRED).
 - Explicit "load the groups I can manage" button; nothing loads on page open (AC2).
+- **Loading indicator REQUIRED (owner, 2026-07-24).** The list build does a per-group
+  ACL read (§6.3 list-time enforcement), so the load can take a noticeable moment. Show
+  a spinner / progress indicator and disable the load button while the query runs, so a
+  user does not assume the page is dead and resubmit. The button re-enables on completion
+  or error.
 - Query both backends concurrently behind small adapters returning a normalized
   `ManageableGroup` (id, displayName, type, location on-prem/M365, other owners,
   capability flags `CanManageMembers`, `IsDynamic`). Merge into one list; preserve
@@ -499,9 +516,14 @@ and actor-binding rule. Owner decisions this session are marked (OWNER 2026-07-2
    untouched.
 2. **Eligibility = manager-can-update-membership + on-demand single-group search**
    (AC4). SCALED BACK 2026-07-24 (see §6.3): the admin allowlist and the domain-wide
-   ACE-scan are DROPPED. (a) The passive list rule is exactly task 1's output — groups
-   where the caller is the `managedBy` manager with "Manager can update membership" on;
-   no separate eligibility store. (b) Net-new single-group search: user types a group
+   ACE-scan are DROPPED. (a) Passive list = groups where the caller is the `managedBy`
+   manager with "Manager can update membership" on; no separate eligibility store. The
+   task-1 LDAP filter is necessary but NOT sufficient — for each candidate group it
+   returns, read that group's ACL and confirm the caller's WriteProperty-on-`member`
+   (or GenericWrite/GenericAll) ACE before setting `CanManageMembers = true`; EXCLUDE
+   any candidate that fails (enforce at list time, not shown-then-rejected — owner,
+   2026-07-24). Bounded ACL read (per-user set only, not the 41k domain); a spinner is
+   required while it runs (§6.4). (b) Net-new single-group search: user types a group
    name; resolve once injection-safe (F11), read the group, confirm the caller can
    manage its membership (manager-with-WriteMember OR a direct membership-write ACE on
    the caller's SID); return it if manageable, else an error to contact the IT Support
