@@ -12,9 +12,10 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 
 ## Findings
 
-| ID          | Severity | Impact (one line)                                             | Status | Branch | Reviewer |
-|-------------|----------|---------------------------------------------------------------|--------|--------|----------|
-| pp-finder-1 | HIGH     | Protected room editable via single-room Finder (no PP gate)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (finding+plan r1-3); codex-commercial/gpt-5.6-sol/max/frontier (consolidation r4) |
+| ID                | Severity | Impact (one line)                                             | Status | Branch | Reviewer |
+|-------------------|----------|---------------------------------------------------------------|--------|--------|----------|
+| pp-finder-1       | HIGH     | Protected room editable via single-room Finder (no PP gate)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (finding+plan r1-3); codex-commercial/gpt-5.6-sol/max/frontier (consolidation r4) |
+| gm3-task2-slice1  | n/a      | Slice-landing review: list-time member-write eligibility      | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — accepted, no material issue (1a0cf58) |
 
 Notes:
 - Finding **confirmed real** (round 1), fix **plan reviewed & accepted** (rounds 2-3
