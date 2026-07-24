@@ -36,9 +36,34 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     SilentlyContinue KEPT as designed — it is the plan's F12 fan-out behavior (one owner's failed
     lookup shows the DN, not a whole-load failure; main query is still -Stop). Build + format +
     diff-check clean; 697 tests green. Live AD query is manual-validation-on-dev (no dev tenant).
-  - **NEXT: implement task 2** = fail-closed eligibility rule (AC4). Admin-controlled immutable-ID
-    allowlist (NOT just OU/scope); denies role-assignable / nested-privileged / app-access groups;
-    unreadable store = deny all (Known Failure Class #3); flips `ManageableGroup.CanManageMembers`.
+  - **TASK 2 REDEFINED 2026-07-23 — owner rejected the plan's admin allowlist** ("any group manager
+    can just open ADUC and manage the group themselves — an arbitrary security speedbump with no
+    point"). New eligibility rule: **"show groups the user can actually update."** = the caller's SID
+    (or a group SID they hold) has GenericAll / GenericWrite / WriteProperty-on-`member` / WriteProperty-
+    on-all-props on the group. `managedBy` "manager can update membership" is just one such ACE, so this
+    SUBSUMES task 1's manager lookup. SelfMembership (self-only) does NOT qualify. This diverges from the
+    Approved plan and codex F5 — plan §6.3/task 2 and `.agents/decisions.md` MUST be updated before code.
+  - **Discovery DONE (read-only, `tools/Discover-GroupMembershipDelegation.ps1`, UNCOMMITTED).** Answers
+    "how do L1/L2 get edit rights when not in the manager field": on a 400-group sample across the two
+    biggest OUs, after stripping inherited domain-admin noise + service accounts, **82 real delegations,
+    almost all DIRECT ACEs naming individual people** (69 users, e.g. 9 groups for one person); the 13
+    unresolved SIDs are deleted accounts. **ZERO helpdesk-group delegation.** So non-managers get rights
+    via direct per-group ACEs on themselves — not via a group. `nTSecurityDescriptor` is NOT searchable
+    by trustee, so there is no cheap per-user LDAP query for "groups I can edit"; you must read ACLs.
+  - **DECIDED design (owner, 2026-07-23) — "scope B-cached, global, lazy, single-flight, blocking":**
+    a single global `SID -> editable-group-GUIDs` map (covers ALL users, not per-user), refreshed lazily
+    and **gated once per window N** (no scheduled task). ONE global single-flight lock — the first click
+    in a window triggers a full ACL scan and **BLOCKS** behind "Loading, please wait. This can take
+    several minutes."; concurrent clicks wait on the same scan; later clicks in the window read cache.
+    Rationale: a per-user live ACL scan would let one user fire thousands of AD lookups (owner veto);
+    a global cached map bounds it to one scan per window. Staleness up to N accepted.
+  - **BLOCKER for writing the plan: scan-universe sizing unverified.** Owner flagged the group universe
+    is bigger than the two sampled OUs (those two alone = 5108 + 14878 = ~20k groups; @0.017s/ACL that
+    is ~5.6 min single-thread / ~3 min at throttle=2 — so "several minutes" is honest for 20k, but the
+    TRUE universe is larger and uncounted). Need a domain-wide (or full-in-scope) `Get-ADGroup` count to
+    confirm the wait-message copy and pick the N-window default. **This needs ptk (see Blockers).**
+  - **NEXT once sized:** write task-2 design into `docs/SelfServiceGroupManagement-Plan.md` §6.3/task 2
+    (replace the allowlist) + record in `.agents/decisions.md`, THEN implement. Both doc edits first.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
@@ -135,7 +160,14 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 ## Blockers / open gaps
 
-- **None blocking current work.**
+- **ptk MCP server DOWN (2026-07-23) — blocks GM-3 scan-sizing.** Audit persistence failed at
+  startup (`ptk_state`: `audit=unavailable`, `failure_class=journal.startup`); every `ptk_invoke`
+  AND `ptk_reset` fails with "Required audit persistence is unavailable", survives multiple restarts
+  (no in-band recovery — reset itself needs the audit backend). Filed
+  AlsoBeltrix/PowerShell-Token-Killer#10. Owner rule: **ptk down is a STOP for AD work — do NOT fall
+  back to direct PowerShell** (the warm session's persistent AD module/connection is the whole point;
+  direct calls reload the module each time). The one AD command still needed = a domain-wide/in-scope
+  `Get-ADGroup` count to size the GM-3 scan. Resume when `ptk_state` shows audit healthy.
 - **CLOSED (2026-07-21, commit 2a97d09) — single-room Finder protected-principal gap.** The
   single-room Room Finder page path (`ConferenceRooms.razor` `SetupSingleRoom` →
   `SetRoomMetadataAndListAsync`) previously wrote with no PP gate. Fixed by consolidating the

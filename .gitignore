@@ -67,3 +67,6 @@ docs/CodeReview-*.md
 docs/NOTIFICATIONS_SECURITY.md
 docs/SectionPermissions-Plan.md
 examplescripts/
+
+# GM-3 discovery output — contains live directory SIDs/usernames, never commit
+GroupMembershipDelegation-*.csv
