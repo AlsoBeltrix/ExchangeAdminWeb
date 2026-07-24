@@ -68,10 +68,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
        telling them to contact the IT Support Desk. Handles the case where a user knows they have rights
        (e.g. a direct per-group ACE, per the discovery finding) and knows the group name, without any
        domain-wide scan.
-  - **NEXT:** write this scaled-back task-2 design into `docs/SelfServiceGroupManagement-Plan.md`
-    §6.3/task 2 (replace both the allowlist AND the 2026-07-23 ACE-scan rule) + record the supersession
-    in `.agents/decisions.md`, THEN implement. Both doc edits first. The 41k scan-sizing work and the
-    global-map design are history, kept above only as the rationale for dropping the scan.
+  - **Doc edits DONE (2026-07-24, commit `ec31788`):** scaled-back task-2 design written into
+    `docs/SelfServiceGroupManagement-Plan.md` §6.3/task 2 (allowlist AND 2026-07-23 ACE-scan both
+    replaced; F5 note + Status header updated) and the supersession recorded in `.agents/decisions.md`.
+    The 41k scan-sizing work and the global-map design are history, kept above only as the rationale
+    for dropping the scan.
+  - **NEXT: implement task 2** — (a) confirm task 1's list rule is exactly manager-can-update-membership
+    (WriteProperty-on-`member`), and (b) build the on-demand single-group search (resolve once
+    injection-safe, read group, confirm caller's manage right, else "contact IT Support Desk"). New
+    service logic ⇒ xUnit before "done", proven non-vacuous.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
