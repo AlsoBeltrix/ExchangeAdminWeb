@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
 
@@ -16,10 +17,16 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// interpolated), and the ownership filter is built by <see cref="AdOwnershipFilter"/> with RFC 4515
 /// escaping and passed as a bound -LDAPFilter value.
 ///
-/// Ownership alone is NOT authorization: every returned group has <see cref="ManageableGroup.CanManageMembers"/>
-/// = false here; the fail-closed eligibility rule (task 2) is what flips it, and every write re-checks
-/// (task 5). The live AD query is manual-validation-on-dev (no dev tenant); the pure filter core is
-/// unit-tested (AdOwnershipFilterTests).
+/// Ownership alone is NOT authorization (task 1). Task 2 enforces eligibility AT LIST TIME: the
+/// managedBy/msExchCoManagedByLink filter is necessary but not sufficient (a group can name the caller
+/// as manager with "Manager can update membership" UNCHECKED), so for each candidate group this reads
+/// the group's DACL through a credentialed AD drive and includes it only when the caller's own SID holds
+/// an Allow member-write ACE (the WriteProperty-on-<c>member</c> ACE that checkbox grants, or
+/// GenericWrite/GenericAll) that no Deny revokes - classified by the pure, unit-tested
+/// <see cref="GroupMembershipAce"/>. A candidate that fails is EXCLUDED (fail-closed, Known Failure
+/// Class #3), never shown-then-refused. Every write still re-checks (task 5). The live AD query and ACL
+/// read are manual-validation-on-dev (no dev tenant); the pure cores are unit-tested
+/// (AdOwnershipFilterTests, GroupMembershipAceTests).
 /// </summary>
 public class SelfServiceGroupService
 {
@@ -75,6 +82,21 @@ public class SelfServiceGroupService
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
 
+            // Mount a credentialed AD: provider drive for the list-time DACL reads below. The default
+            // AD: drive binds to the PROCESS identity, which would break credential isolation (Spec):
+            // this module's ACL reads must use THIS module's credential, so we bind an explicitly-named
+            // drive to it. The drive is runspace-scoped and disposed with the runspace.
+            const string adDrive = "SsgAd";
+            ps.AddCommand("New-PSDrive")
+              .AddParameter("Name", adDrive)
+              .AddParameter("PSProvider", "ActiveDirectory")
+              .AddParameter("Root", "//RootDSE/")
+              .AddParameter("Credential", credential)
+              .AddParameter("Scope", "Global")
+              .AddParameter("ErrorAction", "Stop");
+            ps.Invoke();
+            ps.Commands.Clear();
+
             // Resolve the caller ONCE to their DN via the immutable SID (bound -Identity, no
             // interpolation). This resolved DN is the sole ownership key used below (codex F11).
             ps.AddCommand("Get-ADUser")
@@ -110,6 +132,16 @@ public class SelfServiceGroupService
                 var scope = group.Properties["GroupScope"]?.Value?.ToString() ?? "";
                 var groupType = category == "Security" ? $"Security ({scope})" : $"Distribution ({scope})";
 
+                var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+
+                // List-time eligibility (task 2, plan §6.3): being the managedBy manager is necessary
+                // but NOT sufficient - "Manager can update membership" may be unchecked. Read the
+                // group's DACL and include it ONLY when the caller's own SID holds an Allow member-write
+                // ACE that no Deny revokes. Fail-closed: a group whose ACL cannot be read is EXCLUDED
+                // (Known Failure Class #3), not shown-then-refused.
+                if (!CallerCanManageMembers(ps, adDrive, groupDn, callerSid))
+                    continue;
+
                 var ownerDns = CollectOwnerDns(group);
                 var otherOwners = new List<string>();
                 foreach (var ownerDn in ownerDns
@@ -122,19 +154,100 @@ public class SelfServiceGroupService
                 results.Add(new ManageableGroup
                 {
                     ObjectGuid = group.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
-                    DistinguishedName = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+                    DistinguishedName = groupDn,
                     Name = group.Properties["Name"]?.Value?.ToString() ?? "",
                     SamAccountName = group.Properties["SamAccountName"]?.Value?.ToString() ?? "",
                     Description = group.Properties["Description"]?.Value?.ToString(),
                     GroupType = groupType,
                     OtherOwners = otherOwners,
-                    // Ownership is not authorization: the eligibility rule (task 2) flips this.
-                    CanManageMembers = false,
+                    // Passed the list-time DACL check above: the caller holds member-write on this group.
+                    CanManageMembers = true,
                 });
             }
 
             return (IReadOnlyList<ManageableGroup>)results;
         }));
+    }
+
+    /// <summary>
+    /// List-time eligibility check (task 2, plan §6.3): reads the group's DACL through the credentialed
+    /// AD drive and returns true ONLY when the caller's own SID holds an Allow member-write ACE
+    /// (WriteProperty-on-<c>member</c>, GenericWrite, or GenericAll) that no Deny member-write ACE for
+    /// the same SID revokes. Classification is delegated to the pure, unit-tested
+    /// <see cref="GroupMembershipAce"/>, keyed on rights BITS (never the ObjectType name) so a
+    /// Self-Membership ACE - which shares the <c>member</c> schema GUID - never counts.
+    ///
+    /// Fail-closed (Known Failure Class #3): an unreadable DACL, or any error, returns false so the
+    /// group is EXCLUDED rather than shown as manageable. The per-ACE projection runs in PowerShell so
+    /// this type takes no dependency on System.DirectoryServices ACL types; C# sees only primitives.
+    /// </summary>
+    private static bool CallerCanManageMembers(PowerShell ps, string adDrive, string groupDn, string callerSid)
+    {
+        if (string.IsNullOrWhiteSpace(groupDn))
+            return false;
+
+        Collection<PSObject> aces;
+        try
+        {
+            // Read the DACL via the AD drive (the discovery script confirmed Get-Acl AD:\<DN> is more
+            // reliable than Get-ADGroup -Properties nTSecurityDescriptor, which can return an empty
+            // .Access). Project each ACE to primitives (Allow/Deny, rights int, ObjectType GUID, trustee
+            // SID) so no ACL type crosses back into C#. -Path is built from a bound variable, never
+            // interpolated into a script expression.
+            ps.AddScript(
+                "param($drivePath) " +
+                "$acl = Get-Acl -Path $drivePath -ErrorAction Stop; " +
+                "foreach ($ace in $acl.Access) { " +
+                "  $sid = $null; " +
+                "  try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }; " +
+                "  [pscustomobject]@{ " +
+                "    Type = $ace.AccessControlType.ToString(); " +
+                "    Rights = [int]$ace.ActiveDirectoryRights; " +
+                "    ObjectType = $ace.ObjectType.ToString(); " +
+                "    Sid = $sid " +
+                "  } " +
+                "}")
+              .AddArgument($"{adDrive}:\\{groupDn}");
+            aces = ps.Invoke();
+        }
+        catch
+        {
+            ps.Commands.Clear();
+            return false;
+        }
+        finally
+        {
+            ps.Commands.Clear();
+        }
+
+        if (ps.HadErrors)
+        {
+            ps.Streams.Error.Clear();
+            return false;
+        }
+
+        var allow = false;
+        foreach (var ace in aces)
+        {
+            var sid = ace.Properties["Sid"]?.Value?.ToString();
+            if (!string.Equals(sid, callerSid, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var rights = ace.Properties["Rights"]?.Value is int r ? r : 0;
+            var objectTypeRaw = ace.Properties["ObjectType"]?.Value?.ToString();
+            var objectType = Guid.TryParse(objectTypeRaw, out var g) ? g : Guid.Empty;
+
+            if (!GroupMembershipAce.ConveysMemberWrite(rights, objectType))
+                continue;
+
+            var type = ace.Properties["Type"]?.Value?.ToString();
+            if (string.Equals(type, "Deny", StringComparison.OrdinalIgnoreCase))
+                return false; // an explicit Deny of member-write for the caller wins (fail-closed).
+            if (string.Equals(type, "Allow", StringComparison.OrdinalIgnoreCase))
+                allow = true;
+        }
+
+        return allow;
     }
 
     /// <summary>
