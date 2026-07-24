@@ -1,0 +1,227 @@
+@page "/self-service-groups"
+@using Microsoft.AspNetCore.Authorization
+@using System.Security.Claims
+@using ExchangeAdminWeb.Services.SelfServiceGroups
+@attribute [Authorize(Policy = "SelfServiceGroups")]
+@rendermode InteractiveServer
+@inject SelfServiceGroupService GroupService
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ILogger<SelfServiceGroups> Logger
+
+<PageTitle>Self-Service Groups</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>View and manage membership of the on-premises Active Directory groups you own and are
+        permitted to update. This page always acts as you, the signed-in user.</small>
+    </div>
+    <h1 class="mb-4">Self-Service Groups<ModuleVersion /></h1>
+
+    <!-- Load the groups I can manage. Nothing loads on page open (AC2); the load runs a per-group
+         ACL read, so the button is disabled and a spinner shown while it runs (plan section 6.4). -->
+    <div class="card mb-3">
+        <div class="card-body">
+            <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@isLoading">
+                @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                Load the groups I can manage
+            </button>
+            @if (isLoading)
+            {
+                <span class="ms-2 text-muted">Reading group permissions, this can take a moment...</span>
+            }
+        </div>
+    </div>
+
+    @if (loadError != null)
+    {
+        <!-- Hard failure: show a clear error, NEVER "no groups found" on failure (AC8). -->
+        <div class="alert alert-danger">@loadError</div>
+    }
+    else if (loaded)
+    {
+        @if (ownedGroups.Count == 0)
+        {
+            <div class="alert alert-secondary">You do not own any groups whose membership you can update.</div>
+        }
+        else
+        {
+            <div class="card mb-3">
+                <div class="card-body">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Other owners</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var g in ownedGroups)
+                            {
+                                <tr>
+                                    <td>@g.Name</td>
+                                    <td>@g.GroupType</td>
+                                    <td>@(g.OtherOwners.Count == 0 ? "-" : string.Join(", ", g.OtherOwners))</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+
+    <!-- On-demand single-group search (plan section 6.3): a user who can manage a group not in the
+         list above (e.g. via a direct per-group ACE) types its name. A not-found and a
+         not-manageable outcome are deliberately indistinguishable. -->
+    <div class="card mb-3">
+        <div class="card-header">Find a specific group by name</div>
+        <div class="card-body">
+            <div class="input-group">
+                <input type="text" class="form-control" @bind="searchName" @bind:event="oninput"
+                       @onkeydown="OnSearchKeyDown"
+                       placeholder="Exact group name or sAMAccountName" disabled="@isSearching" />
+                <button class="btn btn-outline-primary" @onclick="SearchGroup"
+                        disabled="@(isSearching || string.IsNullOrWhiteSpace(searchName))">
+                    @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Search
+                </button>
+            </div>
+
+            @if (searchMessage != null)
+            {
+                <div class="alert alert-warning mt-3 mb-0">@searchMessage</div>
+            }
+            else if (searchResult != null)
+            {
+                <table class="table table-sm align-middle mt-3 mb-0">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Other owners</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>@searchResult.Name</td>
+                            <td>@searchResult.GroupType</td>
+                            <td>@(searchResult.OtherOwners.Count == 0 ? "-" : string.Join(", ", searchResult.OtherOwners))</td>
+                        </tr>
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool authChecked;
+    private string? callerSid;
+
+    private bool isLoading;
+    private bool loaded;
+    private string? loadError;
+    private IReadOnlyList<ManageableGroup> ownedGroups = [];
+
+    private string searchName = "";
+    private bool isSearching;
+    private string? searchMessage;
+    private ManageableGroup? searchResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "SelfServiceGroups");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        // The self-service owner is ALWAYS the authenticated Windows principal (AC6). Take the SID
+        // from the PrimarySid claim the Negotiate scheme populates; the service re-validates it as a
+        // genuine SID and rejects any alternate identity form.
+        callerSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
+        authChecked = true;
+    }
+
+    private async Task LoadOwnedGroups()
+    {
+        if (isLoading)
+            return;
+
+        isLoading = true;
+        loadError = null;
+        loaded = false;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            ownedGroups = await GroupService.GetOwnedGroupsAsync(callerSid);
+            loaded = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service owned-groups load failed for {User}", callerSid);
+            loadError = "The groups could not be loaded right now. Please try again; if the problem persists, contact the IT Support Desk.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task OnSearchKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(searchName) && !isSearching)
+            await SearchGroup();
+    }
+
+    private async Task SearchGroup()
+    {
+        if (isSearching || string.IsNullOrWhiteSpace(searchName))
+            return;
+
+        isSearching = true;
+        searchMessage = null;
+        searchResult = null;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            var result = await GroupService.SearchManageableGroupAsync(callerSid, searchName);
+            if (result.Group != null)
+                searchResult = result.Group;
+            else
+                searchMessage = result.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service group search failed for {User}", callerSid);
+            searchMessage = "The search could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.";
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+}

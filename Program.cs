@@ -125,6 +125,7 @@ try
     builder.Services.AddSingleton<M365GroupManagementService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     builder.Services.AddScoped<GroupManagementService>();
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.SelfServiceGroups.SelfServiceGroupService>();
     builder.Services.AddScoped<ADAttributeEditorService>();
     builder.Services.AddSingleton<ADOrganizationalUnitService>();
     builder.Services.AddSingleton<ADDirectorySearchService>();

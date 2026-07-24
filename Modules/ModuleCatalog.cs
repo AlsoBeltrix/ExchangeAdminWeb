@@ -331,6 +331,23 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "SelfServiceGroups",
+            DisplayName = "Self-Service Groups",
+            Description = "View and manage membership of the on-premises Active Directory groups you own and are permitted to update.",
+            Route = "self-service-groups",
+            IconCss = "bi bi-people-fill-nav-menu",
+            Category = "Directory & Groups",
+            SortOrder = 165,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
+            ConfigFields = [
+                new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
+            ]
+        },
+        new()
+        {
             Id = "MfaReset",
             DisplayName = "MFA Reset",
             Description = "Reset multi-factor authentication methods for users, forcing re-registration at next sign-in.",
