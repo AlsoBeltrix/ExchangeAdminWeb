@@ -61,4 +61,45 @@ public class AdOwnershipFilterTests
     {
         Assert.Throws<ArgumentException>(() => AdOwnershipFilter.BuildOwnedGroupsFilter(dn));
     }
+
+    [Fact]
+    public void BuildGroupByNameFilter_matches_name_and_sam_exactly()
+    {
+        var filter = AdOwnershipFilter.BuildGroupByNameFilter("Finance Team");
+        Assert.Equal(
+            "(&(objectCategory=group)(|(name=Finance Team)(sAMAccountName=Finance Team)))",
+            filter);
+    }
+
+    [Fact]
+    public void BuildGroupByNameFilter_escapes_wildcard_so_it_cannot_widen_the_match()
+    {
+        // A '*' the user types must become a LITERAL, never an LDAP wildcard - otherwise "a*"
+        // would match every group starting with "a" (over-broad disclosure).
+        var filter = AdOwnershipFilter.BuildGroupByNameFilter("a*");
+        Assert.DoesNotContain("name=a*", filter);
+        Assert.Contains("(name=a\\2a)", filter);
+        Assert.Contains("(sAMAccountName=a\\2a)", filter);
+    }
+
+    [Fact]
+    public void BuildGroupByNameFilter_escapes_a_hostile_name_so_structure_is_intact()
+    {
+        var hostile = "x)(objectClass=*)";
+        var filter = AdOwnershipFilter.BuildGroupByNameFilter(hostile);
+
+        Assert.Contains("x\\29\\28objectClass=\\2a\\29", filter);
+        // Only the builder's own structural parens are unescaped, exactly 5 pairs:
+        // (&  (objectCategory=group)  (|  (name=..)  (sAMAccountName=..) ) )
+        Assert.Equal(5, filter.Count(c => c == '('));
+        Assert.Equal(5, filter.Count(c => c == ')'));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildGroupByNameFilter_rejects_blank_name(string name)
+    {
+        Assert.Throws<ArgumentException>(() => AdOwnershipFilter.BuildGroupByNameFilter(name));
+    }
 }

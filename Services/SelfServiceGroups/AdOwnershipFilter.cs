@@ -55,4 +55,23 @@ public static class AdOwnershipFilter
         // and Exchange multi-owner (msExchCoManagedByLink) linkage.
         return $"(&(objectCategory=group)(|(managedBy={dn})(msExchCoManagedByLink={dn})))";
     }
+
+    /// <summary>
+    /// Builds the LDAP filter selecting groups whose <c>name</c> or <c>sAMAccountName</c> EXACTLY
+    /// equals the given value (plan §6.3 on-demand single-group search). The value is a user-typed
+    /// group name; it is LDAP-escaped so its metacharacters cannot alter the filter's structure or
+    /// widen the match (e.g. an injected <c>*</c> becomes a literal <c>\2a</c>, not a wildcard). The
+    /// result is a complete, structurally-fixed filter safe to pass to Get-ADGroup -LDAPFilter.
+    /// </summary>
+    /// <param name="groupName">The user-typed group name (non-empty).</param>
+    public static string BuildGroupByNameFilter(string groupName)
+    {
+        if (string.IsNullOrWhiteSpace(groupName))
+            throw new ArgumentException("Group name is required.", nameof(groupName));
+
+        var n = EscapeLdapFilterValue(groupName);
+        // Exact match on either identifier the user is likely to type; no wildcards are emitted, so a
+        // metacharacter in the input cannot broaden the search (codex F11).
+        return $"(&(objectCategory=group)(|(name={n})(sAMAccountName={n})))";
+    }
 }

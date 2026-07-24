@@ -34,6 +34,15 @@ public class SelfServiceGroupService
     private readonly ILogger<SelfServiceGroupService> _logger;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
+    // Name of the credentialed AD: provider drive mounted per runspace. The DEFAULT AD: drive binds
+    // to the PROCESS identity, which would break credential isolation (Spec); every ACL read in this
+    // service goes through this drive bound to THIS module's credential instead.
+    private const string AdDriveName = "SsgAd";
+
+    // The group properties both the ownership reverse-lookup and the single-group search load.
+    private static readonly string[] GroupProperties =
+        ["Description", "managedBy", "msExchCoManagedByLink", "GroupCategory", "GroupScope"];
+
     public SelfServiceGroupService(
         ModuleCredentialService moduleCredentials,
         ILogger<SelfServiceGroupService> logger)
@@ -76,39 +85,10 @@ public class SelfServiceGroupService
             using var ps = PowerShell.Create();
             ps.Runspace = runspace;
 
-            ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            PrepareAdRunspace(ps, credential);
 
-            // Mount a credentialed AD: provider drive for the list-time DACL reads below. The default
-            // AD: drive binds to the PROCESS identity, which would break credential isolation (Spec):
-            // this module's ACL reads must use THIS module's credential, so we bind an explicitly-named
-            // drive to it. The drive is runspace-scoped and disposed with the runspace.
-            const string adDrive = "SsgAd";
-            ps.AddCommand("New-PSDrive")
-              .AddParameter("Name", adDrive)
-              .AddParameter("PSProvider", "ActiveDirectory")
-              .AddParameter("Root", "//RootDSE/")
-              .AddParameter("Credential", credential)
-              .AddParameter("Scope", "Global")
-              .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
-
-            // Resolve the caller ONCE to their DN via the immutable SID (bound -Identity, no
-            // interpolation). This resolved DN is the sole ownership key used below (codex F11).
-            ps.AddCommand("Get-ADUser")
-              .AddParameter("Identity", callerSid)
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var callerResults = ps.Invoke();
-            ps.Commands.Clear();
-
-            var callerDn = callerResults.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(callerDn))
-                throw new InvalidOperationException("Could not resolve the signed-in user in Active Directory.");
+            var callerDn = ResolveCallerDn(ps, credential, callerSid);
 
             var filter = AdOwnershipFilter.BuildOwnedGroupsFilter(callerDn);
             // No ResultSetSize cap: this is already bounded to the groups ONE user owns, and a silent
@@ -116,7 +96,7 @@ public class SelfServiceGroupService
             // internally (ResultPageSize) and returns all matches.
             ps.AddCommand("Get-ADGroup")
               .AddParameter("LDAPFilter", filter)
-              .AddParameter("Properties", new[] { "Description", "managedBy", "msExchCoManagedByLink", "GroupCategory", "GroupScope" })
+              .AddParameter("Properties", GroupProperties)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             var groups = ps.Invoke();
@@ -128,45 +108,172 @@ public class SelfServiceGroupService
 
             foreach (var group in groups)
             {
-                var category = group.Properties["GroupCategory"]?.Value?.ToString() ?? "";
-                var scope = group.Properties["GroupScope"]?.Value?.ToString() ?? "";
-                var groupType = category == "Security" ? $"Security ({scope})" : $"Distribution ({scope})";
-
-                var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-
                 // List-time eligibility (task 2, plan §6.3): being the managedBy manager is necessary
-                // but NOT sufficient - "Manager can update membership" may be unchecked. Read the
-                // group's DACL and include it ONLY when the caller's own SID holds an Allow member-write
-                // ACE that no Deny revokes. Fail-closed: a group whose ACL cannot be read is EXCLUDED
-                // (Known Failure Class #3), not shown-then-refused.
-                if (!CallerCanManageMembers(ps, adDrive, groupDn, callerSid))
+                // but NOT sufficient - "Manager can update membership" may be unchecked. Include the
+                // group ONLY when the caller holds member-write on it; fail-closed exclusion otherwise.
+                var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+                if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
                     continue;
 
-                var ownerDns = CollectOwnerDns(group);
-                var otherOwners = new List<string>();
-                foreach (var ownerDn in ownerDns
-                             .Where(dn => !string.Equals(dn, callerDn, StringComparison.OrdinalIgnoreCase))
-                             .Distinct(StringComparer.OrdinalIgnoreCase))
-                {
-                    otherOwners.Add(ResolveOwnerDisplay(ps, credential, ownerDn, ownerDisplayCache));
-                }
-
-                results.Add(new ManageableGroup
-                {
-                    ObjectGuid = group.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
-                    DistinguishedName = groupDn,
-                    Name = group.Properties["Name"]?.Value?.ToString() ?? "",
-                    SamAccountName = group.Properties["SamAccountName"]?.Value?.ToString() ?? "",
-                    Description = group.Properties["Description"]?.Value?.ToString(),
-                    GroupType = groupType,
-                    OtherOwners = otherOwners,
-                    // Passed the list-time DACL check above: the caller holds member-write on this group.
-                    CanManageMembers = true,
-                });
+                results.Add(ProjectGroup(ps, credential, group, callerDn, ownerDisplayCache, canManageMembers: true));
             }
 
             return (IReadOnlyList<ManageableGroup>)results;
         }));
+    }
+
+    /// <summary>
+    /// On-demand single-group search (plan §6.3): resolves ONE user-typed group name and returns it
+    /// ONLY if the signed-in caller can manage its membership. This exists because there is no
+    /// domain-wide scan - a user who knows they can manage a group (e.g. via a direct per-group ACE)
+    /// types its name. The name is resolved injection-safely (RFC 4515-escaped, no PowerShell
+    /// interpolation, exact match, no wildcards - codex F11) and the SAME DACL eligibility check as the
+    /// list path decides manageability, so this can never surface a group the caller cannot edit.
+    /// </summary>
+    /// <param name="callerSid">The authenticated Windows principal's SID (validated as a SID, per
+    /// <see cref="GetOwnedGroupsAsync"/>).</param>
+    /// <param name="groupName">The user-typed group name (matched exactly against name / sAMAccountName).</param>
+    /// <returns>A <see cref="GroupSearchResult"/>: the group when manageable; otherwise a
+    /// not-found-or-not-manageable outcome whose message tells the user to contact the IT Support Desk.
+    /// The two are deliberately indistinguishable to the user so the search cannot be used to probe
+    /// which groups exist.</returns>
+    public async Task<GroupSearchResult> SearchManageableGroupAsync(string callerSid, string groupName)
+    {
+        if (string.IsNullOrWhiteSpace(callerSid))
+            throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
+        if (string.IsNullOrWhiteSpace(groupName))
+            throw new ArgumentException("Group name is required.", nameof(groupName));
+
+        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD single-group search");
+        if (creds is null)
+            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            PrepareAdRunspace(ps, credential);
+
+            var callerDn = ResolveCallerDn(ps, credential, callerSid);
+
+            var filter = AdOwnershipFilter.BuildGroupByNameFilter(groupName.Trim());
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("LDAPFilter", filter)
+              .AddParameter("Properties", GroupProperties)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var found = ps.Invoke();
+            ps.Commands.Clear();
+
+            // Not-found and not-manageable return the SAME outcome (contact IT Support Desk): the
+            // search must not double as a directory-enumeration oracle. An ambiguous match (>1 group
+            // with the typed name) is treated the same way - the user cannot disambiguate here.
+            const string contactSupport =
+                "That group was not found, or you do not have permission to manage its membership. " +
+                "If you believe you should be able to manage it, contact the IT Support Desk.";
+
+            if (found.Count != 1)
+                return new GroupSearchResult(null, contactSupport);
+
+            var group = found[0];
+            var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+            if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
+                return new GroupSearchResult(null, contactSupport);
+
+            var ownerDisplayCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var manageable = ProjectGroup(ps, credential, group, callerDn, ownerDisplayCache, canManageMembers: true);
+            return new GroupSearchResult(manageable, null);
+        }));
+    }
+
+    /// <summary>
+    /// Imports the ActiveDirectory module and mounts the credentialed <see cref="AdDriveName"/> AD
+    /// drive so subsequent ACL reads use THIS module's credential, not the process identity (Spec
+    /// credential isolation). The drive is runspace-scoped and disposed with the runspace.
+    /// </summary>
+    private static void PrepareAdRunspace(PowerShell ps, PSCredential credential)
+    {
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        ps.AddCommand("New-PSDrive")
+          .AddParameter("Name", AdDriveName)
+          .AddParameter("PSProvider", "ActiveDirectory")
+          .AddParameter("Root", "//RootDSE/")
+          .AddParameter("Credential", credential)
+          .AddParameter("Scope", "Global")
+          .AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+    }
+
+    /// <summary>
+    /// Resolves the caller ONCE to their DN via the immutable SID (bound -Identity, no interpolation).
+    /// This resolved DN is the sole ownership key used downstream (codex F11). Throws when the caller
+    /// cannot be resolved, so the surface shows a clear error rather than an empty result.
+    /// </summary>
+    private static string ResolveCallerDn(PowerShell ps, PSCredential credential, string callerSid)
+    {
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", callerSid)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var callerResults = ps.Invoke();
+        ps.Commands.Clear();
+
+        var callerDn = callerResults.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(callerDn))
+            throw new InvalidOperationException("Could not resolve the signed-in user in Active Directory.");
+        return callerDn;
+    }
+
+    /// <summary>
+    /// Projects a Get-ADGroup result into a normalized <see cref="ManageableGroup"/>, resolving the
+    /// other owners' display names (caller excluded). <paramref name="canManageMembers"/> is set by
+    /// the caller only after the DACL eligibility check has passed.
+    /// </summary>
+    private static ManageableGroup ProjectGroup(
+        PowerShell ps,
+        PSCredential credential,
+        PSObject group,
+        string callerDn,
+        Dictionary<string, string> ownerDisplayCache,
+        bool canManageMembers)
+    {
+        var category = group.Properties["GroupCategory"]?.Value?.ToString() ?? "";
+        var scope = group.Properties["GroupScope"]?.Value?.ToString() ?? "";
+        var groupType = category == "Security" ? $"Security ({scope})" : $"Distribution ({scope})";
+
+        var otherOwners = new List<string>();
+        foreach (var ownerDn in CollectOwnerDns(group)
+                     .Where(dn => !string.Equals(dn, callerDn, StringComparison.OrdinalIgnoreCase))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            otherOwners.Add(ResolveOwnerDisplay(ps, credential, ownerDn, ownerDisplayCache));
+        }
+
+        return new ManageableGroup
+        {
+            ObjectGuid = group.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
+            DistinguishedName = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+            Name = group.Properties["Name"]?.Value?.ToString() ?? "",
+            SamAccountName = group.Properties["SamAccountName"]?.Value?.ToString() ?? "",
+            Description = group.Properties["Description"]?.Value?.ToString(),
+            GroupType = groupType,
+            OtherOwners = otherOwners,
+            CanManageMembers = canManageMembers,
+        };
     }
 
     /// <summary>
