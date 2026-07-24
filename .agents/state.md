@@ -50,20 +50,28 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     unresolved SIDs are deleted accounts. **ZERO helpdesk-group delegation.** So non-managers get rights
     via direct per-group ACEs on themselves — not via a group. `nTSecurityDescriptor` is NOT searchable
     by trustee, so there is no cheap per-user LDAP query for "groups I can edit"; you must read ACLs.
-  - **DECIDED design (owner, 2026-07-23) — "scope B-cached, global, lazy, single-flight, blocking":**
-    a single global `SID -> editable-group-GUIDs` map (covers ALL users, not per-user), refreshed lazily
-    and **gated once per window N** (no scheduled task). ONE global single-flight lock — the first click
-    in a window triggers a full ACL scan and **BLOCKS** behind "Loading, please wait. This can take
-    several minutes."; concurrent clicks wait on the same scan; later clicks in the window read cache.
-    Rationale: a per-user live ACL scan would let one user fire thousands of AD lookups (owner veto);
-    a global cached map bounds it to one scan per window. Staleness up to N accepted.
-  - **BLOCKER for writing the plan: scan-universe sizing unverified.** Owner flagged the group universe
-    is bigger than the two sampled OUs (those two alone = 5108 + 14878 = ~20k groups; @0.017s/ACL that
-    is ~5.6 min single-thread / ~3 min at throttle=2 — so "several minutes" is honest for 20k, but the
-    TRUE universe is larger and uncounted). Need a domain-wide (or full-in-scope) `Get-ADGroup` count to
-    confirm the wait-message copy and pick the N-window default. **This needs ptk (see Blockers).**
-  - **NEXT once sized:** write task-2 design into `docs/SelfServiceGroupManagement-Plan.md` §6.3/task 2
-    (replace the allowlist) + record in `.agents/decisions.md`, THEN implement. Both doc edits first.
+  - **Scan universe sized (2026-07-24):** domain-wide `Get-ADGroup -Filter *` = **41,368 groups**
+    (~2x the two sampled OUs). At the discovery script's ~0.017s/ACL that is ~11.7 min single-thread /
+    ~5.9 min at throttle=2. Owner ruled **no OU scope is viable** — the AD has grown since NT4.0 and any
+    OU allowlist would be brittle and silently miss groups. So a global ACL scan would have to cover the
+    full 41k.
+  - **DESIGN SUPERSEDED / SCALED BACK (owner, 2026-07-24) — the global ACL-scan design is DROPPED.**
+    The 41k full-domain scan (cached global map, single-flight lock, multi-minute blocking wait) is too
+    expensive/risky for the value. Replaced with two cheap targeted lookups, no scan / no cache / no lock:
+    1. **Passive list = managedBy-manager groups only.** Show groups where the caller is the declared
+       `managedBy` manager AND "Manager can update membership" is on (the WriteProperty-on-`member` ACE
+       granted to the manager). This is essentially what **task 1 already built** — task 1 becomes the
+       list. NOT the broad "any editable group" rule; the 2026-07-23 ACE-based eligibility (GenericAll/
+       GenericWrite/etc.) is NO LONGER the list rule.
+    2. **On-demand single-group search.** User types a specific group name; resolve it and check whether
+       the caller can manage its membership; if yes, return it (manageable); if no, return an error
+       telling them to contact the IT Support Desk. Handles the case where a user knows they have rights
+       (e.g. a direct per-group ACE, per the discovery finding) and knows the group name, without any
+       domain-wide scan.
+  - **NEXT:** write this scaled-back task-2 design into `docs/SelfServiceGroupManagement-Plan.md`
+    §6.3/task 2 (replace both the allowlist AND the 2026-07-23 ACE-scan rule) + record the supersession
+    in `.agents/decisions.md`, THEN implement. Both doc edits first. The 41k scan-sizing work and the
+    global-map design are history, kept above only as the rationale for dropping the scan.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
@@ -160,14 +168,11 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 ## Blockers / open gaps
 
-- **ptk MCP server DOWN (2026-07-23) — blocks GM-3 scan-sizing.** Audit persistence failed at
-  startup (`ptk_state`: `audit=unavailable`, `failure_class=journal.startup`); every `ptk_invoke`
-  AND `ptk_reset` fails with "Required audit persistence is unavailable", survives multiple restarts
-  (no in-band recovery — reset itself needs the audit backend). Filed
-  AlsoBeltrix/PowerShell-Token-Killer#10. Owner rule: **ptk down is a STOP for AD work — do NOT fall
-  back to direct PowerShell** (the warm session's persistent AD module/connection is the whole point;
-  direct calls reload the module each time). The one AD command still needed = a domain-wide/in-scope
-  `Get-ADGroup` count to size the GM-3 scan. Resume when `ptk_state` shows audit healthy.
+- **CLOSED (2026-07-24) — ptk blocker + AD scan-sizing.** ptk was removed entirely (server and the
+  shell-blocking hook that forced AD calls through it), so the "ptk down is a STOP; no direct
+  PowerShell fallback" rule no longer applies — its premise is gone. The one AD read it gated (a
+  domain-wide `Get-ADGroup` count) was run directly: **41,368 groups** (see the GM-3 `## Now` block).
+  Moot regardless: the scaled-back task-2 design (2026-07-24) drops the domain-wide scan entirely.
 - **CLOSED (2026-07-21, commit 2a97d09) — single-room Finder protected-principal gap.** The
   single-room Room Finder page path (`ConferenceRooms.razor` `SetupSingleRoom` →
   `SetRoomMetadataAndListAsync`) previously wrote with no PP gate. Fixed by consolidating the
