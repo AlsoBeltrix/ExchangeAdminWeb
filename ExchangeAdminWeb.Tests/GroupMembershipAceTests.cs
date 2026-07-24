@@ -3,7 +3,7 @@ using ExchangeAdminWeb.Services.SelfServiceGroups;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Guards the security-critical ACE classifier (plan docs/SelfServiceGroupManagement-Plan.md §6.3,
+/// Guards the security-critical ACE classifier (plan docs/SelfServiceGroupManagement-Plan.md section 6.3,
 /// list-time eligibility). The trap these tests exist to catch: the AD <c>member</c> attribute's schema
 /// GUID is SHARED with the Self-Membership validated write, so classifying "manager can edit members"
 /// MUST key on the rights BITS (WriteProperty / GenericWrite / GenericAll), never on the ObjectType

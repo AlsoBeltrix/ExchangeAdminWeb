@@ -108,7 +108,7 @@ public class SelfServiceGroupService
 
             foreach (var group in groups)
             {
-                // List-time eligibility (task 2, plan §6.3): being the managedBy manager is necessary
+                // List-time eligibility (task 2, plan section 6.3): being the managedBy manager is necessary
                 // but NOT sufficient - "Manager can update membership" may be unchecked. Include the
                 // group ONLY when the caller holds member-write on it; fail-closed exclusion otherwise.
                 var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
@@ -123,7 +123,7 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// On-demand single-group search (plan §6.3): resolves ONE user-typed group name and returns it
+    /// On-demand single-group search (plan section 6.3): resolves ONE user-typed group name and returns it
     /// ONLY if the signed-in caller can manage its membership. This exists because there is no
     /// domain-wide scan - a user who knows they can manage a group (e.g. via a direct per-group ACE)
     /// types its name. The name is resolved injection-safely (RFC 4515-escaped, no PowerShell
@@ -277,7 +277,7 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// List-time eligibility check (task 2, plan §6.3): reads the group's DACL through the credentialed
+    /// List-time eligibility check (task 2, plan section 6.3): reads the group's DACL through the credentialed
     /// AD drive and returns true ONLY when the caller's own SID holds an Allow member-write ACE
     /// (WriteProperty-on-<c>member</c>, GenericWrite, or GenericAll) that no Deny member-write ACE for
     /// the same SID revokes. Classification is delegated to the pure, unit-tested

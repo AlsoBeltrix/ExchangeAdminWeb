@@ -58,7 +58,7 @@ public static class AdOwnershipFilter
 
     /// <summary>
     /// Builds the LDAP filter selecting groups whose <c>name</c> or <c>sAMAccountName</c> EXACTLY
-    /// equals the given value (plan §6.3 on-demand single-group search). The value is a user-typed
+    /// equals the given value (plan section 6.3 on-demand single-group search). The value is a user-typed
     /// group name; it is LDAP-escaped so its metacharacters cannot alter the filter's structure or
     /// widen the match (e.g. an injected <c>*</c> becomes a literal <c>\2a</c>, not a wildcard). The
     /// result is a complete, structurally-fixed filter safe to pass to Get-ADGroup -LDAPFilter.

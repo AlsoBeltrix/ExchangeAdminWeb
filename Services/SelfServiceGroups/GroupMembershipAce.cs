@@ -2,7 +2,7 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 
 /// <summary>
 /// Pure, AD-free classifier for whether an access-control entry's RIGHTS convey the ability to edit a
-/// group's membership (plan docs/SelfServiceGroupManagement-Plan.md §6.3, list-time eligibility
+/// group's membership (plan docs/SelfServiceGroupManagement-Plan.md section 6.3, list-time eligibility
 /// enforcement). This is the security-critical core of task 2, kept separate from the live ACL read so
 /// it is unit-testable without a domain controller.
 ///
