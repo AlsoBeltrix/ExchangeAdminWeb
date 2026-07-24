@@ -22,8 +22,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   - **Reverted in-progress delegated code (slice-1 steps 1-2 from commits `4be93a3`, `22c0510`):**
     removed the Microsoft.Identity.Web package, `Services/SelfServiceGroups/DelegatedEntra*`, and the
     `ISecretFieldsReader` seam on `DelineaService`. Build green at clean baseline.
-  - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup ✅ → 2 fail-closed eligibility →
-    3 module descriptor + page skeleton → 4 list + in-list filter (AC9) → 5 member add/remove with
+  - **Revised on-prem task set (plan §7):** 1 on-prem reverse-lookup ✅ → 2 fail-closed eligibility ✅
+    → 3 module descriptor + page skeleton ✅ → 4 list + in-list filter (AC9) → 5 member add/remove with
     pre-write re-checks + audit/notify → 6 verification/manual-validation note.
   - **Task 1 DONE + codex-reviewed** (commits `0afb2bf`, `9633fa7`, `1f65674`, `7922d42`):
     `Services/SelfServiceGroups/` — `ManageableGroup` (model, `CanManageMembers` defaults false),
@@ -73,10 +73,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     replaced; F5 note + Status header updated) and the supersession recorded in `.agents/decisions.md`.
     The 41k scan-sizing work and the global-map design are history, kept above only as the rationale
     for dropping the scan.
-  - **NEXT: implement task 2** — (a) confirm task 1's list rule is exactly manager-can-update-membership
-    (WriteProperty-on-`member`), and (b) build the on-demand single-group search (resolve once
-    injection-safe, read group, confirm caller's manage right, else "contact IT Support Desk"). New
-    service logic ⇒ xUnit before "done", proven non-vacuous.
+  - **TASK 2 DONE + codex-reviewed** (`.agents/review/findings/gm3-task2-slice1.md`, `-slice2.md`):
+    (a) list-time eligibility = manager-can-update-membership (WriteProperty-on-`member`), enforced per
+    candidate via credentialed-drive DACL read (`GroupMembershipAce` pure classifier keys on rights BITS
+    not the shared `member` schema GUID); (b) on-demand single-group search
+    (`SearchManageableGroupAsync`, injection-safe RFC 4515, not-found/ambiguous/not-manageable all return
+    the same "contact IT Support Desk" message). Slice-2 codex round caught + fixed a HIGH: the SID gate
+    accepted SDDL aliases (BA/DA/SY/WD) — now requires canonical-SID round-trip (`e748e32`).
+  - **TASK 3 DONE + codex-reviewed** (`ba22cf5` slice, `47f357a` review record;
+    `.agents/review/findings/gm3-task3-slice1.md`): `SelfServiceGroups` module descriptor
+    (`Modules/ModuleCatalog.cs`: Access-only FailClosed, Directory & Groups, SortOrder 165,
+    EnabledByDefault=false, v1.0.0, on-prem `DelineaSecretId`), DI registration (`Program.cs`,
+    Scoped), and `Components/Pages/SelfServiceGroups.razor` (`[Authorize]` + OnInitializedAsync
+    re-check, `<ModuleVersion/>`, load button with required spinner + disabled state per plan 6.4,
+    owned-groups table, on-demand single-group search box; caller SID from the PrimarySid claim, AC6).
+    Adding a module did NOT bump the base app version. Count-guards updated (23 modules, 32 aliases),
+    proven non-vacuous. codex verdict accepted, no material issue.
+  - **NEXT: task 4** — list + in-list filter (AC9): render the loaded owned-groups list with type +
+    other-owners columns (skeleton table already present); add a client-side in-list filter matching a
+    mid-string name term or a description word (pure filtering over the loaded list, no directory
+    round-trip). Then task 5 (member add/remove with pre-write re-checks + audit/notify) and task 6
+    (verification/manual-validation note). New service logic ⇒ xUnit before "done", proven non-vacuous.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
