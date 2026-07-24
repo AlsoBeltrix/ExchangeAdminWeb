@@ -17,6 +17,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | pp-finder-1       | HIGH     | Protected room editable via single-room Finder (no PP gate)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (finding+plan r1-3); codex-commercial/gpt-5.6-sol/max/frontier (consolidation r4) |
 | gm3-task2-slice1  | n/a      | Slice-landing review: list-time member-write eligibility      | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — accepted, no material issue (1a0cf58) |
 | gm3-task2-slice2  | HIGH     | SID gate accepted SDDL aliases (alternate-identity to AD)     | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — reopened (d85c511) → accepted after fix (e748e32) |
+| gm3-task3-slice1  | n/a      | Slice-landing review: module descriptor + page skeleton       | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — accepted, no material issue (ba22cf5) |
 
 Notes:
 - Finding **confirmed real** (round 1), fix **plan reviewed & accepted** (rounds 2-3
