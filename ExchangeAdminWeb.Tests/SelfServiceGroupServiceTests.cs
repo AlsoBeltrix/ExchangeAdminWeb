@@ -35,4 +35,25 @@ public class SelfServiceGroupServiceTests
     {
         Assert.False(SelfServiceGroupService.IsSecurityIdentifier(value));
     }
+
+    [Theory]
+    [InlineData("BA")] // BUILTIN\Administrators
+    [InlineData("DA")] // Domain Admins
+    [InlineData("SY")] // Local System
+    [InlineData("WD")] // Everyone
+    [InlineData("ba")] // lower-case alias
+    public void IsSecurityIdentifier_rejects_sddl_aliases(string alias)
+    {
+        // new SecurityIdentifier("BA") SUCCEEDS and resolves to a real SID, so parse-success alone
+        // is not enough - an alias would reach Get-ADUser -Identity as a DIFFERENT principal than the
+        // authenticated caller (codex slice-2 finding). Only the literal SID string may pass.
+        Assert.False(SelfServiceGroupService.IsSecurityIdentifier(alias));
+    }
+
+    [Fact]
+    public void IsSecurityIdentifier_rejects_padded_sid()
+    {
+        // A padded SID string parses but is not the exact value that reaches AD; reject it.
+        Assert.False(SelfServiceGroupService.IsSecurityIdentifier(" S-1-5-18 "));
+    }
 }

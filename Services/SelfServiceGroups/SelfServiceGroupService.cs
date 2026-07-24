@@ -416,9 +416,14 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// True only when the value is a syntactically valid Windows SID (e.g. "S-1-5-21-...-1105").
-    /// Uses the framework SID parser so no other -Identity form (DN, GUID, sAMAccountName) passes.
-    /// Pure and static so it is unit-testable without AD.
+    /// True only when the value is a Windows SID in STRING form (e.g. "S-1-5-21-...-1105"). Uses the
+    /// framework SID parser so no other -Identity form (DN, GUID, sAMAccountName) passes, AND rejects
+    /// SDDL 2-letter aliases: <c>new SecurityIdentifier("BA")</c> succeeds and resolves to
+    /// BUILTIN\Administrators, so parse-success alone is NOT sufficient - the alias would then reach
+    /// <c>Get-ADUser -Identity</c> as a DIFFERENT principal than the authenticated caller (codex
+    /// slice-2 finding). The value must round-trip to the canonical SID string it parsed to; an alias
+    /// ("BA" -> "S-1-5-32-544") does not, a genuine SID string does. Pure and static so it is
+    /// unit-testable without AD.
     /// </summary>
     internal static bool IsSecurityIdentifier(string value)
     {
@@ -426,8 +431,10 @@ public class SelfServiceGroupService
             return false;
         try
         {
-            _ = new System.Security.Principal.SecurityIdentifier(value);
-            return true;
+            var sid = new System.Security.Principal.SecurityIdentifier(value);
+            // Reject SDDL aliases (BA, DA, SY, WD, ...) and any padded form: only the exact canonical
+            // SID string is accepted, since that same string is what reaches Get-ADUser -Identity.
+            return string.Equals(sid.Value, value, StringComparison.OrdinalIgnoreCase);
         }
         catch (ArgumentException)
         {
