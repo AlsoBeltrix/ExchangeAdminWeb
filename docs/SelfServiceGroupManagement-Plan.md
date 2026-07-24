@@ -1,6 +1,6 @@
 # Self-Service Group Management (GM-3) Plan
 
-Status: Approved (on-prem AD only — see 2026-07-22 scope-narrowed-again decision)
+Status: Approved (on-prem AD only — see 2026-07-22 scope-narrowed-again decision; task 2 SCALED BACK 2026-07-24 — admin allowlist + domain-wide ACE-scan dropped; eligibility = manager-can-update-membership + on-demand single-group search; see §6.3 and `.agents/decisions.md`)
 Owner: Michael
 Last verified against code: 22c0510 (2026-07-22)
 Approval: self-service core approved by owner 2026-07-22 ("okay, start implementing").
@@ -296,17 +296,33 @@ logged, never written unencrypted, never placed in audit/trace (AC10).
   interpolation (codex F11); the same resolved object is used for both
   authorization and mutation. This is new code; the existing search-by-substring
   path is untouched.
-- **Eligibility (fail-closed, ON TOP of ownership) — an OU/scope allowlist is NOT
-  sufficient (codex F5, BLOCKER):** ownership is not authorization, and an ordinary
-  user could otherwise add themselves to an eligible group that confers privilege
-  through nesting, application access, or a directory role. Eligibility is an
-  ADMIN-CONTROLLED immutable-ID allowlist (or an equally unforgeable
-  classification). It DENIES role-assignable groups, groups nested into privileged
-  authorization groups, and app-access-conferring groups. The AD write credential's
-  ACL/JEA rights are additionally constrained to the same approved set (defense in
-  depth — the credential cannot write outside the allowlist even if a check is
-  bypassed). Unreadable eligibility store = deny all (Known Failure Class #3,
-  fail-closed). Applied to BOTH backends.
+- **Eligibility — SCALED BACK 2026-07-24 (owner). Manager-can-update-membership IS
+  the eligibility rule; the admin allowlist and the ACE-scan are both DROPPED.** The
+  earlier admin-controlled immutable-ID allowlist (codex F5) and the 2026-07-23
+  broad "any group the user can update via GenericAll/GenericWrite/WriteMember ACE"
+  rule are superseded. Both required either an admin-maintained store or a
+  domain-wide ACL scan (41,368 groups, ~6-12 min); the owner ruled that cost/risk
+  unjustified and no OU scope viable (AD grown since NT4.0 — any OU allowlist is
+  brittle and silently drops groups). The eligibility rule is now exactly: **the
+  caller is the group's declared `managedBy` manager AND "Manager can update
+  membership" is on** (the WriteProperty-on-`member` ACE the AD checkbox grants the
+  manager). This is authorization, not mere ownership — the manager already holds the
+  directory right to edit membership, so surfacing it confers nothing new (the owner's
+  framing: they could do the same in ADUC). SelfMembership (self-only) does NOT
+  qualify. Still fail-closed: a group that cannot be confirmed manageable by the
+  caller is refused, and a hard AD read failure is an error, never an empty/allowed
+  result (Known Failure Class #3). The AD write credential's ACL/JEA rights remain the
+  least-privilege backstop.
+- **On-demand single-group search (net-new, 2026-07-24):** because there is no
+  domain-wide scan, a user who knows they can manage a group (e.g. via a direct
+  per-group ACE — the discovery finding, `tools/Discover-GroupMembershipDelegation.ps1`,
+  showed edit rights are almost all direct per-user ACEs, not helpdesk-group
+  delegation) can type that group's name. Resolve the name ONCE to an immutable id
+  (injection-safe, RFC 4515-escaped, no PowerShell interpolation — codex F11), read
+  the group, and check whether the caller can manage its membership (manager-with-
+  WriteMember as above, OR a direct membership-write ACE held by the caller's SID).
+  If manageable, return it; if not, return an error telling the user to contact the
+  IT Support Desk. This is a single per-name lookup, not a scan.
 
 ### 6.4 Unified surface
 
@@ -481,10 +497,17 @@ and actor-binding rule. Owner decisions this session are marked (OWNER 2026-07-2
    (F11). Returns a normalized `ManageableGroup` (id, name, type, other owners,
    `CanManageMembers`). This is new code; the existing search-by-substring path is
    untouched.
-2. **Fail-closed eligibility rule** (AC4). Admin-controlled immutable-ID allowlist
-   (not just OU/scope); denies role-assignable / nested-privileged / app-access
-   groups; AD write credential ACL/JEA constrained to the same set (F5); unreadable
-   store = deny all (Known Failure Class #3).
+2. **Eligibility = manager-can-update-membership + on-demand single-group search**
+   (AC4). SCALED BACK 2026-07-24 (see §6.3): the admin allowlist and the domain-wide
+   ACE-scan are DROPPED. (a) The passive list rule is exactly task 1's output — groups
+   where the caller is the `managedBy` manager with "Manager can update membership" on;
+   no separate eligibility store. (b) Net-new single-group search: user types a group
+   name; resolve once injection-safe (F11), read the group, confirm the caller can
+   manage its membership (manager-with-WriteMember OR a direct membership-write ACE on
+   the caller's SID); return it if manageable, else an error to contact the IT Support
+   Desk. Fail-closed: unconfirmable ⇒ refused; hard AD read failure ⇒ error, never an
+   empty/allowed result (Known Failure Class #3). AD write credential ACL/JEA is the
+   least-privilege backstop.
 3. **Module descriptor + page skeleton** (AC1, AC2, AC6). `SelfServiceGroups`
    descriptor: `Access` main permission only (FailClosed), `Category = "Directory &
    Groups"`, `SortOrder ≈ 165`, `EnabledByDefault = false`, `Version = "1.0.0"`, an
@@ -562,9 +585,15 @@ into §6-§8. Resolutions:
 - **F4 (BLOCKER) — "reuse existing add/remove" would write via app-only credential.**
   RESOLVED in §6.5: delegated-only cloud write, no app-only fallback; admin app-only
   path (if any) isolated behind a separate credential+authorizer. Test AC3/AC5 row.
-- **F5 (BLOCKER) — OU/scope allowlist does not prove a group safe.** RESOLVED in
-  §6.3: admin-controlled immutable-ID allowlist; deny role-assignable/nested-priv/
-  app-access groups; AD write credential ACL/JEA constrained to the same set.
+- **F5 (BLOCKER) — OU/scope allowlist does not prove a group safe.** SUPERSEDED
+  2026-07-24 (owner scale-back, §6.3): the admin allowlist that resolved F5, and the
+  2026-07-23 broad ACE-scan that replaced it, are BOTH dropped. The eligibility rule
+  is now manager-can-update-membership (the caller already holds the directory right
+  to edit the group's membership), plus an on-demand single-group search that confirms
+  the caller's manage right before returning a group. F5's concern — ownership ≠
+  authorization — is met because the rule keys on an actual membership-write right,
+  not mere ownership; and the AD write credential's ACL/JEA rights are the
+  least-privilege backstop. No allowlist store to maintain, no domain-wide scan.
 - **F6 (BLOCKER) — admin path undefined; `/me` wrong subject; `ownedObjects` has no
   app permission; `ManageOthers` != Entra write role.** RESOLVED in §6.3/§6.5/task8:
   model actor vs subject; `/users/{subject}/ownedObjects`; explicit Entra-role vs

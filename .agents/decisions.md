@@ -5,6 +5,46 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-24 - GM-3 task 2 scaled back: eligibility = manager-can-update-membership + on-demand single-group search
+
+Status: Active (supersedes the admin-allowlist eligibility of the 2026-07-22 on-prem-only
+entry and codex F5, and the never-recorded 2026-07-23 broad ACE-scan direction; plan
+`docs/SelfServiceGroupManagement-Plan.md` §6.3 and task 2 revised).
+
+Owner direction 2026-07-24. The eligibility half of GM-3 is scaled back to two cheap
+targeted AD lookups. Both prior approaches are DROPPED:
+
+- the admin-controlled immutable-ID allowlist (the original codex-F5 resolution), and
+- the 2026-07-23 "show every group the caller can update via any GenericAll / GenericWrite /
+  WriteProperty-on-member ACE" rule, which required a domain-wide ACL scan.
+
+Reason: the ACL scan is not searchable by trustee (`nTSecurityDescriptor` cannot be queried
+by SID), so "groups I can edit" would need reading every group's ACL. The group universe was
+sized at **41,368 groups domain-wide** (`Get-ADGroup -Filter *`, 2026-07-24) — a full scan is
+~6-12 min. No OU scope narrows it safely: the AD has grown since NT4.0 and any OU allowlist is
+brittle and silently drops groups. The owner judged that cost/risk unjustified for the value,
+and the admin allowlist an "arbitrary security speedbump" (a manager can already edit their
+group in ADUC).
+
+New rule:
+- **Passive list = manager-can-update-membership only.** Show groups where the caller is the
+  declared `managedBy` manager AND "Manager can update membership" is on (the WriteProperty-on-
+  `member` ACE that checkbox grants). This is what task 1 already built; task 1 becomes the list.
+  SelfMembership (self-only) does NOT qualify.
+- **On-demand single-group search.** A user who knows they can manage a group (per the discovery
+  finding, `tools/Discover-GroupMembershipDelegation.ps1`: edit rights are almost all direct
+  per-user ACEs, not helpdesk-group delegation) types the group name. Resolve once, injection-safe
+  (codex F11); read the group; confirm the caller can manage its membership (manager-with-
+  WriteMember OR a direct membership-write ACE on the caller's SID); return it if manageable, else
+  an error directing them to contact the IT Support Desk. Single per-name lookup, no scan.
+
+F5 is met without an allowlist: the rule keys on an actual membership-write right (authorization),
+not mere ownership, and the AD write credential's ACL/JEA rights remain the least-privilege
+backstop. Still fail-closed — a group not confirmed manageable is refused, and a hard AD read
+failure is an error, never an empty/allowed result (Known Failure Class #3).
+
+Supersedes: the admin-allowlist eligibility in the 2026-07-22 on-prem-only entry and codex F5.
+
 ### 2026-07-22 - GM-3 scope narrowed AGAIN: on-prem AD only, M365/delegated-Entra dropped entirely
 
 Status: Active (supersedes the delegated-Entra elements of both 2026-07-22 entries below;
