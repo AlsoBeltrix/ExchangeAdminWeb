@@ -37,6 +37,36 @@ public class MessageTraceResult
     public string Server { get; set; } = "";
 }
 
+/// <summary>
+/// A single event (hop) in a message's delivery trail. On-prem: one
+/// Get-MessageTrackingLog event row (RECEIVE, SUBMIT, DELIVER, FAIL, DEFER, ...).
+/// Cloud: one Get-MessageTraceDetailV2 event. Field names are normalized across
+/// both backends; a field that a backend does not supply is left empty.
+/// </summary>
+public class MessageTraceDetailEvent
+{
+    public DateTime Date { get; set; }
+    public string Event { get; set; } = "";   // on-prem EventId / cloud Event
+    public string Action { get; set; } = "";   // cloud Action; empty on-prem
+    public string Detail { get; set; } = "";   // cloud Detail / on-prem SourceContext or RecipientStatus
+    public string Source { get; set; } = "";   // on-prem Source; empty cloud
+}
+
+/// <summary>
+/// The full per-hop delivery trail for one <see cref="MessageTraceResult"/>. The
+/// summary list collapses a message to a single row; this preserves every event
+/// so an operator can see why a message was deferred/failed/quarantined. Fetched
+/// on demand (never for a whole result set) - see docs/MessageTraceDetail-Plan.md.
+/// Fail-soft: on a fetch failure <see cref="Error"/> is set and
+/// <see cref="Events"/> is empty; the caller is never blanked.
+/// </summary>
+public class MessageTraceDetail
+{
+    public MessageTraceResult Summary { get; set; } = default!;
+    public List<MessageTraceDetailEvent> Events { get; set; } = new();
+    public string? Error { get; set; }
+}
+
 public class MessageTraceResponse
 {
     public List<MessageTraceResult> Results { get; set; } = new();
