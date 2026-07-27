@@ -61,25 +61,49 @@
         {
             <div class="card mb-3">
                 <div class="card-body">
-                    <table class="table table-sm align-middle mb-0">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Other owners</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var g in ownedGroups)
-                            {
+                    <!-- In-list filter (AC9): pure client-side filtering over the already-loaded list;
+                         matches a mid-name term or a description word, no directory round-trip. -->
+                    <div class="input-group input-group-sm mb-3">
+                        <span class="input-group-text"><i class="bi bi-funnel"></i></span>
+                        <input type="text" class="form-control" @bind="filterTerm" @bind:event="oninput"
+                               placeholder="Filter loaded groups by name or description" />
+                        @if (!string.IsNullOrWhiteSpace(filterTerm))
+                        {
+                            <button class="btn btn-outline-secondary" @onclick="() => filterTerm = string.Empty">Clear</button>
+                        }
+                    </div>
+
+                    @{
+                        var visibleGroups = ManageableGroupFilter.Filter(ownedGroups, filterTerm);
+                    }
+                    @if (visibleGroups.Count == 0)
+                    {
+                        <!-- Filtered to nothing: this is a filter result over a loaded list, NOT a load
+                             failure, so it is safe to say the filter matched nothing (distinct from AC8). -->
+                        <div class="alert alert-secondary mb-0">No loaded groups match "@filterTerm".</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
                                 <tr>
-                                    <td>@g.Name</td>
-                                    <td>@g.GroupType</td>
-                                    <td>@(g.OtherOwners.Count == 0 ? "-" : string.Join(", ", g.OtherOwners))</td>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Other owners</th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                @foreach (var g in visibleGroups)
+                                {
+                                    <tr>
+                                        <td>@g.Name</td>
+                                        <td>@g.GroupType</td>
+                                        <td>@(g.OtherOwners.Count == 0 ? "-" : string.Join(", ", g.OtherOwners))</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
                 </div>
             </div>
         }
@@ -137,6 +161,7 @@
     private bool loaded;
     private string? loadError;
     private IReadOnlyList<ManageableGroup> ownedGroups = [];
+    private string filterTerm = "";
 
     private string searchName = "";
     private bool isSearching;
@@ -170,6 +195,7 @@
         isLoading = true;
         loadError = null;
         loaded = false;
+        filterTerm = "";
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
