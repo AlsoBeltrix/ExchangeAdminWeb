@@ -102,14 +102,28 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     the sandbox's blocked NuGet feed (isolated snapshot can't `dotnet restore`), the MCP run on the
     transport idle timeout during that silent test run. Runtime guard proof is the coder's job and was
     done; the reviewer's contribution is static judgment, which needs no build.
-  - **NEXT: task 5** — member add/remove with pre-write re-checks + audit/notify (the ONLY mutation in
-    the first cut). USER-ONLY members; resolve exactly one immutable member id; before each write
+  - **TASK 5 IN PROGRESS** — member add/remove with pre-write re-checks + audit/notify (the ONLY mutation
+    in the first cut). USER-ONLY members; resolve exactly one immutable member id; before each write
     re-check module permission + re-read group + re-check eligibility + re-check ownership by immutable
     id + ProtectedPrincipalService.CheckAsync on the affected member; fail-closed; serialize same-group
-    ops; idempotent desired-state; per-row failure aggregation; audit via AuditService.LogModuleAction +
-    admin + affected-user notification; post-write read-back reconciliation; NO background worker/outbox.
-    Then task 6 (verification/manual-validation note). New service logic ⇒ xUnit before "done", proven
-    non-vacuous. Task 5 is a mutation — needs an approval/go before coding and likely a module version bump.
+    ops; idempotent desired-state; post-write read-back reconciliation; NO background worker/outbox.
+    Owner decisions settled B/B: notify = audit-first best-effort, no background worker (Decision 1);
+    TOCTOU = accept + document the ms race, least-privilege write cred as backstop (Decision 2).
+    - **Slice 5a DONE + codex-reviewed** (`08a2a53` slice, `1dac5d5` review; findings `gm3-task5-slice5a`):
+      pure decision core `MembershipChangeReconciler` (idempotent desired-state + read-back
+      reconciliation, 6 xUnit tests). Accepted, static-only, no material issue.
+    - **Slice 5b DONE + codex-reviewed** (`6fd722f` slice; F1 fix `246a197`, F2 fix `5ef1b0d`; `46e4bb6`
+      review record; findings `gm3-task5-slice5b`): live AD write path `SelfServiceGroupService.ChangeMemberAsync`
+      — resolves the affected member ONCE (own cred, RFC 4515 person/user-only filter) into a
+      ResolvedDirectoryPrincipal, checks + writes THAT principal (F1), reconciles the write even when the
+      Invoke throws with a guarded read-back (F2). 740/740 tests, build/format/ASCII clean. codex-commercial
+      (MCP, default) reopened on the slice commit for F1/F2, accepted after both one-per-commit fixes.
+    - **NEXT: slice 5c** — page wiring in `Components/Pages/SelfServiceGroups.razor`: member add/remove UI
+      calling `ChangeMemberAsync`; re-check module authorization on the page; audit-first best-effort notify
+      (Decision 1 B) — `Audit.LogModuleAction` FIRST (try/catch), THEN `Email.SendAdminNotificationAsync` +
+      `Email.SendUserNotificationAsync` best-effort. Likely a SelfServiceGroups module version bump
+      (1.0.0 -> next) in `Modules/ModuleCatalog.cs`. Then task 6 (verification/manual-validation note).
+      New logic ⇒ xUnit before "done", proven non-vacuous.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
