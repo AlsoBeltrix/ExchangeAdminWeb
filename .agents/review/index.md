@@ -19,6 +19,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | gm3-task2-slice2  | HIGH     | SID gate accepted SDDL aliases (alternate-identity to AD)     | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — reopened (d85c511) → accepted after fix (e748e32) |
 | gm3-task3-slice1  | n/a      | Slice-landing review: module descriptor + page skeleton       | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std — accepted, no material issue (ba22cf5) |
 | gm3-task4-slice1  | n/a      | Slice-landing review: in-list filter (AC9), pure client-side  | `[x]`  |        | codex-commercial (MCP, default) — accepted, static-only, no material issue (f17f3de) |
+| gm3-task5-slice5a | n/a      | Slice-landing review: member add/remove decision core (6.5)   | `[x]`  |        | codex-commercial (MCP, default) — accepted, static-only, no material issue (08a2a53) |
 
 Notes:
 - Finding **confirmed real** (round 1), fix **plan reviewed & accepted** (rounds 2-3
