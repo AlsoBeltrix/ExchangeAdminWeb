@@ -352,15 +352,48 @@ public class SelfServiceGroupService
                       .AddParameter("Confirm", false)
                       .AddParameter("ErrorAction", "Stop");
                 }
-                ps.Invoke();
-                ps.Commands.Clear();
+                // The write (ErrorAction=Stop) can throw a TERMINATING error - including a timeout that
+                // fires AFTER the change already committed at the DC. Capture it rather than let it exit
+                // before reconciliation: whether the write "succeeded" is decided ONLY by the read-back
+                // below, never by the presence or absence of this exception (codex F10, Known Failure
+                // Class #2).
+                Exception? writeError = null;
+                try
+                {
+                    ps.Invoke();
+                }
+                catch (Exception ex)
+                {
+                    writeError = ex;
+                }
+                finally
+                {
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
 
                 // Post-write read-back reconciliation (slice 5a / codex F10): confirm the membership
-                // actually reached the requested end state. A write that silently did nothing - or timed
-                // out after we lost the response - is reported as failure, never blind success.
-                var presentAfter = IsMemberOfGroup(ps, credential, groupDn, memberDn);
-                if (!MembershipChangeReconciler.IsDesiredStateReached(operation, presentAfter))
+                // actually reached the requested end state. A write that silently did nothing, threw, or
+                // timed out after we lost the response is reported as failure unless the read-back proves
+                // the change is in place. The read-back itself throws on a read error (IsMemberOfGroup),
+                // so an unverifiable outcome also fails closed rather than reading as success.
+                bool presentAfter;
+                try
+                {
+                    presentAfter = IsMemberOfGroup(ps, credential, groupDn, memberDn);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Post-write membership read-back failed - reporting the change as unconfirmed");
                     return PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.");
+                }
+
+                if (!MembershipChangeReconciler.IsDesiredStateReached(operation, presentAfter))
+                {
+                    if (writeError is not null)
+                        _logger.LogWarning(writeError, "Membership write threw and the read-back shows the desired state was not reached");
+                    return PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.");
+                }
 
                 return PermissionResult.Ok(operation == MembershipOperation.Add
                     ? "The user was added to the group."
