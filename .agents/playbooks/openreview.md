@@ -64,24 +64,24 @@ read-only-plus-disposable-worktree set to inspect the repo and run its bounded
 smoke test.
 
 Tier routing is fixed: `openreview` always dispatches the harness's
-owner-confirmed **frontier** pair at **max** effort (see the `codereview`
+owner-named **frontier** pair at **max** effort (see the `codereview`
 playbook's "Reviewer tiers and routing") — no escalation headroom exists
 above it, so a contested round resolves by owner adjudication, never a
-stronger redispatch. Eligibility is carried by the frontier entry's
-`openreview_confirmed` field (amended 2026-07-18, owner adjudication of
-OR3): the pair is dispatchable here only when that field matches the
-current harness version. A `fallback`-grade pair so confirmed is a
-legitimate openreview reviewer — dispatched when no competitive-grade
-harness is available or when the owner names it — and its grade is
-recorded in the outcome. A missing or `null` `openreview_confirmed`
-blocks that harness fail-closed for this playbook and routes to the
-owner; the orchestrator never infers openreview eligibility from a
-codereview-only confirmation.
+stronger redispatch.
 
-Model naming rides the `codereview` playbook's "Model map and dispatch
-grammar" section (canonical): nickname→slug resolution and its fetch
-contract apply here unchanged, and a resolved nickname confers nothing —
-`openreview_confirmed` above remains the only eligibility gate.
+Eligibility rides the frontier pair's `grade`, which the owner already
+declares when naming the pair — there is no second confirmation (supersedes
+the `openreview_confirmed` field, 2026-07-25; the field was a separate
+version-keyed gate that asked the owner again for a judgment the grade
+already carries). A `competitive` grade is openreview-eligible: dispatch it.
+A `fallback` grade is a legitimate openreview reviewer but a weaker
+adjudicator, so it asks the owner once before dispatching here and its grade
+is recorded in the outcome either way.
+
+Model naming rides the `codereview` playbook's "Dispatch
+grammar" section (canonical): the owner's literal word is used verbatim,
+checked against no list — and a named model confers nothing:
+the frontier pair's `grade` above remains the only eligibility gate.
 
 ## Verdict contract (structured, fail-closed)
 
@@ -90,6 +90,7 @@ match:
 
 ```json
 {"verdict":"clean|findings","reviewed_sha":"<head-sha>","base_sha":"<base-sha>",
+ "capability_ok":true,
  "findings":[{"title":"…","evidence":"file:line — …","predicted_failure":"…",
   "severity":"CRITICAL|HIGH|MEDIUM|LOW","better_approach":"…"}]}
 ```
@@ -98,16 +99,16 @@ Parse the envelope's result field against this schema. **The orchestrator —
 never the reviewer — computes acceptance.** Fail closed: any of {non-zero exit,
 missing/invalid JSON envelope, payload not matching the schema, `verdict` not in
 the enum, `reviewed_sha` ≠ the dispatched head SHA, `base_sha` ≠ the dispatched
-base SHA, `findings` non-empty with verdict `clean` or empty with verdict
-`findings`} → the outcome is **not** a clean pass. **Extraction before
-rejection:** a prose-wrapped payload is not a parse miss — scan it for
-candidate JSON objects, and when exactly one matches the schema, use it; the
-review already happened, and surrounding prose is never an input to
-acceptance. Zero or multiple schema matches → parse miss. On a parse miss,
-re-prompt once for **re-emission only**: feed the reviewer its own output back
-and ask for schema-only JSON — no re-review, no hint of the expected verdict.
-If that still fails, route to the owner as contested. Never re-run a completed
-review to fix formatting. A parse miss never silently becomes a clean verdict.
+base SHA, `capability_ok` not literally `true`, `findings` non-empty with
+verdict `clean` or empty with verdict `findings`} → the outcome is **not** a
+clean pass. `capability_ok` is the folded-in transport proof (see the
+`codereview` playbook's "Capability proof"): the reviewer sets it only after
+reading a repo file and running one allowlisted command in the same shot, so
+its absence means the child never had the capabilities the review needs. Recover a prose-wrapped or
+off-schema payload by the `codereview` playbook's verdict-contract handling
+(canonical): extraction before rejection, one re-emission-only re-prompt, then
+route to the owner as contested — a parse miss never silently becomes a clean
+verdict.
 
 ## Downstream: findings enter the codereview machinery
 
