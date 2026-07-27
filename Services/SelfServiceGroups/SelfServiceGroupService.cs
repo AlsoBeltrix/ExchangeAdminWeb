@@ -212,8 +212,10 @@ public class SelfServiceGroupService
     /// <item>the caller identity is a genuine Windows SID (AC6, as the read paths enforce);</item>
     /// <item>the affected member is resolved USER-ONLY to exactly one immutable id (codex F7) - a
     ///   not-found or ambiguous member is refused;</item>
-    /// <item>the member passes the protected-principal check (<see cref="ProtectedPrincipalService"/>),
-    ///   fail-closed on Unavailable/Ambiguous resolution (Known Failure Class #3);</item>
+    /// <item>that SAME resolved member passes the protected-principal check
+    ///   (<see cref="ProtectedPrincipalService.CheckAsync"/> on the one resolution, not a second
+    ///   independent lookup), fail-closed when protected or the check cannot complete (Known Failure
+    ///   Class #3);</item>
     /// <item>the group still exists, and the caller still holds member-write on it RIGHT NOW - the
     ///   same DACL eligibility check the list uses (<see cref="CallerCanManageMembers"/>), re-read
     ///   here so a revoked right blocks the write even though the page still lists the group;</item>
@@ -252,17 +254,41 @@ public class SelfServiceGroupService
         if (string.IsNullOrWhiteSpace(memberIdentity))
             return PermissionResult.Fail("A member identity is required.");
 
-        // Protected-principal check on the affected member BEFORE taking the group write lock or any AD
-        // write. Fail-closed on Unavailable/Ambiguous (Known Failure Class #3), mirroring
-        // GroupManagementService.CheckProtectedAsync. This gate is enforced in the service, not just the
-        // page, so protection cannot be bypassed by a non-page caller ("UI hiding is not security").
-        var protectionDenial = await CheckMemberProtectedAsync(memberIdentity);
-        if (protectionDenial is not null)
-            return protectionDenial;
-
+        // Fetch THIS module's credential first: it is used both to resolve the affected member and to
+        // perform the write, so the resolution the protection check runs on and the write target are the
+        // same directory object seen through the same credential.
         var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+
+        // Resolve the affected member ONCE, USER-ONLY, to an immutable principal (codex F7, F11), using
+        // THIS module's credential. This single resolution feeds BOTH the protected-principal gate below
+        // AND the write target (member.DistinguishedName), so the principal that clears the protection
+        // check is provably the one written - no second, differently-credentialed or untrimmed lookup can
+        // drift the identity between check and write. A resolution error fails closed (Known Failure
+        // Class #3).
+        ResolvedDirectoryPrincipal? member;
+        try
+        {
+            member = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveUserMember(creds.Value, memberIdentity)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve the affected member - blocking as a precaution");
+            return PermissionResult.Fail("The member could not be resolved right now. Please try again shortly.");
+        }
+        if (member is null || string.IsNullOrWhiteSpace(member.DistinguishedName))
+            return PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again.");
+        var memberDn = member.DistinguishedName;
+
+        // Protected-principal check on the SAME resolved member (not a second, independent lookup).
+        // Fail-closed when protected or the check cannot complete (Known Failure Class #3). Enforced in
+        // the service, not just the page, so protection cannot be bypassed by a non-page caller ("UI
+        // hiding is not security").
+        var protectionDenial = await CheckMemberProtectedAsync(member);
+        if (protectionDenial is not null)
+            return protectionDenial;
 
         // Serialize per-group so two changes to the same group cannot interleave their check->write
         // cycles (plan section 6.5). Keyed on the immutable objectGUID.
@@ -298,12 +324,8 @@ public class SelfServiceGroupService
                 if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
                     return PermissionResult.Fail("You are no longer permitted to manage this group's membership.");
 
-                // Resolve the member USER-ONLY to exactly one immutable id (codex F7, F11).
-                var memberDn = ResolveUserMemberDn(ps, credential, memberIdentity);
-                if (memberDn is null)
-                    return PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again.");
-
                 // Idempotent desired-state (slice 5a): only write if the current membership requires it.
+                // Uses the member DN resolved once above - no second resolution.
                 var present = IsMemberOfGroup(ps, credential, groupDn, memberDn);
                 var plan = MembershipChangeReconciler.PlanWrite(operation, present);
                 if (plan == MembershipWriteAction.AlreadySatisfied)
@@ -352,34 +374,22 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// Protected-principal gate on the affected member (plan section 6.5, codex F9). Resolves the member
-    /// through <see cref="ProtectedPrincipalService"/> and refuses the change when the member is
-    /// protected OR when the protection check cannot be completed (Unavailable/Ambiguous resolution, or
-    /// a check failure) - fail-closed (Known Failure Class #3). Returns null when the member is clear to
-    /// mutate, or a Fail result to abort. Mirrors GroupManagementService.CheckProtectedAsync.
+    /// Protected-principal gate on the affected member (plan section 6.5, codex F9). Runs
+    /// <see cref="ProtectedPrincipalService.CheckAsync"/> on the SAME principal already resolved for the
+    /// write (not a second, independent lookup), so the account that clears this gate is provably the one
+    /// written. Refuses the change when the member is protected OR when the check cannot be completed -
+    /// fail-closed (Known Failure Class #3). Returns null when the member is clear to mutate, or a Fail
+    /// result to abort.
     /// </summary>
-    private async Task<PermissionResult?> CheckMemberProtectedAsync(string memberIdentity)
+    private async Task<PermissionResult?> CheckMemberProtectedAsync(ResolvedDirectoryPrincipal member)
     {
         try
         {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(memberIdentity);
-            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
-                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
-            {
-                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
-                    ? "That identity is ambiguous - it matches multiple AD users."
-                    : "The protection check is unavailable right now. Please try again shortly.");
-            }
-
-            if (resolved != null)
-            {
-                var check = await _protectedPrincipals.CheckAsync(resolved);
-                if (check.CheckFailed)
-                    return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
-                if (check.IsProtected)
-                    return PermissionResult.Fail("That user is a protected account and cannot be changed here. Contact the IT Support Desk.");
-            }
-
+            var check = await _protectedPrincipals.CheckAsync(member);
+            if (check.CheckFailed)
+                return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
+            if (check.IsProtected)
+                return PermissionResult.Fail("That user is a protected account and cannot be changed here. Contact the IT Support Desk.");
             return null;
         }
         catch (Exception ex)
@@ -421,16 +431,34 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// Resolves the affected member USER-ONLY (codex F7) to exactly one DN via an injection-safe,
-    /// RFC 4515-escaped -LDAPFilter (codex F11, <see cref="AdOwnershipFilter.BuildUserByIdentityFilter"/>).
-    /// Returns null unless EXACTLY one user matches - a not-found or ambiguous identity is refused so
-    /// the write never targets the wrong or an unintended principal.
+    /// Resolves the affected member USER-ONLY (codex F7) to exactly one immutable principal via an
+    /// injection-safe, RFC 4515-escaped -LDAPFilter (codex F11,
+    /// <see cref="AdOwnershipFilter.BuildUserByIdentityFilter"/>) using THIS module's credential. The
+    /// SINGLE resolution both the protected-principal gate and the write consume: returning the whole
+    /// <see cref="ResolvedDirectoryPrincipal"/> (identifiers + DN) means the account checked for
+    /// protection is provably the account written. Returns null unless EXACTLY one user matches - a
+    /// not-found or ambiguous identity is refused so the write never targets the wrong or an unintended
+    /// principal. Runs in its own runspace so it can execute before the write-phase runspace is built.
     /// </summary>
-    private static string? ResolveUserMemberDn(PowerShell ps, PSCredential credential, string memberIdentity)
+    private static ResolvedDirectoryPrincipal? ResolveUserMember(
+        (string username, string password, string domain) creds, string memberIdentity)
     {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
         var filter = AdOwnershipFilter.BuildUserByIdentityFilter(memberIdentity.Trim());
         ps.AddCommand("Get-ADUser")
           .AddParameter("LDAPFilter", filter)
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
         var users = ps.Invoke();
@@ -438,8 +466,20 @@ public class SelfServiceGroupService
 
         if (users.Count != 1)
             return null;
-        var dn = users[0].Properties["DistinguishedName"]?.Value?.ToString();
-        return string.IsNullOrWhiteSpace(dn) ? null : dn;
+        var u = users[0];
+        var dn = u.Properties["DistinguishedName"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(dn))
+            return null;
+
+        return new ResolvedDirectoryPrincipal(
+            Source: "SelfServiceGroupService-AD",
+            DisplayName: u.Properties["DisplayName"]?.Value?.ToString() ?? memberIdentity,
+            UserPrincipalName: u.Properties["UserPrincipalName"]?.Value?.ToString() ?? memberIdentity,
+            SamAccountName: u.Properties["SamAccountName"]?.Value?.ToString(),
+            PrimarySmtpAddress: u.Properties["mail"]?.Value?.ToString(),
+            DistinguishedName: dn,
+            ObjectGuid: u.Properties["ObjectGUID"]?.Value?.ToString(),
+            EntraObjectId: null);
     }
 
     /// <summary>
