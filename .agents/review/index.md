@@ -22,6 +22,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | gm3-task5-slice5a | n/a      | Slice-landing review: member add/remove decision core (6.5)   | `[x]`  |        | codex-commercial (MCP, default) — accepted, static-only, no material issue (08a2a53) |
 | gm3-task5-slice5b | n/a      | Slice-landing review: live member add/remove write path (6.5) | `[x]`  |        | codex-commercial (MCP, default) — reopened (6fd722f: F1 check/write mismatch, F2 write not fail-closed) → accepted after fixes (5ef1b0d), static-only |
 | gm3-task5-slice5c | n/a      | Slice-landing review: member add/remove UI + audit/notify (6.5)| `[x]`  |        | codex CLI (codex-cli 0.145.0, codex exec, default) — accepted, static-only, no material issue (b461fed). MCP route abandoned (idle-timeout, then no-local-reader invalid); switched to headless CLI per owner |
+| mt-detail-slice1  | n/a      | Slice-landing review: MessageTraceDetail models (MT plan s1)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.145.0, codex exec, default) — accepted, no material issue, build-verified (ade48c1) |
 
 Notes:
 - Finding **confirmed real** (round 1), fix **plan reviewed & accepted** (rounds 2-3
