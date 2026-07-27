@@ -355,6 +355,77 @@ public class EmailService
         await SendEmailAsync(targetEmail, $"Your Auto-Reply Has Been {(isEnabled ? "Enabled" : "Disabled")}", body);
     }
 
+    /// <summary>
+    /// Notifies a user that they were added to or removed from an on-premises security group
+    /// (self-service group management, plan docs/SelfServiceGroupManagement-Plan.md AC10; Constitution
+    /// "Notifications" - a change to a user's access must additionally notify the affected user). Gated
+    /// by the same <c>NotifyUsersOnPermissionGrant</c> switch as the other affected-user notifications,
+    /// and virtual so it is test-seamable like the admin-notification overloads.
+    /// </summary>
+    /// <param name="userEmail">The affected member's primary SMTP address.</param>
+    /// <param name="groupName">The security group's display name.</param>
+    /// <param name="performedBy">The self-service owner who made the change.</param>
+    /// <param name="isAdd">True when the user was added; false when removed.</param>
+    public virtual async Task SendGroupMembershipUserNotificationAsync(
+        string userEmail,
+        string groupName,
+        string performedBy,
+        bool isAdd)
+    {
+        if (!_notifyUsers)
+        {
+            _logger.LogDebug("User notifications disabled, skipping group-membership notification to {Email}", userEmail);
+            return;
+        }
+
+        var subject = isAdd
+            ? "You Have Been Added to a Security Group"
+            : "You Have Been Removed from a Security Group";
+        var headerText = isAdd ? "Security Group Membership Added" : "Security Group Membership Removed";
+        var actionWord = isAdd ? "added to" : "removed from";
+        var headerColor = isAdd ? "#0078d4" : "#28a745";
+
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        var body = $@"<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {{ font-family: Arial, sans-serif; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: {headerColor}; color: white; padding: 20px; border-radius: 5px 5px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-top: none; }}
+        .footer {{ background: #f0f0f0; padding: 15px; border-radius: 0 0 5px 5px; font-size: 12px; color: #666; }}
+        .warning {{ background: #fff3cd; border: 1px solid #ffc107; padding: 10px; margin: 15px 0; border-radius: 3px; }}
+        .details {{ background: white; padding: 10px; margin: 10px 0; border-left: 3px solid {headerColor}; }}
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <div class=""header"">
+            <h2>{h(headerText)}</h2>
+        </div>
+        <div class=""content"">
+            <p>Hello,</p>
+            <p>Your membership of the following security group has been {actionWord}:</p>
+            <div class=""details"">
+                <strong>Group:</strong> {h(groupName)}<br>
+                <strong>{(isAdd ? "Added" : "Removed")} by:</strong> {h(performedBy)}<br>
+                <strong>Date:</strong> {DateTime.Now:MMMM dd, yyyy 'at' h:mm tt}
+            </div>
+            <div class=""warning"">
+                <strong>Important:</strong> Security group membership can change your access to systems and resources. If you were unaware of this change or did not request it, please contact the IT Service Desk immediately.
+            </div>
+        </div>
+        <div class=""footer"">
+            <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+        </div>
+    </div>
+</body>
+</html>";
+
+        await SendEmailAsync(userEmail, subject, body);
+    }
+
     private async Task SendEmailAsync(string to, string subject, string htmlBody)
     {
         try
