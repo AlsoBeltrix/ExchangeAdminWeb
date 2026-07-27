@@ -69,6 +69,38 @@ public sealed class MessageTraceDetailTests
         Assert.Contains("Nonsense", detail.Error);
     }
 
+    // ---- Outer fail-soft guard (pre-delegate throws) ----------------------------------------
+
+    [Fact]
+    public async Task RunDetailBackend_ThrowingQuery_ReturnsFailSoftDetail_NeverThrows()
+    {
+        // A pre-delegate throw (EXO borrow/config/pool/connect for cloud; throttle timeout for
+        // on-prem) escapes the inner catches. The outer guard must convert it to a detail, not
+        // propagate it into the caller (mandate item 3: never throws into the caller).
+        var summary = Summary("ExchangeOnline");
+
+        var detail = await MessageTraceService.RunDetailBackendAsync(
+            summary,
+            () => throw new InvalidOperationException("Exchange service is busy. Please try again shortly."));
+
+        Assert.Same(summary, detail.Summary);
+        Assert.Empty(detail.Events);
+        Assert.NotNull(detail.Error);
+        Assert.Contains("Exchange service is busy", detail.Error);
+    }
+
+    [Fact]
+    public async Task RunDetailBackend_SucceedingQuery_PassesResultThrough()
+    {
+        var expected = new MessageTraceDetail { Summary = Summary("OnPrem") };
+
+        var detail = await MessageTraceService.RunDetailBackendAsync(
+            expected.Summary!,
+            () => Task.FromResult(expected));
+
+        Assert.Same(expected, detail);
+    }
+
     // ---- On-prem: NO collapse + reason fields -----------------------------------------------
 
     [Fact]

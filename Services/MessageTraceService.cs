@@ -99,14 +99,40 @@ public class MessageTraceService : ExchangeServiceBase
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        switch (ClassifyDetailBackend(message.Backend))
+        // Outer fail-soft guard through a pure seam: the inner catches only cover failures once
+        // the pooled delegate / on-prem Task.Run body is running. EXO borrow/config/pool/connect
+        // and throttle-timeout failures throw before that point; RunDetailBackendAsync converts
+        // any such throw to a fail-soft detail so the caller never sees an exception (mirrors the
+        // summary path's RunMessageTraceBackendAsync wrapper).
+        return await RunDetailBackendAsync(
+            message,
+            () => ClassifyDetailBackend(message.Backend) switch
+            {
+                DetailBackend.OnPrem => GetOnPremMessageDetailAsync(message, ct),
+                DetailBackend.Cloud => GetCloudMessageDetailAsync(message),
+                _ => Task.FromResult(UnknownBackendDetail(message))
+            },
+            ex => _logger.LogError(ex, "Message delivery detail failed before returning a result for {MessageId}", message.MessageId));
+    }
+
+    // Pure outer fail-soft guard, extracted so it is unit-testable without a live pool / on-prem
+    // runspace (pool-backed services cannot be unit-hosted; mirrors RunWithRetryCoreAsync). Any
+    // throw from the backend query - including EXO borrow/config/pool/connect and on-prem
+    // throttle-timeout failures that occur before the inner catches run - becomes a fail-soft
+    // detail with Error set and Events empty. GetMessageDetailAsync therefore never throws.
+    internal static async Task<MessageTraceDetail> RunDetailBackendAsync(
+        MessageTraceResult message,
+        Func<Task<MessageTraceDetail>> query,
+        Action<Exception>? onError = null)
+    {
+        try
         {
-            case DetailBackend.OnPrem:
-                return await GetOnPremMessageDetailAsync(message, ct);
-            case DetailBackend.Cloud:
-                return await GetCloudMessageDetailAsync(message);
-            default:
-                return UnknownBackendDetail(message);
+            return await query();
+        }
+        catch (Exception ex)
+        {
+            onError?.Invoke(ex);
+            return new MessageTraceDetail { Summary = message, Error = $"Delivery detail failed: {ex.Message}" };
         }
     }
 
