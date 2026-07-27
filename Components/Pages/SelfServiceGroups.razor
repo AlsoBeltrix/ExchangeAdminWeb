@@ -5,6 +5,9 @@
 @attribute [Authorize(Policy = "SelfServiceGroups")]
 @rendermode InteractiveServer
 @inject SelfServiceGroupService GroupService
+@inject AuditService Audit
+@inject EmailService Email
+@inject ClientInfoService ClientInfo
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
@@ -90,15 +93,20 @@
                                     <th>Name</th>
                                     <th>Type</th>
                                     <th>Other owners</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 @foreach (var g in visibleGroups)
                                 {
-                                    <tr>
-                                        <td>@g.Name</td>
-                                        <td>@g.GroupType</td>
-                                        <td>@(g.OtherOwners.Count == 0 ? "-" : string.Join(", ", g.OtherOwners))</td>
+                                    var group = g;
+                                    <tr class="@(selected?.ObjectGuid == group.ObjectGuid ? "table-active" : "")">
+                                        <td>@group.Name</td>
+                                        <td>@group.GroupType</td>
+                                        <td>@(group.OtherOwners.Count == 0 ? "-" : string.Join(", ", group.OtherOwners))</td>
+                                        <td class="text-end">
+                                            <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(group)">Manage members</button>
+                                        </td>
                                     </tr>
                                 }
                             </tbody>
@@ -138,24 +146,72 @@
                             <th>Name</th>
                             <th>Type</th>
                             <th>Other owners</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
+                        <tr class="@(selected?.ObjectGuid == searchResult.ObjectGuid ? "table-active" : "")">
                             <td>@searchResult.Name</td>
                             <td>@searchResult.GroupType</td>
                             <td>@(searchResult.OtherOwners.Count == 0 ? "-" : string.Join(", ", searchResult.OtherOwners))</td>
+                            <td class="text-end">
+                                <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(searchResult)">Manage members</button>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
             }
         </div>
     </div>
+
+    @if (selected != null)
+    {
+        <!-- Member management panel (plan section 6.5): add/remove a USER member by typed identity on
+             the selected group. The service has no member-listing method in the first cut, so this is
+             add/remove by identity, not a remove-from-list UI. Every change re-checks module
+             authorization on the page (defense in depth) and the service re-checks group/eligibility/
+             ownership/protection immediately before the write (AC5). -->
+        <div class="card mb-3 border-primary">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Manage members of <strong>@selected.Name</strong> <span class="badge bg-light text-dark border ms-1">@selected.GroupType</span></span>
+                <button type="button" class="btn-close" aria-label="Close" @onclick="() => { selected = null; changeResult = null; }"></button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted"><small>Add or remove a user by their username, email, or user principal name.
+                Membership changes take effect in on-premises Active Directory immediately.</small></p>
+
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" @bind="memberIdentity" @bind:event="oninput"
+                           placeholder="user@domain.com, DOMAIN\\user, or username" disabled="@isChanging" />
+                    <button class="btn btn-success" @onclick="() => ChangeMember(MembershipOperation.Add)"
+                            disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                        @if (isChanging && pendingOp == MembershipOperation.Add) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Add
+                    </button>
+                    <button class="btn btn-outline-danger" @onclick="() => ChangeMember(MembershipOperation.Remove)"
+                            disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                        @if (isChanging && pendingOp == MembershipOperation.Remove) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Remove
+                    </button>
+                </div>
+
+                @if (changeResult != null)
+                {
+                    <div class="alert @(changeResult.Success ? "alert-success" : "alert-danger") alert-dismissible py-2 mb-0">
+                        <small>@changeResult.Message</small>
+                        <button type="button" class="btn-close btn-close-sm" @onclick="() => changeResult = null"></button>
+                    </div>
+                }
+            </div>
+        </div>
+    }
 </div>
 
 @code {
     private bool authChecked;
     private string? callerSid;
+    private string currentUser = "Unknown";
+    private string clientIpAddress = "Unknown";
 
     private bool isLoading;
     private bool loaded;
@@ -168,10 +224,17 @@
     private string? searchMessage;
     private ManageableGroup? searchResult;
 
+    private ManageableGroup? selected;
+    private string memberIdentity = "";
+    private bool isChanging;
+    private MembershipOperation? pendingOp;
+    private PermissionResult? changeResult;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
 
         var authResult = await AuthorizationService.AuthorizeAsync(user, "SelfServiceGroups");
         if (!authResult.Succeeded)
@@ -184,7 +247,82 @@
         // from the PrimarySid claim the Negotiate scheme populates; the service re-validates it as a
         // genuine SID and rejects any alternate identity form.
         callerSid = user.FindFirst(ClaimTypes.PrimarySid)?.Value;
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
         authChecked = true;
+    }
+
+    private void SelectGroup(ManageableGroup group)
+    {
+        selected = group;
+        memberIdentity = "";
+        changeResult = null;
+    }
+
+    private async Task ChangeMember(MembershipOperation operation)
+    {
+        if (selected == null || isChanging || string.IsNullOrWhiteSpace(memberIdentity))
+            return;
+
+        isChanging = true;
+        pendingOp = operation;
+        changeResult = null;
+        await Task.Yield();
+
+        var group = selected;
+        var member = memberIdentity.Trim();
+        var action = operation == MembershipOperation.Add ? "SelfServiceGroups_AddMember" : "SelfServiceGroups_RemoveMember";
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            // Defense in depth (AC5): re-check module authorization on the page before the write; the
+            // circuit principal can be stale. The service also re-checks group/eligibility/ownership/
+            // protection immediately before writing.
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
+            if (!authCheck.Succeeded)
+            {
+                changeResult = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
+                return;
+            }
+
+            var outcome = await GroupService.ChangeMemberAsync(callerSid, group.ObjectGuid, member, operation);
+            changeResult = outcome.Result;
+
+            // Audit-first, best-effort notify (owner decision B, 2026-07-27): the audit record is
+            // written FIRST and its own failure is logged, never allowed to mask the operation; the
+            // notifications are best-effort and never change the result the user sees (Constitution
+            // "Notifications"). No background worker / outbox.
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+
+            var memberDetail = string.IsNullOrWhiteSpace(outcome.AffectedMemberDisplayName) ? member : $"{outcome.AffectedMemberDisplayName} ({member})";
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, [operation == MembershipOperation.Add ? "Member Added" : "Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            // Affected-user notification only when the service confirms a real security-group change
+            // with a known address (AC10; the NotifyAffectedUser gate encapsulates the rule).
+            if (outcome.NotifyAffectedUser)
+            {
+                try { await Email.SendGroupMembershipUserNotificationAsync(outcome.AffectedMemberEmail!, group.Name, currentUser, operation == MembershipOperation.Add); } catch (Exception emailEx) { Logger.LogError(emailEx, "Affected-user notification failed for {Action}", action); }
+            }
+
+            if (outcome.Result.Success)
+                memberIdentity = "";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service membership change failed for {User} on {Group}", callerSid, group.Name);
+            changeResult = PermissionResult.Fail("The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+        }
+        finally
+        {
+            isChanging = false;
+            pendingOp = null;
+        }
     }
 
     private async Task LoadOwnedGroups()
