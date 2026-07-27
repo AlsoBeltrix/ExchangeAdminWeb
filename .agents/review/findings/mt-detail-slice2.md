@@ -1,9 +1,9 @@
 # mt-detail-slice2: per-message delivery-detail service (slice 2)
 
 **Severity**: n/a — slice-landing review of a new service method + its tests
-**Status**: Round-1 fix landed - awaiting re-dispatch (round 2)
+**Status**: Accepted (round 2, 2026-07-27) — verified, slice 2 complete
 **Branch**: `master` (committed directly per repo policy; no per-finding branch)
-**Commit**: `1f0af9c` (slice), fix commit pending
+**Commit**: `1f0af9c` (slice), `b00c5b7` (round-1 fix, accepted round 2)
 
 ## Evidence
 `Services/MessageTraceService.cs` — new `GetMessageDetailAsync` and its backend
@@ -98,3 +98,20 @@ runspace, mirroring `RunWithRetryCoreAsync`. Two new tests
 non-vacuous: replacing the catch body with `throw;` makes the throwing test FAIL
 (1 failed / 19 passed); restoring makes all 20 pass. Full suite 768/768, build 0 errors,
 format exit 0, `git diff --check HEAD` clean, both files ASCII-clean.
+
+**Round 2 - codex CLI (codex exec, portkey gpt-5.5-dzs/xhigh), 2026-07-27 - ACCEPTED.**
+Verdict `{"verdict":"accepted","guard_confirmed":true,"capability_ok":true,"reviewed_sha":"b00c5b7","base_sha":"5ab8412","comments":[]}`.
+Both round-1 gaps confirmed closed: `GetMessageDetailAsync` now routes both live
+backends (cloud, on-prem) and the unknown-backend case through the new pure
+`RunDetailBackendAsync` seam, whose broad `catch (Exception)` converts any throw -
+including the cloud pre-delegate EXO borrow/config/pool/connect throw and the on-prem
+pre-`Task.Run` `ThrottledAsync` timeout - into a fail-soft detail (original `Summary`
+carried, `Error` set, `Events` empty). Extraction mirrors the summary path's
+`RunMessageTraceBackendAsync` wrapper and the `RunWithRetryCoreAsync` pure-seam
+precedent with no success-path behavior change. guard_confirmed: in the reviewer's own
+isolated `git archive` snapshot at head, replacing the catch body with `throw;` made
+`RunDetailBackend_ThrowingQuery_ReturnsFailSoftDetail_NeverThrows` FAIL (1 failed /
+19 passed); restore -> all 20 passed. capability_ok: read a repo file + `dotnet build
+ExchangeAdminWeb.slnx -c Release` (0 errors). `reviewed_sha` b00c5b7 / `base_sha`
+5ab8412 both match dispatch. No comments (clean accept). Coder tree verified unmutated
+(still at b00c5b7). Slice 2 complete.
