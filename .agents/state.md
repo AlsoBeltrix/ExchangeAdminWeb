@@ -118,12 +118,31 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
       ResolvedDirectoryPrincipal, checks + writes THAT principal (F1), reconciles the write even when the
       Invoke throws with a guarded read-back (F2). 740/740 tests, build/format/ASCII clean. codex-commercial
       (MCP, default) reopened on the slice commit for F1/F2, accepted after both one-per-commit fixes.
-    - **NEXT: slice 5c** — page wiring in `Components/Pages/SelfServiceGroups.razor`: member add/remove UI
-      calling `ChangeMemberAsync`; re-check module authorization on the page; audit-first best-effort notify
-      (Decision 1 B) — `Audit.LogModuleAction` FIRST (try/catch), THEN `Email.SendAdminNotificationAsync` +
-      `Email.SendUserNotificationAsync` best-effort. Likely a SelfServiceGroups module version bump
-      (1.0.0 -> next) in `Modules/ModuleCatalog.cs`. Then task 6 (verification/manual-validation note).
-      New logic ⇒ xUnit before "done", proven non-vacuous.
+    - **Slice 5c DONE + codex-reviewed** (`164b83a` return metadata + `MembershipChangeResult` record + 8
+      tests, `aafc13e` email method, `b461fed` page UI + version bump; `.agents/review/findings/gm3-task5-slice5c.md`,
+      index row `gm3-task5-slice5c`): `Components/Pages/SelfServiceGroups.razor` Manage-members panel calls
+      `ChangeMemberAsync` (add/remove USER by typed identity — no member-list method in first cut); page
+      re-checks the SelfServiceGroups policy before the write (defense in depth, AC5); audit-first
+      best-effort notify (owner decision B) — `Audit.LogModuleAction` FIRST (own try/catch, never masks),
+      then best-effort `Email.SendAdminNotificationAsync`, then affected-user
+      `Email.SendGroupMembershipUserNotificationAsync` gated by `MembershipChangeResult.NotifyAffectedUser`
+      (success AND real change AND security group AND known address — AC10, Constitution Notifications).
+      `ChangeMemberAsync` now returns `MembershipChangeResult` (PermissionResult + notify metadata from the
+      SAME single member resolution — no F1 regression). SelfServiceGroups module 1.0.0 -> 1.1.0 (no base
+      app bump). Build 0 errors, 748/748 tests, ASCII/format/diff-check clean; gate non-vacuity proven
+      (IsSecurityGroup term inverted -> distribution test fails -> restore -> 8/8). Live add/remove+notify
+      is manual-validation-on-dev (no dev tenant).
+    - **REVIEWER TRANSPORT (2026-07-27):** the codex-commercial MCP reviewer CANNOT see un-pushed local
+      HEAD — under a no-shell constraint it has no local file reader and falls back to the connected GitHub
+      repo, so a local-only SHA returns `invalid`; without the constraint it runs `dotnet` and dies at the
+      30-min idle timeout on the blocked NuGet feed. Owner ruling: use **codex headless CLI** for these
+      reviews — `codex exec -s read-only --output-last-message <file> - < promptfile` (prompt via stdin;
+      too long for an arg), run in background. It has direct read-only LOCAL repo access, so it reviews
+      un-pushed commits fine. A recurring `Failed to refresh token` line in its log is benign (review still
+      runs). Do NOT use `--skip-git-repo-check`. codex-cli 0.145.0 on this machine.
+    - **NEXT: task 6** — verification + manual-validation note (the last task in the plan §7 set). Record
+      what automation covers vs. what needs a live DC/tenant; no dev tenant, so the live AD add/remove +
+      email path is manual-validation-on-dev / deferred. Likely docs-only.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
