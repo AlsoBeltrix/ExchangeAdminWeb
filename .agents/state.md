@@ -89,11 +89,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
     owned-groups table, on-demand single-group search box; caller SID from the PrimarySid claim, AC6).
     Adding a module did NOT bump the base app version. Count-guards updated (23 modules, 32 aliases),
     proven non-vacuous. codex verdict accepted, no material issue.
-  - **NEXT: task 4** — list + in-list filter (AC9): render the loaded owned-groups list with type +
-    other-owners columns (skeleton table already present); add a client-side in-list filter matching a
-    mid-string name term or a description word (pure filtering over the loaded list, no directory
-    round-trip). Then task 5 (member add/remove with pre-write re-checks + audit/notify) and task 6
-    (verification/manual-validation note). New service logic ⇒ xUnit before "done", proven non-vacuous.
+  - **TASK 4 DONE + codex-reviewed** (`f17f3de` slice; `.agents/review/findings/gm3-task4-slice1.md`,
+    index row `gm3-task4-slice1`): in-list filter (AC9). `Services/SelfServiceGroups/ManageableGroupFilter.cs`
+    (pure UI-free helper: case-insensitive SUBSTRING match across Name/SamAccountName/Description, blank
+    term returns all, input order preserved) wired into `Components/Pages/SelfServiceGroups.razor` (filter
+    input over the loaded list only — no directory round-trip; filtered-empty renders a message distinct
+    from the AC8 load-failure error; `filterTerm` reset each load). 12 xUnit tests, proven non-vacuous
+    (Contains->StartsWith fails 3, restore passes 12, `git diff --stat` empty). Full suite 728/728,
+    build/format/ASCII-lint clean. codex-commercial (MCP transport, default model/effort) verdict accepted,
+    no material issue. Review dispatched read-only/static-code-judgment-only: two prior dispatches (codex
+    cli, then a first codex-commercial run) both died at ~30 min trying to run the test suite — the cli on
+    the sandbox's blocked NuGet feed (isolated snapshot can't `dotnet restore`), the MCP run on the
+    transport idle timeout during that silent test run. Runtime guard proof is the coder's job and was
+    done; the reviewer's contribution is static judgment, which needs no build.
+  - **NEXT: task 5** — member add/remove with pre-write re-checks + audit/notify (the ONLY mutation in
+    the first cut). USER-ONLY members; resolve exactly one immutable member id; before each write
+    re-check module permission + re-read group + re-check eligibility + re-check ownership by immutable
+    id + ProtectedPrincipalService.CheckAsync on the affected member; fail-closed; serialize same-group
+    ops; idempotent desired-state; per-row failure aggregation; audit via AuditService.LogModuleAction +
+    admin + affected-user notification; post-write read-back reconciliation; NO background worker/outbox.
+    Then task 6 (verification/manual-validation note). New service logic ⇒ xUnit before "done", proven
+    non-vacuous. Task 5 is a mutation — needs an approval/go before coding and likely a module version bump.
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
