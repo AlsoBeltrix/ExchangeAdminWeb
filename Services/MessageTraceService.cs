@@ -81,6 +81,232 @@ public class MessageTraceService : ExchangeServiceBase
     }
 
     // -------------------------------------------------------------------------
+    // Per-message delivery detail (the full per-hop trail for one message)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Fetch the full per-hop delivery trail for a single <paramref name="message"/>. Routes by
+    /// <see cref="MessageTraceResult.Backend"/>: on-prem re-runs Get-MessageTrackingLog scoped to
+    /// the one message with the reason fields and NO collapse (every event row, ordered by
+    /// timestamp); cloud calls Get-MessageTraceDetailV2 keyed by MessageTraceId + RecipientAddress.
+    /// Fail-soft: any failure sets <see cref="MessageTraceDetail.Error"/> with empty
+    /// <see cref="MessageTraceDetail.Events"/>; it never throws. A cloud message aged out of the
+    /// trace window returns empty events with an explanatory message, not an exception. The live
+    /// PowerShell paths run through the sealed connection pool / on-prem runspace and are
+    /// manual-validation-only; the routing and mapping seams below are unit-covered.
+    /// </summary>
+    public async Task<MessageTraceDetail> GetMessageDetailAsync(MessageTraceResult message, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        switch (ClassifyDetailBackend(message.Backend))
+        {
+            case DetailBackend.OnPrem:
+                return await GetOnPremMessageDetailAsync(message, ct);
+            case DetailBackend.Cloud:
+                return await GetCloudMessageDetailAsync(message);
+            default:
+                return UnknownBackendDetail(message);
+        }
+    }
+
+    internal enum DetailBackend { OnPrem, Cloud, Unknown }
+
+    internal static DetailBackend ClassifyDetailBackend(string? backend) => backend switch
+    {
+        "OnPrem" => DetailBackend.OnPrem,
+        "ExchangeOnline" => DetailBackend.Cloud,
+        _ => DetailBackend.Unknown
+    };
+
+    internal static MessageTraceDetail UnknownBackendDetail(MessageTraceResult message) => new()
+    {
+        Summary = message,
+        Error = $"Cannot fetch delivery detail: unrecognized backend '{message.Backend}'."
+    };
+
+    private async Task<MessageTraceDetail> GetCloudMessageDetailAsync(MessageTraceResult message)
+    {
+        // Read-only single query: safe to retry on a dead pooled session.
+        return await RunPooledQueryAsync((ps, tracker) =>
+        {
+            try
+            {
+                ps.AddCommand("Get-MessageTraceDetailV2")
+                  .AddParameter("MessageTraceId", message.MessageTraceId)
+                  .AddParameter("RecipientAddress", message.RecipientAddress)
+                  .AddParameter("ErrorAction", "Stop");
+
+                var events = Invoke(ps, tracker);
+                return BuildCloudDetail(message, events);
+            }
+            catch (Exception ex) when (IsOutdatedModuleError(ex))
+            {
+                _logger.LogError(ex, "Get-MessageTraceDetailV2 not available - ExchangeOnlineManagement module may be outdated");
+                return new MessageTraceDetail
+                {
+                    Summary = message,
+                    Error = "Get-MessageTraceDetailV2 requires ExchangeOnlineManagement 3.7.0 or later. Please update the module."
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching Exchange Online message trace detail for {MessageTraceId}", message.MessageTraceId);
+                return new MessageTraceDetail
+                {
+                    Summary = message,
+                    Error = $"Exchange Online trace detail failed: {ex.Message}"
+                };
+            }
+        }, allowRetry: true);
+    }
+
+    private async Task<MessageTraceDetail> GetOnPremMessageDetailAsync(MessageTraceResult message, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_onPremServerUri))
+            return new MessageTraceDetail { Summary = message, Error = "On-prem delivery detail unavailable: OnPremExchange:ServerUri is not configured." };
+
+        var creds = await GetModuleCredentialsAsync("on-prem message tracking detail");
+        if (creds is null)
+            return new MessageTraceDetail { Summary = message, Error = "On-prem delivery detail unavailable: credentials could not be retrieved from Delinea." };
+
+        return await ThrottledAsync(() => Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            try
+            {
+                ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
+                var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
+                var server = string.IsNullOrWhiteSpace(message.Server) ? null : message.Server;
+                var tracking = InvokeOnPremMessageDetailQuery(ps, session, server, message);
+                return BuildOnPremDetail(message, tracking);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching on-prem message tracking detail for {MessageId}", message.MessageId);
+                return new MessageTraceDetail { Summary = message, Error = $"On-prem delivery detail failed: {ex.Message}" };
+            }
+            finally
+            {
+                RemoveOnPremSession(ps);
+            }
+        }, ct), _onPremThrottle);
+    }
+
+    // Detail query: scoped to the one message, with the reason fields Select-Object drops for the
+    // summary list (Source, SourceContext, RecipientStatus), and NO collapse - every event row is
+    // returned so the trail is intact. Narrow time window around the summary timestamp keeps it cheap.
+    private static Collection<PSObject> InvokeOnPremMessageDetailQuery(PowerShell ps, object? session, string? server, MessageTraceResult message)
+    {
+        if (session is null)
+            return new Collection<PSObject>();
+
+        var hasTimestamp = message.Received != DateTime.MinValue;
+        var start = hasTimestamp ? message.Received.AddMinutes(-5) : DateTime.Now.AddDays(-7);
+        var end = hasTimestamp ? message.Received.AddMinutes(5) : DateTime.Now;
+
+        var command = new StringBuilder();
+        command.Append("Get-MessageTrackingLog");
+        command.Append(" -Start ").Append(PowerShellLiteral(start));
+        command.Append(" -End ").Append(PowerShellLiteral(end));
+        command.Append(" -ResultSize ").Append(MessageTraceResponse.MaxResults.ToString(CultureInfo.InvariantCulture));
+        command.Append(" -ErrorAction SilentlyContinue");
+        AddMessageTrackingParameter(command, "Server", server);
+        AddMessageTrackingParameter(command, "MessageId", message.MessageId);
+        command.Append(" | Select-Object Timestamp,EventId,Source,SourceContext,RecipientStatus,Recipients,MessageId,MessageSubject,ServerHostname");
+
+        var script = ScriptBlock.Create(command.ToString());
+        ps.AddCommand("Invoke-Command")
+          .AddParameter("Session", session)
+          .AddParameter("ScriptBlock", script);
+
+        return InvokeOptional(ps);
+    }
+
+    // Map the on-prem tracking rows for one message into the delivery trail. NO collapse: every row
+    // is preserved (contrast the summary path's GroupBy(...).First()), ordered by timestamp, with the
+    // reason fields carried through (Source; SourceContext + RecipientStatus joined into Detail).
+    internal static MessageTraceDetail BuildOnPremDetail(MessageTraceResult summary, IEnumerable<PSObject> tracking)
+    {
+        var detail = new MessageTraceDetail
+        {
+            Summary = summary,
+            Events = MapOnPremDetailEvents(tracking, summary.MessageId)
+        };
+        if (detail.Events.Count == 0)
+            detail.Error = "No delivery events were found for this message in the on-prem tracking log.";
+        return detail;
+    }
+
+    internal static List<MessageTraceDetailEvent> MapOnPremDetailEvents(IEnumerable<PSObject> tracking, string? messageIdFilter)
+    {
+        var normalized = NormalizeMessageId(messageIdFilter);
+        var events = new List<MessageTraceDetailEvent>();
+        foreach (var item in tracking)
+        {
+            if (!MessageIdMatches(GetPropertyString(item, "MessageId"), normalized))
+                continue;
+
+            var sourceContext = GetPropertyString(item, "SourceContext");
+            var recipientStatus = GetPropertyString(item, "RecipientStatus");
+            var reason = string.Join(" | ", new[] { sourceContext, recipientStatus }
+                .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+            events.Add(new MessageTraceDetailEvent
+            {
+                Date = GetPropertyDate(item, "Timestamp"),
+                Event = GetPropertyString(item, "EventId"),
+                Action = string.Empty,
+                Detail = reason,
+                Source = GetPropertyString(item, "Source")
+            });
+        }
+        return events.OrderBy(e => e.Date).ToList();
+    }
+
+    internal static MessageTraceDetail BuildCloudDetail(MessageTraceResult summary, IEnumerable<PSObject> events)
+    {
+        var detail = new MessageTraceDetail
+        {
+            Summary = summary,
+            Events = MapCloudDetailEvents(events)
+        };
+        if (detail.Events.Count == 0)
+            detail.Error = "No delivery detail is available for this message; it may have aged out of the trace window.";
+        return detail;
+    }
+
+    internal static List<MessageTraceDetailEvent> MapCloudDetailEvents(IEnumerable<PSObject> events)
+    {
+        var mapped = new List<MessageTraceDetailEvent>();
+        foreach (var evt in events)
+        {
+            mapped.Add(new MessageTraceDetailEvent
+            {
+                Date = GetPropertyDate(evt, "Date"),
+                Event = GetPropertyString(evt, "Event"),
+                Action = GetPropertyString(evt, "Action"),
+                Detail = GetPropertyString(evt, "Detail", "Data"),
+                Source = string.Empty
+            });
+        }
+        return mapped.OrderBy(e => e.Date).ToList();
+    }
+
+    // The outdated-module signature shared by the summary and detail cloud paths: the V2 cmdlet is
+    // absent on ExchangeOnlineManagement < 3.7.0, surfacing as a "not recognized" command error.
+    internal static bool IsOutdatedModuleError(Exception ex) =>
+        ex.Message.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("is not recognized", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("CommandNotFoundException", StringComparison.OrdinalIgnoreCase);
+
+    // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
 
@@ -161,9 +387,7 @@ public class MessageTraceService : ExchangeServiceBase
                 response.Results = allResults;
                 response.TotalAvailable = allResults.Count;
             }
-            catch (Exception ex) when (ex.Message.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
-                                    || ex.Message.Contains("is not recognized", StringComparison.OrdinalIgnoreCase)
-                                    || ex.Message.Contains("CommandNotFoundException", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex) when (IsOutdatedModuleError(ex))
             {
                 response.Error = "Get-MessageTraceV2 requires ExchangeOnlineManagement 3.7.0 or later. Please update the module.";
                 _logger.LogError(ex, "Get-MessageTraceV2 not available - ExchangeOnlineManagement module may be outdated");
