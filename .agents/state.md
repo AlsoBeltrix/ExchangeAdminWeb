@@ -194,7 +194,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`.
 
 ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job (separate
-`config/exchangeadmin-jobs.db`, never promoted). Self-pumping singleton runner (not a hosted timer);
+`config/exchangeadmin-jobs.db`, never promoted). <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime jobs DB is intentionally created outside source control) --> Self-pumping singleton runner (not a hosted timer);
 single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no resume); always
 cancellable; per-row failure aggregation; completion email fires from the job. Off-circuit auth =
 option (a) (capture the authorization decision at submit, re-check per row via shared pure

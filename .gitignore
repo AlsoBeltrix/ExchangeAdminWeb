@@ -34,10 +34,13 @@ session_*.json
 appsettings.json
 appsettings.Development.json
 
-# Runtime config database (SqliteConfigStore — lives in config/, per-environment)
+# Runtime SQLite databases (live in config/, per-environment)
 config/exchangeadmin.db
 config/exchangeadmin.db-wal
 config/exchangeadmin.db-shm
+config/exchangeadmin-jobs.db
+config/exchangeadmin-jobs.db-wal
+config/exchangeadmin-jobs.db-shm
 
 # IDE
 .vscode/

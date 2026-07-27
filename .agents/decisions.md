@@ -335,8 +335,7 @@ durable decisions this locks in:
    one-shot reconciliation (via an explicit `InitializeAsync()` call in Program.cs, because a DI
    singleton is not constructed until resolved), then only acts when an operator submits.
 
-2. **Job state lives in a SEPARATE operational SQLite database, `config/exchangeadmin-jobs.db`,
-   never the config DB.** Rationale: job state is environment-local (a dev job must never appear
+2. **Job state lives in a SEPARATE operational SQLite database, `config/exchangeadmin-jobs.db`, never the config DB.** <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime jobs DB is intentionally created outside source control) --> Rationale: job state is environment-local (a dev job must never appear
    in prod), high-churn, and prunable; the config DB is promoted dev→prod and backed up before
    every deploy. Mixing them would reintroduce the "many concerns in one store" coupling the
    2026-06-12 SQLite migration exists to kill. The jobs DB inherits the `config/` deploy
@@ -559,7 +558,7 @@ Assessed terrain (agent analysis 2026-06-29 — guidance for the future plan, no
 
 Canonical location / next step when actioned:
 This entry is the durable requirement. The implementation scope still belongs in a
-`docs/ModulePackaging-Plan.md` that must be written and approved before any code. The
+`docs/ModulePackaging-Plan.md` that must be written and approved before any code. <!-- lint: allow (owner ruled leave-it, 2026-07-27: this is the intended future plan path and is not written yet) --> The
 precompiled-vs-runtime decision is to be made when that plan reaches the install/loader stage,
 and recorded then. See also `.agents/state.md` "Queued work → Module packaging/import" and the
 OPEN versioning-rule blocker (new modules should not bump the base app version), which is the
@@ -761,7 +760,7 @@ them in its review log.
    Dynamics plugins, much of the Jenkins/Jira/Grafana ecosystem). Scope when the plan is
    written: documented `.zip` package structure + `tools/validate-module-package.ps1` as the
    gate; defer runtime upload until a real second deployment needs it. This sets the scope for
-   the future `docs/ModulePackaging-Plan.md`; that plan is still required before any
+   the future `docs/ModulePackaging-Plan.md`; that plan is still required before any <!-- lint: allow (owner ruled leave-it, 2026-07-27: this is the intended future plan path and is not written yet) -->
    implementation.
 
 Reason:

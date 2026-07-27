@@ -55,7 +55,7 @@ which should win. Do not silently choose whichever source is convenient.
   `tools/Install-ExchangeAdminWeb.ps1`.
 - Deploy-host dependency: `sqlite3.exe` must be on PATH (`winget install SQLite.SQLite`).
   The deploy/promote scripts use it to make a verified online backup of
-  `config/exchangeadmin.db` before each deploy and fail fast if it is missing (see
+  `config/exchangeadmin.db` before each deploy and fail fast if it is missing (see <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
   `tools/SqliteConfigBackup.psm1`). The app bundles its own SQLite engine; this is a
   host dependency for the ops scripts only.
 
@@ -115,7 +115,7 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 2. Config promotion is dev-wins (`tools/promote-dev-to-prod.ps1`).
 3. Deploys never overwrite runtime config: `appsettings*.json`, `config/`, `logs/`
    are excluded from robocopy mirroring. Preserve these exclusions in any deploy
-   change. Runtime operational config lives in `config/exchangeadmin.db` (SQLite); it
+   change. Runtime operational config lives in `config/exchangeadmin.db` (SQLite); it <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
    is backed up via verified online backup before each deploy, not by raw file copy.
 4. Every ops-script step must support `-PlanOnly` (via `Invoke-PlanOrAction` /
    `Write-Plan`).
