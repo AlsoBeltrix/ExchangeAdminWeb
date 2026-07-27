@@ -36,3 +36,4 @@ _First recorded 2026-07-21._
   `D:\inetpub\ExchangeAdminWebDev`.
 - `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup).
 - harness-cli: codex.ps1 (recorded 2026-07-27, refresh offer)
+- harness-cli: codex.cmd (recorded 2026-07-27, refresh offer)
