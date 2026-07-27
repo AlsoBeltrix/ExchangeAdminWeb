@@ -102,4 +102,55 @@ public class AdOwnershipFilterTests
     {
         Assert.Throws<ArgumentException>(() => AdOwnershipFilter.BuildGroupByNameFilter(name));
     }
+
+    [Fact]
+    public void BuildUserByIdentityFilter_matches_the_three_identifiers_and_is_user_only()
+    {
+        var filter = AdOwnershipFilter.BuildUserByIdentityFilter("jane@contoso.com");
+        Assert.Equal(
+            "(&(objectCategory=person)(objectClass=user)(|(userPrincipalName=jane@contoso.com)(mail=jane@contoso.com)(sAMAccountName=jane@contoso.com)))",
+            filter);
+    }
+
+    [Fact]
+    public void BuildUserByIdentityFilter_is_bounded_to_users_not_groups()
+    {
+        // USER-ONLY membership (codex F7): the person/user bound must be present so a group or other
+        // object with a colliding identity can never be resolved as a member here.
+        var filter = AdOwnershipFilter.BuildUserByIdentityFilter("payroll");
+        Assert.Contains("(objectCategory=person)", filter);
+        Assert.Contains("(objectClass=user)", filter);
+    }
+
+    [Fact]
+    public void BuildUserByIdentityFilter_escapes_wildcard_so_it_cannot_widen_the_match()
+    {
+        // A '*' in the identity must become a LITERAL, never an LDAP wildcard - otherwise "a*" would
+        // match many users and the write could target the wrong principal.
+        var filter = AdOwnershipFilter.BuildUserByIdentityFilter("a*");
+        Assert.DoesNotContain("userPrincipalName=a*", filter);
+        Assert.Contains("(userPrincipalName=a\\2a)", filter);
+        Assert.Contains("(sAMAccountName=a\\2a)", filter);
+    }
+
+    [Fact]
+    public void BuildUserByIdentityFilter_escapes_a_hostile_identity_so_structure_is_intact()
+    {
+        var hostile = "x)(objectClass=*)";
+        var filter = AdOwnershipFilter.BuildUserByIdentityFilter(hostile);
+
+        Assert.Contains("x\\29\\28objectClass=\\2a\\29", filter);
+        // Only the builder's own structural parens are unescaped, exactly 7 pairs:
+        // (&  (objectCategory=person)  (objectClass=user)  (|  (upn=..)  (mail=..)  (sam=..) ) )
+        Assert.Equal(7, filter.Count(c => c == '('));
+        Assert.Equal(7, filter.Count(c => c == ')'));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildUserByIdentityFilter_rejects_blank_identity(string identity)
+    {
+        Assert.Throws<ArgumentException>(() => AdOwnershipFilter.BuildUserByIdentityFilter(identity));
+    }
 }

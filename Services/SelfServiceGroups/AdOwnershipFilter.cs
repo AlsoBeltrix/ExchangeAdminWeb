@@ -74,4 +74,26 @@ public static class AdOwnershipFilter
         // metacharacter in the input cannot broaden the search (codex F11).
         return $"(&(objectCategory=group)(|(name={n})(sAMAccountName={n})))";
     }
+
+    /// <summary>
+    /// Builds the LDAP filter selecting the USER whose userPrincipalName, mail, or sAMAccountName
+    /// EXACTLY equals the given identity (plan task 5, section 6.5 member add/remove). First-cut
+    /// membership is USER-ONLY (codex F7), so <c>objectCategory=person</c> bounds the match to users -
+    /// a nested group, computer, or service principal with a colliding name can never be resolved as a
+    /// member here. The identity is a user-typed value; it is LDAP-escaped so its metacharacters cannot
+    /// alter the filter's structure or widen the match (an injected <c>*</c> becomes a literal
+    /// <c>\2a</c>, not a wildcard - codex F11). The result is a complete, structurally-fixed filter safe
+    /// to pass to Get-ADUser -LDAPFilter.
+    /// </summary>
+    /// <param name="memberIdentity">The user-typed member identity (UPN / email / sAMAccountName).</param>
+    public static string BuildUserByIdentityFilter(string memberIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(memberIdentity))
+            throw new ArgumentException("Member identity is required.", nameof(memberIdentity));
+
+        var m = EscapeLdapFilterValue(memberIdentity);
+        // objectCategory=person restricts to users (USER-ONLY members, codex F7); exact match on the
+        // three identifiers a user is likely to type, no wildcards emitted.
+        return $"(&(objectCategory=person)(objectClass=user)(|(userPrincipalName={m})(mail={m})(sAMAccountName={m})))";
+    }
 }

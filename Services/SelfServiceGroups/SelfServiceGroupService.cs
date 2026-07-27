@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 
@@ -31,8 +32,13 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 public class SelfServiceGroupService
 {
     private readonly ModuleCredentialService _moduleCredentials;
+    private readonly ProtectedPrincipalService _protectedPrincipals;
     private readonly ILogger<SelfServiceGroupService> _logger;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
+
+    // Serializes membership writes PER GROUP (plan section 6.5): two concurrent changes to the same
+    // group must not interleave their read-check-write cycles. Keyed on the group's immutable objectGUID.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _groupWriteLocks = new(StringComparer.OrdinalIgnoreCase);
 
     // Name of the credentialed AD: provider drive mounted per runspace. The DEFAULT AD: drive binds
     // to the PROCESS identity, which would break credential isolation (Spec); every ACL read in this
@@ -45,9 +51,11 @@ public class SelfServiceGroupService
 
     public SelfServiceGroupService(
         ModuleCredentialService moduleCredentials,
+        ProtectedPrincipalService protectedPrincipals,
         ILogger<SelfServiceGroupService> logger)
     {
         _moduleCredentials = moduleCredentials;
+        _protectedPrincipals = protectedPrincipals;
         _logger = logger;
     }
 
@@ -194,6 +202,273 @@ public class SelfServiceGroupService
             var manageable = ProjectGroup(ps, credential, group, callerDn, ownerDisplayCache, canManageMembers: true);
             return new GroupSearchResult(manageable, null);
         }));
+    }
+
+    /// <summary>
+    /// Adds or removes a single USER member on a group the signed-in caller is eligible to manage
+    /// (plan task 5, section 6.5). This is the ONLY mutation in the first cut. Every safety re-check
+    /// runs immediately before the write (AC5), fail-closed on any failure:
+    /// <list type="number">
+    /// <item>the caller identity is a genuine Windows SID (AC6, as the read paths enforce);</item>
+    /// <item>the affected member is resolved USER-ONLY to exactly one immutable id (codex F7) - a
+    ///   not-found or ambiguous member is refused;</item>
+    /// <item>the member passes the protected-principal check (<see cref="ProtectedPrincipalService"/>),
+    ///   fail-closed on Unavailable/Ambiguous resolution (Known Failure Class #3);</item>
+    /// <item>the group still exists, and the caller still holds member-write on it RIGHT NOW - the
+    ///   same DACL eligibility check the list uses (<see cref="CallerCanManageMembers"/>), re-read
+    ///   here so a revoked right blocks the write even though the page still lists the group;</item>
+    /// <item>the change is expressed as idempotent desired-state via
+    ///   <see cref="MembershipChangeReconciler.PlanWrite"/> (add-if-absent / remove-if-present), so a
+    ///   retry is a safe no-op; and</item>
+    /// <item>after the write, membership is READ BACK and reconciled
+    ///   (<see cref="MembershipChangeReconciler.IsDesiredStateReached"/>) so a write that did not take
+    ///   effect is reported as failed, never as blind success (codex F10, Known Failure Class #2).</item>
+    /// </list>
+    /// Writes to the same group are serialized (<see cref="_groupWriteLocks"/>). The residual TOCTOU
+    /// window between the last check and the service-account write is accepted and documented (owner
+    /// decision 2026-07-27); the AD write credential's least-privilege ACL/JEA rights are the backstop.
+    /// Audit + notification are the caller's (page) responsibility (plan section 6.5); this method
+    /// returns a <see cref="PermissionResult"/> the page audits and notifies on.
+    /// </summary>
+    /// <param name="callerSid">The authenticated Windows principal's SID (validated as a SID, per
+    /// <see cref="GetOwnedGroupsAsync"/>). The self-service owner is ALWAYS the authenticated caller.</param>
+    /// <param name="groupObjectGuid">The immutable objectGUID of the target group (from a
+    /// <see cref="ManageableGroup"/> the caller loaded). The write target is keyed on this id, never a
+    /// display name (codex F11).</param>
+    /// <param name="memberIdentity">The user-typed identity of the USER member to add/remove
+    /// (UPN / email / sAMAccountName).</param>
+    /// <param name="operation">Add or Remove.</param>
+    public async Task<PermissionResult> ChangeMemberAsync(
+        string callerSid, string groupObjectGuid, string memberIdentity, MembershipOperation operation)
+    {
+        if (string.IsNullOrWhiteSpace(callerSid))
+            throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
+        if (string.IsNullOrWhiteSpace(groupObjectGuid))
+            throw new ArgumentException("Group objectGUID is required.", nameof(groupObjectGuid));
+        if (string.IsNullOrWhiteSpace(memberIdentity))
+            return PermissionResult.Fail("A member identity is required.");
+
+        // Protected-principal check on the affected member BEFORE taking the group write lock or any AD
+        // write. Fail-closed on Unavailable/Ambiguous (Known Failure Class #3), mirroring
+        // GroupManagementService.CheckProtectedAsync. This gate is enforced in the service, not just the
+        // page, so protection cannot be bypassed by a non-page caller ("UI hiding is not security").
+        var protectionDenial = await CheckMemberProtectedAsync(memberIdentity);
+        if (protectionDenial is not null)
+            return protectionDenial;
+
+        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
+        if (creds is null)
+            return PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+
+        // Serialize per-group so two changes to the same group cannot interleave their check->write
+        // cycles (plan section 6.5). Keyed on the immutable objectGUID.
+        var gate = _groupWriteLocks.GetOrAdd(groupObjectGuid, _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(TimeSpan.FromMinutes(2)))
+            return PermissionResult.Fail("That group is busy with another change. Please try again shortly.");
+
+        try
+        {
+            return await ThrottledAdAsync(async () => await Task.Run(() =>
+            {
+                var iss = InitialSessionState.CreateDefault();
+                iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+                using var runspace = RunspaceFactory.CreateRunspace(iss);
+                runspace.Open();
+                using var ps = PowerShell.Create();
+                ps.Runspace = runspace;
+
+                var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                PrepareAdRunspace(ps, credential);
+
+                var callerDn = ResolveCallerDn(ps, credential, callerSid);
+
+                // Re-read the group by its immutable objectGUID (AC5): resolves nothing if the group was
+                // deleted since load, and gives us the current DN for the ACL + membership operations.
+                var group = ResolveGroupByGuid(ps, credential, groupObjectGuid);
+                if (group is null)
+                    return PermissionResult.Fail("That group no longer exists, or could not be read. Reload your groups and try again.");
+                var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+
+                // Re-check eligibility RIGHT NOW (AC5): the caller's member-write right may have been
+                // revoked since the page listed the group. Same fail-closed DACL check the list uses.
+                if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
+                    return PermissionResult.Fail("You are no longer permitted to manage this group's membership.");
+
+                // Resolve the member USER-ONLY to exactly one immutable id (codex F7, F11).
+                var memberDn = ResolveUserMemberDn(ps, credential, memberIdentity);
+                if (memberDn is null)
+                    return PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again.");
+
+                // Idempotent desired-state (slice 5a): only write if the current membership requires it.
+                var present = IsMemberOfGroup(ps, credential, groupDn, memberDn);
+                var plan = MembershipChangeReconciler.PlanWrite(operation, present);
+                if (plan == MembershipWriteAction.AlreadySatisfied)
+                {
+                    return PermissionResult.Ok(operation == MembershipOperation.Add
+                        ? "That user is already a member of the group."
+                        : "That user is not a member of the group.");
+                }
+
+                if (operation == MembershipOperation.Add)
+                {
+                    ps.AddCommand("Add-ADGroupMember")
+                      .AddParameter("Identity", groupDn)
+                      .AddParameter("Members", memberDn)
+                      .AddParameter("Credential", credential)
+                      .AddParameter("ErrorAction", "Stop");
+                }
+                else
+                {
+                    ps.AddCommand("Remove-ADGroupMember")
+                      .AddParameter("Identity", groupDn)
+                      .AddParameter("Members", memberDn)
+                      .AddParameter("Credential", credential)
+                      .AddParameter("Confirm", false)
+                      .AddParameter("ErrorAction", "Stop");
+                }
+                ps.Invoke();
+                ps.Commands.Clear();
+
+                // Post-write read-back reconciliation (slice 5a / codex F10): confirm the membership
+                // actually reached the requested end state. A write that silently did nothing - or timed
+                // out after we lost the response - is reported as failure, never blind success.
+                var presentAfter = IsMemberOfGroup(ps, credential, groupDn, memberDn);
+                if (!MembershipChangeReconciler.IsDesiredStateReached(operation, presentAfter))
+                    return PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.");
+
+                return PermissionResult.Ok(operation == MembershipOperation.Add
+                    ? "The user was added to the group."
+                    : "The user was removed from the group.");
+            }));
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Protected-principal gate on the affected member (plan section 6.5, codex F9). Resolves the member
+    /// through <see cref="ProtectedPrincipalService"/> and refuses the change when the member is
+    /// protected OR when the protection check cannot be completed (Unavailable/Ambiguous resolution, or
+    /// a check failure) - fail-closed (Known Failure Class #3). Returns null when the member is clear to
+    /// mutate, or a Fail result to abort. Mirrors GroupManagementService.CheckProtectedAsync.
+    /// </summary>
+    private async Task<PermissionResult?> CheckMemberProtectedAsync(string memberIdentity)
+    {
+        try
+        {
+            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(memberIdentity);
+            if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
+                       or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? "That identity is ambiguous - it matches multiple AD users."
+                    : "The protection check is unavailable right now. Please try again shortly.");
+            }
+
+            if (resolved != null)
+            {
+                var check = await _protectedPrincipals.CheckAsync(resolved);
+                if (check.CheckFailed)
+                    return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
+                if (check.IsProtected)
+                    return PermissionResult.Fail("That user is a protected account and cannot be changed here. Contact the IT Support Desk.");
+            }
+
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Protected-principal check failed for member - blocking as a precaution");
+            return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
+        }
+    }
+
+    /// <summary>
+    /// Re-reads a group by its immutable objectGUID (bound -Identity, no interpolation). Returns null
+    /// when the group cannot be resolved (e.g. deleted since the caller loaded it) so the caller fails
+    /// closed rather than writing to a stale target.
+    /// </summary>
+    private static PSObject? ResolveGroupByGuid(PowerShell ps, PSCredential credential, string groupObjectGuid)
+    {
+        try
+        {
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("Identity", groupObjectGuid)
+              .AddParameter("Properties", GroupProperties)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var found = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                return null;
+            }
+            return found.FirstOrDefault();
+        }
+        catch
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the affected member USER-ONLY (codex F7) to exactly one DN via an injection-safe,
+    /// RFC 4515-escaped -LDAPFilter (codex F11, <see cref="AdOwnershipFilter.BuildUserByIdentityFilter"/>).
+    /// Returns null unless EXACTLY one user matches - a not-found or ambiguous identity is refused so
+    /// the write never targets the wrong or an unintended principal.
+    /// </summary>
+    private static string? ResolveUserMemberDn(PowerShell ps, PSCredential credential, string memberIdentity)
+    {
+        var filter = AdOwnershipFilter.BuildUserByIdentityFilter(memberIdentity.Trim());
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("LDAPFilter", filter)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var users = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (users.Count != 1)
+            return null;
+        var dn = users[0].Properties["DistinguishedName"]?.Value?.ToString();
+        return string.IsNullOrWhiteSpace(dn) ? null : dn;
+    }
+
+    /// <summary>
+    /// True when the given member DN is currently a member of the group. Uses a bound -LDAPFilter with
+    /// the member DN LDAP-escaped (codex F11); checks direct membership on the group's <c>member</c>
+    /// attribute. Used both for the idempotency pre-check and the post-write read-back (slice 5a).
+    /// </summary>
+    private static bool IsMemberOfGroup(PowerShell ps, PSCredential credential, string groupDn, string memberDn)
+    {
+        var memberEsc = AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
+        var groupEsc = AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
+        // Ask AD directly whether this user is a member of this group. distinguishedName is bound to the
+        // resolved member DN and memberOf to the resolved group DN; both are escaped so neither can alter
+        // the filter. This reflects the write immediately (unlike a cached member list).
+        var filter = $"(&(distinguishedName={memberEsc})(memberOf={groupEsc}))";
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("LDAPFilter", filter)
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var result = ps.Invoke();
+        ps.Commands.Clear();
+        if (ps.HadErrors)
+        {
+            ps.Streams.Error.Clear();
+            // An errored membership read must not be treated as a definitive answer. Throw so the
+            // read-back reconciliation reports the change as unconfirmed rather than silently wrong.
+            throw new InvalidOperationException("Could not read the group's membership.");
+        }
+        return result.Count > 0;
     }
 
     /// <summary>
