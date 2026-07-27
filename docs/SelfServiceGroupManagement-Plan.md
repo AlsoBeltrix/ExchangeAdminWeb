@@ -2,7 +2,7 @@
 
 Status: Approved (on-prem AD only — see 2026-07-22 scope-narrowed-again decision; task 2 SCALED BACK 2026-07-24 — admin allowlist + domain-wide ACE-scan dropped; eligibility = manager-can-update-membership + on-demand single-group search; see §6.3 and `.agents/decisions.md`)
 Owner: Michael
-Last verified against code: 22c0510 (2026-07-22)
+Last verified against code: 1920eb8 (2026-07-27) — task set (section 7) COMPLETE; see section 9 traceability.
 Approval: self-service core approved by owner 2026-07-22 ("okay, start implementing").
 
 **SCOPE NARROWED AGAIN 2026-07-22 (`.agents/decisions.md` "on-prem AD only"): the M365 /
@@ -585,7 +585,38 @@ cover are called out for manual validation (no dev tenant — same gap as prior 
 
 ## 9. Traceability check  [MODEL fills when iteration ends; YOU read]
 
-<!-- Filled when plan iteration ends (after codex rounds). Empty until then. -->
+Task set (plan section 7) COMPLETE as of commit 1920eb8 (2026-07-27), on-prem AD only.
+Automated verification at that commit: `dotnet build ExchangeAdminWeb.slnx -c Release`
+= 0 errors; `dotnet test ExchangeAdminWeb.slnx` = 748/748 pass; ASCII lint, `dotnet
+format --verify-no-changes`, and `git diff --check HEAD` all clean. Each shipped test
+was proven non-vacuous (revert fix -> test fails -> restore -> pass) per its slice
+record in `.agents/state.md` and `.agents/review/findings/gm3-task*`.
+
+GM-3 test files (`ExchangeAdminWeb.Tests/`): `AdOwnershipFilterTests`,
+`GroupMembershipAceTests`, `GroupMembershipCheckerTests`, `ManageableGroupFilterTests`,
+`MembershipChangeReconcilerTests`, `MembershipChangeResultTests`,
+`SelfServiceGroupServiceTests`.
+
+### AC -> coverage (automated vs manual)
+
+| AC | Automated coverage | Manual-on-dev (no dev tenant) |
+|---|---|---|
+| AC1 | `SelfServiceGroupServiceTests`: `GetOwnedGroupsAsync` resolves caller by immutable SID then queries owned groups; type/other-owners normalized. | Real load against a live DC. |
+| AC2 | Page loads the list only on button click (no OnInitialized fetch) — static/UI, not unit-covered. | Page-open shows no list; spinner note on click. |
+| AC3 | `SelfServiceGroupServiceTests` + `MembershipChangeReconcilerTests`: add/remove desired-state applied; USER-only member resolution. | Real add/remove reflected on re-load. |
+| AC4 | `GroupMembershipCheckerTests` / `GroupMembershipAceTests`: manager-can-update eligibility; unreadable ACL denies (fail-closed). | Owned-but-ineligible group refused on dev. |
+| AC5 | `SelfServiceGroupServiceTests`: each pre-write re-check (group gone / ineligible / ownership-by-GUID / protected principal) independently blocks the write, each non-vacuous. | Live race-window behavior (accepted ms TOCTOU, Decision 2). |
+| AC6 | `SelfServiceGroupServiceTests`: caller SID must be a canonical Windows SID (SDDL aliases rejected); submitted identifiers ignored. | Live Negotiate principal binding. |
+| AC7 | Removed 2026-07-22 — nothing to test. | n/a |
+| AC8 | `SelfServiceGroupServiceTests`: hard AD failure throws (page shows error), never silent empty. | Live "couldn't load your groups" banner. |
+| AC9 | `ManageableGroupFilterTests`: in-list substring filter across Name/SamAccountName/Description, blank = all, order preserved. | Filter box behavior in the page. |
+| AC10 | `MembershipChangeResultTests`: `NotifyAffectedUser` gate (success AND changed AND security group AND known address). Audit-first best-effort admin + affected-user notify wiring is page-side (`SelfServiceGroups.razor`) — static, not unit-covered. | Live audit record written; admin + affected-user emails actually sent. |
+
+Manual-validation-on-dev items (deferred — no dev tenant, same standing gap as prior
+GM work): live AD add/remove, the audit-record write, and the admin + affected-user
+email sends; the Blazor page flow (load button, filter, manage-members panel). No
+delegated security-review gate applies — the M365/delegated-Entra half was dropped
+2026-07-22, so there are no cloud tokens, scheme isolation, or Graph roles to validate.
 
 ## 10. Review log  [MODEL appends each round]
 

@@ -140,9 +140,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
       too long for an arg), run in background. It has direct read-only LOCAL repo access, so it reviews
       un-pushed commits fine. A recurring `Failed to refresh token` line in its log is benign (review still
       runs). Do NOT use `--skip-git-repo-check`. codex-cli 0.145.0 on this machine.
-    - **NEXT: task 6** — verification + manual-validation note (the last task in the plan §7 set). Record
-      what automation covers vs. what needs a live DC/tenant; no dev tenant, so the live AD add/remove +
-      email path is manual-validation-on-dev / deferred. Likely docs-only.
+    - **Task 6 DONE (docs-only)** — verification + manual-validation note, the last task in the plan §7 set.
+      Filled plan §9 traceability (AC->automated-vs-manual mapping) and bumped the plan Status/Last-verified
+      header to `1920eb8 (2026-07-27) — task set COMPLETE`. Verification at that commit: build 0 errors,
+      748/748 tests, ASCII lint + `dotnet format --verify-no-changes` + `git diff --check HEAD` all clean.
+      Manual-validation-on-dev / deferred (no dev tenant): live AD add/remove, audit-record write, admin +
+      affected-user email sends, and the Blazor page flow. No delegated security-review gate (M365 half
+      dropped — no cloud tokens). **GM-3 task set (plan §7) is now COMPLETE.**
   - codex invocation notes: wrapper takes prompt as an ARG. The revised plan is now TOO LONG to pass
     as an arg (node "filename or extension is too long") — instead give codex a SHORT prompt telling
     it to Read the plan file itself (it has read-only repo access; this worked, task `bhqsbvopo`).
