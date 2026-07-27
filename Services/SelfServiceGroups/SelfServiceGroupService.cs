@@ -230,7 +230,10 @@ public class SelfServiceGroupService
     /// window between the last check and the service-account write is accepted and documented (owner
     /// decision 2026-07-27); the AD write credential's least-privilege ACL/JEA rights are the backstop.
     /// Audit + notification are the caller's (page) responsibility (plan section 6.5); this method
-    /// returns a <see cref="PermissionResult"/> the page audits and notifies on.
+    /// returns a <see cref="MembershipChangeResult"/> - the user-facing <see cref="PermissionResult"/>
+    /// plus the facts the caller needs for the mandatory notifications that are only known here (the
+    /// affected member's resolved SMTP/display from the SINGLE resolution above, and whether the group
+    /// is a security group). No second directory lookup is done for notify (codex F1 anti-pattern).
     /// </summary>
     /// <param name="callerSid">The authenticated Windows principal's SID (validated as a SID, per
     /// <see cref="GetOwnedGroupsAsync"/>). The self-service owner is ALWAYS the authenticated caller.</param>
@@ -240,7 +243,7 @@ public class SelfServiceGroupService
     /// <param name="memberIdentity">The user-typed identity of the USER member to add/remove
     /// (UPN / email / sAMAccountName).</param>
     /// <param name="operation">Add or Remove.</param>
-    public async Task<PermissionResult> ChangeMemberAsync(
+    public async Task<MembershipChangeResult> ChangeMemberAsync(
         string callerSid, string groupObjectGuid, string memberIdentity, MembershipOperation operation)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
@@ -252,14 +255,14 @@ public class SelfServiceGroupService
         if (string.IsNullOrWhiteSpace(groupObjectGuid))
             throw new ArgumentException("Group objectGUID is required.", nameof(groupObjectGuid));
         if (string.IsNullOrWhiteSpace(memberIdentity))
-            return PermissionResult.Fail("A member identity is required.");
+            return MembershipChangeResult.From(PermissionResult.Fail("A member identity is required."));
 
         // Fetch THIS module's credential first: it is used both to resolve the affected member and to
         // perform the write, so the resolution the protection check runs on and the write target are the
         // same directory object seen through the same credential.
         var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
         if (creds is null)
-            return PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+            return MembershipChangeResult.From(PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups."));
 
         // Resolve the affected member ONCE, USER-ONLY, to an immutable principal (codex F7, F11), using
         // THIS module's credential. This single resolution feeds BOTH the protected-principal gate below
@@ -276,10 +279,10 @@ public class SelfServiceGroupService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not resolve the affected member - blocking as a precaution");
-            return PermissionResult.Fail("The member could not be resolved right now. Please try again shortly.");
+            return MembershipChangeResult.From(PermissionResult.Fail("The member could not be resolved right now. Please try again shortly."));
         }
         if (member is null || string.IsNullOrWhiteSpace(member.DistinguishedName))
-            return PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again.");
+            return MembershipChangeResult.From(PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again."));
         var memberDn = member.DistinguishedName;
 
         // Protected-principal check on the SAME resolved member (not a second, independent lookup).
@@ -288,13 +291,13 @@ public class SelfServiceGroupService
         // hiding is not security").
         var protectionDenial = await CheckMemberProtectedAsync(member);
         if (protectionDenial is not null)
-            return protectionDenial;
+            return MembershipChangeResult.From(protectionDenial);
 
         // Serialize per-group so two changes to the same group cannot interleave their check->write
         // cycles (plan section 6.5). Keyed on the immutable objectGUID.
         var gate = _groupWriteLocks.GetOrAdd(groupObjectGuid, _ => new SemaphoreSlim(1, 1));
         if (!await gate.WaitAsync(TimeSpan.FromMinutes(2)))
-            return PermissionResult.Fail("That group is busy with another change. Please try again shortly.");
+            return MembershipChangeResult.From(PermissionResult.Fail("That group is busy with another change. Please try again shortly."));
 
         try
         {
@@ -316,13 +319,19 @@ public class SelfServiceGroupService
                 // deleted since load, and gives us the current DN for the ACL + membership operations.
                 var group = ResolveGroupByGuid(ps, credential, groupObjectGuid);
                 if (group is null)
-                    return PermissionResult.Fail("That group no longer exists, or could not be read. Reload your groups and try again.");
+                    return MembershipChangeResult.From(PermissionResult.Fail("That group no longer exists, or could not be read. Reload your groups and try again."));
                 var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+
+                // Whether the target is a SECURITY group decides if the affected user is notified (AC10,
+                // Constitution "Notifications" scopes affected-user notify to access changes; on-prem
+                // security-group membership is the access-bearing case). Read from the re-read group.
+                var isSecurityGroup = string.Equals(
+                    group.Properties["GroupCategory"]?.Value?.ToString(), "Security", StringComparison.OrdinalIgnoreCase);
 
                 // Re-check eligibility RIGHT NOW (AC5): the caller's member-write right may have been
                 // revoked since the page listed the group. Same fail-closed DACL check the list uses.
                 if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
-                    return PermissionResult.Fail("You are no longer permitted to manage this group's membership.");
+                    return MembershipChangeResult.From(PermissionResult.Fail("You are no longer permitted to manage this group's membership."));
 
                 // Idempotent desired-state (slice 5a): only write if the current membership requires it.
                 // Uses the member DN resolved once above - no second resolution.
@@ -330,9 +339,12 @@ public class SelfServiceGroupService
                 var plan = MembershipChangeReconciler.PlanWrite(operation, present);
                 if (plan == MembershipWriteAction.AlreadySatisfied)
                 {
-                    return PermissionResult.Ok(operation == MembershipOperation.Add
-                        ? "That user is already a member of the group."
-                        : "That user is not a member of the group.");
+                    // No write happened, so no affected-user notification (MembershipChanged stays false).
+                    return new MembershipChangeResult(
+                        PermissionResult.Ok(operation == MembershipOperation.Add
+                            ? "That user is already a member of the group."
+                            : "That user is not a member of the group."),
+                        member.PrimarySmtpAddress, member.DisplayName, isSecurityGroup, MembershipChanged: false);
                 }
 
                 if (operation == MembershipOperation.Add)
@@ -385,19 +397,23 @@ public class SelfServiceGroupService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Post-write membership read-back failed - reporting the change as unconfirmed");
-                    return PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.");
+                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership."));
                 }
 
                 if (!MembershipChangeReconciler.IsDesiredStateReached(operation, presentAfter))
                 {
                     if (writeError is not null)
                         _logger.LogWarning(writeError, "Membership write threw and the read-back shows the desired state was not reached");
-                    return PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.");
+                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership."));
                 }
 
-                return PermissionResult.Ok(operation == MembershipOperation.Add
-                    ? "The user was added to the group."
-                    : "The user was removed from the group.");
+                // Write applied and confirmed by read-back: carry the notify metadata so the caller can
+                // audit + notify (MembershipChanged true only here, where a real add/remove took effect).
+                return new MembershipChangeResult(
+                    PermissionResult.Ok(operation == MembershipOperation.Add
+                        ? "The user was added to the group."
+                        : "The user was removed from the group."),
+                    member.PrimarySmtpAddress, member.DisplayName, isSecurityGroup, MembershipChanged: true);
             }));
         }
         finally
