@@ -426,11 +426,85 @@ public class EmailService
         await SendEmailAsync(userEmail, subject, body);
     }
 
-    private async Task SendEmailAsync(string to, string subject, string htmlBody)
+    /// <summary>
+    /// Sends the Message Analysis per-message detail export (a zip attachment) to
+    /// the logged-in user plus the configured admins. The recipient set is derived
+    /// entirely from the authenticated identity and the admin config -- never from
+    /// an operator-typed address -- so the export cannot be exfiltrated to an
+    /// arbitrary mailbox. Fail-soft: a send failure is logged, never thrown into
+    /// the bulk-job result.
+    /// </summary>
+    public virtual async Task SendMessageTraceResultAsync(
+        string userEmail,
+        byte[] zipBytes,
+        string zipFileName,
+        int messageCount,
+        string ticket,
+        string performedBy)
+    {
+        var recipients = ResolveMessageTraceRecipients(userEmail, _adminEmail);
+        if (recipients.Count == 0)
+        {
+            _logger.LogWarning("Message Analysis detail export has no recipient (no user email and no admin email configured); skipping send");
+            return;
+        }
+
+        var subject = $"[Exchange Admin] Message Analysis detail export - {messageCount} message(s) - Ticket #{ticket}";
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        var body = $@"<html>
+<body style=""font-family: Segoe UI, Arial, sans-serif; color: #222;"">
+    <div style=""max-width: 640px; margin: 0 auto;"">
+        <h2>Message Analysis - Delivery Detail Export</h2>
+        <p>The delivery-detail export you requested is attached as a zip file.</p>
+        <table style=""border-collapse: collapse;"" cellpadding=""6"">
+            <tr><td><strong>Messages</strong></td><td>{messageCount}</td></tr>
+            <tr><td><strong>Ticket</strong></td><td>{h(ticket)}</td></tr>
+            <tr><td><strong>Requested by</strong></td><td>{h(performedBy)}</td></tr>
+            <tr><td><strong>Generated</strong></td><td>{h(timestamp)}</td></tr>
+            <tr><td><strong>Attachment</strong></td><td>{h(zipFileName)}</td></tr>
+        </table>
+        <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+    </div>
+</body>
+</html>";
+
+        foreach (var to in recipients)
+        {
+            await SendEmailAsync(to, subject, body, zipBytes, zipFileName);
+        }
+    }
+
+    /// <summary>
+    /// Builds the Message Analysis export recipient set: the logged-in user's
+    /// address plus the configured admin address(es), trimmed, blank-stripped, and
+    /// de-duplicated case-insensitively. Never includes an operator-typed address.
+    /// </summary>
+    internal static IReadOnlyList<string> ResolveMessageTraceRecipients(string? userEmail, string adminEmailCsv)
+    {
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(userEmail))
+            candidates.Add(userEmail);
+        if (!string.IsNullOrWhiteSpace(adminEmailCsv))
+            candidates.AddRange(adminEmailCsv.Split(',', StringSplitOptions.RemoveEmptyEntries));
+
+        return candidates
+            .Select(e => e.Trim())
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private async Task SendEmailAsync(
+        string to,
+        string subject,
+        string htmlBody,
+        byte[]? attachmentBytes = null,
+        string? attachmentFileName = null)
     {
         try
         {
-            await SendEmailOrThrowAsync(to, subject, htmlBody);
+            await SendEmailOrThrowAsync(to, subject, htmlBody, attachmentBytes, attachmentFileName);
         }
         catch (Exception ex)
         {
@@ -438,7 +512,12 @@ public class EmailService
         }
     }
 
-    private async Task SendEmailOrThrowAsync(string to, string subject, string htmlBody)
+    private async Task SendEmailOrThrowAsync(
+        string to,
+        string subject,
+        string htmlBody,
+        byte[]? attachmentBytes = null,
+        string? attachmentFileName = null)
     {
         var message = new MimeMessage();
         message.From.Add(new MailboxAddress(_fromName, _fromAddress));
@@ -446,6 +525,8 @@ public class EmailService
         message.Subject = subject;
 
         var builder = new BodyBuilder { HtmlBody = htmlBody };
+        if (attachmentBytes is not null && !string.IsNullOrWhiteSpace(attachmentFileName))
+            builder.Attachments.Add(attachmentFileName, attachmentBytes);
         message.Body = builder.ToMessageBody();
 
         using var client = new SmtpClient();
