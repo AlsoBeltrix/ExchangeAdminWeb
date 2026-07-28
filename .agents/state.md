@@ -6,6 +6,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **MessageTrace per-message delivery-detail (MT-detail) — COMPLETE 2026-07-27.**
+  `docs/MessageTraceDetail-Plan.md` Status: Implemented. All 9 slices landed on
+  `master`, each committed and codex-reviewed accepted (records
+  `.agents/review/findings/mt-detail-slice1..9.md`, index rows mt-detail-slice1..9).
+  Core defect fixed: the trace no longer collapses a message's per-hop trail; a
+  per-row Details drill-in shows every event (on-prem never collapses, free;
+  cloud costs one `Get-MessageTraceDetailV2` per click), plus checkbox selection
+  with threshold-driven download (1-10) / off-circuit email (1-50, cap 50) of a
+  zipped CSV to the authenticated mailbox + configured admins ONLY (never a typed
+  address; exfiltration-gated), pre-zip CSV saved under
+  `<AuditLogRoot>\ExchangeAdminWeb\MessageTraceExports\`. MessageTrace module
+  `1.1.1 -> 1.2.0`; no base app bump (reuses bulk-job runner / audit root /
+  admin-email config / EXO+on-prem creds). Slice-9 verification: build 0 errors,
+  807/807 tests, format/diff-check clean, `MessageTrace.razor` pure ASCII.
+  **Manual-validation-on-dev / deferred (no dev tenant):** live EXO/on-prem
+  detail drill-in, download parity, email/zip delivery, and the Blazor selection
+  UI — enumerated in the plan's "Manual validation still required" section.
+  Reviewer transport = codex headless CLI per the standing 2026-07-27 owner
+  ruling (see GM-3 note below). Commits `.prompt.txt`/`.result.txt` scratch left
+  untracked pending the owner's commit-vs-clean decision.
+
 - **GM-3 SCOPE NARROWED AGAIN 2026-07-22 → on-prem AD ONLY. M365/delegated-Entra DROPPED entirely.**
   (`.agents/decisions.md` "on-prem AD only"; plan `docs/SelfServiceGroupManagement-Plan.md` revised,
   Status: Approved / on-prem only.) Trigger: the delegated design forced the actor↔Entra binding
