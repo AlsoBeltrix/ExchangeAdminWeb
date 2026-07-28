@@ -200,6 +200,101 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
+    /// Returns the direct members of a group the signed-in caller is eligible to manage (plan
+    /// docs/SelfServiceGroupsMemberListingAndPicker-Plan.md, member listing). Eligibility is
+    /// re-checked here (fail-closed, <see cref="CallerCanManageMembers"/>) so a caller who cannot
+    /// manage the group gets NO member list - never a leaked membership. The caller is identified by
+    /// their immutable Windows SID (AC6, as the other read paths enforce). Throws on a hard AD failure
+    /// or an ineligible/deleted group so the page surfaces a clear error rather than an empty list
+    /// presented as "no members" (Known Failure Class #2).
+    ///
+    /// Each member is projected to <see cref="GroupMember"/> primitives in PowerShell so no
+    /// System.DirectoryServices type crosses into C#; removability is decided by the pure, unit-tested
+    /// <see cref="GroupMemberClassifier"/> (USER-only, matching the first-cut write scope).
+    /// </summary>
+    /// <param name="callerSid">The authenticated Windows principal's SID (validated as a SID, per
+    /// <see cref="GetOwnedGroupsAsync"/>).</param>
+    /// <param name="groupObjectGuid">The immutable objectGUID of the target group (from a
+    /// <see cref="ManageableGroup"/> the caller loaded).</param>
+    public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(string callerSid, string groupObjectGuid)
+    {
+        if (string.IsNullOrWhiteSpace(callerSid))
+            throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
+        if (string.IsNullOrWhiteSpace(groupObjectGuid))
+            throw new ArgumentException("Group objectGUID is required.", nameof(groupObjectGuid));
+
+        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD group member listing");
+        if (creds is null)
+            throw new InvalidOperationException("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+
+        return await ThrottledAdAsync(async () => await Task.Run(() =>
+        {
+            var iss = InitialSessionState.CreateDefault();
+            iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+            using var runspace = RunspaceFactory.CreateRunspace(iss);
+            runspace.Open();
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+            PrepareAdRunspace(ps);
+
+            // Re-read the group by its immutable objectGUID (never a display name); null => gone.
+            var group = ResolveGroupByGuid(ps, credential, groupObjectGuid);
+            if (group is null)
+                throw new InvalidOperationException("That group no longer exists, or could not be read.");
+            var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
+
+            // Fail-closed eligibility gate (AC-M4): a caller who cannot manage the group is never
+            // shown its membership. Throw rather than return empty, so the page shows an error.
+            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
+                throw new InvalidOperationException("You are not permitted to view or manage this group's membership.");
+
+            // Read direct members. Get-ADGroupMember returns objectClass per member, which the pure
+            // classifier maps to a kind + removability. Bound -Identity (objectGUID), no interpolation.
+            ps.AddCommand("Get-ADGroupMember")
+              .AddParameter("Identity", groupObjectGuid)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var members = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                // An errored read must not read as "no members" (Known Failure Class #2).
+                throw new InvalidOperationException("The group's membership could not be read.");
+            }
+
+            var results = new List<GroupMember>();
+            foreach (var m in members)
+            {
+                var objectClass = m.Properties["objectClass"]?.Value?.ToString();
+                var sam = m.Properties["SamAccountName"]?.Value?.ToString() ?? "";
+                var upn = m.Properties["UserPrincipalName"]?.Value?.ToString();
+                results.Add(new GroupMember
+                {
+                    ObjectGuid = m.Properties["objectGUID"]?.Value?.ToString()
+                                 ?? m.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
+                    DistinguishedName = m.Properties["distinguishedName"]?.Value?.ToString()
+                                        ?? m.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+                    DisplayName = m.Properties["name"]?.Value?.ToString()
+                                  ?? m.Properties["Name"]?.Value?.ToString()
+                                  ?? sam,
+                    Identity = !string.IsNullOrWhiteSpace(upn) ? upn : sam,
+                    Kind = GroupMemberClassifier.KindOf(objectClass),
+                    IsRemovable = GroupMemberClassifier.IsRemovable(objectClass),
+                });
+            }
+
+            return (IReadOnlyList<GroupMember>)results;
+        }));
+    }
+
+    /// <summary>
     /// Adds or removes a single USER member on a group the signed-in caller is eligible to manage
     /// (plan task 5, section 6.5). This is the ONLY mutation in the first cut. Every safety re-check
     /// runs immediately before the write (AC5), fail-closed on any failure:
