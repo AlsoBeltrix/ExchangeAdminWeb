@@ -9,8 +9,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
   each codex-reviewed accepted. MessageTrace module 1.1.1 -> 1.2.0, no base app bump.
-  Full record archived: `docs/history/state-archive.md`. Manual-validation-on-dev
-  deferred (no dev tenant): live EXO/on-prem detail drill-in, download/email/zip delivery,
+  Full record archived: `docs/history/state-archive.md`. Live validation not yet performed
+  (runs against real PROD EXO/on-prem AD, from the dev instance): detail drill-in, download/email/zip delivery,
   Blazor selection UI (enumerated in the plan).
 
 - **GM-3 self-service group management (on-prem AD only) — task set DONE, landed 2026-07-27.**
@@ -18,7 +18,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   (plan section 7) complete and codex-reviewed. M365/delegated-Entra dropped 2026-07-22.
   SelfServiceGroups module at 1.1.0 (added at 1.0.0, no base app bump). Full record + the
   scope-narrowing and ACL-scan-drop history archived: `docs/history/state-archive.md`.
-  Manual-validation-on-dev deferred (no dev tenant): live AD add/remove, audit write,
+  Live validation not yet performed (runs against real PROD AD, from the dev instance): live AD add/remove, audit write,
   admin + affected-user email, the Blazor page flow.
 
 - **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
@@ -33,8 +33,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
   **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
   `appsettings.json` must set it before deploying `2.3.29`.
-- **OPEN:** manual dev validation of `2.3.29` (deferred, same tenant gap as Bulk Job Runner);
-  promote `2.3.29` to prod when validated (needs owner go; deploy is script-only).
+- **OPEN:** live validation of `2.3.29` not yet performed (runs against PROD AD/Exchange from the
+  dev instance, same as Bulk Job Runner); promote `2.3.29` to prod once validated (needs owner
+  go; deploy is script-only).
 - **This session landed (2026-07-21), all pushed + CI green:**
   - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
     decisions.md + repo-guidance; resolved the long-open versioning exception).
@@ -70,25 +71,24 @@ Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs b
 (`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green (as of `9d26b5f`); build/format/diff-check
 clean; each slice codex-reviewed with findings fixed before commit.
 
-**Next action:** run manual validation on dev (below) — the UI and end-to-end job lifecycle are not
+**Next action:** run live validation from the dev instance against PROD EXO/AD -- the UI and end-to-end job lifecycle are not
 covered by automated tests. (Dev deploy done 2026-07-20.)
 
 ## Next up (prioritized)
 
 Live backlog only. Items need an approved plan before code unless noted.
-
-1. **Manual-validate the Bulk Job Runner on dev — DEFERRED (owner, 2026-07-20).** No test data and
-   no dev/QA tenant for AD or Exchange, so a real end-to-end run is not possible here. The runner
-   *logic* is already covered by xUnit without a live tenant — lifecycle (FIFO queue, cancel,
-   recycle→Interrupted via `Initialize_FlipsOrphanedNonTerminalJobsToInterrupted`), per-row failure
-   aggregation, completion notification (all variants), and the protected-principal block on **both**
-   Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays unvalidated
-   until a real tenant run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
-   write. Revisit when a controlled prod run is possible; do not close out until then.
+1. **Live-validate the Bulk Job Runner (owner-deferred, 2026-07-20).** Runs from the dev instance
+   against real PROD AD/Exchange (the only tenant there is; both instances on this server point at
+   it). The runner *logic* is already covered by xUnit without a live run -- lifecycle (FIFO queue,
+   cancel, recycle->Interrupted via `Initialize_FlipsOrphanedNonTerminalJobsToInterrupted`), per-row
+   failure aggregation, completion notification (all variants), and the protected-principal block on
+   **both** Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays
+   unvalidated until a live run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
+   write. Do not close out until performed.
 2. **Single-room Finder protected-principal gap** — **DONE** (2026-07-21, commit 2a97d09;
    `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` Implemented). Consolidated the
    module PP check into one `ConferenceRoomProtectionGate` (C2-G). Only remaining follow-up is
-   live-tenant/UI validation (deferred, no dev tenant).
+   live-instance/UI validation not yet performed (runs against PROD from the dev instance).
 3. **Module packaging/import — DEFERRED (owner, 2026-07-22)** as low-value/high-cost. Not to be
    worked on or raised as next; no plan. End-state direction retained only as history in
    `.agents/decisions.md` (2026-07-22 deferral, refining 2026-06-29 & 06-18).
@@ -98,7 +98,7 @@ Live backlog only. Items need an approved plan before code unless noted.
    back up. Not to be worked on or raised as next.
 5. **GM-3 self-service group management (on-prem AD only) — DONE 2026-07-27.** All 6 tasks (plan
    section 7) landed and codex-reviewed; see the `## Now` pointer and `docs/history/state-archive.md`.
-   Only follow-up is manual-validation-on-dev (no dev tenant). Not next.
+   Only follow-up is live validation, not yet performed (runs against PROD AD from the dev instance). Not next.
 6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
    code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
    excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
@@ -122,8 +122,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   guarded-execution helper): page Finder+Type and each bulk row route through `GuardThenRunAsync`;
   the write runs only when the gate clears; the two prior near-duplicate inline checks were removed.
   672 tests pass; non-vacuity verified. Plan Implemented
-  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). **Live-tenant/UI validation not
-  run** (no dev tenant) — deferred to a future controlled run, same as the Bulk Job Runner.
+  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). **Live/UI validation not yet
+  performed** (runs against PROD from the dev instance, same as Bulk Job Runner).
 - **OPEN — AccountLockoutRemediation not yet exercised on dev** (owner deferred, 2026-06-29). Run
   the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
   dry-run+logoff, protected-block) when ready. Gates the rule-3 user-notify decision above.
@@ -168,9 +168,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - `docs/ProjectConstitution.md` — highest engineering authority.
 - `.agents/decisions.md` — durable decisions (most recent: Bulk Job Runner, 2026-07-02).
 - `.agents/repo-map.json` — automated verification map.
-- Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, pending dev validation);
-  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21, pending
-  live-tenant validation). No plan is currently `In progress`.
+- Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
+  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
+  live/UI validation pending). No plan is currently `In progress`.
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory

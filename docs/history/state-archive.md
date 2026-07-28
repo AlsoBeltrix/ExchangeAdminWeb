@@ -3,6 +3,14 @@
 Landed and superseded `## Now` entries rotated out of `.agents/state.md` by the
 `catchup` hygiene sweep, kept verbatim for history. Newest first.
 
+> **Terminology correction (2026-07-28):** the archived text below repeatedly says
+> "manual-validation-on-dev / no dev tenant." That wording is wrong and is retained only
+> as verbatim history. There is no separate dev tenant by design: both the dev and prod
+> instances run on this server and connect to the same live PROD AD/Exchange. The dev
+> deploy proves the app loads; functional validation is done against real PROD data and
+> can be run from the dev instance. Read every "no dev tenant" below as "live validation
+> not yet performed."
+
 ## Archived 2026-07-28 (catchup sweep)
 
 ### MessageTrace per-message delivery-detail (MT-detail) — landed complete 2026-07-27
