@@ -12,8 +12,13 @@ public class PermissionValidatorTests
 {
     private static PermissionValidator CreateValidator(
         string[]? excludedUsers = null,
-        bool preventSelfGrant = true)
+        bool preventSelfGrant = true,
+        string[]? appsettingsExcludedUsers = null)
     {
+        // Unique DB dir per validator so seeded module config does not leak across tests.
+        var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testDir);
+
         var configData = new Dictionary<string, string?>
         {
             ["Security:PreventSelfGrant"] = preventSelfGrant.ToString(),
@@ -21,10 +26,12 @@ public class PermissionValidatorTests
             ["Audit:LogRoot"] = Path.Combine(Path.GetTempPath(), "eaw-test-logs")
         };
 
-        if (excludedUsers is not null)
+        // Retired appsettings source: seeded only by the guard test that proves a value
+        // present ONLY under Security:ExcludedUsers is no longer read (retired 2026-07-28).
+        if (appsettingsExcludedUsers is not null)
         {
-            for (int i = 0; i < excludedUsers.Length; i++)
-                configData[$"Security:ExcludedUsers:{i}"] = excludedUsers[i];
+            for (int i = 0; i < appsettingsExcludedUsers.Length; i++)
+                configData[$"Security:ExcludedUsers:{i}"] = appsettingsExcludedUsers[i];
         }
 
         var config = new ConfigurationBuilder()
@@ -39,9 +46,19 @@ public class PermissionValidatorTests
         scope.ServiceProvider.Returns(serviceProvider);
 
         var env = Substitute.For<IWebHostEnvironment>();
-        env.ContentRootPath.Returns(Path.GetTempPath());
+        env.ContentRootPath.Returns(testDir);
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(Path.GetTempPath()), moduleConfigLogger);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(testDir), moduleConfigLogger);
+
+        // Exclusions are read from the MailboxPermissions/ExcludedUsers module config
+        // (the only source since the appsettings fallback was retired 2026-07-28).
+        if (excludedUsers is not null)
+        {
+            moduleConfig.SaveModuleConfig("MailboxPermissions", new Dictionary<string, string>
+            {
+                ["ExcludedUsers"] = string.Join(",", excludedUsers)
+            });
+        }
 
         var httpClientFactory = Substitute.For<IHttpClientFactory>();
         httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
@@ -144,6 +161,18 @@ public class PermissionValidatorTests
         var validator = CreateValidator(excludedUsers: Array.Empty<string>());
 
         var result = await validator.ValidateTargetMailboxAsync("anyone@company.com");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_AppsettingsOnlyExclusion_IsNotProtected()
+    {
+        // Guards the retirement of the Security:ExcludedUsers appsettings fallback
+        // (2026-07-28): a value present ONLY under appsettings, with the module config
+        // empty, must NOT be treated as excluded. Restoring the fallback read fails this.
+        var validator = CreateValidator(appsettingsExcludedUsers: new[] { "AppsettingsOnlyGroup" });
+
+        var result = await validator.ValidateTargetMailboxAsync("AppsettingsOnlyGroup");
         Assert.Null(result);
     }
 

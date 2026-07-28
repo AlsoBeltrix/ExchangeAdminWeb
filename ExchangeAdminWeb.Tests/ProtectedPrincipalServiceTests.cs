@@ -459,6 +459,45 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.True(centralResult.IsProtected);
     }
 
+    // --- Legacy exclusions source: module config only, no appsettings fallback ---
+
+    [Fact]
+    public async Task Check_LegacyExclusion_FromModuleConfig_IsProtected()
+    {
+        // The MailboxPermissions/ExcludedUsers module config is the sole legacy source.
+        var moduleConfigStore = TestConfigStore.Create(_tempDir);
+        new ExchangeAdminWeb.Services.Storage.ModuleConfigRepository(moduleConfigStore)
+            .SaveModule("MailboxPermissions", new Dictionary<string, string>
+            {
+                ["ExcludedUsers"] = "legacy@contoso.com"
+            });
+
+        var service = CreateService(moduleConfigStore: moduleConfigStore);
+        var result = await service.CheckAsync(MakePrincipal("legacy@contoso.com"));
+
+        Assert.True(result.IsProtected);
+        Assert.Contains("LegacyExclusion:legacy@contoso.com", result.MatchedRules);
+    }
+
+    [Fact]
+    public async Task Check_LegacyExclusion_AppsettingsSource_IsNotProtected()
+    {
+        // Guards the retirement of the Security:ExcludedUsers appsettings fallback
+        // (2026-07-28): a value present ONLY under appsettings, with the module config
+        // empty, must NOT contribute a LegacyExclusion match. Restoring the fallback
+        // read (GetLegacyExclusions) fails this test.
+        var overrides = new Dictionary<string, string?>
+        {
+            ["Security:ExcludedUsers:0"] = "appsettings-only@contoso.com"
+        };
+        var service = CreateService(configOverrides: overrides);
+
+        var result = await service.CheckAsync(MakePrincipal("appsettings-only@contoso.com"));
+
+        Assert.False(result.IsProtected);
+        Assert.DoesNotContain("LegacyExclusion:appsettings-only@contoso.com", result.MatchedRules);
+    }
+
     // --- Config save invalidates cache ---
 
     [Fact]
