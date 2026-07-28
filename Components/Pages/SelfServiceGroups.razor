@@ -28,154 +28,164 @@
 }
 
 <div class="container-fluid">
-    <div class="alert alert-info py-2 mb-3">
-        <small>View and manage membership of the on-premises Active Directory groups you own and are
-        permitted to update. This page always acts as you, the signed-in user.</small>
-    </div>
-    <h1 class="mb-4">Self-Service Groups<ModuleVersion /></h1>
-
-    <!-- Load the groups I can manage. Nothing loads on page open (AC2); the load runs a per-group
-         ACL read, so the button is disabled and a spinner shown while it runs (plan section 6.4). -->
-    <div class="card mb-3">
-        <div class="card-body">
-            <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@isLoading">
-                @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                Load the groups I can manage
-            </button>
-            @if (isLoading)
-            {
-                <span class="ms-2 text-muted">Reading group permissions, this can take a moment...</span>
-            }
+    @if (selected == null)
+    {
+        <!-- Browse view: load / list / search. Once a group is selected this whole block is replaced
+             by the manage view below, so the management UI sits at the top of the page instead of
+             stacking under the browse controls (UX redesign 2026-07-28). -->
+        <div class="alert alert-info py-2 mb-3">
+            <small>View and manage membership of the on-premises Active Directory groups you own and are
+            permitted to update. This page always acts as you, the signed-in user.</small>
         </div>
-    </div>
+        <h1 class="mb-4">Self-Service Groups<ModuleVersion /></h1>
 
-    @if (loadError != null)
-    {
-        <!-- Hard failure: show a clear error, NEVER "no groups found" on failure (AC8). -->
-        <div class="alert alert-danger">@loadError</div>
-    }
-    else if (loaded)
-    {
-        @if (ownedGroups.Count == 0)
+        <!-- Load the groups I can manage. Nothing loads on page open (AC2); the load runs a per-group
+             ACL read, so the button is disabled and a spinner shown while it runs (plan section 6.4). -->
+        <div class="card mb-3">
+            <div class="card-body">
+                <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@isLoading">
+                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                    Load the groups I can manage
+                </button>
+                @if (isLoading)
+                {
+                    <span class="ms-2 text-muted">Reading group permissions, this can take a moment...</span>
+                }
+            </div>
+        </div>
+
+        @if (loadError != null)
         {
-            <div class="alert alert-secondary">You do not own any groups whose membership you can update.</div>
+            <!-- Hard failure: show a clear error, NEVER "no groups found" on failure (AC8). -->
+            <div class="alert alert-danger">@loadError</div>
         }
-        else
+        else if (loaded)
         {
-            <div class="card mb-3">
-                <div class="card-body">
-                    <!-- In-list filter (AC9): pure client-side filtering over the already-loaded list;
-                         matches a mid-name term or a description word, no directory round-trip. -->
-                    <div class="input-group input-group-sm mb-3">
-                        <span class="input-group-text"><i class="bi bi-funnel"></i></span>
-                        <input type="text" class="form-control" @bind="filterTerm" @bind:event="oninput"
-                               placeholder="Filter loaded groups by name or description" />
-                        @if (!string.IsNullOrWhiteSpace(filterTerm))
+            @if (ownedGroups.Count == 0)
+            {
+                <div class="alert alert-secondary">You do not own any groups whose membership you can update.</div>
+            }
+            else
+            {
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <!-- In-list filter (AC9): pure client-side filtering over the already-loaded list;
+                             matches a mid-name term or a description word, no directory round-trip. -->
+                        <div class="input-group input-group-sm mb-3">
+                            <span class="input-group-text"><i class="bi bi-funnel"></i></span>
+                            <input type="text" class="form-control" @bind="filterTerm" @bind:event="oninput"
+                                   placeholder="Filter loaded groups by name or description" />
+                            @if (!string.IsNullOrWhiteSpace(filterTerm))
+                            {
+                                <button class="btn btn-outline-secondary" @onclick="() => filterTerm = string.Empty">Clear</button>
+                            }
+                        </div>
+
+                        @{
+                            var visibleGroups = ManageableGroupFilter.Filter(ownedGroups, filterTerm);
+                        }
+                        @if (visibleGroups.Count == 0)
                         {
-                            <button class="btn btn-outline-secondary" @onclick="() => filterTerm = string.Empty">Clear</button>
+                            <!-- Filtered to nothing: this is a filter result over a loaded list, NOT a load
+                                 failure, so it is safe to say the filter matched nothing (distinct from AC8). -->
+                            <div class="alert alert-secondary mb-0">No loaded groups match "@filterTerm".</div>
+                        }
+                        else
+                        {
+                            <table class="table table-sm align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Type</th>
+                                        <th>Other owners</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var g in visibleGroups)
+                                    {
+                                        var group = g;
+                                        <tr>
+                                            <td>@group.Name</td>
+                                            <td>@group.GroupType</td>
+                                            <td>@(group.OtherOwners.Count == 0 ? "-" : string.Join(", ", group.OtherOwners))</td>
+                                            <td class="text-end">
+                                                <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(group)">Manage members</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
                         }
                     </div>
-
-                    @{
-                        var visibleGroups = ManageableGroupFilter.Filter(ownedGroups, filterTerm);
-                    }
-                    @if (visibleGroups.Count == 0)
-                    {
-                        <!-- Filtered to nothing: this is a filter result over a loaded list, NOT a load
-                             failure, so it is safe to say the filter matched nothing (distinct from AC8). -->
-                        <div class="alert alert-secondary mb-0">No loaded groups match "@filterTerm".</div>
-                    }
-                    else
-                    {
-                        <table class="table table-sm align-middle mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Type</th>
-                                    <th>Other owners</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                @foreach (var g in visibleGroups)
-                                {
-                                    var group = g;
-                                    <tr class="@(selected?.ObjectGuid == group.ObjectGuid ? "table-active" : "")">
-                                        <td>@group.Name</td>
-                                        <td>@group.GroupType</td>
-                                        <td>@(group.OtherOwners.Count == 0 ? "-" : string.Join(", ", group.OtherOwners))</td>
-                                        <td class="text-end">
-                                            <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(group)">Manage members</button>
-                                        </td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
-                    }
                 </div>
-            </div>
+            }
         }
-    }
 
-    <!-- On-demand single-group search (plan section 6.3): a user who can manage a group not in the
-         list above (e.g. via a direct per-group ACE) types its name. A not-found and a
-         not-manageable outcome are deliberately indistinguishable. -->
-    <div class="card mb-3">
-        <div class="card-header">Find a specific group by name</div>
-        <div class="card-body">
-            <div class="input-group">
-                <input type="text" class="form-control" @bind="searchName" @bind:event="oninput"
-                       @onkeydown="OnSearchKeyDown"
-                       placeholder="Exact group name or sAMAccountName" disabled="@isSearching" />
-                <button class="btn btn-outline-primary" @onclick="SearchGroup"
-                        disabled="@(isSearching || string.IsNullOrWhiteSpace(searchName))">
-                    @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                    Search
-                </button>
+        <!-- On-demand single-group search (plan section 6.3): a user who can manage a group not in the
+             list above (e.g. via a direct per-group ACE) types its name. A not-found and a
+             not-manageable outcome are deliberately indistinguishable. -->
+        <div class="card mb-3">
+            <div class="card-header">Find a specific group by name</div>
+            <div class="card-body">
+                <div class="input-group">
+                    <input type="text" class="form-control" @bind="searchName" @bind:event="oninput"
+                           @onkeydown="OnSearchKeyDown"
+                           placeholder="Exact group name or sAMAccountName" disabled="@isSearching" />
+                    <button class="btn btn-outline-primary" @onclick="SearchGroup"
+                            disabled="@(isSearching || string.IsNullOrWhiteSpace(searchName))">
+                        @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                        Search
+                    </button>
+                </div>
+
+                @if (searchMessage != null)
+                {
+                    <div class="alert alert-warning mt-3 mb-0">@searchMessage</div>
+                }
+                else if (searchResult != null)
+                {
+                    <table class="table table-sm align-middle mt-3 mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Other owners</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>@searchResult.Name</td>
+                                <td>@searchResult.GroupType</td>
+                                <td>@(searchResult.OtherOwners.Count == 0 ? "-" : string.Join(", ", searchResult.OtherOwners))</td>
+                                <td class="text-end">
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(searchResult)">Manage members</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                }
             </div>
-
-            @if (searchMessage != null)
-            {
-                <div class="alert alert-warning mt-3 mb-0">@searchMessage</div>
-            }
-            else if (searchResult != null)
-            {
-                <table class="table table-sm align-middle mt-3 mb-0">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Type</th>
-                            <th>Other owners</th>
-                            <th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr class="@(selected?.ObjectGuid == searchResult.ObjectGuid ? "table-active" : "")">
-                            <td>@searchResult.Name</td>
-                            <td>@searchResult.GroupType</td>
-                            <td>@(searchResult.OtherOwners.Count == 0 ? "-" : string.Join(", ", searchResult.OtherOwners))</td>
-                            <td class="text-end">
-                                <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(searchResult)">Manage members</button>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-            }
         </div>
-    </div>
-
-    @if (selected != null)
+    }
+    else
     {
-        <!-- Member management panel (plan section 6.5): add/remove a USER member by typed identity on
-             the selected group. The service has no member-listing method in the first cut, so this is
-             add/remove by identity, not a remove-from-list UI. Every change re-checks module
-             authorization on the page (defense in depth) and the service re-checks group/eligibility/
-             ownership/protection immediately before the write (AC5). -->
+        <!-- Manage view (plan section 6.5): add/remove a USER member on the selected group. Shown in
+             place of the browse view so it is pinned to the top of the page - no scrolling past the
+             load/list/search controls to reach it. "Back to groups" returns to the browse view and
+             clears the per-group state. Every change re-checks module authorization on the page
+             (defense in depth) and the service re-checks group/eligibility/ownership/protection
+             immediately before the write (AC5). -->
+        <div class="d-flex align-items-center mb-3">
+            <button class="btn btn-outline-secondary btn-sm me-3" @onclick="BackToGroups">
+                <i class="bi bi-arrow-left"></i> Back to groups
+            </button>
+            <h1 class="h3 mb-0">Manage members of <strong>@selected.Name</strong>
+                <span class="badge bg-light text-dark border ms-1">@selected.GroupType</span></h1>
+        </div>
+
         <div class="card mb-3 border-primary">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <span>Manage members of <strong>@selected.Name</strong> <span class="badge bg-light text-dark border ms-1">@selected.GroupType</span></span>
-                <button type="button" class="btn-close" aria-label="Close" @onclick="() => { selected = null; changeResult = null; groupMembers = []; memberLoadError = null; }"></button>
-            </div>
             <div class="card-body">
                 <p class="text-muted"><small>Add or remove a user by their username, email, or user principal name.
                 Membership changes take effect in on-premises Active Directory immediately.</small></p>
@@ -325,6 +335,17 @@
         memberIdentity = "";
         changeResult = null;
         await LoadMembers();
+    }
+
+    // Returns from the manage view to the browse view (UX redesign 2026-07-28) and clears all
+    // per-group state so a later selection starts clean.
+    private void BackToGroups()
+    {
+        selected = null;
+        memberIdentity = "";
+        changeResult = null;
+        groupMembers = [];
+        memberLoadError = null;
     }
 
     // Loads the selected group's current members (AC-M1). Fail-closed display: a read error sets
