@@ -13,13 +13,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   (runs against real PROD EXO/on-prem AD, from the dev instance): detail drill-in, download/email/zip delivery,
   Blazor selection UI (enumerated in the plan).
 
-- **GM-3 self-service group management (on-prem AD only) — task set DONE, landed 2026-07-27.**
+- **GM-3 self-service group management (on-prem AD only) — task set DONE, landed 2026-07-27;
+  two follow-ups landed 2026-07-28.**
   Plan `docs/SelfServiceGroupManagement-Plan.md` Status: Approved / on-prem only; all 6 tasks
   (plan section 7) complete and codex-reviewed. M365/delegated-Entra dropped 2026-07-22.
-  SelfServiceGroups module at 1.1.0 (added at 1.0.0, no base app bump). Full record + the
-  scope-narrowing and ACL-scan-drop history archived: `docs/history/state-archive.md`.
-  Live validation not yet performed (runs against real PROD AD, from the dev instance): live AD add/remove, audit write,
-  admin + affected-user email, the Blazor page flow.
+  Full record + the scope-narrowing and ACL-scan-drop history archived:
+  `docs/history/state-archive.md`.
+  - **2026-07-28 DACL-read fix (`28efc88`):** eligibility read was `Get-Acl AD:\<DN>`, which
+    returned an empty `.Access` in the service runspace, fail-closed-excluding every group (page
+    always showed "no groups"). Now reads `Get-ADGroup -Properties nTSecurityDescriptor`. Module
+    1.1.0 -> 1.1.1.
+  - **2026-07-28 member listing + AD picker (`a190664`,`fd16982`,`428a19e`,`80fe2a5`):** plan
+    `docs/SelfServiceGroupsMemberListingAndPicker-Plan.md` (Approved 2026-07-28). Manage panel now
+    lists current members with per-user Remove; member add box uses the shared
+    `ADIdentityAutocomplete` (Option A: suggestions under app-pool identity, write stays isolated +
+    re-validated — `.agents/decisions.md` 2026-07-28). Module 1.1.1 -> 1.2.0. Build/format/824
+    tests green (17 new `GroupMemberClassifierTests`, non-vacuity proven).
+  SelfServiceGroups module now at **1.2.0** (added at 1.0.0, no base app bump).
+  Live validation not yet performed (runs against real PROD AD, from the dev instance): live AD
+  add/remove, member list render + remove, audit write, admin + affected-user email, the Blazor
+  page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
+  does not resolve the "no groups" symptom.
 
 - **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
   for the app-wide log-root fail-fast change (`3eac48a`).
