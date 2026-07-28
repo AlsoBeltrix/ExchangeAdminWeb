@@ -7,7 +7,7 @@ using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
 
-public class MessageTraceService : ExchangeServiceBase
+public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetailSource
 {
     public MessageTraceService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MessageTraceService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MessageTrace", operationTrace) { }

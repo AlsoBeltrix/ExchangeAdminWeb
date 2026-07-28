@@ -74,6 +74,8 @@ try
             // module id -> processor type; the type is resolved per-job from a fresh scope.
             new(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName,
                 typeof(ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor)),
+            new(ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor.ModuleName,
+                typeof(ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor)),
         }));
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
 
@@ -137,6 +139,12 @@ try
     builder.Services.AddScoped<RecipientLookupService>();
     builder.Services.AddScoped<HeaderAnalysisService>();
     builder.Services.AddScoped<MessageTraceService>();
+    // The Message Analysis detail-export bulk processor talks to detail through the narrow
+    // IMessageTraceDetailSource seam (implemented by MessageTraceService) so it is unit-testable
+    // without live EXO/on-prem, and is resolved per-job from a fresh scope by the runner.
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.IMessageTraceDetailSource>(
+        sp => sp.GetRequiredService<MessageTraceService>());
+    builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor>();
     builder.Services.AddScoped<MailboxPermissionService>();
     builder.Services.AddScoped<CalendarPermissionService>();
     builder.Services.AddScoped<BlockedSenderService>();
