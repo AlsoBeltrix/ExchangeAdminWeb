@@ -13,6 +13,8 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
+@inject IConfiguration Configuration
 @inject IJSRuntime JS
 
 <PageTitle>Message Analysis</PageTitle>
@@ -362,10 +364,58 @@
                         <p class="text-muted mb-0">@response.Results.Count result(s)</p>
                         <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
                     </div>
+
+                    <div class="border rounded p-2 mb-2 bg-light">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <span class="me-2"><strong>@selectedIndices.Count</strong> selected@(SelectionCappedAt50 ? " (cap 50)" : "")</span>
+                            @{
+                                var action = MessageTraceDetailReport.ResolveAction(selectedIndices.Count);
+                            }
+                            <button type="button" class="btn btn-sm btn-primary" disabled="@(action != MessageTraceDetailAction.LiveOrEmail || detailActionBusy)" @onclick="DownloadSelectedDetails">
+                                @if (detailActionBusy && detailActionKind == "download")
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                Download details
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-primary" disabled="@(action == MessageTraceDetailAction.None || detailActionBusy)" @onclick="EmailSelectedDetails">
+                                @if (detailActionBusy && detailActionKind == "email")
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1"></span>
+                                }
+                                Email details
+                            </button>
+                            @if (selectedIndices.Count > 0)
+                            {
+                                <button type="button" class="btn btn-sm btn-link" @onclick="ClearSelection" disabled="@detailActionBusy">Clear</button>
+                            }
+                        </div>
+                        @if (action == MessageTraceDetailAction.EmailOnly)
+                        {
+                            <div class="form-text mb-0">@MessageTraceDetailReport.LiveMax or fewer can be downloaded live; @(selectedIndices.Count) selected must be delivered by email.</div>
+                        }
+                        @if (selectedIndices.Count > 0)
+                        {
+                            <div class="form-text mb-0">Emailed reports are sent only to <strong>@DestinationDisplay()</strong> - never a typed-in address.</div>
+                        }
+                    </div>
+
+                    @if (detailActionError != null)
+                    {
+                        <div class="alert alert-danger">@detailActionError</div>
+                    }
+                    @if (emailJobSubmitted)
+                    {
+                        <div class="alert alert-success">Detail export submitted as a background job. The zipped report will be emailed to <strong>@DestinationDisplay()</strong> when it is ready - you can close this tab.</div>
+                    }
+
                     <div class="table-responsive">
                         <table class="table table-sm table-striped align-middle">
                             <thead>
                                 <tr>
+                                    <th style="width: 32px;">
+                                        <input type="checkbox" class="form-check-input" checked="@AllSelectableChecked" @onchange="ToggleSelectAll" title="Select all (first @MessageTraceDetailReport.EmailMax)" />
+                                    </th>
                                     <th>Received</th>
                                     <th>Backend</th>
                                     <th>Sender</th>
@@ -383,6 +433,9 @@
                                     var index = i;
                                     var msg = response.Results[index];
                                     <tr>
+                                        <td>
+                                            <input type="checkbox" class="form-check-input" checked="@selectedIndices.Contains(index)" @onchange="e => ToggleRowSelection(index, e)" />
+                                        </td>
                                         <td>@msg.Received.ToString("yyyy-MM-dd HH:mm")</td>
                                         <td>@msg.Backend</td>
                                         <td>@msg.SenderAddress</td>
@@ -404,7 +457,7 @@
                                     @if (expandedIndex == index)
                                     {
                                         <tr class="table-light">
-                                            <td colspan="9">
+                                            <td colspan="10">
                                                 @if (detailLoading)
                                                 {
                                                     <div class="d-flex align-items-center gap-2 text-muted">
@@ -477,6 +530,16 @@
     private bool detailLoading;
     private MessageTraceDetail? detail;
     private int detailRequestToken;
+    private readonly HashSet<int> selectedIndices = new();
+    private bool detailActionBusy;
+    private string? detailActionKind;
+    private string? detailActionError;
+    private bool emailJobSubmitted;
+
+    private bool SelectionCappedAt50 => selectedIndices.Count >= MessageTraceDetailReport.EmailMax;
+    private bool AllSelectableChecked =>
+        response?.Results is { Count: > 0 } results
+        && selectedIndices.Count == MessageTraceDetailReport.SelectAllCount(results.Count);
     private string currentUser = "";
     private string userEmail = "";
     private string clientIpAddress = "Unknown";
@@ -557,6 +620,9 @@
         detailLoading = false;
         // Supersede any in-flight detail fetch so its late response cannot render against new results.
         detailRequestToken++;
+        selectedIndices.Clear();
+        detailActionError = null;
+        emailJobSubmitted = false;
 
         try
         {
@@ -797,6 +863,163 @@
                 detailLoading = false;
             }
         }
+    }
+
+    private void ToggleRowSelection(int index, ChangeEventArgs e)
+    {
+        var check = e.Value is bool b && b;
+        if (check)
+        {
+            // Never exceed the hard cap (decision 3/5): a tick beyond 50 is ignored.
+            if (selectedIndices.Count >= MessageTraceDetailReport.EmailMax && !selectedIndices.Contains(index))
+                return;
+            selectedIndices.Add(index);
+        }
+        else
+        {
+            selectedIndices.Remove(index);
+        }
+        detailActionError = null;
+        emailJobSubmitted = false;
+    }
+
+    private void ToggleSelectAll(ChangeEventArgs e)
+    {
+        selectedIndices.Clear();
+        var check = e.Value is bool b && b;
+        if (check && response?.Results is { Count: > 0 } results)
+        {
+            // Select-all ticks at most the first EmailMax rows (decision 3).
+            var take = MessageTraceDetailReport.SelectAllCount(results.Count);
+            for (var i = 0; i < take; i++)
+                selectedIndices.Add(i);
+        }
+        detailActionError = null;
+        emailJobSubmitted = false;
+    }
+
+    private void ClearSelection()
+    {
+        selectedIndices.Clear();
+        detailActionError = null;
+        emailJobSubmitted = false;
+    }
+
+    // The selected summary rows, in result order (never operator-reordered).
+    private List<MessageTraceResult> SelectedMessages() =>
+        response?.Results is { } results
+            ? selectedIndices.OrderBy(i => i).Where(i => i >= 0 && i < results.Count).Select(i => results[i]).ToList()
+            : new List<MessageTraceResult>();
+
+    // The read-only destination shown to the operator: authenticated mailbox + configured admins,
+    // never a typed-in address (decision 6, exfiltration prevention).
+    private string DestinationDisplay()
+    {
+        var adminCsv = Configuration["Email:AdminNotificationEmail"] ?? "";
+        var recipients = new List<string>();
+        if (!string.IsNullOrWhiteSpace(userEmail)) recipients.Add(userEmail.Trim());
+        if (!string.IsNullOrWhiteSpace(adminCsv))
+            recipients.AddRange(adminCsv.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(a => a.Trim()));
+        recipients = recipients.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return recipients.Count > 0 ? string.Join(", ", recipients) : "(no recipient configured)";
+    }
+
+    private async Task DownloadSelectedDetails()
+    {
+        var messages = SelectedMessages();
+        // Guard the threshold at the action too (UI hiding is not the gate): only <=LiveMax downloads live.
+        if (MessageTraceDetailReport.ResolveAction(messages.Count) != MessageTraceDetailAction.LiveOrEmail)
+        {
+            detailActionError = $"Live download is available for {MessageTraceDetailReport.LiveMax} or fewer messages. Use Email details instead.";
+            return;
+        }
+
+        detailActionError = null;
+        emailJobSubmitted = false;
+        detailActionBusy = true;
+        detailActionKind = "download";
+        var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
+        try
+        {
+            // Fetch each selected message's detail (one cloud call each; on-prem free), then build the
+            // same CSV the email path produces. Fail-soft: a per-message error is carried into the export.
+            var details = new List<MessageTraceDetail>(messages.Count);
+            foreach (var m in messages)
+                details.Add(await MsgTrace.GetMessageDetailAsync(m));
+
+            var csv = MessageTraceDetailReport.BuildCsv(details);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            var base64 = Convert.ToBase64String(bytes);
+            var filename = $"MessageTraceDetail_{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+            await JS.InvokeVoidAsync("downloadFile", filename, "text/csv", base64);
+
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, true, null, ticketNumber.Trim());
+        }
+        catch (Exception ex)
+        {
+            detailActionError = ex.Message;
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailDownload", target, false, ex.Message, ticketNumber.Trim());
+        }
+        finally
+        {
+            detailActionBusy = false;
+            detailActionKind = null;
+        }
+    }
+
+    private Task EmailSelectedDetails()
+    {
+        var messages = SelectedMessages();
+        if (messages.Count == 0)
+            return Task.CompletedTask;
+        if (messages.Count > MessageTraceDetailReport.EmailMax)
+        {
+            detailActionError = $"Selection is capped at {MessageTraceDetailReport.EmailMax} messages.";
+            return Task.CompletedTask;
+        }
+
+        detailActionError = null;
+        emailJobSubmitted = false;
+        detailActionBusy = true;
+        detailActionKind = "email";
+        var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
+        try
+        {
+            // Off-circuit bulk job (decision 5): the zipped report is emailed to the authenticated
+            // user + admins by the processor; the destination is never operator-typed (decision 6).
+            var payload = new ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobPayload
+            {
+                Messages = messages,
+                UserEmail = userEmail?.Trim(),
+            };
+            var job = new ExchangeAdminWeb.Services.Jobs.BulkJob
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                ModuleId = ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor.ModuleName,
+                JobType = ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobPayload.JobType,
+                Status = ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued,
+                SubmittedBy = currentUser,
+                SubmittedByDisplay = currentUser,
+                SubmittedIp = clientIpAddress,
+                Ticket = ticketNumber.Trim(),
+                PayloadJson = System.Text.Json.JsonSerializer.Serialize(payload),
+                SubmittedAtUtc = DateTime.UtcNow,
+            };
+            BulkJobs.Enqueue(job);
+            emailJobSubmitted = true;
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}", ticketNumber.Trim());
+        }
+        catch (Exception ex)
+        {
+            detailActionError = ex.Message;
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, false, ex.Message, ticketNumber.Trim());
+        }
+        finally
+        {
+            detailActionBusy = false;
+            detailActionKind = null;
+        }
+        return Task.CompletedTask;
     }
 
     private string TraceTarget()
