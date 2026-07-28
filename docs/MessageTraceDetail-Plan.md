@@ -1,6 +1,6 @@
 # Message Analysis — Per-Message Delivery Detail Plan
 
-**Status:** Approved (owner, 2026-07-27 — see Owner decisions)
+**Status:** Implemented (2026-07-27 — all 9 slices landed and codex-reviewed accepted; see Implementation status below)
 **Date:** 2026-07-27
 **Target version:** MessageTrace module `Version` bump only (1.1.1 -> 1.2.0); no base app bump
 **Module:** `MessageTrace` ("Message Analysis"), route `message-analysis`
@@ -251,3 +251,49 @@ ExchangeAdminWeb.slnx --verify-no-changes --no-restore`; `git diff --check HEAD`
 
 Each slice codex-reviewed as it lands (owner standing convention: codex headless
 CLI, default model/effort).
+
+## Implementation status (2026-07-27)
+
+All nine slices landed on `master`, each committed and codex-reviewed accepted
+(records under `.agents/review/findings/mt-detail-slice*.md`, index rows in
+`.agents/review/index.md`):
+
+1. Models (`MessageTraceDetail` + `MessageTraceDetailEvent`) — accepted (ade48c1).
+2. Service `GetMessageDetailAsync` (both backends, fail-soft, on-prem no-collapse)
+   + tests — reopened then accepted (b00c5b7).
+3. Pure `MessageTraceDetailReport` (CSV builder + threshold helper) + tests —
+   accepted (2df0f48).
+4. `EmailService.SendMessageTraceResultAsync` + zip attachment + recipient
+   resolver + tests — accepted (2575467).
+5. Bulk-job: payload + `MessageTraceDetailJobProcessor` + registration + tests —
+   accepted (slice `7a307ac`, review `a5f3fa7`).
+6. UI: per-row Details drill-in + inline trail + live-path audit — reopened
+   (stale-response race) then fixed (`6960887`) and accepted.
+7. UI: checkboxes + select-all (cap 50) + threshold-driven download/email +
+   bulk-job submit — accepted (`99cf4a1`).
+8. Module version 1.1.1 -> 1.2.0 — accepted (`e7ce73c`).
+9. This verification + manual-validation note.
+
+Automated verification (slice 9): `dotnet build ExchangeAdminWeb.slnx -c Release`
+0 errors; `dotnet test ExchangeAdminWeb.slnx` full suite green; `dotnet format
+--verify-no-changes` and `git diff --check HEAD` clean; `MessageTrace.razor`
+verified pure ASCII.
+
+### Manual validation still required on dev (no dev tenant — standing gap)
+
+Automation covers the pure builder, the threshold helper, the email
+method/resolver (via the virtual seam), and the bulk-job processor (against a fake
+detail seam). The following need a live dev run and were NOT executed here:
+
+- Live per-row **Details** drill-in against a real EXO tenant and a real on-prem
+  transport server: confirm the on-prem trail shows every event (no collapse) with
+  reason fields, and the cloud path issues exactly one `Get-MessageTraceDetailV2`
+  per click.
+- **Download details** (1-10 selected): the file downloads and its content matches
+  the emailed report for the same selection.
+- **Email details** (1-50 selected): the bulk job runs off-circuit, the zipped CSV
+  is delivered only to the authenticated mailbox + configured admins (never a
+  typed address), and the pre-zip CSV is saved under
+  `<AuditLogRoot>\ExchangeAdminWeb\MessageTraceExports\`.
+- Blazor selection UI behavior: checkbox/select-all cap at 50, threshold-driven
+  enable/disable, and selection reset on a new trace.
