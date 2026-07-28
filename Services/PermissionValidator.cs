@@ -39,6 +39,10 @@ public class PermissionValidator
         };
     }
 
+    // Exclusions come only from the MailboxPermissions/ExcludedUsers module config.
+    // The appsettings Security:ExcludedUsers fallback was retired 2026-07-28: it was
+    // invisible to the Protected Principals admin UI, so principals could be blocked
+    // with no visible cause.
     private string[] GetConfiguredExclusions()
     {
         var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
@@ -47,8 +51,7 @@ public class PermissionValidator
             return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         }
 
-        var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
-        return legacy ?? Array.Empty<string>();
+        return Array.Empty<string>();
     }
 
     private bool GetPreventSelfGrant()
