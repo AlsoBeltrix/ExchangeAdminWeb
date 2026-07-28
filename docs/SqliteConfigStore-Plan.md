@@ -99,8 +99,10 @@ config is absent. They must keep working during the transition and be **removed 
 the corresponding store is DB-backed and the importer has run everywhere:
 
 - `Security:SectionAccess` ← fallback for `sectionaccess.json`
-- `Security:ExcludedUsers` ← fallback for MailboxPermissions module config (read by
-  `PermissionValidator` and `ProtectedPrincipalService`)
+- `Security:ExcludedUsers` ← **RETIRED 2026-07-28**: fallback removed from
+  `PermissionValidator` and `ProtectedPrincipalService`; exclusions now read only from
+  the MailboxPermissions module config (see
+  `docs/RetireExcludedUsersAppsettingsFallback-Plan.md`)
 - `Security:ProtectedPrincipalDirectoryReadSecretId` ← fallback for ProtectedPrincipals
   module config
 - `ExchangeOnline:AppId|Organization|CertificateSubject` ← fallback for

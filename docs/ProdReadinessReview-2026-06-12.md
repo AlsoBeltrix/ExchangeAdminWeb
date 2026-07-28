@@ -311,6 +311,12 @@ PermissionValidator and ProtectedPrincipalService both read module-config key 'E
 
 **Suggested fix:** Add an 'ExcludedUsers' ModuleConfigField (Required: false) to the MailboxPermissions descriptor so it is visible and editable in the config UI, or remove the module-config read and document appsettings as the single source.
 
+**RESOLVED 2026-07-28:** the invisible `Security:ExcludedUsers` appsettings fallback was
+retired from both readers (`PermissionValidator`, `ProtectedPrincipalService`); exclusions
+now come only from the MailboxPermissions module config, so no principal can be blocked by
+an appsettings source the admin UI cannot see. See
+`docs/RetireExcludedUsersAppsettingsFallback-Plan.md`.
+
 ### [catalog] Graph modules fall back to 'DelineaSecretId' for Graph app secrets, against the credential naming rule
 
 `Services/MfaResetService.cs:22`
