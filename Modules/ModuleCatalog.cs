@@ -337,12 +337,14 @@ public sealed class ModuleCatalog
             Route = "self-service-groups",
             // v1.1.1: fixed the DACL eligibility read (Get-Acl AD:\ returned an empty .Access here,
             // excluding every group; now reads Get-ADGroup -Properties nTSecurityDescriptor).
+            // v1.2.0: member listing (current members shown per group, per-user Remove) + the member
+            // add box uses the shared AD user typeahead.
             IconCss = "bi bi-people-fill-nav-menu",
             Category = "Directory & Groups",
             SortOrder = 165,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.1",
+            Version = "1.2.0",
             MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
