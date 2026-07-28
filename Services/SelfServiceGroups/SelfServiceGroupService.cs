@@ -25,9 +25,9 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// an Allow member-write ACE (the WriteProperty-on-<c>member</c> ACE that checkbox grants, or
 /// GenericWrite/GenericAll) that no Deny revokes - classified by the pure, unit-tested
 /// <see cref="GroupMembershipAce"/>. A candidate that fails is EXCLUDED (fail-closed, Known Failure
-/// Class #3), never shown-then-refused. Every write still re-checks (task 5). The live AD query and ACL
-/// read are manual-validation-on-dev (no dev tenant); the pure cores are unit-tested
-/// (AdOwnershipFilterTests, GroupMembershipAceTests).
+/// Class #3), never shown-then-refused. Every write still re-checks (task 5). The live AD query and DACL
+/// read are validated against PROD AD from the dev instance (both instances run on this server against
+/// the same live directory); the pure cores are unit-tested (AdOwnershipFilterTests, GroupMembershipAceTests).
 /// </summary>
 public class SelfServiceGroupService
 {
@@ -39,11 +39,6 @@ public class SelfServiceGroupService
     // Serializes membership writes PER GROUP (plan section 6.5): two concurrent changes to the same
     // group must not interleave their read-check-write cycles. Keyed on the group's immutable objectGUID.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _groupWriteLocks = new(StringComparer.OrdinalIgnoreCase);
-
-    // Name of the credentialed AD: provider drive mounted per runspace. The DEFAULT AD: drive binds
-    // to the PROCESS identity, which would break credential isolation (Spec); every ACL read in this
-    // service goes through this drive bound to THIS module's credential instead.
-    private const string AdDriveName = "SsgAd";
 
     // The group properties both the ownership reverse-lookup and the single-group search load.
     private static readonly string[] GroupProperties =
@@ -94,7 +89,7 @@ public class SelfServiceGroupService
             ps.Runspace = runspace;
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            PrepareAdRunspace(ps, credential);
+            PrepareAdRunspace(ps);
 
             var callerDn = ResolveCallerDn(ps, credential, callerSid);
 
@@ -120,7 +115,7 @@ public class SelfServiceGroupService
                 // but NOT sufficient - "Manager can update membership" may be unchecked. Include the
                 // group ONLY when the caller holds member-write on it; fail-closed exclusion otherwise.
                 var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-                if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
+                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
                     continue;
 
                 results.Add(ProjectGroup(ps, credential, group, callerDn, ownerDisplayCache, canManageMembers: true));
@@ -170,7 +165,7 @@ public class SelfServiceGroupService
             ps.Runspace = runspace;
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            PrepareAdRunspace(ps, credential);
+            PrepareAdRunspace(ps);
 
             var callerDn = ResolveCallerDn(ps, credential, callerSid);
 
@@ -195,7 +190,7 @@ public class SelfServiceGroupService
 
             var group = found[0];
             var groupDn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-            if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
+            if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
                 return new GroupSearchResult(null, contactSupport);
 
             var ownerDisplayCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -311,7 +306,7 @@ public class SelfServiceGroupService
                 ps.Runspace = runspace;
 
                 var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-                PrepareAdRunspace(ps, credential);
+                PrepareAdRunspace(ps);
 
                 var callerDn = ResolveCallerDn(ps, credential, callerSid);
 
@@ -330,7 +325,7 @@ public class SelfServiceGroupService
 
                 // Re-check eligibility RIGHT NOW (AC5): the caller's member-write right may have been
                 // revoked since the page listed the group. Same fail-closed DACL check the list uses.
-                if (!CallerCanManageMembers(ps, AdDriveName, groupDn, callerSid))
+                if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
                     return MembershipChangeResult.From(PermissionResult.Fail("You are no longer permitted to manage this group's membership."));
 
                 // Idempotent desired-state (slice 5a): only write if the current membership requires it.
@@ -561,23 +556,15 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// Imports the ActiveDirectory module and mounts the credentialed <see cref="AdDriveName"/> AD
-    /// drive so subsequent ACL reads use THIS module's credential, not the process identity (Spec
-    /// credential isolation). The drive is runspace-scoped and disposed with the runspace.
+    /// Imports the ActiveDirectory module into the runspace. Every AD read/write in this service binds
+    /// THIS module's credential explicitly via -Credential (Spec credential isolation), so no
+    /// credentialed provider drive is needed. (An earlier version mounted a credentialed "SsgAd" AD
+    /// drive for Get-Acl reads; that read returned an empty DACL here and was replaced by
+    /// Get-ADGroup -Properties nTSecurityDescriptor - see <see cref="CallerCanManageMembers"/>.)
     /// </summary>
-    private static void PrepareAdRunspace(PowerShell ps, PSCredential credential)
+    private static void PrepareAdRunspace(PowerShell ps)
     {
         ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
-        ps.Invoke();
-        ps.Commands.Clear();
-
-        ps.AddCommand("New-PSDrive")
-          .AddParameter("Name", AdDriveName)
-          .AddParameter("PSProvider", "ActiveDirectory")
-          .AddParameter("Root", "//RootDSE/")
-          .AddParameter("Credential", credential)
-          .AddParameter("Scope", "Global")
-          .AddParameter("ErrorAction", "Stop");
         ps.Invoke();
         ps.Commands.Clear();
     }
@@ -641,18 +628,25 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
-    /// List-time eligibility check (task 2, plan section 6.3): reads the group's DACL through the credentialed
-    /// AD drive and returns true ONLY when the caller's own SID holds an Allow member-write ACE
-    /// (WriteProperty-on-<c>member</c>, GenericWrite, or GenericAll) that no Deny member-write ACE for
-    /// the same SID revokes. Classification is delegated to the pure, unit-tested
-    /// <see cref="GroupMembershipAce"/>, keyed on rights BITS (never the ObjectType name) so a
-    /// Self-Membership ACE - which shares the <c>member</c> schema GUID - never counts.
+    /// List-time eligibility check (task 2, plan section 6.3): reads the group's DACL and returns true
+    /// ONLY when the caller's own SID holds an Allow member-write ACE (WriteProperty-on-<c>member</c>,
+    /// GenericWrite, or GenericAll) that no Deny member-write ACE for the same SID revokes. Classification
+    /// is delegated to the pure, unit-tested <see cref="GroupMembershipAce"/>, keyed on rights BITS (never
+    /// the ObjectType name) so a Self-Membership ACE - which shares the <c>member</c> schema GUID - never
+    /// counts.
+    ///
+    /// The DACL is read via <c>Get-ADGroup -Properties nTSecurityDescriptor</c> and its
+    /// <c>GetAccessRules</c>. An earlier version read <c>Get-Acl AD:\&lt;DN&gt;</c> through a credentialed
+    /// provider drive; live validation on 2026-07-28 showed that path returns an EMPTY <c>.Access</c>
+    /// collection in this runspace (0 ACEs, blank Owner) while the same group's DACL enumerates 298 rules
+    /// via nTSecurityDescriptor - so every group was fail-closed excluded and the page always showed "no
+    /// groups". The nTSecurityDescriptor read returns the real DACL under the same module credential.
     ///
     /// Fail-closed (Known Failure Class #3): an unreadable DACL, or any error, returns false so the
     /// group is EXCLUDED rather than shown as manageable. The per-ACE projection runs in PowerShell so
     /// this type takes no dependency on System.DirectoryServices ACL types; C# sees only primitives.
     /// </summary>
-    private static bool CallerCanManageMembers(PowerShell ps, string adDrive, string groupDn, string callerSid)
+    private static bool CallerCanManageMembers(PowerShell ps, PSCredential credential, string groupDn, string callerSid)
     {
         if (string.IsNullOrWhiteSpace(groupDn))
             return false;
@@ -660,25 +654,26 @@ public class SelfServiceGroupService
         Collection<PSObject> aces;
         try
         {
-            // Read the DACL via the AD drive (the discovery script confirmed Get-Acl AD:\<DN> is more
-            // reliable than Get-ADGroup -Properties nTSecurityDescriptor, which can return an empty
-            // .Access). Project each ACE to primitives (Allow/Deny, rights int, ObjectType GUID, trustee
-            // SID) so no ACL type crosses back into C#. -Path is built from a bound variable, never
-            // interpolated into a script expression.
+            // Read the DACL via Get-ADGroup -Properties nTSecurityDescriptor (bound -Identity, no
+            // interpolation) and project each access rule to primitives (Allow/Deny, rights int,
+            // ObjectType GUID, trustee SID) so no ACL type crosses back into C#. GetAccessRules with
+            // targetType=SecurityIdentifier yields the trustee SID directly, so no per-ACE Translate()
+            // round-trip is needed. This replaces the Get-Acl AD:\ drive read that returned an empty
+            // .Access here (see summary).
             ps.AddScript(
-                "param($drivePath) " +
-                "$acl = Get-Acl -Path $drivePath -ErrorAction Stop; " +
-                "foreach ($ace in $acl.Access) { " +
-                "  $sid = $null; " +
-                "  try { $sid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }; " +
+                "param($groupDn, $cred) " +
+                "$g = Get-ADGroup -Identity $groupDn -Properties nTSecurityDescriptor -Credential $cred -ErrorAction Stop; " +
+                "$rules = $g.nTSecurityDescriptor.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]); " +
+                "foreach ($ace in $rules) { " +
                 "  [pscustomobject]@{ " +
                 "    Type = $ace.AccessControlType.ToString(); " +
                 "    Rights = [int]$ace.ActiveDirectoryRights; " +
                 "    ObjectType = $ace.ObjectType.ToString(); " +
-                "    Sid = $sid " +
+                "    Sid = $ace.IdentityReference.Value " +
                 "  } " +
                 "}")
-              .AddArgument($"{adDrive}:\\{groupDn}");
+              .AddArgument(groupDn)
+              .AddArgument(credential);
             aces = ps.Invoke();
         }
         catch
