@@ -6,6 +6,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Retire `Security:ExcludedUsers` appsettings fallback — DONE (code half), landed 2026-07-28.**
+  Plan `docs/RetireExcludedUsersAppsettingsFallback-Plan.md` Status: Implemented;
+  `.agents/decisions.md` 2026-07-28. Both readers (`PermissionValidator.GetConfiguredExclusions`,
+  `ProtectedPrincipalService.GetLegacyExclusions`) no longer fall back to the invisible
+  `Security:ExcludedUsers` appsettings array; exclusions come only from the DB protected-principal
+  store + `MailboxPermissions/ExcludedUsers` module config. Base app `2.3.29 -> 2.3.30`.
+  Commits `4dff069`(plan) `f5b329b`(slice1) `942dd10`(slice2) `5c7cc93`(slice3 tests)
+  `c35f056`(slice4 docs) `456e07c`(version). Build/format/827 tests green; two new guard tests
+  non-vacuity-proven (fallback restored -> both fail).
+  **OPEN — host cleanup (slice 5, runtime, per box, after deploy):** remove the
+  `Security.ExcludedUsers` block from `D:\inetpub\ExchangeAdminWebDev\appsettings.json` and
+  `D:\inetpub\ExchangeAdminWeb\appsettings.json` (leave `PreventSelfGrant`, `AllowedGroups`).
+  DB reconciled read-only on both installs pre-removal: the three must-stay principals already
+  in the DB store.
+
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
   each codex-reviewed accepted. MessageTrace module 1.1.1 -> 1.2.0, no base app bump.
@@ -35,8 +50,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.29`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.28`
-  for the app-wide log-root fail-fast change (`3eac48a`).
+- **App version `2.3.30`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.29`
+  (`456e07c`) for retiring the `Security:ExcludedUsers` appsettings fallback; `2.3.29` was the
+  app-wide log-root fail-fast change (`3eac48a`).
 - **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.29` (this session's
   log-root work) is **deployed to dev** (owner, 2026-07-22; `D:\inetpub\ExchangeAdminWebDev`) but
   **NOT yet manually validated** and **NOT in prod**. (Dev started the day on `2.3.28`/Bulk Job

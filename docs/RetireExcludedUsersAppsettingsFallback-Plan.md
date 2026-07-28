@@ -1,6 +1,8 @@
 # Retire the `Security:ExcludedUsers` appsettings fallback
 
-Status: Approved (owner, 2026-07-28). Owner ruled: remove the appsettings
+Status: Implemented (2026-07-28; approved by owner, 2026-07-28). Code half landed on
+`master` (slices 1-4 + version bump); host-appsettings cleanup (slice 5) is runtime data
+per box, done after deploy. Owner ruled: remove the appsettings
 `Security:ExcludedUsers` source entirely and retire the two code fallbacks that read
 it. `CLD_LIC_MS_BOD` (present only in appsettings, with no database counterpart on
 either install) correctly loses protection: the owner removed that group from the UI

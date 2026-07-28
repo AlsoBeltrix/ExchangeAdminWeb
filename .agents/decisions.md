@@ -5,6 +5,30 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-28 - Retire the `Security:ExcludedUsers` appsettings fallback (exclusions are module-config only)
+
+Status: Active. Plan `docs/RetireExcludedUsersAppsettingsFallback-Plan.md` (Approved,
+owner 2026-07-28; Implemented). App version `2.3.29` -> `2.3.30`.
+
+Owner direction 2026-07-28. Both readers of the legacy exclusion list -
+`PermissionValidator.GetConfiguredExclusions` and
+`ProtectedPrincipalService.GetLegacyExclusions` - previously fell back to the
+`Security:ExcludedUsers` string array in `appsettings.json` when the
+`MailboxPermissions/ExcludedUsers` module config was empty. That fallback was invisible
+to the Protected Principals admin UI, so a principal could be blocked with no cause the
+admin could see or clear from the UI (hit in practice: a test account blocked by the
+self-service groups gate). The fallback is removed; exclusions now come only from the
+DB-managed protected-principal store and the MailboxPermissions module config.
+
+Reconciled read-only against the DB `protected_principal` store on both installs before
+removal: `vincent.roche` (exact DB duplicate) and `VRStaff` (covered by
+`group|ANALOG\VR Staff`) keep protection; `mcoelho-2` (test account) and `CLD_LIC_MS_BOD`
+correctly lose it - the owner removed `CLD_LIC_MS_BOD` from the UI as the wrong group and
+its lingering presence in appsettings was itself the bug this change fixes. No DB
+migration needed. Host cleanup (removing the `Security:ExcludedUsers` block from each
+host's runtime `appsettings.json`) is runtime data outside source control, done per box
+after deploy; `PreventSelfGrant` and `AllowedGroups` stay.
+
 ### 2026-07-28 - Self-Service Groups member picker reuses the app-pool-credentialed AD autocomplete (Option A)
 
 Status: Active. Plan `docs/SelfServiceGroupsMemberListingAndPicker-Plan.md` (Approved
