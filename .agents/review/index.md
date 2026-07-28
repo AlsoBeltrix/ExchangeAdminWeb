@@ -25,6 +25,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | mt-detail-slice1  | n/a      | Slice-landing review: MessageTraceDetail models (MT plan s1)   | `[x]`  |        | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.145.0, codex exec, default) — accepted, no material issue, build-verified (ade48c1) |
 | mt-detail-slice2  | n/a      | Slice-landing review: per-message delivery-detail service (s2) | `[x]`  |        | codex CLI (codex exec, default) — reopened (1f0af9c: outer fail-soft gaps, cloud pre-delegate + on-prem pre-Task.Run throttle) → round-1 fix landed (RunDetailBackendAsync seam + 2 tests, 768/768) → round-2 accepted (b00c5b7, guard+capability confirmed, no comments) |
 | mt-detail-slice3  | n/a      | Slice-landing review: pure detail-export CSV builder + threshold helper (s3) | `[x]`  |        | codex CLI (codex exec, gpt-5.5-dzs/xhigh/std) — accepted r1 (2df0f48, base 7181db5); threshold guard confirmed (mutate -> 4 fail, restore -> 25 pass) in isolated copy tree, capability build EXIT=0, no comments |
+| mt-detail-slice4  | n/a      | Slice-landing review: detail-export email + zip attachment + resolver (s4) | `[x]`  |        | codex CLI (codex exec, gpt-5.5-dzs/xhigh/std) — accepted r1 (2575467, base 09a9605); exfiltration rule confirmed (recipients only user + admins), dedup guard confirmed (remove .Distinct -> FAIL, restore -> PASS) in isolated tree, capability build EXIT=0, no comments |
 
 Notes:
 - Finding **confirmed real** (round 1), fix **plan reviewed & accepted** (rounds 2-3
