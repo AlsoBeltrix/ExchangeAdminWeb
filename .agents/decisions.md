@@ -5,6 +5,26 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-28 - Self-Service Groups member picker reuses the app-pool-credentialed AD autocomplete (Option A)
+
+Status: Active. Plan `docs/SelfServiceGroupsMemberListingAndPicker-Plan.md` (Approved
+2026-07-28), which adds member listing + a member-name typeahead to the shipped GM-3 module.
+
+Owner direction 2026-07-28. The member add box reuses the existing shared control
+`Components/Shared/ADIdentityAutocomplete` as-is. Its live suggestion search runs under the
+**app-pool ambient identity** (`Services/ADDirectorySearchService.cs:8`), NOT the
+SelfServiceGroups module's Delinea credential. This is a deliberate, accepted exception to the
+module's otherwise-strict per-module credential isolation, bounded because the picker only
+assists typing an identity string: the actual write still routes through
+`SelfServiceGroupService.ChangeMemberAsync`, which re-resolves the member USER-ONLY under the
+module credential, runs the protected-principal check, re-checks eligibility, and
+read-back-reconciles. A suggestion sourced from the weaker read path can never cause a bad
+write.
+
+Rejected: Option B (build a second, module-credentialed typeahead) — declined as not worth the
+extra code/test surface for a read-only suggestion list. The write-path isolation is unchanged
+either way.
+
 ### 2026-07-24 - GM-3 task 2 scaled back: eligibility = manager-can-update-membership + on-demand single-group search
 
 Status: Active (supersedes the admin-allowlist eligibility of the 2026-07-22 on-prem-only
