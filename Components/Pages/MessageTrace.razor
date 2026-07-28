@@ -392,7 +392,7 @@
                                         <td>@msg.Server</td>
                                         <td class="text-break"><small>@msg.MessageId</small></td>
                                         <td class="text-nowrap">
-                                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleDetail(index, msg)" disabled="@(detailLoading && expandedIndex == index)">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => ToggleDetail(index, msg)" disabled="@detailLoading">
                                                 @if (detailLoading && expandedIndex == index)
                                                 {
                                                     <span class="spinner-border spinner-border-sm me-1"></span>
@@ -476,6 +476,7 @@
     private int? expandedIndex;
     private bool detailLoading;
     private MessageTraceDetail? detail;
+    private int detailRequestToken;
     private string currentUser = "";
     private string userEmail = "";
     private string clientIpAddress = "Unknown";
@@ -553,6 +554,9 @@
         response = null;
         expandedIndex = null;
         detail = null;
+        detailLoading = false;
+        // Supersede any in-flight detail fetch so its late response cannot render against new results.
+        detailRequestToken++;
 
         try
         {
@@ -763,26 +767,35 @@
             return;
         }
 
+        // A monotonic token identifies this request; a later click supersedes it. The button is
+        // disabled while any fetch is in flight (disabled="@detailLoading"), but a stale in-flight
+        // response could still land after the row was superseded - the token guard discards it so a
+        // late reply never writes the wrong message's trail or clears the newer request's spinner.
+        var token = ++detailRequestToken;
         expandedIndex = index;
         detail = null;
         detailLoading = true;
+        var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
         try
         {
             // Fail-soft: the seam sets Error rather than throwing; render it inline, never blank the list.
-            detail = await MsgTrace.GetMessageDetailAsync(msg);
-            var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
-            var success = string.IsNullOrEmpty(detail.Error);
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, detail.Error, ticketNumber.Trim());
+            var fetched = await MsgTrace.GetMessageDetailAsync(msg);
+            var success = string.IsNullOrEmpty(fetched.Error);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, success, fetched.Error, ticketNumber.Trim());
+            if (token == detailRequestToken)
+            {
+                detail = fetched;
+                detailLoading = false;
+            }
         }
         catch (Exception ex)
         {
-            detail = new MessageTraceDetail { Summary = msg, Error = ex.Message };
-            var target = string.IsNullOrWhiteSpace(msg.MessageId) ? msg.MessageTraceId : msg.MessageId;
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_Detail", target, false, ex.Message, ticketNumber.Trim());
-        }
-        finally
-        {
-            detailLoading = false;
+            if (token == detailRequestToken)
+            {
+                detail = new MessageTraceDetail { Summary = msg, Error = ex.Message };
+                detailLoading = false;
+            }
         }
     }
 
