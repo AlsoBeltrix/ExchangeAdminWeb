@@ -412,14 +412,18 @@ public class ProtectedPrincipalService
         _moduleConfig.SaveModuleConfig(ProtectedPrincipalsModuleKey, current);
     }
 
+    // Legacy exclusions come only from the MailboxPermissions/ExcludedUsers module
+    // config. The appsettings Security:ExcludedUsers fallback was retired 2026-07-28:
+    // it was invisible to the Protected Principals admin UI, so principals could be
+    // blocked with no visible cause. Protection now lives in the DB store (UI-managed)
+    // and this module-config value only.
     private string[] GetLegacyExclusions()
     {
         var excluded = _moduleConfig.GetValue("MailboxPermissions", "ExcludedUsers");
         if (!string.IsNullOrEmpty(excluded))
             return excluded.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        var legacy = _config.GetSection("Security:ExcludedUsers").Get<string[]>();
-        return legacy ?? [];
+        return [];
     }
 
     private static void CheckDirectUserMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
