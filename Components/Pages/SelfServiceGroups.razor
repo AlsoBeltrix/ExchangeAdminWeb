@@ -174,33 +174,95 @@
         <div class="card mb-3 border-primary">
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Manage members of <strong>@selected.Name</strong> <span class="badge bg-light text-dark border ms-1">@selected.GroupType</span></span>
-                <button type="button" class="btn-close" aria-label="Close" @onclick="() => { selected = null; changeResult = null; }"></button>
+                <button type="button" class="btn-close" aria-label="Close" @onclick="() => { selected = null; changeResult = null; groupMembers = []; memberLoadError = null; }"></button>
             </div>
             <div class="card-body">
                 <p class="text-muted"><small>Add or remove a user by their username, email, or user principal name.
                 Membership changes take effect in on-premises Active Directory immediately.</small></p>
 
-                <div class="input-group mb-3">
-                    <input type="text" class="form-control" @bind="memberIdentity" @bind:event="oninput"
-                           placeholder="user@domain.com, DOMAIN\\user, or username" disabled="@isChanging" />
-                    <button class="btn btn-success" @onclick="() => ChangeMember(MembershipOperation.Add)"
-                            disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
-                        @if (isChanging && pendingOp == MembershipOperation.Add) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                        Add
-                    </button>
-                    <button class="btn btn-outline-danger" @onclick="() => ChangeMember(MembershipOperation.Remove)"
-                            disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
-                        @if (isChanging && pendingOp == MembershipOperation.Remove) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                        Remove
-                    </button>
+                <!-- Member identity uses the shared AD user typeahead (plan
+                     docs/SelfServiceGroupsMemberListingAndPicker-Plan.md, Option A). The suggestion
+                     search runs under the app-pool identity (ADDirectorySearchService), NOT this
+                     module's credential; that is accepted because the picker only helps type an
+                     identity - the write still re-resolves the user and re-checks eligibility +
+                     protection under the module credential in ChangeMemberAsync. -->
+                <div class="row g-2 mb-3 align-items-start">
+                    <div class="col">
+                        <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN"
+                                                @bind-Value="memberIdentity"
+                                                Placeholder="Search for a user by name, username, or email"
+                                                Disabled="isChanging" />
+                    </div>
+                    <div class="col-auto">
+                        <button class="btn btn-success" @onclick="() => ChangeMember(MembershipOperation.Add)"
+                                disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                            @if (isChanging && pendingOp == MembershipOperation.Add) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Add
+                        </button>
+                        <button class="btn btn-outline-danger" @onclick="() => ChangeMember(MembershipOperation.Remove)"
+                                disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                            @if (isChanging && pendingOp == MembershipOperation.Remove) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                            Remove
+                        </button>
+                    </div>
                 </div>
 
                 @if (changeResult != null)
                 {
-                    <div class="alert @(changeResult.Success ? "alert-success" : "alert-danger") alert-dismissible py-2 mb-0">
+                    <div class="alert @(changeResult.Success ? "alert-success" : "alert-danger") alert-dismissible py-2 mb-3">
                         <small>@changeResult.Message</small>
                         <button type="button" class="btn-close btn-close-sm" @onclick="() => changeResult = null"></button>
                     </div>
+                }
+
+                <!-- Current members (plan docs/SelfServiceGroupsMemberListingAndPicker-Plan.md). Loaded
+                     on group selection, not on page open. A read failure shows a clear error, NEVER an
+                     empty list presented as "no members" (AC-M3, Known Failure Class #2). -->
+                <h6 class="mb-2">Current members</h6>
+                @if (isLoadingMembers)
+                {
+                    <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span> Loading members...</div>
+                }
+                else if (memberLoadError != null)
+                {
+                    <div class="alert alert-danger py-2 mb-0"><small>@memberLoadError</small></div>
+                }
+                else if (groupMembers.Count == 0)
+                {
+                    <div class="alert alert-secondary py-2 mb-0"><small>This group has no members.</small></div>
+                }
+                else
+                {
+                    <table class="table table-sm align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Identity</th>
+                                <th>Type</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in groupMembers)
+                            {
+                                var member = m;
+                                <tr>
+                                    <td>@member.DisplayName</td>
+                                    <td>@member.Identity</td>
+                                    <td>@member.Kind</td>
+                                    <td class="text-end">
+                                        @if (member.IsRemovable)
+                                        {
+                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
+                                                    disabled="@isChanging">
+                                                Remove
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 }
             </div>
         </div>
@@ -230,6 +292,10 @@
     private MembershipOperation? pendingOp;
     private PermissionResult? changeResult;
 
+    private IReadOnlyList<GroupMember> groupMembers = [];
+    private bool isLoadingMembers;
+    private string? memberLoadError;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -253,16 +319,54 @@
         authChecked = true;
     }
 
-    private void SelectGroup(ManageableGroup group)
+    private async Task SelectGroup(ManageableGroup group)
     {
         selected = group;
         memberIdentity = "";
         changeResult = null;
+        await LoadMembers();
     }
 
-    private async Task ChangeMember(MembershipOperation operation)
+    // Loads the selected group's current members (AC-M1). Fail-closed display: a read error sets
+    // memberLoadError and clears the list so the UI never shows an errored read as "no members"
+    // (AC-M3, Known Failure Class #2).
+    private async Task LoadMembers()
     {
-        if (selected == null || isChanging || string.IsNullOrWhiteSpace(memberIdentity))
+        if (selected == null)
+            return;
+
+        isLoadingMembers = true;
+        memberLoadError = null;
+        groupMembers = [];
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, selected.ObjectGuid);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service member load failed for {User} on {Group}", callerSid, selected.Name);
+            memberLoadError = "The group's members could not be loaded right now. Please try again; if the problem persists, contact the IT Support Desk.";
+        }
+        finally
+        {
+            isLoadingMembers = false;
+        }
+    }
+
+    // Removes a listed member via the same eligibility/protection-checked write path as a typed
+    // remove (AC-M2); on success the member list is refreshed so the row disappears.
+    private async Task RemoveMember(GroupMember member)
+    {
+        await ChangeMember(MembershipOperation.Remove, member.Identity);
+    }
+
+    private async Task ChangeMember(MembershipOperation operation, string? explicitIdentity = null)
+    {
+        var identity = (explicitIdentity ?? memberIdentity).Trim();
+        if (selected == null || isChanging || string.IsNullOrWhiteSpace(identity))
             return;
 
         isChanging = true;
@@ -271,7 +375,7 @@
         await Task.Yield();
 
         var group = selected;
-        var member = memberIdentity.Trim();
+        var member = identity;
         var action = operation == MembershipOperation.Add ? "SelfServiceGroups_AddMember" : "SelfServiceGroups_RemoveMember";
         try
         {
@@ -323,6 +427,12 @@
             isChanging = false;
             pendingOp = null;
         }
+
+        // Reflect the change in the displayed membership (AC-M2): a successful add/remove refreshes the
+        // list so the added member appears / the removed row disappears. A failed change leaves the list
+        // as-is. Runs after isChanging is cleared so the list's Remove buttons re-enable.
+        if (changeResult?.Success == true)
+            await LoadMembers();
     }
 
     private async Task LoadOwnedGroups()
