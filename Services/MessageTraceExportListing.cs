@@ -91,13 +91,12 @@ public class MessageTraceExportListing
     /// fail?" would mean scanning append-only day files once per rendered row, on the render path.
     /// The job record is already loaded for every row, so the marker costs nothing to read.
     ///
-    /// NOT YET WRITTEN BY ANYTHING. <see cref="MessageTraceExportState.Failed"/> is therefore
-    /// unreachable in production until slice 3 lands the processor's save-failure branch, which owns
-    /// the write. It cannot be stamped through the existing runner path: the terminal state is
-    /// persisted by a compare-and-swap from a NON-terminal status (BulkJobService.cs:401,
-    /// BulkJobRepository.TryFinish) BEFORE OnJobCompletedAsync runs (BulkJobService.cs:441), so by
-    /// the time the processor knows the save failed the job is already Completed and TryFinish will
-    /// not fire. Slice 3 must add an unconditional message write to BulkJobRepository for this.
+    /// Written by <c>MessageTraceDetailJobProcessor.MarkSaveFailed</c> through the additive
+    /// <c>BulkJobService.AppendJobMessage</c>, NOT through the terminal transition: the runner
+    /// persists the terminal state by a compare-and-swap from a NON-terminal status
+    /// (BulkJobService.cs:401, BulkJobRepository.TryFinish) BEFORE OnJobCompletedAsync runs
+    /// (BulkJobService.cs:441), so by the time the processor knows the save failed the job is
+    /// already Completed and a TryFinish from there would match no row.
     /// </summary>
     public const string SaveFailedMarker = "log save failed";
 
@@ -280,7 +279,7 @@ public class MessageTraceExportListing
 
     /// <summary>
     /// True when the completion step could not write the export. See <see cref="SaveFailedMarker"/>
-    /// for which source this reads and why, and for the slice-3 write that makes it reachable.
+    /// for which source this reads, why, and which code path writes it.
     /// </summary>
     private static bool SaveFailed(BulkJob job) =>
         job.Message is not null && job.Message.Contains(SaveFailedMarker, StringComparison.OrdinalIgnoreCase);
