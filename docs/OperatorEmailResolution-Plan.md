@@ -46,6 +46,11 @@ blocking guard survived three months unreported: `:710` refuses before reaching
 **unproven end to end**, not as working code with one broken guard -- nothing downstream of
 `:710` has executed in this deployment.
 
+It is nonetheless **wanted functionality**: historical search is the only way L2 can run a
+search beyond the realtime window without escalating to L3-4 (owner, 2026-07-29). Unblocking it
+is a real capability gain for its intended users, not incidental tidying -- but proving it works
+end to end is out of this plan's scope (OQ-2).
+
 Consequence for this plan: removing the false refusal is in scope, but making historical search
 *work* is not, and cannot be verified here. Manual check 5 below is therefore exploratory --
 its purpose is to discover what the next failure is, if any, not to gate this plan. See OQ-2.
@@ -244,14 +249,17 @@ checks below.
 - **OQ-1 (non-blocking):** other pages may want the operator's address later. This plan
   registers a shared singleton so they can, but converts no other page. Any such conversion is
   separate work.
-- **OQ-2 (non-blocking):** the historical-search path beyond `:710` has never executed in this
-  deployment (owner, 2026-07-29). Anything it hits after the refusal is removed -- EXO
-  permissions on `Start-HistoricalSearch`, the cmdlet rejecting the address, an unhandled
-  response shape -- is undiscovered, not regressed. Record and stop; fixing it is separate work
-  needing its own plan.
-- **OQ-3 (non-blocking, owner-facing):** an unused feature that has never worked is a candidate
-  for removal rather than repair. This plan does not propose that -- it only stops the page
-  lying about why the feature refuses -- but if historical search is not wanted, deleting it
-  (the tab section at `:315-338`, `RunHistoricalSearch`, and
-  `MessageTraceService.StartHistoricalSearchAsync`) is less code than making it work. Owner's
-  call, not blocking.
+- **OQ-2 (does not block THIS plan, but is real work that follows it):** the historical-search
+  path beyond `:710` has never executed in this deployment (owner, 2026-07-29). Anything it
+  hits once the refusal is removed -- EXO permissions on `Start-HistoricalSearch`, the cmdlet
+  rejecting the address, an unhandled response shape -- is undiscovered, not regressed.
+
+  This is **wanted functionality**, not a curiosity: it is L2's only route to a beyond-realtime
+  search without escalating to L3-4 (OQ-3). So manual check 5 is exploratory only in the sense
+  that its outcome must not gate *this* change; the outcome itself matters and must be recorded
+  in `.agents/state.md` either way. If it fails, raise a follow-up plan to make historical
+  search work end to end rather than absorbing the fix here.
+- **OQ-3 -- CLOSED (owner, 2026-07-29): keep historical search; do not remove it.** It is the
+  only way L2 can run a search beyond the realtime window without escalating to L3-4. Removal
+  was considered and rejected. Do not re-raise deletion as a simplification in any later work
+  on this page.
