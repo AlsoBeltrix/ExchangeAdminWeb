@@ -1,7 +1,8 @@
 # Message Analysis Export Delivery: Reports Page + Notification Link -- Plan
 
-Status: **Draft -- awaiting owner approval.** All four decisions (D1-D4) are ruled;
-D4 was ruled 2026-07-29. No code is written until this plan is Approved.
+Status: **Approved 2026-07-29.** All four decisions (D1-D4) are ruled. Implementation may
+proceed slice by slice, one commit per slice; implementation must not exceed plan scope.
+Scope changes go back through the plan.
 Independently reviewed 2026-07-29 (openreview, codex-commercial / gpt-5.6-sol / max,
 range `68bfd25..1e98eaf`): four findings, all repaired in this revision -- see
 `.agents/review/findings/mt-export-delivery-plan.md`.

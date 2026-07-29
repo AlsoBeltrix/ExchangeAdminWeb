@@ -35,9 +35,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **OPEN:** deploy + live re-run of the failing search. **OPEN (OQ-1, non-blocking):** why EXO
   emits a null row at all is undiagnosed; the guard is correct regardless.
 
-- **MessageTrace export delivery: reports page + notification link — PLAN DRAFTED 2026-07-29,
-  awaiting owner approval + one open ruling.** Plan `docs/MessageTraceDownloadLink-Plan.md`
-  Status: Draft. Replaces the emailed zip attachment with a Downloadable Reports page inside the
+- **MessageTrace export delivery: reports page + notification link — PLAN APPROVED 2026-07-29,
+  implementation starting at slice 1.** Plan `docs/MessageTraceDownloadLink-Plan.md`
+  Status: Approved. Replaces the emailed zip attachment with a Downloadable Reports page inside the
   app; the email carries a link to that page, so an arbitrary notification recipient is safe (the
   data never leaves the login gate) and admins leave the trace-data path. Supersedes
   `docs/MessageTraceDetail-Plan.md` decisions 5 + 6. Owner rulings recorded in the plan:
@@ -50,7 +50,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   rather than an empty `?ticket=` in an emailed URL); **D4** (ruled 2026-07-29) the recipient box
   is pre-filled with the operator's own address, editable and clearable -- a default, not a floor,
   and never a required field. Base app `2.3.30 -> 2.3.31` + MessageTrace `1.2.1 -> 1.3.0`.
-  All four decisions ruled; no open owner gates. **Awaiting plan approval; no code written.**
+  All four decisions ruled, no open owner gates, plan approved by the owner 2026-07-29.
+  **NEXT: slice 1** (`MessageTraceExportStore` -- export-path resolver, GUID-"N" jobId whitelist,
+  traversal guard, 30-day constant) then slice 2 (reports page), 3 (email link), 4 (UI). One
+  commit per slice. Nothing deploys without a separate owner go.
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
