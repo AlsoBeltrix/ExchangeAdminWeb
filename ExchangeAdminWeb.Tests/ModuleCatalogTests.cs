@@ -219,6 +219,9 @@ public class ModuleCatalogTests
             "/Error",
             "/access-denied",
             "/message-trace",
+            // Sub-page of the Message Analysis module, not a module of its own: it reuses that
+            // module's MessageTrace policy and has no separate catalog descriptor by design.
+            "/message-analysis/reports",
             "/module-config/{ModuleId}"
         };
 

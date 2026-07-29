@@ -294,6 +294,30 @@ public sealed class BulkJobRepository
         return ReadAll(command);
     }
 
+    /// <summary>
+    /// Terminal jobs for one module and job type, newest first, capped at <paramref name="limit"/>.
+    ///
+    /// Deliberately NOT <see cref="GetRecentFinished"/>: that one is unfiltered across every module
+    /// and capped at BulkJobs:RecentJobLimit, so a busy day in another module would push this
+    /// module's jobs out of the window entirely and silently empty a page built on it.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetFinishedByType(string moduleId, string jobType, int limit)
+    {
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns +
+            " WHERE module_id = $module AND job_type = $type" +
+            " AND status IN ($completed, $cancelled, $interrupted)" +
+            " ORDER BY finished_at DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$module", moduleId);
+        command.Parameters.AddWithValue("$type", jobType);
+        command.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+        command.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+        command.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+        command.Parameters.AddWithValue("$limit", limit);
+        return ReadAll(command);
+    }
+
     public IReadOnlyList<BulkJobRow> GetRows(string jobId)
     {
         using var connection = _factory.Open();

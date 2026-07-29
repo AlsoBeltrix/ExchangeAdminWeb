@@ -147,6 +147,9 @@ try
     // Single owner of the export directory, filename convention, and jobId validation, shared by the
     // detail-export writer and the Downloadable Reports page so the two cannot drift apart.
     builder.Services.AddScoped<MessageTraceExportStore>();
+    // Page logic for the Downloadable Reports page, kept out of the markup so it is unit-testable
+    // (the repo has no bUnit harness).
+    builder.Services.AddScoped<MessageTraceExportListing>();
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor>();
     builder.Services.AddScoped<MailboxPermissionService>();
     builder.Services.AddScoped<CalendarPermissionService>();

@@ -1,0 +1,197 @@
+@page "/message-analysis/reports"
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "MessageTrace")]
+@rendermode InteractiveServer
+@inject MessageTraceExportListing Exports
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject IJSRuntime JS
+
+<PageTitle>Downloadable Reports</PageTitle>
+
+<div class="container-fluid mt-4">
+    @* Sub-page of the Message Analysis module, so it reuses that module's policy and version.
+       ModuleVersion resolves the descriptor from the route, which only matches the module's own
+       route - on this sub-route it renders nothing. Kept per docs/AdminModuleSpec.md rather than
+       hand-rolling the lookup; the sub-route gap is recorded in .agents/state.md. *@
+    <h2>Downloadable Reports<ModuleVersion /></h2>
+    <p class="text-muted">
+        Message Analysis detail exports produced as background jobs. Downloads are logged for audit;
+        a ticket number is required and is recorded with the download.
+    </p>
+    <div class="alert alert-info py-2 mb-3">
+        <small>
+            Exports are kept for @MessageTraceExportStore.RetentionDays days and then removed automatically.
+            Live downloads taken directly from a trace (@MessageTraceDetailReport.LiveMax or fewer messages)
+            are not stored and never appear here.
+        </small>
+    </div>
+
+    <div class="row g-3 mb-3 align-items-end">
+        <div class="col-md-3">
+            <label class="form-label">Ticket Number</label>
+            <input type="text" class="form-control" @bind="ticketNumber" @bind:event="oninput"
+                   placeholder="required to download" disabled="@busy" />
+        </div>
+        <div class="col-md-2">
+            <button class="btn btn-outline-secondary" type="button" @onclick="Refresh" disabled="@busy">Refresh</button>
+        </div>
+        <div class="col-md-7">
+            <a class="btn btn-link" href="message-analysis">Back to Message Analysis</a>
+        </div>
+    </div>
+
+    @if (error != null)
+    {
+        <div class="alert alert-danger">@error</div>
+    }
+
+    @if (items.Count == 0)
+    {
+        <div class="alert alert-secondary">No detail exports have been produced yet.</div>
+    }
+    else
+    {
+        <div class="table-responsive">
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Submitted</th>
+                        <th>Submitted By</th>
+                        <th>Messages</th>
+                        <th>Trace</th>
+                        <th>Ticket</th>
+                        <th>Status</th>
+                        <th>Available Until</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in items)
+                    {
+                        <tr>
+                            <td class="text-nowrap">@item.SubmittedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@item.SubmittedBy</td>
+                            <td>@item.MessageCount</td>
+                            <td class="small text-break">@item.Descriptor</td>
+                            <td>@item.Ticket</td>
+                            <td class="text-nowrap" title="@MessageTraceExportListing.Describe(item.State)">
+                                @MessageTraceExportListing.ShortStatus(item.State)
+                            </td>
+                            <td class="text-nowrap">
+                                @(item.State == MessageTraceExportState.Available
+                                    ? item.ExpiresAtUtc.ToLocalTime().ToString("yyyy-MM-dd")
+                                    : "-")
+                            </td>
+                            <td class="text-end">
+                                <button type="button" class="btn btn-sm btn-outline-primary"
+                                        disabled="@(busy || !item.CanDownload || string.IsNullOrWhiteSpace(ticketNumber))"
+                                        @onclick="() => Download(item.JobId)">
+                                    @if (busy && busyJobId == item.JobId)
+                                    {
+                                        <span class="spinner-border spinner-border-sm me-1"></span>
+                                    }
+                                    Download
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private IReadOnlyList<MessageTraceExportListItem> items = Array.Empty<MessageTraceExportListItem>();
+    private string ticketNumber = "";
+    private string? error;
+    private bool busy;
+    private string? busyJobId;
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+
+    private const string AuditAction = "MessageTrace_ExportDownload";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "MessageTrace");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        Refresh();
+    }
+
+    private void Refresh()
+    {
+        error = null;
+        items = Exports.GetExports();
+    }
+
+    private async Task Download(string jobId)
+    {
+        error = null;
+        busy = true;
+        busyJobId = jobId;
+        var ticket = ticketNumber.Trim();
+        try
+        {
+            // The listing owns the whole decision (ticket presence, re-resolution at click time, and
+            // the read), so a row rendered before the retention task ran cannot download a file that
+            // is already gone, and a blank ticket never reaches the filesystem.
+            var result = await Exports.TryDownloadAsync(jobId, ticket);
+
+            if (result.Succeeded)
+            {
+                await JS.InvokeVoidAsync("downloadFile", result.FileName, "text/csv",
+                    Convert.ToBase64String(result.Bytes!));
+            }
+            else
+            {
+                error = result.Error;
+                // Refresh the whole list so a vanished file stops showing a live action everywhere,
+                // not only on the row that was clicked.
+                items = Exports.GetExports();
+            }
+
+            // Audit every attempt, hit and miss (plan slice 2). The ticket is recorded, never
+            // validated (D2). An audit failure must never fail the download (Constitution).
+            try
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, AuditAction, $"job {jobId}",
+                    result.Succeeded, result.Error, ticket);
+            }
+            catch { }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            try
+            {
+                Audit.LogLookupAction(currentUser, clientIpAddress, AuditAction, $"job {jobId}",
+                    false, ex.Message, ticket);
+            }
+            catch { }
+        }
+        finally
+        {
+            busy = false;
+            busyJobId = null;
+        }
+    }
+}

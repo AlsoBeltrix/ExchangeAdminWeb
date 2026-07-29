@@ -173,6 +173,14 @@ public sealed class BulkJobService
     public IReadOnlyList<BulkJobRow> GetRows(string id) => _repository.GetRows(id);
 
     /// <summary>
+    /// Terminal jobs for one module and job type, newest first. Takes its own limit rather than
+    /// reusing BulkJobs:RecentJobLimit, which bounds the cross-module recent-jobs view: a page
+    /// listing one module's history must not disappear because another module was busy.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetFinishedByType(string moduleId, string jobType, int limit) =>
+        _repository.GetFinishedByType(moduleId, jobType, limit);
+
+    /// <summary>
     /// Display classification: a Running job whose heartbeat is older than the stale threshold is
     /// surfaced as "Stalled" (its worker may be wedged mid-cmdlet - see plan). Stalled is never a
     /// stored state; it is derived here purely for the UI. All other statuses map to their name.

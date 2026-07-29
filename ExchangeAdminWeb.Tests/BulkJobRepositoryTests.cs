@@ -289,6 +289,80 @@ public class BulkJobRepositoryTests
         Assert.Equal(["j4", "j3", "j2"], recent.Select(j => j.Id));
     }
 
+    [Fact]
+    public void GetFinishedByType_FiltersByModuleAndType_ExcludesEverythingElse()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        repo.Insert(Finished(NewJob("mine", BulkJobStatus.Completed)));
+        repo.Insert(Finished(Retyped(NewJob("otherType", BulkJobStatus.Completed), jobType: "SetType_Bulk")));
+        repo.Insert(Finished(Retyped(NewJob("otherModule", BulkJobStatus.Completed), moduleId: "MessageTrace")));
+        repo.Insert(NewJob("stillRunning", BulkJobStatus.Running));
+
+        var found = repo.GetFinishedByType("ConferenceRooms", "SetMetadata_Bulk", 50);
+
+        Assert.Equal(["mine"], found.Select(j => j.Id));
+    }
+
+    [Fact]
+    public void GetFinishedByType_IsNotBoundedByTheRecentJobLimit()
+    {
+        // The reason this method exists rather than reusing GetRecentFinished: that one is unfiltered
+        // and capped at BulkJobs:RecentJobLimit (default 25), so a busy day in another module would
+        // silently empty a page built on it.
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        for (var i = 0; i < 40; i++)
+        {
+            var j = NewJob($"j{i}", BulkJobStatus.Completed);
+            j.FinishedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i);
+            repo.Insert(j);
+        }
+
+        Assert.Equal(40, repo.GetFinishedByType("ConferenceRooms", "SetMetadata_Bulk", 200).Count);
+    }
+
+    [Fact]
+    public void GetFinishedByType_IncludesCancelledAndInterrupted_NewestFirst()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        var statuses = new[] { BulkJobStatus.Completed, BulkJobStatus.Cancelled, BulkJobStatus.Interrupted };
+        for (var i = 0; i < statuses.Length; i++)
+        {
+            var j = NewJob($"j{i}", statuses[i]);
+            j.FinishedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i);
+            repo.Insert(j);
+        }
+
+        var found = repo.GetFinishedByType("ConferenceRooms", "SetMetadata_Bulk", 50);
+
+        Assert.Equal(["j2", "j1", "j0"], found.Select(j => j.Id));
+    }
+
+    private static BulkJob Finished(BulkJob job)
+    {
+        job.FinishedAtUtc = new DateTime(2026, 1, 1, 13, 0, 0, DateTimeKind.Utc);
+        return job;
+    }
+
+    private static BulkJob Retyped(BulkJob job, string? moduleId = null, string? jobType = null) => new()
+    {
+        Id = job.Id,
+        ModuleId = moduleId ?? job.ModuleId,
+        JobType = jobType ?? job.JobType,
+        Status = job.Status,
+        SubmittedBy = job.SubmittedBy,
+        SubmittedByDisplay = job.SubmittedByDisplay,
+        SubmittedIp = job.SubmittedIp,
+        Ticket = job.Ticket,
+        AuthSnapshotJson = job.AuthSnapshotJson,
+        PayloadJson = job.PayloadJson,
+        SubmittedAtUtc = job.SubmittedAtUtc,
+        FinishedAtUtc = job.FinishedAtUtc
+    };
+
     private static BulkJob WithSubmitted(BulkJob job, DateTime submitted) => new()
     {
         Id = job.Id,
