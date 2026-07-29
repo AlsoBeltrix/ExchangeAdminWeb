@@ -73,5 +73,6 @@ examplescripts/
 
 # GM-3 discovery output — contains live directory SIDs/usernames, never commit
 GroupMembershipDelegation-*.csv
-.tokensave/ 
+.tokensave/
+ 
  
