@@ -121,8 +121,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   broken relative link.
 
 - **Operator email resolution from AD -- PLAN DRAFT, awaiting owner approval; no code written.**
-  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev (2026-07-29,
-  against `2.3.31`) that the new recipient box does not pre-fill. Pre-fill *is* the design
+  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev (2026-07-29)
+  that the new recipient box does not pre-fill -- **see the deployed-version conflict flagged
+  in the version block below; which build that report came from is unsettled.** Pre-fill
+  *is* the design
   (D4(a) of the download-link plan), so this is a bug. Root cause at
   `Components/Pages/MessageTrace.razor:610-613`: `userEmail` is read from `ClaimTypes.Email` /
   `email` / `ClaimTypes.Upn`, but the app is **Negotiate-only** (`Program.cs:38-39`) and a
@@ -148,6 +150,23 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   unproven, not regressed; manual check 5 does not gate this plan, but **its outcome must be
   recorded here either way**, and a failure earns its own follow-up plan rather than being
   absorbed into this one. Plan commits `b7b9c94`, `3962904`, `186d4e0`.
+  **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max,
+  range `64b211a..ace6230`): verdict **findings** (3), all accepted; record at
+  `.agents/review/findings/operator-email-resolution-plan.md`. **F1 (HIGH) replaced the
+  plan's central mechanism:** resolve by the authenticated **primary SID**
+  (`ClaimTypes.PrimarySid`, which Negotiate does populate --
+  `Components/Pages/SelfServiceGroups.razor:325`) through a bound `Get-ADUser -Identity`,
+  mirroring `SelfServiceGroupService.ResolveCallerDn`
+  (`Services/SelfServiceGroups/SelfServiceGroupService.cs:672-685`, whose doc comment
+  already rejects samAccountName as an identity form by name). The samAccountName-through-
+  autocomplete design fails four ways an exact-match post-filter cannot close, the worst
+  being a cross-trust name collision returning exactly one confidently-wrong row. **F2
+  (MEDIUM):** the resolver is `ResolveAsync` doing its work under `Task.Run` -- the shared
+  AD lock can block 30s (`ADDirectorySearchService.cs:80`) and would freeze the circuit;
+  a late result fills the recipient box only while it is still untouched. **F3 (LOW):** the
+  deployed-version contradiction, flagged in the version block below rather than guessed.
+  Also confirmed: `ADDirectorySearchService` is `sealed`, so the narrow test interface is
+  required, not optional.
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
@@ -186,6 +205,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   to dev, validated, then promoted to prod. `2.3.30` supersedes all prior deployed builds, so it
   carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root fail-fast, and the `2.3.30`
   ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27` (validated 2026-06-29).
+- **CONFLICT, UNRESOLVED (flagged 2026-07-29 by openreview F3) — what is actually on dev.**
+  The two bullets above say `2.3.31` is deployed nowhere and dev is on `2.3.30`. But the
+  owner's report that the recipient box does not pre-fill can only come from a host running
+  `2.3.31`: the box did not exist before it (`2f0b99c`). Both readings cannot be true.
+  **Do not assume either** when choosing a deploy baseline. Settled by one look at the version
+  in the dev sidebar (`BuildInfo` renders it); record the answer here and delete this bullet.
+  Tracked as OQ-4 in `docs/OperatorEmailResolution-Plan.md`.
 - **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
   Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
   `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),

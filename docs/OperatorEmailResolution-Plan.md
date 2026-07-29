@@ -1,8 +1,13 @@
 # Operator Email Resolution From Active Directory -- Plan
 
 Status: **Draft, awaiting owner approval.** Decisions D1-D3 are ruled (owner, 2026-07-29);
-see Owner Decisions. No open owner gates. Implementation may not begin until the status
-line reads Approved.
+see Owner Decisions. Implementation may not begin until the status line reads Approved.
+**Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max,
+range `64b211a..ace6230`): verdict **findings** (3), all accepted and repaired here; record
+at `.agents/review/findings/operator-email-resolution-plan.md`. F1 (HIGH) replaced this
+plan's central mechanism -- the lookup key is now the authenticated **primary SID**, not the
+account name -- so the owner is ruling on a materially revised design. One open owner gate:
+OQ-4 (a contradiction in the recorded dev version, which the repo cannot settle by itself).
 App version: `2.3.31` -> `2.3.32` (shared service + DI registration, used by more than one
 page over time).
 Module: `MessageTrace` `1.3.0` -> `1.3.1` (module behavior change: the recipient box now
@@ -24,9 +29,11 @@ userEmail = user.FindFirst(ClaimTypes.Email)?.Value
 
 The app authenticates with **Negotiate only** (`Program.cs:38-39`,
 `AddAuthentication(NegotiateDefaults.AuthenticationScheme).AddNegotiate()`). A Kerberos/NTLM
-token carries the account name (`DOMAIN\user`, read at `:601`) and group SIDs. It does not
-carry `mail`, does not carry an `email` claim, and does not carry a UPN claim. All three
-lookups miss, so `userEmail` is `""` on every request.
+token carries the account name (`DOMAIN\user`, read at `:601`) and SIDs -- including the
+account's own **primary SID**, which this app already consumes elsewhere
+(`Components/Pages/SelfServiceGroups.razor:325`). It does not carry `mail`, does not carry
+an `email` claim, and does not carry a UPN claim. All three lookups miss, so `userEmail` is
+`""` on every request.
 
 Two consumers are broken by this, both pre-existing:
 
@@ -62,9 +69,13 @@ its purpose is to discover what the next failure is, if any, not to gate this pl
 Ruled by the owner, 2026-07-29 ("2nd" -- fix `userEmail` at the source rather than patching
 only the new Notify box).
 
-The address is looked up in AD from the authenticated account name. Fixing only the Notify
+The address is looked up in AD from the authenticated principal. Fixing only the Notify
 box would leave the same empty variable feeding historical search, guaranteeing a return
 visit to this code.
+
+**Amended after review (openreview finding F1, 2026-07-29):** the lookup key is the
+authenticated **primary SID**, not the account name. The ruling is unchanged -- it asked for
+a directory lookup and still gets one; only the key it looks up by is corrected. See Design.
 
 ### D2 -- `mail`, falling back to `userPrincipalName` (RULED)
 
@@ -120,52 +131,87 @@ A narrow, testable seam. Registered `AddSingleton` in `Program.cs` beside
 ```csharp
 public class OperatorEmailResolver
 {
-    public virtual string? Resolve(string? accountName);
+    public virtual Task<string?> ResolveAsync(string? primarySid);
 }
 ```
 
-- Accepts the Negotiate account name as `Identity.Name` supplies it: `DOMAIN\user`, or a bare
-  `user`, or a UPN-shaped string. Strip a leading `DOMAIN\` before querying; pass the
-  remainder as the samAccountName.
-- Returns the trimmed `mail`, else the trimmed `userPrincipalName`, else `null`. Never returns
-  an empty or whitespace string -- callers branch on null only.
-- **Fail-soft.** Any exception, AD unavailability, or no match returns `null` and logs a
-  warning. This must never throw into `OnInitializedAsync`; a directory hiccup must not break
-  the whole page when only a pre-fill depends on it.
-- Not sealed, and `Resolve` is `virtual`, so page-level tests can substitute it
-  (`Substitute.ForPartsOf<T>`), matching the seam style used by `MessageTraceExportListing`.
+- Accepts the operator's **primary SID** as the Negotiate scheme supplies it in
+  `ClaimTypes.PrimarySid` (`S-1-5-21-...`). Not the account name. See "Why the SID" below.
+- Validates the input is a well-formed SID before querying, then returns the trimmed `mail`,
+  else the trimmed `userPrincipalName`, else `null`. Never returns an empty or whitespace
+  string -- callers branch on null only.
+- **Fail-soft.** Any exception, AD unavailability, a missing claim, a malformed SID, or no
+  match returns `null` and logs a warning. This must never throw into `OnInitializedAsync`; a
+  directory hiccup must not break the whole page when only a pre-fill depends on it.
+- Not sealed, and `ResolveAsync` is `virtual`, so page-level tests can substitute it
+  (`Substitute.ForPartsOf<T>`), matching the seam style used by `MessageTraceExportListing`
+  (`Services/MessageTraceExportListing.cs:80`, `:214`).
 
-**Reuse `ADDirectorySearchService` rather than opening a second runspace.** It already holds a
-pooled runspace with the `ActiveDirectory` module imported, a 30-second throttle lock, LDAP
-filter escaping via `ProtectedPrincipalService.EscapeLdapFilter`, a cached availability probe,
-and it already requests the `mail` and `UserPrincipalName` properties
-(`ADDirectorySearchService.cs:148`) and surfaces them on `ADSearchResult`
-(`:263-269`). A second runspace would duplicate the module-import cost and the escaping rules.
+### Why the SID, and not the account name (openreview F1, HIGH)
 
-Implementation note -- `Search` is a **wildcard, substring** search with a 3-character minimum
-(`ADDirectorySearchService.cs:69-70, 144`). It is built for autocomplete, not identity
-resolution. Therefore:
+The first draft of this plan looked the operator up by samAccountName through
+`ADDirectorySearchService.Search`, then post-filtered for an exact match. Review rejected that
+design, and the rejection is correct. `Search` is a **wildcard, substring** query with a
+3-character minimum and a `ResultSetSize` cap (`ADDirectorySearchService.cs:69-70`, `:144`,
+`:149`), built for autocomplete. Four separate failures follow from using it as an identity
+oracle, and an exact-match post-filter closes none of them:
 
-- Do not treat a single result as authoritative by position. Filter the returned
-  `ADSearchResult` list to an **exact, case-insensitive** `SamAccountName` match.
-- Return `null` when zero rows match exactly, and when more than one does. A samAccountName is
-  unique within a domain, so multiple exact matches means the assumption is wrong and guessing
-  would mail the wrong person -- the D2 rejection applies to this case too. Log a warning
-  naming the count.
-- Accounts shorter than 3 characters cannot be searched. Return `null` and log; do not
-  special-case around the minimum.
+1. A UPN-shaped input can never equal a samAccountName, so the "UPN-shaped input resolves"
+   requirement and the exact-match rule contradict each other outright.
+2. An account name under 3 characters is unreachable: the search returns `[]` before it runs.
+3. The `ResultSetSize` cap can truncate the set before the exact match appears. The filter then
+   finds nothing and returns `null` -- indistinguishable from a genuine no-match.
+4. Stripping the `DOMAIN\` prefix discards domain identity. The search is not domain-scoped, so
+   across a trust the same samAccountName in two domains can yield **one** row that is
+   confidently the wrong person. The "two or more matches means stop" guard never fires,
+   because only one matched. That mails mail-flow data to the wrong mailbox -- exactly the
+   outcome D2's rejection of address synthesis exists to prevent.
 
-Where the exact-match filter would be a meaningful cost or the semantics are awkward, adding a
-dedicated `FindUserBySamAccountName` method to `ADDirectorySearchService` (non-wildcard
-`Get-ADUser -Identity`) is **in scope** and preferred over loosening the filter above. Keep it
-fail-soft in the same style as the existing methods.
+The repo already solved this, and solved it against the rejected approach by name.
+`Services/SelfServiceGroups/SelfServiceGroupService.cs:672-685` (`ResolveCallerDn`) turns an
+authenticated principal into a directory object with a bound `Get-ADUser -Identity <sid>`; its
+doc comment at `:64-68` explicitly refuses "an alternate identity form (DN, GUID,
+sAMAccountName)", and `:73` hard-validates that the input is a SID. Follow that precedent.
+
+A SID is immutable, unambiguous, and domain-qualified. It needs no wildcard, no length
+minimum, no result cap, and no post-filter -- all four failures above disappear rather than
+being guarded against.
+
+**Do not use `ADDirectorySearchService.Search` for this.** Add a dedicated
+`FindUserBySid(string sid)` to `ADDirectorySearchService` that runs a bound
+`Get-ADUser -Identity <sid>` on the **existing pooled runspace**, requesting `mail` and
+`UserPrincipalName` (already in the property set at `:148`, already surfaced on
+`ADSearchResult` at `:263-269`). Reusing that runspace keeps the `ActiveDirectory` module
+import, the throttle lock, and the availability probe; a second runspace would duplicate all
+three. Keep it fail-soft in the style of the existing methods.
+
+**No name-based fallback.** When the `PrimarySid` claim is absent or the SID does not resolve,
+return `null` and take the D3 path. D3 has already ruled what an unresolvable address means:
+historical search refuses with an honest message, and the pre-fill is simply empty. A second,
+weaker resolution path would reintroduce the ambiguity above to avoid an outcome the owner has
+already accepted.
+
+### Asynchronous by construction (openreview F2, MEDIUM)
+
+`ADDirectorySearchService` blocks: `_runspaceLock.Wait(TimeSpan.FromSeconds(30))`
+(`ADDirectorySearchService.cs:80`) on a process-wide lock held by a singleton, so any
+concurrent AD call in the app, or a cold `ActiveDirectory` module import, sits on the critical
+path. A synchronous resolve called from `OnInitializedAsync` would stall server-side rendering
+and the Blazor circuit for up to 30 seconds -- to populate a text box that D4(a) calls a
+default and not a floor.
+
+The repo already treats this call as blocking and already moves it off the renderer thread:
+`Components/Shared/ADIdentityAutocomplete.razor:104` wraps it in `Task.Run`. Do the same.
+`ResolveAsync` performs the PowerShell work under `Task.Run`; the page renders immediately and
+fills the box when the lookup returns.
 
 ### `Components/Pages/MessageTrace.razor`
 
 Replace the claim chain at `:610-613`:
 
 ```csharp
-userEmail = OperatorEmail.Resolve(currentUser) ?? "";
+var primarySid = user.FindFirst(System.Security.Claims.ClaimTypes.PrimarySid)?.Value;
+userEmail = await OperatorEmail.ResolveAsync(primarySid) ?? "";
 ```
 
 Inject the resolver. Resolution happens **once per circuit** in `OnInitializedAsync`, which is
@@ -173,8 +219,17 @@ the existing caching story -- do not add a memory cache. Keep `recipientInput = 
 `:619` and its comment; with `userEmail` now populated, D4(a) pre-fill starts working with no
 other change.
 
-`currentUser` is already `Identity?.Name ?? "Unknown"` at `:601`. Pass `"Unknown"` through to
-the resolver; it will not match and returns `null`, which is correct.
+Read the SID the same way `Components/Pages/SelfServiceGroups.razor:325` does. Do **not** pass
+`currentUser` (the `DOMAIN\user` string at `:601`) to the resolver -- it is still used for
+audit and display, but it is not an identity key here.
+
+**Late-arriving resolution must never overwrite typed input.** The resolve is now awaited
+rather than instant, so the operator can reach the recipient box before it returns. Write the
+resolved value into `recipientInput` only while the box is still untouched -- track a
+"operator has edited the recipient box" flag set on first input, and skip the pre-fill when it
+is set. A pre-fill is a default (D4(a)); silently replacing an address the operator typed
+would be the worst possible reading of that ruling. `RunHistoricalSearch` awaits the same
+resolution rather than reading a field that may not be populated yet.
 
 Update the refusal at `:710-714`. Current text blames the operator's account:
 
@@ -193,32 +248,35 @@ change; it starts rendering the address once resolution works.
 `ExchangeAdminWeb.Tests/OperatorEmailResolverTests.cs`. New services require tests before the
 work stream is done (`.agents/repo-guidance.md` Verification).
 
-Drive the tests through a substituted `ADDirectorySearchService` seam rather than a live
-directory; the suite must not require a domain controller. If `ADDirectorySearchService` is not
-substitutable as written, introduce the narrow interface needed -- do not add a live-AD test.
+Drive the tests through a substituted directory seam rather than a live directory; the suite
+must not require a domain controller. **`ADDirectorySearchService` is `sealed`
+(`Services/ADDirectorySearchService.cs:11`), so NSubstitute cannot substitute it as written.**
+Introduce the narrow interface the resolver depends on (the single `FindUserBySid` member) and
+have `ADDirectorySearchService` implement it -- this is required, not a contingency. Do not add
+a live-AD test, and do not unseal the class for test convenience.
 
 - `mail` present -> returned, trimmed.
 - `mail` null, empty, or whitespace -> `userPrincipalName` returned (D2). One case per input
   shape; a whitespace `mail` must not win over a valid UPN.
 - Both absent -> `null`, never `""`.
-- `DOMAIN\user` -> the domain prefix is stripped before the query. Assert the term the search
-  received, not merely the result, or a refactor that stops stripping still passes.
-- Bare `user` and a UPN-shaped input both resolve.
-- Exact-match filter: a wildcard result set containing a near-miss (`jdoe2` when asked for
-  `jdoe`) resolves to `jdoe` and never the near-miss. **This is the highest-value test here** --
-  it guards against mailing trace data to the wrong person.
-- Zero exact matches -> `null`. Two or more exact matches -> `null` plus a warning.
-- The search throwing -> `null`, no exception escapes (fail-soft).
-- `null`, `""`, `"Unknown"`, and a sub-3-character account each -> `null` without throwing.
+- A valid SID is passed to the directory call **unmodified**. Assert the identity the lookup
+  received, not merely the result, or a refactor that mangles the SID still passes.
+- Malformed input -- `null`, `""`, `"DOMAIN\user"`, `"user@contoso.com"`, `"Unknown"`, and a
+  non-SID string -- each returns `null` without throwing and **without reaching the directory
+  at all**. Assert the lookup was not called. **This is the highest-value test here:** it is
+  what keeps a name from ever re-entering the identity path and mailing trace data to the
+  wrong person (F1).
+- The directory call throwing -> `null`, no exception escapes (fail-soft).
+- The lookup finding no user -> `null`.
 
-**Non-vacuity proof (required):** for each new guard -- the UPN fallback, the domain-prefix
-strip, the exact-match filter, the ambiguous-match rejection, and the fail-soft catch -- revert
-the guard, confirm the matching test fails, restore, confirm green. Record the observed failure
+**Non-vacuity proof (required):** for each new guard -- the UPN fallback, the SID-format
+validation, the pass-through of the SID unmodified, and the fail-soft catch -- revert the
+guard, confirm the matching test fails, restore, confirm green. Record the observed failure
 count per guard. A test that passes with its guard removed is vacuous and must be replaced.
 
-Page-level behavior (pre-fill rendering, the changed refusal text) is **not** unit-testable:
-the repo has no bUnit harness and this plan does not add one. It is covered by the manual
-checks below.
+Page-level behavior (pre-fill rendering, the untouched-box rule, the changed refusal text) is
+**not** unit-testable: the repo has no bUnit harness and this plan does not add one. It is
+covered by the manual checks below.
 
 ## Verification
 
@@ -243,6 +301,12 @@ checks below.
      change. Record what happens and stop; do not fix it under this plan (OQ-2).
   6. Sign in as a second operator; the box shows *their* address, not the first operator's
      (guards against a resolution cached across circuits).
+  7. Confirm the address actually resolved rather than the resolver fail-softing to empty --
+     i.e. that `ClaimTypes.PrimarySid` is populated on this deployment. Check 1 passing is
+     sufficient evidence; if the box is empty, check the warning log before assuming AD is
+     down (openreview F1, Known gap 1).
+  8. Type an address into the recipient box immediately on page load, before it pre-fills;
+     the typed value must survive -- the late resolution must not overwrite it (F2).
 
 ## Open Questions
 
@@ -263,3 +327,12 @@ checks below.
   only way L2 can run a search beyond the realtime window without escalating to L3-4. Removal
   was considered and rejected. Do not re-raise deletion as a simplification in any later work
   on this page.
+- **OQ-4 (OPEN, owner gate -- blocks nothing in this plan, but the state file is wrong until
+  it is answered):** `.agents/state.md` gives two incompatible answers about dev. The
+  operator-email entry records the missing pre-fill being observed on dev against `2.3.31`;
+  the version block says `2.3.31` is deployed nowhere and that dev and prod are both on
+  `2.3.30`. Both cannot hold -- the recipient box did not exist before `2.3.31` (`2f0b99c`),
+  so a `2.3.30` host cannot exhibit "the box does not pre-fill". Raised by openreview (F3).
+  Settled by one look at the version in the dev sidebar (`BuildInfo` renders it). Not guessed
+  here: writing a version into the canonical state file on inference is the failure the
+  flag-conflicts invariant exists to prevent.
