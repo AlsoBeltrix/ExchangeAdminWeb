@@ -131,6 +131,10 @@ try
     builder.Services.AddScoped<ADAttributeEditorService>();
     builder.Services.AddSingleton<ADOrganizationalUnitService>();
     builder.Services.AddSingleton<ADDirectorySearchService>();
+    // The operator-email resolver reads the same pooled AD runspace through a one-member seam,
+    // so it never reaches the wildcard autocomplete search (OperatorEmailResolution-Plan).
+    builder.Services.AddSingleton<IOperatorDirectory>(sp => sp.GetRequiredService<ADDirectorySearchService>());
+    builder.Services.AddSingleton<OperatorEmailResolver>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<AccountLockoutRemediationService>();
     builder.Services.AddScoped<LicensingUpdatesService>();

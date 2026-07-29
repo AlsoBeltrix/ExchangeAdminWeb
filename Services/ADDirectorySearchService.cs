@@ -8,7 +8,7 @@ namespace ExchangeAdminWeb.Services;
 /// Runs under the app pool's ambient identity (no Delinea credential).
 /// NOT used for authorization, protected-principal enforcement, or writes.
 /// </summary>
-public sealed class ADDirectorySearchService
+public sealed class ADDirectorySearchService : IOperatorDirectory
 {
     private readonly ILogger<ADDirectorySearchService> _logger;
     private readonly SemaphoreSlim _runspaceLock = new(1, 1);
@@ -105,6 +105,101 @@ public sealed class ADDirectorySearchService
             _logger.LogWarning(ex, "AD directory search failed for term '{Term}' objectKind '{ObjectKind}'", term, objectKind);
             return [];
         }
+    }
+
+    /// <summary>
+    /// Resolve one user by their Windows SID, for identity resolution rather than
+    /// autocomplete. Returns null when the SID does not resolve, AD is unavailable, or the
+    /// directory errors (fail-soft, matching <see cref="Search"/>).
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT routed through <see cref="Search"/>. That is a wildcard substring
+    /// query with a length minimum and a result cap, built for autocomplete; using it as an
+    /// identity oracle can return a confidently wrong user (a same-named account in another
+    /// trusted domain) and would mail mail-flow data to the wrong person. This binds
+    /// <c>-Identity</c> to the SID: immutable, unambiguous, domain-qualified, no post-filter.
+    /// Mirrors <c>SelfServiceGroupService.ResolveCallerDn</c>. See
+    /// <c>docs/OperatorEmailResolution-Plan.md</c> ("Why the SID").
+    /// </remarks>
+    public ADSearchResult? FindUserBySid(string sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid))
+            return null;
+
+        if (!IsAvailable)
+            return null;
+
+        try
+        {
+            if (!_runspaceLock.Wait(TimeSpan.FromSeconds(30)))
+            {
+                _logger.LogWarning("AD lookup throttle timeout resolving a principal by SID");
+                return null;
+            }
+
+            try
+            {
+                return ExecuteFindUserBySid(sid.Trim());
+            }
+            catch
+            {
+                // A failed lookup may leave the persistent runspace in a broken
+                // state; drop it so the next call builds a fresh one.
+                _searchRunspace?.Dispose();
+                _searchRunspace = null;
+                throw;
+            }
+            finally
+            {
+                _runspaceLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            // The SID is not logged: it identifies the operator, and this path runs on every
+            // page load. The failure itself is what the operator's empty pre-fill needs explained.
+            _logger.LogWarning(ex, "AD lookup by SID failed");
+            return null;
+        }
+    }
+
+    private ADSearchResult? ExecuteFindUserBySid(string sid)
+    {
+        var runspace = GetOrCreateRunspace();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        // -Identity is a bound parameter, never string interpolation: the SID reaches the
+        // cmdlet as data, so no LDAP filter escaping question arises.
+        ps.AddCommand("Get-ADUser")
+          .AddParameter("Identity", sid)
+          .AddParameter("Properties", new[] { "DisplayName", "DistinguishedName", "SamAccountName", "UserPrincipalName", "mail" })
+          .AddParameter("ErrorAction", "Stop");
+
+        var users = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (ps.HadErrors)
+        {
+            var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADUser by SID failed";
+            _logger.LogWarning("AD lookup by SID had errors: {Error}", errMsg);
+            ps.Streams.Error.Clear();
+        }
+
+        // The null-element guard matches MessageTraceService's four mapping loops: a pipeline
+        // can yield a null row, and dereferencing it throws an NRE the caller reads as an
+        // outage (see docs/MessageTraceNullRow-Plan.md).
+        var obj = users.FirstOrDefault(u => u is not null);
+        if (obj is null)
+            return null;
+
+        return new ADSearchResult(
+            DisplayName: obj.Properties["DisplayName"]?.Value?.ToString() ?? "",
+            DistinguishedName: obj.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+            SamAccountName: obj.Properties["SamAccountName"]?.Value?.ToString(),
+            UserPrincipalName: obj.Properties["UserPrincipalName"]?.Value?.ToString(),
+            Email: obj.Properties["mail"]?.Value?.ToString(),
+            ObjectType: "User");
     }
 
     // Reused across searches (created and accessed only while _runspaceLock is
