@@ -454,7 +454,15 @@ and prod do not silently share one URL.
 - `ExpiresAtUtc` returns `submittedAtUtc + 30 days`. Pin the constant in the test, so a
   change to the host scheduled task's window cannot drift the app's promise silently.
 
-**Save-failure tests** (slice 1, the openreview F1 guard -- the highest-value test here)
+**Save-failure tests** (slice 3, the openreview F1 guard -- the highest-value test here)
+
+Moved here from slice 1 during implementation (owner informed 2026-07-29). The tests
+assert *which* email is sent, and the failure notice does not exist until slice 3
+rewrites `EmailService`. The defect they guard is also created by slice 3: while the zip
+is still attached, a save failure costs only the archive copy and the operator still has
+their data, so there is nothing to catch. Slice 1 landed the store and left
+`SaveToLogPath`'s null return commented as load-bearing for this slice.
+
 - With the export directory unwritable, the processor sends the **failure** notice and
   **not** the ready-and-linked email. Assert on which email was sent, not merely that one
   was: a test that only counts sends passes with the defect present.
