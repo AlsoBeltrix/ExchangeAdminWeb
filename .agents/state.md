@@ -58,20 +58,32 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `/message-analysis/reports`, and `GetFinishedByType` on `BulkJobRepository`/`BulkJobService`.
   Build/format/ASCII clean, 875 tests green; non-vacuity proven per guard by reverting each
   (ticket check 3 failures, Failed-vs-Expired 2, unfiltered limit 1, malformed payload 1).
-  Two facts slice 3 inherits, both recorded in code at the point of use:
-  (a) `MessageTraceExportState.Failed` is **unreachable in production** until slice 3 writes the
-  marker -- `BulkJobRepository.TryFinish` persists the terminal state by compare-and-swap from a
-  non-terminal status (`BulkJobService.cs:401`) *before* `OnJobCompletedAsync` runs (`:441`), so
-  the processor cannot stamp `job.Message` through any existing path; slice 3 must add an
-  unconditional message write to `BulkJobRepository`. (b) `<ModuleVersion />` resolves the
-  descriptor by route and so renders nothing on the sub-route; kept per `docs/AdminModuleSpec.md`
-  (PAGE009) rather than hand-rolling the lookup.
-  **NEXT: slice 3** (email link + the save-failure branch and its `job.Message` write, F1/F3
-  repairs across `EmailService`, `Install-ExchangeAdminWeb.ps1`, `deploy.ps1`,
-  `promote-dev-to-prod.ps1`, `README.md`, plus `Application:PublicBaseUrl`), then slice 4 (UI:
-  remove the leaked string at `MessageTrace.razor:399`/`:409`, drop `DestinationDisplay()`, add the
-  D4 recipient input). Version bumps land at the end. One commit per slice. Nothing deploys
-  without a separate owner go.
+  One fact recorded in code at the point of use: `<ModuleVersion />` resolves the descriptor by
+  route and so renders nothing on the sub-route; kept per `docs/AdminModuleSpec.md` (PAGE009)
+  rather than hand-rolling the lookup.
+  **Slice 3 DONE** (`e4d2497`): the completion mail now carries a link to the reports page instead
+  of the export. `EmailService.SendMessageTraceResultAsync` (no attachment, states the retention
+  expiry and the ticket prompt) + new `SendMessageTraceFailureAsync`; `NormalizeRecipients`
+  replaces `ResolveMessageTraceRecipients` and **adds nothing**, so the configured admin address is
+  never merged into a trace-export recipient set (owner ruling). F3: `ResolveReportsUrl` returns
+  null -- never a relative path -- when `Application:PublicBaseUrl` is unset or non-absolute, and
+  the caller falls back to prose; it never fails the send. F1: the save result branches the
+  notification and stamps the job record. New `BulkJobRepository.AppendMessage` /
+  `BulkJobService.AppendJobMessage` -- additive, so a note can never erase a cancel/interrupt
+  reason -- resolves the slice-2 inherited gap: `MessageTraceExportState.Failed` is now reachable
+  in production. `Application:PublicBaseUrl` added to `Install-ExchangeAdminWeb.ps1` (blank
+  default, environment-neutral), `deploy.ps1`, `promote-dev-to-prod.ps1` (empty leaves prod
+  untouched), and `README.md`. Build/format/ASCII clean, **897 xUnit + 65 Pester green**;
+  PSScriptAnalyzer adds one finding per touched script, each in a category already dominant there,
+  none at Error severity. Non-vacuity proven per guard by reverting each: save-failure branch 4
+  failures, no-relative-link rule 2, admin exclusion 6.
+  **NEXT: slice 4** (UI: remove the leaked string at `MessageTrace.razor:399`/`:409`, drop
+  `DestinationDisplay()` at `:916-925`, add the D4(a) recipient input pre-filled with the
+  operator's own address -- editable, valid when cleared, no required-field validation, client-side
+  format check only -- leave `DownloadSelectedDetails()` untouched, and say on the page that only
+  emailed/bulk exports are listed). Version bumps (`2.3.30 -> 2.3.31`, MessageTrace
+  `1.2.1 -> 1.3.0`) land at the end. One commit per slice. Nothing deploys without a separate
+  owner go.
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
@@ -257,8 +269,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - `.agents/repo-map.json` — automated verification map.
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
-  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Draft, awaiting owner
-  approval + ruling D4). No plan is currently `In progress`.
+  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Approved 2026-07-29,
+  **In progress** -- slices 1-3 landed, slice 4 next).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
