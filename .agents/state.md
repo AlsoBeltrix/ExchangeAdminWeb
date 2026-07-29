@@ -90,8 +90,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   919 tests green; non-vacuity proven (cleared-box rule 1 failure, format validation 8).
   Follow-up `86f55ce`: corrected the `SaveFailedMarker` comment that still claimed nothing wrote
   the marker.
-  **NEXT: push (owner go required — see push policy), then deploy to dev and run the plan's 9
-  manual post-deploy checks.** None of them has been run; nothing from this plan is deployed.
+  **Pushed to both remotes 2026-07-29** (owner go given; fast-forward from `2b9c47e`, no rewrite;
+  both remotes verified at `4dd805f`).
+  **NEXT: deploy to dev and run the plan's 9 manual post-deploy checks.** None of them has been
+  run; nothing from this plan is deployed.
   Highest-value ones: an 11+ message export arrives as a link with no attachment; the ticket
   prompt gates the download; an unwritable export dir yields the **failure** notice and a
   **Failed** row (not Expired) with the job still completing; with `Application:PublicBaseUrl`
@@ -113,6 +115,39 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **Non-blocking assumptions the owner may reverse:** OQ-3 (required ticket is this plan's reading
   of "requiring", not an explicit ruling) and OQ-4 (the Failed state is scope the owner did not
   request).
+  **Deploy caveat:** `Application:PublicBaseUrl` is written only on a fresh install or with
+  `-Force`, so an upgrade leaves the key absent unless it is set by hand on the host. Absent is a
+  supported state -- the mail then carries prose and no hyperlink (that is manual check 9), not a
+  broken relative link.
+
+- **Operator email resolution from AD -- PLAN DRAFT, awaiting owner approval; no code written.**
+  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev (2026-07-29,
+  against `2.3.31`) that the new recipient box does not pre-fill. Pre-fill *is* the design
+  (D4(a) of the download-link plan), so this is a bug. Root cause at
+  `Components/Pages/MessageTrace.razor:610-613`: `userEmail` is read from `ClaimTypes.Email` /
+  `email` / `ClaimTypes.Upn`, but the app is **Negotiate-only** (`Program.cs:38-39`) and a
+  Kerberos/NTLM token carries the account name and group SIDs only -- none of those three claims
+  exist, so `userEmail` is `""` on every request. Pre-existing since `e62ae73` (the page's
+  original commit), **not** a slice-4 regression. Second broken consumer: historical search
+  (`:322`, `:709-714`) hard-refuses with "Your authenticated email address is required...".
+  Owner rulings in the plan: **D1** fix at the source by looking the address up in AD, not by
+  patching the one box ("2nd"); **D2** read `mail`, fall back to `userPrincipalName` ("UPN is the
+  same as email here") -- synthesizing `sam@domain` is explicitly rejected as a silent
+  wrong-address failure; **D3** when the lookup yields nothing historical search keeps refusing,
+  only the message changes to name the real cause ("if AD is unreachable, the whole app stops
+  being relevant") -- no typed-address escape hatch. Design: new fail-soft singleton
+  `Services/OperatorEmailResolver.cs` reusing `ADDirectorySearchService`'s pooled runspace, with
+  an **exact case-insensitive `SamAccountName` filter** and `null` on 0 or 2+ matches --
+  `Search` is a wildcard substring autocomplete query, so `jdoe` also returns `jdoe2` and taking
+  the first row would eventually mail trace data to the wrong person; that is the plan's
+  highest-value test. Planned bumps: app `2.3.31 -> 2.3.32`, MessageTrace `1.3.0 -> 1.3.1`.
+  **Historical search has never been used** (owner) -- which is why a permanently blocking guard
+  survived unreported -- but the owner ruled **keep it** (plan OQ-3, CLOSED): it is L2's only
+  route to a beyond-realtime search without escalating to L3-4, so removal was considered and
+  rejected and must not be re-raised. Consequence (plan OQ-2): everything past `:710` is
+  unproven, not regressed; manual check 5 does not gate this plan, but **its outcome must be
+  recorded here either way**, and a failure earns its own follow-up plan rather than being
+  absorbed into this one. Plan commits `b7b9c94`, `3962904`, `186d4e0`.
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
@@ -284,7 +319,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
-  all four slices landed; **9 manual post-deploy checks not run, nothing deployed**).
+  all four slices landed; **9 manual post-deploy checks not run, nothing deployed**);
+  `docs/OperatorEmailResolution-Plan.md` (**Draft 2026-07-29, awaiting owner approval** -- no
+  code until the status line reads Approved).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
