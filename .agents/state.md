@@ -50,6 +50,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   rather than an empty `?ticket=` in an emailed URL). **OPEN (D4, blocks slice 3):** the default
   email recipient when the operator types nothing. Base app `2.3.30 -> 2.3.31` + MessageTrace
   `1.2.1 -> 1.3.0`. No code written.
+  **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
+  `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
+  `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
+  the mail attachment makes the saved file the sole delivery, so `SaveToLogPath`'s swallowed catch
+  would turn a disk-full failure into a "ready" email plus a row the page mislabels as Expired.
+  The plan now branches the notification on the save result and separates **Failed** from
+  **Expired**. Also: a non-blank ticket is now required at download (F2); an unset
+  `Application:PublicBaseUrl` omits the hyperlink instead of emitting an email-unresolvable
+  relative path, and the key is added to both config writers (F3); the global
+  `Export:RetentionDays` key is dropped for a pinned 30-day constant -- it broke the
+  Constitution's module-config rule and created a second retention truth that could drift from
+  the host scheduled task (F4). Plus F5, coder-raised: the D3 rewrite had dropped the
+  Constitution-conflict record about writing state into an externally-pruned directory; restored.
+  **Non-blocking assumptions the owner may reverse:** OQ-3 (required ticket is this plan's reading
+  of "requiring", not an explicit ruling) and OQ-4 (the Failed state is scope the owner did not
+  request).
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,

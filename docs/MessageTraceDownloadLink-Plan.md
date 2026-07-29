@@ -1,7 +1,10 @@
 # Message Analysis Export Delivery: Reports Page + Notification Link -- Plan
 
-Status: **Draft -- awaiting owner ruling on D4 (see Owner Gate).** Decisions D1, D2
-and D3 are ruled. No code is written until this plan is Approved.
+Status: **Draft -- awaiting owner approval and a ruling on D4 (see Owner Gate).**
+Decisions D1, D2 and D3 are ruled. No code is written until this plan is Approved.
+Independently reviewed 2026-07-29 (openreview, codex-commercial / gpt-5.6-sol / max,
+range `68bfd25..1e98eaf`): four findings, all repaired in this revision -- see
+`.agents/review/findings/mt-export-delivery-plan.md`.
 App version at draft: `2.3.30` -> `2.3.31` on implementation (no shared
 infrastructure change; the new page and store belong to the MessageTrace module and
 the only shared touch is a DI registration).
@@ -50,12 +53,25 @@ removes files older than 30 days from the audit log root. Consequences that bind
 plan:
 
 - The reports page must treat a missing file as a normal, expected state ("expired"),
-  never an error or an unhandled exception.
+  never an error or an unhandled exception. **Expired is not the only reason a file can
+  be absent** -- see the Failed-vs-Expired rule under slice 2, which openreview F1
+  forced into this plan.
 - The notification email states an availability date, computed as
-  `submittedAtUtc + Export:RetentionDays` (new config key, default `30`). The value is
-  **descriptive only** -- it mirrors the external task's policy and enforces nothing.
-  Document that at the point it is read, so a future agent does not mistake it for the
-  deletion mechanism.
+  `submittedAtUtc + 30 days`. **Thirty is a constant in `MessageTraceExportStore`, not a
+  config key.** It is **descriptive only** -- it mirrors the external task's policy and
+  enforces nothing. Comment it at the declaration so a future agent does not mistake it
+  for the deletion mechanism.
+- **Do not make it configurable.** The first draft of this plan added a global
+  `Export:RetentionDays`. openreview F4 killed it on two grounds, both correct: a
+  MessageTrace-only setting in a global key violates `docs/ProjectConstitution.md:59`
+  ("Module-specific settings belong to that module's config, not global
+  `appsettings.json`"), and -- the sharper objection -- because the app never deletes,
+  a configurable value is a second source of retention truth that can silently disagree
+  with the scheduled task. Setting it to 60 while the task deletes at 30 promises the
+  operator a file that is already gone. Relocating it to MessageTrace module config was
+  considered and rejected: it satisfies the Constitution while preserving exactly the
+  drift the finding is about. If the host task's schedule ever changes, change the
+  constant in the same commit that changes the task.
 - `BulkJobs:RetentionDays` already defaults to 30 (`Services/Jobs/BulkJobService.cs:65`),
   so the job record and the file expire on comparable schedules. They are independent
   clocks; neither may assume the other. A file whose job record has been pruned is
@@ -125,12 +141,47 @@ and may proceed once this plan is Approved.
 - **No in-app file deletion or retention sweep.** D1 places this out of process. Do not
   add a pruner, a hosted timer, or a startup cleanup for export files.
 - **No ServiceNow validation or writeback** on the ticket field. It is plain audit
-  metadata (Constitution, "External Integrations" and "Never Do").
+  metadata (Constitution, "External Integrations" and "Never Do"). Requiring the field to
+  be non-blank (F2) is a presence check, not validation -- do not let it grow into one.
+- **No configurable retention value.** Thirty days is a constant mirroring the host
+  scheduled task (D1, F4). Do not add `Export:RetentionDays`, a module-config equivalent,
+  or any other knob.
 - **No new catalog module.** The reports page belongs to the existing `MessageTrace`
   module and reuses its policy. A new module would create a second access gate for
   data the owner ruled sits behind the MessageTrace gate.
 - **No change to the live (1-10 message) in-browser download path**, beyond what slice
   4 states explicitly.
+
+## Constitution Conflict To Record, Not To Silently Resolve
+
+`docs/ProjectConstitution.md` "Never Do": *"Do not write durable state into locations
+that deployment or log pruning scripts delete."*
+
+This plan makes an externally-pruned directory the backing store for a link the app
+hands out. That is a real tension with the rule, and the implementing agent must not
+treat it as an oversight to "fix" by adding in-app retention -- D1 forbids that.
+
+(This section was present in the first draft, dropped in the D3 rewrite, and restored
+after openreview. The D3 change from an HTTP endpoint to a Razor page does not touch the
+tension: the page still hands out links backed by a pruned directory.)
+
+The tension is resolved as follows, and this reasoning must be reproduced in the code
+comment on the download handler:
+
+- The export file is a **convenience artifact, not durable state**. The authoritative
+  durable records are the audit event (`MessageTrace_DetailExport`, written with the
+  saved path at `Services/Jobs/MessageTraceDetailJobProcessor.cs:171-173`) and the job
+  record. Neither depends on the file surviving.
+- Every consumer of the file -- the reports page and the email -- is required to render
+  its absence as an ordinary outcome, never an error. Under openreview F1 that outcome
+  is now **two** states, not one: **Expired** (written successfully, since pruned) and
+  **Failed** (never written). Nothing breaks when the scheduled task removes a file, and
+  a write error is never disguised as retention.
+
+If a future change makes the file authoritative for anything -- a compliance record, an
+input to another feature, the only copy of something not reconstructible by re-running
+the trace -- this exemption lapses and the conflict must be re-opened with the owner
+rather than re-resolved here.
 
 ## Current-State Facts The Implementation Depends On
 
@@ -200,7 +251,7 @@ New `Services/MessageTraceExportStore.cs`, registered scoped in `Program.cs`.
 string   DirectoryPath { get; }                  // <logRoot>\ExchangeAdminWeb\MessageTraceExports
 string   FileNameFor(string jobId, DateTime submittedAtUtc)
 bool     TryResolve(string jobId, DateTime submittedAtUtc, out string fullPath)
-DateTime ExpiresAtUtc(DateTime submittedAtUtc)   // submittedAtUtc + Export:RetentionDays (default 30)
+DateTime ExpiresAtUtc(DateTime submittedAtUtc)   // submittedAtUtc + RetentionDays (const 30)
 ```
 
 Requirements:
@@ -218,13 +269,53 @@ Requirements:
   the directory.
 - Move the filename construction out of `MessageTraceDetailJobProcessor:106-107` and the
   directory construction out of `SaveToLogPath:138` to call this store, so the writer and
-  the reader cannot drift apart. Keep `SaveToLogPath`'s fail-soft try/catch exactly as it
-  is -- a save failure must still never break the job.
+  the reader cannot drift apart. Keep `SaveToLogPath`'s fail-soft try/catch -- a save
+  failure must still never fault the job (`OnJobCompletedAsync` is documented fail-safe,
+  `:89-90`) -- but the **caller must now branch on its null return**. See the next
+  subsection: swallowing the failure was correct while the mail carried the data, and
+  becomes a defect the moment the file is the only copy.
 
 Note for the implementer: the traversal guard is defence in depth even though every
 jobId on the read path comes from a job record rather than from user input. It is cheap,
 and it is the difference between a bug in a future caller being a bug and being a file
 disclosure.
+
+### A Failed Save Must Never Produce A "Ready" Email (openreview F1)
+
+This is the finding the plan's first two drafts both got wrong, and the reasoning must
+survive into the code, not just this document.
+
+Today `SaveToLogPath` logs and swallows (`MessageTraceDetailJobProcessor.cs:144-148`)
+and the processor then emails **unconditionally** (`:112`, `:116-118`). That was
+correct: the zip travelled *in* the mail, so a save failure cost only the archive copy
+and the operator still received their data.
+
+This plan removes the attachment. The saved file becomes the **sole** delivery. The same
+swallowed catch would then turn a disk-full or permissions failure into a
+"your export is ready" email pointing at nothing, which the reports page would render as
+**Expired** -- indistinguishable from ordinary 30-day retention. The operator would
+conclude they waited too long, and the export would be unrecoverable.
+
+The signal already exists and simply does not reach the operator: `Audit` at
+`MessageTraceDetailJobProcessor.cs:164-174` already writes `success: savedPath is not
+null` with the detail `"log save failed"`.
+
+Binding rules for the implementation:
+
+- The processor branches on `savedPath`. Non-null: the ready-and-linked email of slice 3.
+  Null: an explicit **failure** notice naming the ticket and the message count, saying
+  the export could not be stored and must be re-run. **Never a ready-with-link mail.**
+- The audit call stays as it is; it is already correct.
+- The job result is unchanged either way -- the job still completes. A save failure is a
+  delivery failure, not a job failure, and mail formatting must never change a job
+  result.
+- The reports page distinguishes **Failed** (the job record says the save failed) from
+  **Expired** (the save succeeded and the file has since been removed). Retention must
+  never be blamed for a write error. Source: the existing `MessageTrace_DetailExport`
+  audit row is the durable record of which happened; if the page cannot cheaply read
+  that, carry a save-failed marker in the job's `Message` field
+  (`Services/Jobs/BulkJobModels.cs:104`) and say in the code comment which source was
+  chosen and why.
 
 ### Slice 2 -- Downloadable Reports page
 
@@ -242,7 +333,8 @@ New `Components/Pages/MessageTraceReports.razor`, `@page "/message-analysis/repo
   the first message's sender/recipient/subject, truncated. Deserialization must be
   wrapped: a payload that fails to parse renders "(unavailable)" and never breaks the row
   or the page.
-- Rows whose file no longer resolves render as **Expired**, action disabled. Resolve via
+- Rows whose file no longer resolves render as **Expired** or **Failed**, action
+  disabled, per the Failed-vs-Expired rule above. Resolve via
   `MessageTraceExportStore.TryResolve` at render time -- never assume the file exists
   because the job record does.
 - **Download action:** prompt for a ticket number (an inline field or a small modal --
@@ -257,10 +349,20 @@ New `Components/Pages/MessageTraceReports.razor`, `@page "/message-analysis/repo
   the expired state and refreshes the row; it must not throw.
 - Audit every download attempt, success and failure, via
   `LogLookupAction(currentUser, clientIpAddress, "MessageTrace_ExportDownload", target: $"job {jobId}", success, errorDetail, ticket)`.
-  Per D2 the ticket is recorded, never validated; an empty ticket is allowed through and
-  recorded as empty, matching the module's optional ticket field
-  (`MessageTrace.razor:23`). An audit failure must not fail the download (Constitution,
+  Per D2 the ticket is **recorded, never validated** -- no ServiceNow lookup, no
+  authorization weight. An audit failure must not fail the download (Constitution,
   "Auditing And Tracing").
+- **A non-blank ticket is required to download** (openreview F2). Trim, and refuse an
+  empty value with inline validation before the file is read. The first draft allowed a
+  blank through by analogy with the module's optional ticket field
+  (`MessageTrace.razor:23`), which confused two separate questions: D2 settles
+  *validation* (never), it does not settle *presence*. The owner's word was a download
+  "requiring a ticket number as the audit check", and a blank ticket makes that check
+  nominal -- the exact failure mode D3 cites as the reason to route through a page
+  instead of an emailed `?ticket=` URL.
+  *Assumption, reversible:* the owner may prefer the blank-permitted behavior for
+  consistency with the search page's optional field. That is a one-line change and does
+  not block this slice; it is flagged in the state entry rather than held as a gate.
 - Add the page to the Trace Search tab as a link, and confirm it does **not** need a
   `ModuleCatalog` nav entry -- it is a sub-page of an existing module, not a new one.
 
@@ -281,13 +383,27 @@ New `Components/Pages/MessageTraceReports.razor`, `@page "/message-analysis/repo
   `System.IO.Compression` using (`:2`) once nothing references them.
 
 Absolute-URL construction: no base-URL config exists today. Add
-`Application:PublicBaseUrl` (e.g. `https://host/ExchangeAdminWeb`). When unset, **log a
-warning and send with a relative path**, plainly labelled -- do not guess a scheme and
-host, and do not fail the send. The job has already completed at this point and
-`OnJobCompletedAsync` is documented fail-safe (`:89-90`); a mail-formatting problem must
-never change a job result. Add the key to `README.md`'s config table
-(`README.md:532-533`) and to `tools/promote-dev-to-prod.ps1` beside the existing
-`Application:PathBase` patch, so dev and prod do not silently share one URL.
+`Application:PublicBaseUrl` (e.g. `https://host/ExchangeAdminWeb`).
+
+**When unset, omit the hyperlink entirely** -- state in prose where the export is (the
+Downloadable Reports page in the app, named via `Application:Name`), and log a warning.
+Do not guess a scheme and host, and do not fail the send.
+
+openreview F3 caught the first draft here: it fell back to a **relative** path, which an
+email client cannot resolve against any origin, so every deployment without the new key
+would receive a dead hyperlink. A dead link is worse than no link -- it reads as a broken
+app and gives the operator nothing to act on. The reviewer's proposed remedy (require and
+validate an absolute HTTPS URL) was **not** adopted verbatim, because failing the send
+conflicts with fail-safe completion: the job has already finished at this point
+(`MessageTraceDetailJobProcessor.cs:89-90`) and a mail-formatting problem must never
+change a job result. Omitting the link satisfies the finding without that cost.
+
+Add the key everywhere config is authored, or fresh installs inherit the degraded path:
+`README.md`'s config table (`README.md:532-533`);
+`tools/Install-ExchangeAdminWeb.ps1:439-443` (the `Application` block, beside `PathBase`
+and `ContactEmail`); `deploy.ps1:735-738` (same block); and
+`tools/promote-dev-to-prod.ps1` beside the existing `Application:PathBase` patch, so dev
+and prod do not silently share one URL.
 
 ### Slice 4 -- Remove the leaked UI string; wire the recipient input (BLOCKED ON D4 for the input only)
 
@@ -318,7 +434,15 @@ never change a job result. Add the key to `README.md`'s config table
   and a jobId containing a directory separator. Assert **rejection**, not merely a
   `false` return, so a refactor cannot satisfy the test by simply failing to find the
   traversed file.
-- `ExpiresAtUtc` honours a configured `Export:RetentionDays` and defaults to 30.
+- `ExpiresAtUtc` returns `submittedAtUtc + 30 days`. Pin the constant in the test, so a
+  change to the host scheduled task's window cannot drift the app's promise silently.
+
+**Save-failure tests** (slice 1, the openreview F1 guard -- the highest-value test here)
+- With the export directory unwritable, the processor sends the **failure** notice and
+  **not** the ready-and-linked email. Assert on which email was sent, not merely that one
+  was: a test that only counts sends passes with the defect present.
+- The job still completes in that case (a delivery failure is not a job failure).
+- With the save succeeding, the ready email is sent and the failure notice is not.
 
 **Repository / page-logic tests** (slice 2)
 - `GetFinishedByType` filters by module and job type and returns no other module's jobs.
@@ -326,22 +450,31 @@ never change a job result. Add the key to `README.md`'s config table
   recent-job limit and assert they are all returned. This is the specific bug that
   reusing `GetRecentFinished` would cause.
 - A malformed `PayloadJson` yields "(unavailable)" instead of throwing.
-- Extract the descriptor and expiry logic into testable methods rather than leaving them
-  inline in markup; the repo has no bUnit harness and this plan does not add one.
+- A job whose save failed renders **Failed**, and a job whose save succeeded but whose
+  file is gone renders **Expired**. Assert the two are distinguishable; collapsing them
+  is the F1 defect.
+- A blank ticket does not download (F2). Assert the file is never read, not merely that
+  a message is shown.
+- Extract the descriptor, expiry, and state-classification logic into testable methods
+  rather than leaving them inline in markup; the repo has no bUnit harness and this plan
+  does not add one.
 
 **`EmailServiceTests`** (slice 3)
 - The body contains the reports-page link and the expiry date, and no attachment
   argument is passed.
-- With `Application:PublicBaseUrl` unset, a relative link is produced and a warning is
-  logged -- the send is not skipped.
+- With `Application:PublicBaseUrl` unset, **no hyperlink is emitted** (assert no `href`
+  and no bare relative path in the body), the prose fallback is present, a warning is
+  logged, and the send is not skipped (F3).
+- With it set, the body contains the absolute URL.
 - Recipient resolution matches D4, and **no admin address appears** in the recipient set.
   Assert the admin exclusion explicitly; it is the security-relevant half.
 
-**Non-vacuity proof (required):** for each new guard -- traversal rejection, the
-unfiltered-limit assertion, the malformed-payload fallback, the admin exclusion --
-revert the guard, confirm the matching test fails, restore, confirm green. Record the
-observed failure per guard. A test that passes with its guard removed is vacuous and
-must be replaced.
+**Non-vacuity proof (required):** for each new guard -- the save-failure branch,
+Failed-vs-Expired, the required ticket, traversal rejection, the unfiltered-limit
+assertion, the malformed-payload fallback, the no-relative-link rule, the admin
+exclusion -- revert the guard, confirm the matching test fails, restore, confirm green.
+Record the observed failure per guard. A test that passes with its guard removed is
+vacuous and must be replaced.
 
 ## Verification
 
@@ -352,8 +485,11 @@ must be replaced.
 - `git diff --check HEAD` (scope to changed paths if the pre-existing unstaged
   `.gitignore` whitespace still makes the repo-wide check return non-zero)
 - ASCII gate: `tools/Test-AsciiOnly.ps1`
-- `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` if
-  `tools/promote-dev-to-prod.ps1` is touched in slice 3.
+- `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` -- slice 3 now
+  touches `tools/Install-ExchangeAdminWeb.ps1`, `deploy.ps1`, and
+  `tools/promote-dev-to-prod.ps1`, so this is required, not conditional. Keep
+  `Install-ExchangeAdminWeb.ps1` environment-neutral (`.agents/repo-guidance.md`
+  Architectural Invariant 1): it gains the key with a blank default, never an ADI host.
 - **Manual, post-deploy, cannot be automated** -- state plainly if not run:
   1. Run an 11+ message export; confirm the mail arrives with a link and no attachment.
   2. Follow the link while signed in: the reports page lists the export.
@@ -364,6 +500,11 @@ must be replaced.
      action is disabled; clicking a row whose file vanished after render does not throw.
   7. Confirm `MessageTrace_ExportDownload` audit events record the hit, the miss, and the
      typed ticket.
+  8. Make the export directory unwritable and run an export: the mail is the **failure**
+     notice with no link, the row shows Failed (not Expired), and the job still completes
+     (openreview F1).
+  9. With `Application:PublicBaseUrl` unset, confirm the mail contains prose and no
+     hyperlink at all -- specifically no bare `/message-analysis/reports` (F3).
 
 ## Open Questions
 
@@ -374,6 +515,14 @@ must be replaced.
   never appear on the reports page. Slice 4 labels this on the page. Whether live
   downloads should also be persisted is a separate question, deliberately not decided
   here.
+- **OQ-3 (non-blocking, from openreview F2):** the required-ticket rule is this plan's
+  reading of the owner's word "requiring", not an explicit ruling. If the owner prefers a
+  blank-permitted ticket for consistency with the search page's optional field, it is a
+  one-line change in slice 2. Not held as a gate.
+- **OQ-4 (non-blocking, from openreview F1):** the Failed-vs-Expired distinction adds a
+  page state the owner did not ask for. It exists because the alternative is silently
+  mislabelling a write error as retention. Flagged in case the owner considers it scope
+  the delivery-path plan should not carry.
 
 ---
 
