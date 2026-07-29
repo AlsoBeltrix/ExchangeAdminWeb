@@ -51,9 +51,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   is pre-filled with the operator's own address, editable and clearable -- a default, not a floor,
   and never a required field. Base app `2.3.30 -> 2.3.31` + MessageTrace `1.2.1 -> 1.3.0`.
   All four decisions ruled, no open owner gates, plan approved by the owner 2026-07-29.
-  **NEXT: slice 1** (`MessageTraceExportStore` -- export-path resolver, GUID-"N" jobId whitelist,
-  traversal guard, 30-day constant) then slice 2 (reports page), 3 (email link), 4 (UI). One
-  commit per slice. Nothing deploys without a separate owner go.
+  **Slice 1 DONE** (`b007ad5`): `MessageTraceExportStore` -- export-path resolver, GUID-"N" jobId
+  whitelist, traversal guard, pinned 30-day constant; 19 tests.
+  **Slice 2 DONE** (`87941b0`): `MessageTraceExportListing` (page logic as a testable service --
+  the repo has no bUnit harness), `Components/Pages/MessageTraceReports.razor` at
+  `/message-analysis/reports`, and `GetFinishedByType` on `BulkJobRepository`/`BulkJobService`.
+  Build/format/ASCII clean, 875 tests green; non-vacuity proven per guard by reverting each
+  (ticket check 3 failures, Failed-vs-Expired 2, unfiltered limit 1, malformed payload 1).
+  Two facts slice 3 inherits, both recorded in code at the point of use:
+  (a) `MessageTraceExportState.Failed` is **unreachable in production** until slice 3 writes the
+  marker -- `BulkJobRepository.TryFinish` persists the terminal state by compare-and-swap from a
+  non-terminal status (`BulkJobService.cs:401`) *before* `OnJobCompletedAsync` runs (`:441`), so
+  the processor cannot stamp `job.Message` through any existing path; slice 3 must add an
+  unconditional message write to `BulkJobRepository`. (b) `<ModuleVersion />` resolves the
+  descriptor by route and so renders nothing on the sub-route; kept per `docs/AdminModuleSpec.md`
+  (PAGE009) rather than hand-rolling the lookup.
+  **NEXT: slice 3** (email link + the save-failure branch and its `job.Message` write, F1/F3
+  repairs across `EmailService`, `Install-ExchangeAdminWeb.ps1`, `deploy.ps1`,
+  `promote-dev-to-prod.ps1`, `README.md`, plus `Application:PublicBaseUrl`), then slice 4 (UI:
+  remove the leaked string at `MessageTrace.razor:399`/`:409`, drop `DestinationDisplay()`, add the
+  D4 recipient input). Version bumps land at the end. One commit per slice. Nothing deploys
+  without a separate owner go.
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
