@@ -35,6 +35,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **OPEN:** deploy + live re-run of the failing search. **OPEN (OQ-1, non-blocking):** why EXO
   emits a null row at all is undiagnosed; the guard is correct regardless.
 
+- **MessageTrace export download link + Downloadable Reports page — PLAN DRAFTED 2026-07-29,
+  awaiting owner approval + one open ruling.** Plan `docs/MessageTraceDownloadLink-Plan.md`
+  Status: Draft. Replaces the emailed zip attachment with a login-gated download link, allows an
+  arbitrary notification recipient (the link, not the payload, carries the data), removes admins
+  from the trace-data path, and adds a reports page listing past exports. Supersedes
+  `docs/MessageTraceDetail-Plan.md` decisions 5 + 6 and its "no server file-share link" clause.
+  Owner rulings recorded in the plan: **D1** retention is out-of-process (a host scheduled task
+  deletes exports older than 30 days; the app never deletes and must render a missing file as
+  "expired"); **D2** the gate is the existing `MessageTrace` module policy with no per-user
+  ownership check, so the job ID is used directly as the URL and the ticket number is an audit
+  prompt only, never an authorization control. **OPEN (D3, blocks slices 3-4):** the default email
+  recipient when the operator types nothing. Would be base app `2.3.30 -> 2.4.0` (first HTTP
+  endpoint in the app) + MessageTrace `1.2.1 -> 1.3.0`. No code written.
+
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
   each codex-reviewed accepted. MessageTrace module 1.1.1 -> 1.2.0, no base app bump.
@@ -203,7 +217,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - `.agents/repo-map.json` — automated verification map.
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
-  live/UI validation pending). No plan is currently `In progress`.
+  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Draft, awaiting owner
+  approval + ruling D3). No plan is currently `In progress`.
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
