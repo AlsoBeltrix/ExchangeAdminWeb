@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using ExchangeAdminWeb.Models;
@@ -11,8 +10,13 @@ namespace ExchangeAdminWeb.Services.Jobs;
 /// (docs/MessageTraceDetail-Plan.md, slice 5). Fetching a message's full delivery detail from the
 /// cloud costs one Get-MessageTraceDetailV2 call each, so above the live threshold (decision 4) the
 /// export is produced off the browser circuit as a bulk job: one row per selected message, then a
-/// single completion step that assembles the CSV, saves it under the audit log root, zips it, and
-/// emails the zip to the authenticated user + configured admins (decisions 5 and 6).
+/// single completion step that assembles the CSV, saves it under the audit log root, and emails a
+/// LINK to the Downloadable Reports page - never the data itself
+/// (docs/MessageTraceDownloadLink-Plan.md, superseding MessageTraceDetail-Plan decisions 5 and 6).
+///
+/// Because the mail no longer carries the export, the saved file is the sole delivery, so the save
+/// result branches the notification: a failed save sends an explicit failure notice and stamps the
+/// job record, never a "ready" mail pointing at a file that does not exist (openreview F1).
 ///
 /// Per row it fetches one message's detail via the narrow <see cref="IMessageTraceDetailSource"/>
 /// seam - fail-soft: a fetch that fails is recorded as a Failed row but its (Error-carrying) detail
@@ -32,6 +36,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     private readonly EmailService _email;
     private readonly AuditService _audit;
     private readonly MessageTraceExportStore _exports;
+    private readonly BulkJobService _jobs;
     private readonly ILogger<MessageTraceDetailJobProcessor> _logger;
 
     public const string ModuleName = "MessageTrace";
@@ -51,12 +56,14 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         EmailService email,
         AuditService audit,
         MessageTraceExportStore exports,
+        BulkJobService jobs,
         ILogger<MessageTraceDetailJobProcessor> logger)
     {
         _details = details;
         _email = email;
         _audit = audit;
         _exports = exports;
+        _jobs = jobs;
         _logger = logger;
     }
 
@@ -103,20 +110,60 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         }
 
         var csv = MessageTraceDetailReport.BuildCsv(details);
-        var csvName = _exports.FileNameFor(job.Id, job.SubmittedAtUtc);
-        var zipName = Path.ChangeExtension(csvName, ".zip");
         var ticket = job.Ticket ?? "";
 
-        // Save the CSV under the audit log root (decision 5: the file is also saved to the log path).
+        // The saved file is now the SOLE delivery - the export is no longer attached to the mail
+        // (docs/MessageTraceDownloadLink-Plan.md). So the save result decides which mail is sent.
         var savedPath = SaveToLogPath(job.Id, job.SubmittedAtUtc, csv);
 
-        // Zip the CSV in-memory (decision B: no server file-share / wwwroot storage) and email it to
-        // the authenticated user + admins (decision 6: recipient is never an operator-typed address).
-        var zipBytes = ZipSingleFile(csvName, csv);
-        await _email.SendMessageTraceResultAsync(payload.UserEmail ?? "", zipBytes, zipName,
-            messages.Count, ticket, job.SubmittedBy);
+        var recipients = ResolveRecipients(payload);
+
+        if (savedPath is null)
+        {
+            // openreview F1: never a "ready" mail when there is nothing to download. Stamp the job
+            // record too, so the reports page can render this as Failed rather than blaming the
+            // 30-day retention window for what was actually a write error.
+            MarkSaveFailed(job);
+            await _email.SendMessageTraceFailureAsync(recipients, messages.Count, ticket, job.SubmittedBy);
+        }
+        else
+        {
+            await _email.SendMessageTraceResultAsync(recipients, messages.Count, ticket, job.SubmittedBy,
+                _exports.ExpiresAtUtc(job.SubmittedAtUtc));
+        }
 
         Audit(job, savedPath, messages.Count, ticket);
+    }
+
+    /// <summary>
+    /// The notification recipient set: the submitting operator's address from the payload. Slice 4
+    /// widens this to the operator's editable list (plan D4). The configured admin address is NOT
+    /// added - the owner ruled that all admins must not receive the actual results, and now that the
+    /// mail carries a link rather than the data, adding them would also be pointless.
+    /// </summary>
+    private static IReadOnlyList<string> ResolveRecipients(MessageTraceDetailJobPayload payload) =>
+        EmailService.NormalizeRecipients([payload.UserEmail]);
+
+    /// <summary>
+    /// Records the save failure in the job's own record, which is what the Downloadable Reports page
+    /// reads to distinguish Failed from Expired.
+    ///
+    /// Uses the additive <see cref="BulkJobService.AppendJobMessage"/> rather than the terminal
+    /// transition: by the time this hook runs the runner has already persisted the terminal state
+    /// via a compare-and-swap from a non-terminal status, so a TryFinish here would match no row.
+    /// Fail-safe like everything else in the completion step - the job result never changes because
+    /// a note could not be written; the audit event remains the durable record either way.
+    /// </summary>
+    private void MarkSaveFailed(BulkJob job)
+    {
+        try
+        {
+            _jobs.AppendJobMessage(job.Id, MessageTraceExportListing.SaveFailedMarker);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not record the export save failure on job {Job}", job.Id);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -147,19 +194,6 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
             _logger.LogError(ex, "Failed to save Message Analysis detail export for job {Job} to the log path", jobId);
             return null;
         }
-    }
-
-    private static byte[] ZipSingleFile(string entryName, string content)
-    {
-        using var ms = new MemoryStream();
-        using (var archive = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
-            using var entryStream = entry.Open();
-            var bytes = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(content);
-            entryStream.Write(bytes, 0, bytes.Length);
-        }
-        return ms.ToArray();
     }
 
     private void Audit(BulkJob job, string? savedPath, int messageCount, string ticket)

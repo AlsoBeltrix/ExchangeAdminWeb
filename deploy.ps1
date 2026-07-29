@@ -26,6 +26,7 @@ param(
     [string[]]$AdminGroups,
     [string]$DomainPrefix        = "DOMAIN",
     [string]$PathBase,
+    [string]$PublicBaseUrl,
     [string]$CloudTargetDomain,
     [string]$HybridEndpoint      = "hybrid1",
 
@@ -735,6 +736,7 @@ if ($isUpgrade) {
             Application = [ordered]@{
                 PathBase = $PathBase
                 ContactEmail = $AdminEmail
+                PublicBaseUrl = $PublicBaseUrl
             }
             AllowedHosts = "*"
         }
@@ -784,6 +786,7 @@ if (-not $isUpgrade) {
     Write-Host ""
     Write-Host "  Post-install:" -ForegroundColor Yellow
     Write-Host "    - Review appsettings.json for additional tuning" -ForegroundColor Yellow
+    Write-Host "    - Set Application:PublicBaseUrl to $siteUrl so notification emails can link to in-app pages" -ForegroundColor Yellow
     Write-Host "    - Security:AdminGroups controls /admin-settings and module config pages" -ForegroundColor Yellow
     Write-Host "    - Use per-module config pages in the sidebar to set section access" -ForegroundColor Yellow
     Write-Host "    - Use Module Config to set Excluded Users for Mailbox/Calendar protection" -ForegroundColor Yellow

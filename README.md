@@ -38,6 +38,9 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
 - Historical Exchange Online searches are still submitted as background jobs for ranges beyond the realtime window
+- Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
+- Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
+- Exports are kept for 30 days by a host scheduled task; the app never deletes them. A row whose export could not be saved shows as Failed, distinct from an expired one
 - Section access key: `MessageTrace`
 ### On-Premises Permission Operations
 
@@ -523,7 +526,8 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 ```json
 "Application": {
   "PathBase": "/ExchangeAdminWeb",
-  "ContactEmail": "exchangeadmin@yourcompany.com"
+  "ContactEmail": "exchangeadmin@yourcompany.com",
+  "PublicBaseUrl": "https://yourserver/ExchangeAdminWeb"
 }
 ```
 
@@ -531,6 +535,7 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 |-----|---------|
 | `Application:PathBase` | IIS sub-application path |
 | `Application:ContactEmail` | Displayed in the UI as the support contact (nav footer) |
+| `Application:PublicBaseUrl` | Absolute external URL of the app, used to build links in notification emails. Optional: when unset or not an absolute URL, emails describe the page in prose instead of linking to it (an email client cannot resolve a relative path, so a partial URL would be a dead link). Set it per environment - dev and prod must not share one value. |
 
 ### Email Notifications
 

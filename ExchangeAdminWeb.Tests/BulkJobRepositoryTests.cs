@@ -341,6 +341,70 @@ public class BulkJobRepositoryTests
         Assert.Equal(["j2", "j1", "j0"], found.Select(j => j.Id));
     }
 
+    // -------------------------------------------------------------------------
+    // AppendMessage - the completion-step note the terminal transition cannot carry
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void AppendMessage_OnTerminalJob_Writes_WithoutChangingTheResult()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        var job = NewJob("j1", BulkJobStatus.Completed);
+        job.FinishedAtUtc = new DateTime(2026, 1, 1, 13, 0, 0, DateTimeKind.Utc);
+        repo.Insert(job);
+
+        Assert.True(repo.AppendMessage("j1", "log save failed"));
+
+        var loaded = repo.Get("j1")!;
+        Assert.Equal("log save failed", loaded.Message);
+        // The whole point: a delivery note must not rewrite a job result.
+        Assert.Equal(BulkJobStatus.Completed, loaded.Status);
+        Assert.Equal(job.FinishedAtUtc, loaded.FinishedAtUtc);
+    }
+
+    /// <summary>
+    /// Appends rather than replaces, so a note can never erase the reason a job was cancelled or
+    /// interrupted - that text is the only record of why.
+    /// </summary>
+    [Fact]
+    public void AppendMessage_KeepsAnExistingMessage()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        var job = NewJob("j1", BulkJobStatus.Cancelled);
+        job.Message = "Cancelled by operator.";
+        repo.Insert(job);
+
+        repo.AppendMessage("j1", "log save failed");
+
+        var loaded = repo.Get("j1")!;
+        Assert.Contains("Cancelled by operator.", loaded.Message);
+        Assert.Contains("log save failed", loaded.Message);
+    }
+
+    [Fact]
+    public void AppendMessage_UnknownJob_ReturnsFalse()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        Assert.False(repo.AppendMessage("nope", "log save failed"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AppendMessage_BlankNote_IsRejected(string? note)
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        repo.Insert(NewJob("j1", BulkJobStatus.Completed));
+
+        Assert.ThrowsAny<ArgumentException>(() => repo.AppendMessage("j1", note!));
+    }
+
     private static BulkJob Finished(BulkJob job)
     {
         job.FinishedAtUtc = new DateTime(2026, 1, 1, 13, 0, 0, DateTimeKind.Utc);

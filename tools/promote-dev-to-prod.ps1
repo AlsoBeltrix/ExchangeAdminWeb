@@ -4,6 +4,7 @@ param(
     [string]$ProdPath = "D:\inetpub\ExchangeAdminWeb",
     [string]$ProdAppPoolName = "ExchangeAdminWeb",
     [string]$ProdPathBase = "/ExchangeAdminWeb",
+    [string]$ProdPublicBaseUrl,
     [string]$DevAppPoolName = "ExchangeAdminWebDev",
     [string]$BackupRoot,
     [int]$BackupRetention = 3,
@@ -159,7 +160,11 @@ function Copy-FileChecked {
 }
 
 function Set-AppsettingsPathBase {
-    param([string]$AppSettingsPath, [string]$PathBase)
+    # Patches the per-environment identity keys under Application. PublicBaseUrl belongs here for
+    # the same reason PathBase does: promotion copies dev's appsettings.json, so without an explicit
+    # patch prod would inherit dev's URL and email links would send operators to the dev instance.
+    # An empty $PublicBaseUrl leaves any existing prod value untouched rather than blanking it.
+    param([string]$AppSettingsPath, [string]$PathBase, [string]$PublicBaseUrl)
 
     if (-not (Test-Path -LiteralPath $AppSettingsPath -PathType Leaf)) {
         throw "appsettings.json was not found: $AppSettingsPath"
@@ -167,6 +172,9 @@ function Set-AppsettingsPathBase {
 
     if (-not $Apply) {
         Write-Plan "Set Application:PathBase in $AppSettingsPath to $PathBase"
+        if ($PublicBaseUrl) {
+            Write-Plan "Set Application:PublicBaseUrl in $AppSettingsPath to $PublicBaseUrl"
+        }
         return
     }
 
@@ -179,6 +187,13 @@ function Set-AppsettingsPathBase {
     } else {
         $json.Application | Add-Member -NotePropertyName PathBase -NotePropertyValue $PathBase
     }
+    if ($PublicBaseUrl) {
+        if (Get-Member -InputObject $json.Application -Name PublicBaseUrl -MemberType NoteProperty -ErrorAction SilentlyContinue) {
+            $json.Application.PublicBaseUrl = $PublicBaseUrl
+        } else {
+            $json.Application | Add-Member -NotePropertyName PublicBaseUrl -NotePropertyValue $PublicBaseUrl
+        }
+    }
 
     $tmp = Join-Path (Split-Path -Parent $AppSettingsPath) ("appsettings.promote.{0}.tmp" -f [guid]::NewGuid().ToString("N"))
     try {
@@ -186,6 +201,9 @@ function Set-AppsettingsPathBase {
         Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json | Out-Null
         Move-Item -LiteralPath $tmp -Destination $AppSettingsPath -Force
         Write-Ok "Set Application:PathBase to $PathBase"
+        if ($PublicBaseUrl) {
+            Write-Ok "Set Application:PublicBaseUrl to $PublicBaseUrl"
+        }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
     }
@@ -312,6 +330,7 @@ Write-Host "  Prod       : $prod" -ForegroundColor DarkGray
 Write-Host "  Backup     : $backup" -ForegroundColor DarkGray
 Write-Host "  App pool   : $ProdAppPoolName" -ForegroundColor DarkGray
 Write-Host "  PathBase   : $ProdPathBase" -ForegroundColor DarkGray
+Write-Host "  PublicUrl  : $(if ($ProdPublicBaseUrl) { $ProdPublicBaseUrl } else { '(unchanged)' })" -ForegroundColor DarkGray
 Write-Host "  Mode       : $(if ($Apply) { 'APPLY' } else { 'DRY RUN' })" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -376,7 +395,7 @@ try {
         Copy-FileChecked -Source $devAppSettings -Destination $prodAppSettings
     }
 
-    Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase
+    Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase -PublicBaseUrl $ProdPublicBaseUrl
 
     if (-not $SkipConfigFragments) {
         # Config promotion (SqliteConfigStore-Plan Phase D2): all runtime config now lives in the

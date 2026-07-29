@@ -181,6 +181,12 @@ public sealed class BulkJobService
         _repository.GetFinishedByType(moduleId, jobType, limit);
 
     /// <summary>
+    /// Records a completion-step note on a job without changing its result. See
+    /// <see cref="BulkJobRepository.AppendMessage"/> for why the terminal transition cannot carry it.
+    /// </summary>
+    public bool AppendJobMessage(string jobId, string note) => _repository.AppendMessage(jobId, note);
+
+    /// <summary>
     /// Display classification: a Running job whose heartbeat is older than the stale threshold is
     /// surfaced as "Stalled" (its worker may be wedged mid-cmdlet - see plan). Stalled is never a
     /// stored state; it is derived here purely for the UI. All other statuses map to their name.

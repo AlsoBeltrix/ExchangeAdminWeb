@@ -18,6 +18,7 @@ public class EmailService
     private readonly string _fromName;
     private readonly string _adminEmail;
     private readonly bool _notifyUsers;
+    private readonly string _appName;
 
     public EmailService(IConfiguration config, ILogger<EmailService> logger)
     {
@@ -32,6 +33,7 @@ public class EmailService
         _fromName = config["Email:FromName"] ?? "Exchange Admin";
         _adminEmail = config["Email:AdminNotificationEmail"] ?? "";
         _notifyUsers = bool.Parse(config["Email:NotifyUsersOnPermissionGrant"] ?? "false");
+        _appName = config["Application:Name"] ?? "Exchange Admin";
     }
 
     public virtual async Task SendAdminNotificationAsync(
@@ -427,72 +429,196 @@ public class EmailService
     }
 
     /// <summary>
-    /// Sends the Message Analysis per-message detail export (a zip attachment) to
-    /// the logged-in user plus the configured admins. The recipient set is derived
-    /// entirely from the authenticated identity and the admin config -- never from
-    /// an operator-typed address -- so the export cannot be exfiltrated to an
-    /// arbitrary mailbox. Fail-soft: a send failure is logged, never thrown into
-    /// the bulk-job result.
+    /// The path of the Downloadable Reports page, relative to the app's base URL. Must stay in step
+    /// with the @page directive on Components/Pages/MessageTraceReports.razor.
+    /// </summary>
+    internal const string MessageTraceReportsPath = "message-analysis/reports";
+
+    /// <summary>
+    /// Notifies that a Message Analysis detail export is ready, with a LINK to the Downloadable
+    /// Reports page. The export itself is deliberately NOT attached
+    /// (docs/MessageTraceDownloadLink-Plan.md): the data stays behind the app's login gate, so an
+    /// arbitrary notification recipient can never receive message content, only a pointer that
+    /// demands authentication and MessageTrace access.
+    ///
+    /// Recipients come from the caller (the operator's submitted set, D4) and are used as given.
+    /// The configured admin address is NOT merged in: admins are never recipients of trace data.
+    /// Fail-soft: a send failure is logged, never thrown into the bulk-job result.
     /// </summary>
     public virtual async Task SendMessageTraceResultAsync(
-        string userEmail,
-        byte[] zipBytes,
-        string zipFileName,
+        IReadOnlyList<string> recipients,
+        int messageCount,
+        string ticket,
+        string performedBy,
+        DateTime expiresAtUtc)
+    {
+        var to = NormalizeRecipients(recipients);
+        if (to.Count == 0)
+        {
+            _logger.LogWarning("Message Analysis detail export has no recipient; skipping send");
+            return;
+        }
+
+        var subject = $"[Exchange Admin] Message Analysis detail export ready - {messageCount} message(s) - Ticket #{ticket}";
+        var body = BuildMessageTraceReadyBody(ResolveReportsUrl(), _appName, messageCount, ticket,
+            performedBy, expiresAtUtc, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+
+        foreach (var recipient in to)
+        {
+            await SendEmailAsync(recipient, subject, body);
+        }
+    }
+
+    /// <summary>
+    /// Notifies that a Message Analysis detail export could NOT be stored, so there is nothing to
+    /// download and the trace must be re-run (openreview F1).
+    ///
+    /// This exists because removing the attachment made the saved file the sole delivery. Without
+    /// this branch a disk-full or permissions failure would send a "ready" mail pointing at a file
+    /// that never existed, which the reports page would render as Expired - indistinguishable from
+    /// ordinary retention, leading the operator to conclude they simply waited too long.
+    /// </summary>
+    public virtual async Task SendMessageTraceFailureAsync(
+        IReadOnlyList<string> recipients,
         int messageCount,
         string ticket,
         string performedBy)
     {
-        var recipients = ResolveMessageTraceRecipients(userEmail, _adminEmail);
-        if (recipients.Count == 0)
+        var to = NormalizeRecipients(recipients);
+        if (to.Count == 0)
         {
-            _logger.LogWarning("Message Analysis detail export has no recipient (no user email and no admin email configured); skipping send");
+            _logger.LogWarning("Message Analysis detail export failure notice has no recipient; skipping send");
             return;
         }
 
-        var subject = $"[Exchange Admin] Message Analysis detail export - {messageCount} message(s) - Ticket #{ticket}";
+        var subject = $"[Exchange Admin] Message Analysis detail export FAILED - {messageCount} message(s) - Ticket #{ticket}";
+        var body = BuildMessageTraceFailureBody(messageCount, ticket, performedBy,
+            DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+
+        foreach (var recipient in to)
+        {
+            await SendEmailAsync(recipient, subject, body);
+        }
+    }
+
+    /// <summary>
+    /// Trims, drops blanks, and de-duplicates case-insensitively. Unlike the resolver this replaced,
+    /// it adds nothing: the admin address is never merged into a trace-export recipient set, and a
+    /// caller that supplies nothing gets no send rather than a silent fallback to some other mailbox.
+    /// </summary>
+    internal static IReadOnlyList<string> NormalizeRecipients(IEnumerable<string?>? recipients)
+    {
+        if (recipients is null)
+            return [];
+
+        return recipients
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// The absolute URL of the Downloadable Reports page, or null when it cannot be built.
+    ///
+    /// Returns null - never a relative path - when Application:PublicBaseUrl is unset or is not an
+    /// absolute URI (openreview F3). An email client has no origin to resolve a relative path
+    /// against, so a bare "/message-analysis/reports" href renders as a dead link, which is worse
+    /// than no link: it reads as a broken app and gives the operator nothing to act on. The caller
+    /// falls back to prose. Deliberately does NOT guess a scheme and host, and deliberately does not
+    /// fail the send - the job has already completed by this point and a mail-formatting problem
+    /// must never change a job result.
+    /// </summary>
+    internal string? ResolveReportsUrl()
+    {
+        var baseUrl = _config["Application:PublicBaseUrl"];
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _logger.LogWarning(
+                "Application:PublicBaseUrl is not configured; the Message Analysis export email will describe the reports page in prose instead of linking to it");
+            return null;
+        }
+
+        baseUrl = baseUrl.Trim();
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var parsed))
+        {
+            _logger.LogWarning(
+                "Application:PublicBaseUrl '{BaseUrl}' is not an absolute URL; omitting the link from the Message Analysis export email rather than emitting one an email client cannot resolve",
+                baseUrl);
+            return null;
+        }
+
+        return $"{parsed.ToString().TrimEnd('/')}/{MessageTraceReportsPath}";
+    }
+
+    /// <summary>
+    /// The ready-and-linked body. Extracted from the send so it is assertable without SMTP.
+    /// Every interpolated value is HTML-encoded.
+    /// </summary>
+    internal static string BuildMessageTraceReadyBody(
+        string? reportsUrl,
+        string appName,
+        int messageCount,
+        string ticket,
+        string performedBy,
+        DateTime expiresAtUtc,
+        string generatedAt)
+    {
         var h = (string s) => WebUtility.HtmlEncode(s ?? "");
-        var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        var body = $@"<html>
+        var where = reportsUrl is null
+            ? $@"<p>Sign in to {h(appName)} and open the <strong>Downloadable Reports</strong> page
+           (Message Analysis) to download it.</p>"
+            : $@"<p><a href=""{h(reportsUrl)}"">Open the Downloadable Reports page</a> to download it.</p>";
+
+        return $@"<html>
 <body style=""font-family: Segoe UI, Arial, sans-serif; color: #222;"">
     <div style=""max-width: 640px; margin: 0 auto;"">
         <h2>Message Analysis - Delivery Detail Export</h2>
-        <p>The delivery-detail export you requested is attached as a zip file.</p>
+        <p>The delivery-detail export you requested is ready.</p>
+        {where}
+        <p>You will be asked for a ticket number when you download it; the ticket is recorded with
+           the download for audit. Downloading requires your Windows sign-in and Message Analysis
+           access - the export is not attached to this email.</p>
         <table style=""border-collapse: collapse;"" cellpadding=""6"">
             <tr><td><strong>Messages</strong></td><td>{messageCount}</td></tr>
             <tr><td><strong>Ticket</strong></td><td>{h(ticket)}</td></tr>
             <tr><td><strong>Requested by</strong></td><td>{h(performedBy)}</td></tr>
-            <tr><td><strong>Generated</strong></td><td>{h(timestamp)}</td></tr>
-            <tr><td><strong>Attachment</strong></td><td>{h(zipFileName)}</td></tr>
+            <tr><td><strong>Generated</strong></td><td>{h(generatedAt)}</td></tr>
+            <tr><td><strong>Available until</strong></td><td>{h(expiresAtUtc.ToString("yyyy-MM-dd"))} (UTC)</td></tr>
         </table>
         <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
     </div>
 </body>
 </html>";
-
-        foreach (var to in recipients)
-        {
-            await SendEmailAsync(to, subject, body, zipBytes, zipFileName);
-        }
     }
 
-    /// <summary>
-    /// Builds the Message Analysis export recipient set: the logged-in user's
-    /// address plus the configured admin address(es), trimmed, blank-stripped, and
-    /// de-duplicated case-insensitively. Never includes an operator-typed address.
-    /// </summary>
-    internal static IReadOnlyList<string> ResolveMessageTraceRecipients(string? userEmail, string adminEmailCsv)
+    /// <summary>The save-failed body: no link, because there is nothing to download.</summary>
+    internal static string BuildMessageTraceFailureBody(
+        int messageCount,
+        string ticket,
+        string performedBy,
+        string generatedAt)
     {
-        var candidates = new List<string>();
-        if (!string.IsNullOrWhiteSpace(userEmail))
-            candidates.Add(userEmail);
-        if (!string.IsNullOrWhiteSpace(adminEmailCsv))
-            candidates.AddRange(adminEmailCsv.Split(',', StringSplitOptions.RemoveEmptyEntries));
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
 
-        return candidates
-            .Select(e => e.Trim())
-            .Where(e => !string.IsNullOrWhiteSpace(e))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        return $@"<html>
+<body style=""font-family: Segoe UI, Arial, sans-serif; color: #222;"">
+    <div style=""max-width: 640px; margin: 0 auto;"">
+        <h2>Message Analysis - Delivery Detail Export Failed</h2>
+        <p>The delivery-detail export you requested could <strong>not be stored</strong>, so there is
+           nothing to download. Please re-run the trace. If it fails again, contact your
+           administrator - the server may be out of disk space or unable to write to the export
+           directory.</p>
+        <table style=""border-collapse: collapse;"" cellpadding=""6"">
+            <tr><td><strong>Messages</strong></td><td>{messageCount}</td></tr>
+            <tr><td><strong>Ticket</strong></td><td>{h(ticket)}</td></tr>
+            <tr><td><strong>Requested by</strong></td><td>{h(performedBy)}</td></tr>
+            <tr><td><strong>Attempted</strong></td><td>{h(generatedAt)}</td></tr>
+        </table>
+        <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+    </div>
+</body>
+</html>";
     }
 
     private async Task SendEmailAsync(

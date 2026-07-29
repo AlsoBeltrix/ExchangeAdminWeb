@@ -203,6 +203,41 @@ public sealed class BulkJobRepository
     }
 
     /// <summary>
+    /// Appends a line to a job's message without touching its status or finished-at stamp. Returns
+    /// true if a row was updated.
+    ///
+    /// This exists because <see cref="TryFinish"/> cannot serve a completion-step note. TryFinish is
+    /// a compare-and-swap from a NON-terminal status, and the runner calls it BEFORE the processor's
+    /// completion hook runs (BulkJobService.FinishAndNotify: TryFinish, then OnJobCompletedAsync), so
+    /// by the time a processor knows how its delivery went the job is already terminal and a second
+    /// TryFinish would match no row. A completion-step outcome that must survive in the job record -
+    /// the Message Analysis export save failure the reports page renders as Failed rather than
+    /// Expired - therefore needs this unconditional write.
+    ///
+    /// Deliberately additive: it appends rather than replaces, so a note can never erase the reason
+    /// a job was cancelled or interrupted. Status and finished_at are untouched by design; a
+    /// delivery failure is not a job failure and must not rewrite a job result.
+    /// </summary>
+    public bool AppendMessage(string id, string note)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(note);
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            UPDATE bulk_job
+            SET message = CASE
+                WHEN message IS NULL OR message = '' THEN $note
+                ELSE message || ' ' || $note
+            END
+            WHERE id = $id;
+            """;
+        command.Parameters.AddWithValue("$note", note);
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteNonQuery() == 1;
+    }
+
+    /// <summary>
     /// Flips every non-terminal job (Queued OR Running) to Interrupted in one transaction. Called
     /// once at startup (orphan reconciliation): there is no resume, so any job left mid-flight by a
     /// recycle becomes a truthful Interrupted record. Returns the number of jobs flipped.

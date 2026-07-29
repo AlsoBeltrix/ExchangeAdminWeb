@@ -2,7 +2,9 @@ using System.Text.Json;
 using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Jobs;
+using ExchangeAdminWeb.Services.Storage;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 
@@ -18,6 +20,7 @@ namespace ExchangeAdminWeb.Tests;
 public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 {
     private readonly string _tempDir;
+    private ServiceProvider? _provider;
 
     public MessageTraceDetailJobProcessorTests()
     {
@@ -27,6 +30,7 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
     public void Dispose()
     {
+        _provider?.Dispose();
         try { Directory.Delete(_tempDir, true); } catch { }
     }
 
@@ -49,15 +53,18 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         public required FakeDetailSource Details { get; init; }
         public required EmailService Email { get; init; }
         public required AuditService Audit { get; init; }
+        public required BulkJobRepository Repository { get; init; }
+        public required MessageTraceExportStore Store { get; init; }
         public required MessageTraceDetailJobProcessor Processor { get; init; }
     }
 
-    private Fixture CreateFixture()
+    private Fixture CreateFixture(string? logRoot = null)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["Audit:LogRoot"] = _tempDir,
+            ["Audit:LogRoot"] = logRoot ?? _tempDir,
             ["Email:AdminNotificationEmail"] = "admin@contoso.com",
+            ["Application:PublicBaseUrl"] = "https://apps.contoso.com/ExchangeAdminWeb",
         }).Build();
 
         var jsonlLog = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
@@ -66,10 +73,32 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var details = new FakeDetailSource();
 
-        var processor = new MessageTraceDetailJobProcessor(details, email, audit,
-            new MessageTraceExportStore(config), NullLogger<MessageTraceDetailJobProcessor>.Instance);
+        // A real jobs store: the save-failure branch writes the marker through it, and asserting on
+        // a substitute would prove only that a method was called, not that the record now says so.
+        var factory = new SqliteConnectionFactory(Path.Combine(_tempDir, $"jobs-{Guid.NewGuid():N}.db"));
+        new JobStoreMigrator(factory).Migrate();
+        var repository = new BulkJobRepository(factory);
+        _provider = new ServiceCollection().BuildServiceProvider();
+        var jobs = new BulkJobService(
+            _provider.GetRequiredService<IServiceScopeFactory>(),
+            repository,
+            new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+            config,
+            NullLogger<BulkJobService>.Instance);
 
-        return new Fixture { Details = details, Email = email, Audit = audit, Processor = processor };
+        var store = new MessageTraceExportStore(config);
+        var processor = new MessageTraceDetailJobProcessor(details, email, audit, store, jobs,
+            NullLogger<MessageTraceDetailJobProcessor>.Instance);
+
+        return new Fixture
+        {
+            Details = details,
+            Email = email,
+            Audit = audit,
+            Repository = repository,
+            Store = store,
+            Processor = processor,
+        };
     }
 
     private static MessageTraceResult Message(string id, string backend = "ExchangeOnline") => new()
@@ -159,10 +188,26 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         Assert.Single(csvFiles);
         Assert.Contains("Message 1 of 2", File.ReadAllText(csvFiles[0]));
 
-        // Emailed the zip to the resolved recipients, gated to the authenticated user (never operator-typed).
+        // Emailed the ready-and-linked notification - no attachment, and the admin address is not a
+        // recipient even though one is configured (the owner ruled admins never get the results).
         await f.Email.Received(1).SendMessageTraceResultAsync(
-            "user@contoso.com", Arg.Any<byte[]>(), Arg.Is<string>(n => n.EndsWith(".zip")),
-            2, "INC1", "jdoe");
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"),
+            2, "INC1", "jdoe", Arg.Any<DateTime>());
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceFailureAsync(default!, default, default!, default!);
+    }
+
+    [Fact]
+    public async Task OnJobCompleted_ReadyEmail_CarriesTheRetentionExpiryDate()
+    {
+        var f = CreateFixture();
+        var job = MakeJob("user@contoso.com", Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        var expected = f.Store.ExpiresAtUtc(job.SubmittedAtUtc);
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Any<IReadOnlyList<string>>(), 1, "INC1", "jdoe", expected);
     }
 
     [Fact]
@@ -183,6 +228,128 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var csv = File.ReadAllText(Directory.GetFiles(exportDir, "*.csv").Single());
         Assert.Contains("deferred lookup failed", csv);
         Assert.Contains("Message 2 of 2", csv);
+    }
+
+    // -------------------------------------------------------------------------
+    // Save failure (openreview F1) - the export is now the sole delivery, so a failed
+    // save must produce a failure notice and a Failed row, never a "ready" mail.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Makes the export directory unwritable by occupying its path with a FILE, so
+    /// Directory.CreateDirectory throws. Cheaper and more portable in CI than ACL manipulation, and
+    /// it exercises the same swallowed-catch branch in SaveToLogPath.
+    /// </summary>
+    private Fixture CreateFixtureWithUnwritableExportDir()
+    {
+        var logRoot = Path.Combine(_tempDir, $"blocked-{Guid.NewGuid():N}");
+        var exportDir = Path.Combine(logRoot, "ExchangeAdminWeb", "MessageTraceExports");
+        Directory.CreateDirectory(Path.GetDirectoryName(exportDir)!);
+        File.WriteAllText(exportDir, "not a directory");
+        return CreateFixture(logRoot);
+    }
+
+    [Fact]
+    public async Task OnJobCompleted_SaveFails_SendsFailureNotice_NotTheReadyEmail()
+    {
+        var f = CreateFixtureWithUnwritableExportDir();
+        var job = MakeJob("user@contoso.com", Message("m1"), Message("m2"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        // Assert WHICH email was sent. A test that only counts sends passes with the defect present.
+        await f.Email.Received(1).SendMessageTraceFailureAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"),
+            2, "INC1", "jdoe");
+        await f.Email.DidNotReceiveWithAnyArgs().SendMessageTraceResultAsync(
+            default!, default, default!, default!, default);
+    }
+
+    /// <summary>
+    /// The marker must reach the job record, because that is what the reports page reads to render
+    /// Failed instead of Expired. Without it the operator sees ordinary retention and concludes they
+    /// waited too long, when in fact the file was never written.
+    /// </summary>
+    [Fact]
+    public async Task OnJobCompleted_SaveFails_StampsTheJobRecordSoThePageCanShowFailed()
+    {
+        var f = CreateFixtureWithUnwritableExportDir();
+        var job = MakeJob("user@contoso.com", Message("m1"));
+        job.Status = BulkJobStatus.Completed;
+        f.Repository.Insert(job);
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        var stored = f.Repository.Get(job.Id);
+        Assert.NotNull(stored);
+        Assert.Contains(MessageTraceExportListing.SaveFailedMarker, stored!.Message ?? "",
+            StringComparison.OrdinalIgnoreCase);
+
+        // And the page classifies it as Failed - not Expired - from that record alone.
+        var listing = new MessageTraceExportListing(
+            new BulkJobService(
+                _provider!.GetRequiredService<IServiceScopeFactory>(),
+                f.Repository,
+                new BulkJobProcessorRegistry(Array.Empty<KeyValuePair<string, Type>>()),
+                new ConfigurationBuilder().AddInMemoryCollection(
+                    new Dictionary<string, string?> { ["Audit:LogRoot"] = _tempDir }).Build(),
+                NullLogger<BulkJobService>.Instance),
+            f.Store,
+            NullLogger<MessageTraceExportListing>.Instance);
+
+        Assert.Equal(MessageTraceExportState.Failed, listing.ClassifyState(stored, out _));
+    }
+
+    /// <summary>A delivery failure is not a job failure: the job result must be untouched.</summary>
+    [Fact]
+    public async Task OnJobCompleted_SaveFails_DoesNotChangeTheJobResult()
+    {
+        var f = CreateFixtureWithUnwritableExportDir();
+        var job = MakeJob("user@contoso.com", Message("m1"));
+        job.Status = BulkJobStatus.Completed;
+        var finishedAt = job.FinishedAtUtc;
+        f.Repository.Insert(job);
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        var stored = f.Repository.Get(job.Id);
+        Assert.NotNull(stored);
+        Assert.Equal(BulkJobStatus.Completed, stored!.Status);
+        Assert.Equal(finishedAt, stored.FinishedAtUtc);
+    }
+
+    /// <summary>The save-failure path must not throw out of the fail-safe completion hook.</summary>
+    [Fact]
+    public async Task OnJobCompleted_SaveFails_JobNotInStore_DoesNotThrow()
+    {
+        var f = CreateFixtureWithUnwritableExportDir();
+        // The job was never inserted, so the marker write matches no row.
+        var job = MakeJob("user@contoso.com", Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        await f.Email.Received(1).SendMessageTraceFailureAsync(
+            Arg.Any<IReadOnlyList<string>>(), 1, "INC1", "jdoe");
+    }
+
+    [Fact]
+    public async Task OnJobCompleted_SaveSucceeds_DoesNotStampTheSaveFailedMarker()
+    {
+        var f = CreateFixture();
+        var job = MakeJob("user@contoso.com", Message("m1"));
+        job.Status = BulkJobStatus.Completed;
+        f.Repository.Insert(job);
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        var stored = f.Repository.Get(job.Id);
+        Assert.DoesNotContain(MessageTraceExportListing.SaveFailedMarker, stored!.Message ?? "",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

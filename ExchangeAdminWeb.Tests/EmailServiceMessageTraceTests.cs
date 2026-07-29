@@ -1,73 +1,209 @@
 using ExchangeAdminWeb.Services;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Slice-4 coverage for the Message Analysis detail-export email path
-/// (docs/MessageTraceDetail-Plan.md). The only SMTP-free, testable unit is the
-/// recipient resolver, which enforces the owner exfiltration rule: the export may
-/// go only to the logged-in user's address plus the configured admins, never to an
-/// operator-typed address.
+/// Coverage for the Message Analysis detail-export email path after the delivery redesign
+/// (docs/MessageTraceDownloadLink-Plan.md slice 3): the mail carries a LINK to the Downloadable
+/// Reports page, never the export itself, so an arbitrary recipient cannot receive trace data.
+///
+/// The SMTP-free seams are the recipient normalizer, the URL resolver, and the two body builders.
 /// </summary>
 public sealed class EmailServiceMessageTraceTests
 {
-    [Fact]
-    public void ResolveRecipients_IncludesUserAndAdmins()
+    private static EmailService Create(string? publicBaseUrl = null, string? appName = null)
     {
-        var recipients = EmailService.ResolveMessageTraceRecipients(
-            "user@contoso.com", "admin1@contoso.com,admin2@contoso.com");
+        var settings = new Dictionary<string, string?>
+        {
+            ["Email:AdminNotificationEmail"] = "admin@contoso.com",
+        };
+        if (publicBaseUrl is not null)
+            settings["Application:PublicBaseUrl"] = publicBaseUrl;
+        if (appName is not null)
+            settings["Application:Name"] = appName;
 
-        Assert.Equal(3, recipients.Count);
-        Assert.Contains("user@contoso.com", recipients);
-        Assert.Contains("admin1@contoso.com", recipients);
-        Assert.Contains("admin2@contoso.com", recipients);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return new EmailService(config, NullLogger<EmailService>.Instance);
+    }
+
+    // -------------------------------------------------------------------------
+    // Recipients
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Recipients_TrimsAndDropsBlanks()
+    {
+        var recipients = EmailService.NormalizeRecipients(["  user@contoso.com  ", "", "   ", null]);
+
+        Assert.Equal(["user@contoso.com"], recipients);
     }
 
     [Fact]
-    public void ResolveRecipients_TrimsAndDropsBlankAdminEntries()
+    public void Recipients_DeduplicatesCaseInsensitively()
     {
-        var recipients = EmailService.ResolveMessageTraceRecipients(
-            "  user@contoso.com  ", " admin@contoso.com , , ");
+        var recipients = EmailService.NormalizeRecipients(["User@Contoso.com", "user@contoso.com", "b@contoso.com"]);
 
         Assert.Equal(2, recipients.Count);
-        Assert.Contains("user@contoso.com", recipients);
-        Assert.Contains("admin@contoso.com", recipients);
+        Assert.Contains("b@contoso.com", recipients);
     }
 
     [Fact]
-    public void ResolveRecipients_DeduplicatesCaseInsensitively()
+    public void Recipients_NullOrEmpty_IsEmpty()
     {
-        // User is also an admin: appears once.
-        var recipients = EmailService.ResolveMessageTraceRecipients(
-            "User@Contoso.com", "user@contoso.com,admin@contoso.com");
+        Assert.Empty(EmailService.NormalizeRecipients(null));
+        Assert.Empty(EmailService.NormalizeRecipients([]));
+    }
 
-        Assert.Equal(2, recipients.Count);
-        Assert.Contains("admin@contoso.com", recipients);
-        Assert.Single(recipients, r => string.Equals(r, "user@contoso.com", StringComparison.OrdinalIgnoreCase));
+    /// <summary>
+    /// The security-relevant half of this slice: the admin address is configured, and the normalizer
+    /// still must not introduce it. Before the redesign the resolver merged admins in deliberately,
+    /// because the zip travelled in the mail and admins were an intended archive. Now the export is
+    /// trace data behind a login gate and the owner ruled admins must not receive the results, so
+    /// nothing may add a recipient the caller did not ask for.
+    /// </summary>
+    [Fact]
+    public void Recipients_NeverAddsTheConfiguredAdmin()
+    {
+        var recipients = EmailService.NormalizeRecipients(["user@contoso.com"]);
+
+        Assert.Equal(["user@contoso.com"], recipients);
+        Assert.DoesNotContain("admin@contoso.com", recipients);
+    }
+
+    // -------------------------------------------------------------------------
+    // Reports URL (openreview F3)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ReportsUrl_WhenBaseUrlSet_IsAbsolute()
+    {
+        var url = Create("https://apps.contoso.com/ExchangeAdminWeb").ResolveReportsUrl();
+
+        Assert.Equal("https://apps.contoso.com/ExchangeAdminWeb/message-analysis/reports", url);
+    }
+
+    [Fact]
+    public void ReportsUrl_TrailingSlash_DoesNotDoubleUp()
+    {
+        var url = Create("https://apps.contoso.com/ExchangeAdminWeb/").ResolveReportsUrl();
+
+        Assert.Equal("https://apps.contoso.com/ExchangeAdminWeb/message-analysis/reports", url);
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void ResolveRecipients_NoUser_FallsBackToAdminsOnly(string? userEmail)
+    public void ReportsUrl_WhenBaseUrlUnset_IsNull(string? baseUrl)
     {
-        var recipients = EmailService.ResolveMessageTraceRecipients(userEmail, "admin@contoso.com");
+        Assert.Null(Create(baseUrl).ResolveReportsUrl());
+    }
 
-        Assert.Equal(new[] { "admin@contoso.com" }, recipients);
+    /// <summary>
+    /// A relative value is treated exactly like an unset one. An email client has no origin to
+    /// resolve it against, so emitting it would produce a dead hyperlink - worse than no link.
+    /// </summary>
+    [Theory]
+    [InlineData("/ExchangeAdminWeb")]
+    [InlineData("ExchangeAdminWeb")]
+    public void ReportsUrl_WhenBaseUrlIsRelative_IsNull(string baseUrl)
+    {
+        Assert.Null(Create(baseUrl).ResolveReportsUrl());
+    }
+
+    // -------------------------------------------------------------------------
+    // Ready body
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void ReadyBody_WithUrl_LinksToTheReportsPage_AndStatesTheExpiryDate()
+    {
+        var body = EmailService.BuildMessageTraceReadyBody(
+            "https://apps.contoso.com/ExchangeAdminWeb/message-analysis/reports",
+            "IT Admin Portal", 12, "INC42", "jdoe",
+            new DateTime(2026, 8, 28, 0, 0, 0, DateTimeKind.Utc), "2026-07-29 10:00:00");
+
+        Assert.Contains("href=\"https://apps.contoso.com/ExchangeAdminWeb/message-analysis/reports\"", body);
+        Assert.Contains("2026-08-28", body);
+        Assert.Contains("INC42", body);
+    }
+
+    /// <summary>The mail must not claim an attachment it no longer carries.</summary>
+    [Fact]
+    public void ReadyBody_DoesNotMentionAnAttachedZip()
+    {
+        var body = EmailService.BuildMessageTraceReadyBody(
+            "https://apps.contoso.com/message-analysis/reports", "IT Admin Portal", 1, "INC1", "jdoe",
+            DateTime.UtcNow, "2026-07-29 10:00:00");
+
+        Assert.DoesNotContain("zip", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("attached as", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// F3: with no base URL, the body carries prose and NO hyperlink at all - specifically not a
+    /// bare relative path, which is what the first draft would have emitted.
+    /// </summary>
+    [Fact]
+    public void ReadyBody_WithoutUrl_HasNoHrefAndNoRelativePath_ButNamesTheApp()
+    {
+        var body = EmailService.BuildMessageTraceReadyBody(
+            null, "IT Admin Portal", 3, "INC7", "jdoe", DateTime.UtcNow, "2026-07-29 10:00:00");
+
+        Assert.DoesNotContain("href", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/message-analysis/reports", body);
+        Assert.Contains("IT Admin Portal", body);
+        Assert.Contains("Downloadable Reports", body);
     }
 
     [Fact]
-    public void ResolveRecipients_NoUserNoAdmin_IsEmpty()
+    public void ReadyBody_HtmlEncodesInterpolatedValues()
     {
-        Assert.Empty(EmailService.ResolveMessageTraceRecipients(null, ""));
+        var body = EmailService.BuildMessageTraceReadyBody(
+            null, "IT Admin Portal", 1, "<script>alert(1)</script>", "jdoe",
+            DateTime.UtcNow, "2026-07-29 10:00:00");
+
+        Assert.DoesNotContain("<script>", body);
+        Assert.Contains("&lt;script&gt;", body);
     }
 
     [Fact]
-    public void ResolveRecipients_AdminsBlankButUserPresent_ReturnsUser()
+    public void ReadyBody_TellsTheOperatorATicketWillBeRequired()
     {
-        var recipients = EmailService.ResolveMessageTraceRecipients("user@contoso.com", "");
+        var body = EmailService.BuildMessageTraceReadyBody(
+            "https://apps.contoso.com/message-analysis/reports", "IT Admin Portal", 1, "INC1", "jdoe",
+            DateTime.UtcNow, "2026-07-29 10:00:00");
 
-        Assert.Equal(new[] { "user@contoso.com" }, recipients);
+        Assert.Contains("ticket number", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // -------------------------------------------------------------------------
+    // Failure body (openreview F1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The failure notice must not link anywhere: there is no file to download. A link here would
+    /// land the operator on a row rendered Failed, which is confusing at best.
+    /// </summary>
+    [Fact]
+    public void FailureBody_SaysItCouldNotBeStored_AndLinksNowhere()
+    {
+        var body = EmailService.BuildMessageTraceFailureBody(5, "INC9", "jdoe", "2026-07-29 10:00:00");
+
+        Assert.Contains("not be stored", body);
+        Assert.Contains("re-run", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("href", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("INC9", body);
+    }
+
+    [Fact]
+    public void FailureBody_HtmlEncodesInterpolatedValues()
+    {
+        var body = EmailService.BuildMessageTraceFailureBody(1, "<b>x</b>", "jdoe", "2026-07-29 10:00:00");
+
+        Assert.DoesNotContain("<b>x</b>", body);
+        Assert.Contains("&lt;b&gt;", body);
     }
 }
