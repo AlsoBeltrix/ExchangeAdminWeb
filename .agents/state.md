@@ -15,12 +15,25 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Commits `4dff069`(plan) `f5b329b`(slice1) `942dd10`(slice2) `5c7cc93`(slice3 tests)
   `c35f056`(slice4 docs) `456e07c`(version). Build/format/827 tests green; two new guard tests
   non-vacuity-proven (fallback restored -> both fail).
-  **OPEN — host cleanup (slice 5, runtime, per box):** deploy precondition now met (`2.3.30` in
-  prod + dev, 2026-07-29). Remove the now-dead `Security.ExcludedUsers` block from
-  `D:\inetpub\ExchangeAdminWebDev\appsettings.json` and `D:\inetpub\ExchangeAdminWeb\appsettings.json`
-  (leave `PreventSelfGrant`, `AllowedGroups`). The block is inert once `2.3.30` is running (no reader
-  consults it), so this is tidy-up, not a functional fix. DB reconciled read-only on both installs
-  pre-removal: the three must-stay principals already in the DB store.
+  **Slice 5 host cleanup DONE (owner, 2026-07-29):** the `Security.ExcludedUsers` block was
+  removed from the deployed `appsettings.json` on both dev and prod (`PreventSelfGrant`,
+  `AllowedGroups` left in place). The ExcludedUsers-fallback retirement is now fully complete,
+  code + host, both environments.
+
+- **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29, NOT yet deployed.**
+  Plan `docs/MessageTraceNullRow-Plan.md` Status: Implemented. Live prod symptom: an EXO
+  summary search failed with `Object reference not set to an instance of an object.` (banner
+  doubled because `:348` and `:423` both format the same string). Root cause at
+  `Services/MessageTraceService.cs:386`: the `Get-MessageTraceV2` pipeline returned a
+  collection containing a **null element** and the loop dereferenced it; the `?.` chain guarded
+  the property and its value but not `msg` itself. Latent since `b70b59d` (2026-06-04), NOT an
+  MT-detail regression; data-dependent (the detail export emailed successfully the same day).
+  Same defect class fixed in all four mapping loops (`:277`, `:314`, `:384`, `:501`) — every
+  `GetProperty*` helper takes a non-nullable `PSObject` and dereferences `.Properties`.
+  MessageTrace module `1.2.0 -> 1.2.1`, no base app bump. 830 tests green; non-vacuity proven
+  per guard against the exact production exception.
+  **OPEN:** deploy + live re-run of the failing search. **OPEN (OQ-1, non-blocking):** why EXO
+  emits a null row at all is undiagnosed; the guard is correct regardless.
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,

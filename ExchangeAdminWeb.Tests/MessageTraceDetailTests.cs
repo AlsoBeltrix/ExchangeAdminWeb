@@ -234,4 +234,50 @@ public sealed class MessageTraceDetailTests
     {
         Assert.False(MessageTraceService.IsOutdatedModuleError(new InvalidOperationException(message)));
     }
+
+    // ---- Null pipeline rows -----------------------------------------------------------------
+    // A live EXO trace crashed with NullReferenceException because the PowerShell pipeline
+    // returned a collection containing a null element and the mapping loops dereferenced it
+    // (prod 2026-07-29; docs/MessageTraceNullRow-Plan.md). Every GetProperty* helper takes a
+    // non-nullable PSObject and reads obj.Properties directly, so a null row throws. The loops
+    // skip nulls and keep the surrounding valid rows.
+
+    [Fact]
+    public void CloudDetail_NullPipelineRow_IsSkippedAndValidRowsSurvive()
+    {
+        var events = new PSObject?[]
+        {
+            CloudEvent(new DateTime(2026, 7, 27, 10, 0, 0), "Receive", "GettingMessageStatus", "received"),
+            null,
+            CloudEvent(new DateTime(2026, 7, 27, 10, 0, 2), "Deliver", "Delivered", "to mailbox")
+        };
+
+        var detail = MessageTraceService.BuildCloudDetail(Summary("ExchangeOnline"), events!);
+
+        Assert.Equal(new[] { "Receive", "Deliver" }, detail.Events.Select(e => e.Event).ToArray());
+        Assert.Null(detail.Error);
+    }
+
+    [Fact]
+    public void OnPremDetail_NullPipelineRow_IsSkippedAndValidRowsSurvive()
+    {
+        var rows = new PSObject?[]
+        {
+            OnPremRow(new DateTime(2026, 7, 27, 10, 0, 0), "RECEIVE", "SMTP", "ctx1", "250 ok"),
+            null,
+            OnPremRow(new DateTime(2026, 7, 27, 10, 0, 2), "DELIVER", "STOREDRIVER", "ctx2", "250 delivered")
+        };
+
+        var detail = MessageTraceService.BuildOnPremDetail(Summary("OnPrem"), rows!);
+
+        Assert.Equal(new[] { "RECEIVE", "DELIVER" }, detail.Events.Select(e => e.Event).ToArray());
+    }
+
+    [Fact]
+    public void CloudDetail_AllRowsNull_ReturnsEmptyRatherThanThrowing()
+    {
+        var detail = MessageTraceService.BuildCloudDetail(Summary("ExchangeOnline"), new PSObject?[] { null, null }!);
+
+        Assert.Empty(detail.Events);
+    }
 }

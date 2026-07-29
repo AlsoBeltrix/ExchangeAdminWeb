@@ -276,6 +276,10 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         var events = new List<MessageTraceDetailEvent>();
         foreach (var item in tracking)
         {
+            // Null pipeline element: skip the row rather than crash the whole mapping.
+            if (item is null)
+                continue;
+
             if (!MessageIdMatches(GetPropertyString(item, "MessageId"), normalized))
                 continue;
 
@@ -313,6 +317,10 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         var mapped = new List<MessageTraceDetailEvent>();
         foreach (var evt in events)
         {
+            // Null pipeline element: skip the row rather than crash the whole mapping.
+            if (evt is null)
+                continue;
+
             mapped.Add(new MessageTraceDetailEvent
             {
                 Date = GetPropertyDate(evt, "Date"),
@@ -383,6 +391,11 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
 
                 foreach (var msg in results)
                 {
+                    // A null pipeline element crashes every GetProperty* read below (they
+                    // dereference obj.Properties directly). Skip the row, keep the batch.
+                    if (msg is null)
+                        continue;
+
                     var subject = msg.Properties["Subject"]?.Value?.ToString() ?? "";
                     var resultMessageId = msg.Properties["MessageId"]?.Value?.ToString() ?? "";
                     if (!MessageIdMatches(resultMessageId, normalizedMessageId))
@@ -500,6 +513,10 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
                 var mapped = new List<MessageTraceResult>();
                 foreach (var item in tracking)
                 {
+                    // Null pipeline element: skip the row rather than crash the whole trace.
+                    if (item is null)
+                        continue;
+
                     var itemMessageId = GetPropertyString(item, "MessageId");
                     if (!MessageIdMatches(itemMessageId, normalizedMessageId))
                         continue;
