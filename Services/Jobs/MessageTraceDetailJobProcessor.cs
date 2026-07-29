@@ -31,7 +31,7 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     private readonly IMessageTraceDetailSource _details;
     private readonly EmailService _email;
     private readonly AuditService _audit;
-    private readonly IConfiguration _config;
+    private readonly MessageTraceExportStore _exports;
     private readonly ILogger<MessageTraceDetailJobProcessor> _logger;
 
     public const string ModuleName = "MessageTrace";
@@ -50,13 +50,13 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         IMessageTraceDetailSource details,
         EmailService email,
         AuditService audit,
-        IConfiguration config,
+        MessageTraceExportStore exports,
         ILogger<MessageTraceDetailJobProcessor> logger)
     {
         _details = details;
         _email = email;
         _audit = audit;
-        _config = config;
+        _exports = exports;
         _logger = logger;
     }
 
@@ -103,13 +103,12 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
         }
 
         var csv = MessageTraceDetailReport.BuildCsv(details);
-        var baseName = $"MessageTraceDetail_{job.Id}_{job.SubmittedAtUtc:yyyyMMdd-HHmmss}";
-        var csvName = baseName + ".csv";
-        var zipName = baseName + ".zip";
+        var csvName = _exports.FileNameFor(job.Id, job.SubmittedAtUtc);
+        var zipName = Path.ChangeExtension(csvName, ".zip");
         var ticket = job.Ticket ?? "";
 
         // Save the CSV under the audit log root (decision 5: the file is also saved to the log path).
-        var savedPath = SaveToLogPath(job.Id, csvName, csv);
+        var savedPath = SaveToLogPath(job.Id, job.SubmittedAtUtc, csv);
 
         // Zip the CSV in-memory (decision B: no server file-share / wwwroot storage) and email it to
         // the authenticated user + admins (decision 6: recipient is never an operator-typed address).
@@ -125,19 +124,21 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Persists the CSV export under <c>&lt;logRoot&gt;\ExchangeAdminWeb\MessageTraceExports\</c>
-    /// (the required audit log root; fail-loud if unset). Returns the written path. Errors are logged
-    /// and swallowed so a save failure never breaks the email path or (via the fail-safe caller) the
-    /// job result.
+    /// Persists the CSV export under the directory owned by <see cref="MessageTraceExportStore"/>
+    /// (rooted at the required audit log root; fail-loud if unset). Returns the written path, or null
+    /// if the save failed. Errors are logged and swallowed so a save failure never faults the job -
+    /// the caller is fail-safe by contract.
+    ///
+    /// A null return is NOT nothing: the caller must branch on it. Once the export stops travelling
+    /// in the mail as an attachment, this file is the only copy, so swallowing a failure here and
+    /// still sending a "ready" notification would point the operator at a file that does not exist.
     /// </summary>
-    private string? SaveToLogPath(string jobId, string fileName, string csv)
+    private string? SaveToLogPath(string jobId, DateTime submittedAtUtc, string csv)
     {
         try
         {
-            var logRoot = AuditLogRoot.Require(_config);
-            var dir = Path.Combine(logRoot, "ExchangeAdminWeb", "MessageTraceExports");
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, fileName);
+            Directory.CreateDirectory(_exports.DirectoryPath);
+            var path = _exports.PathFor(jobId, submittedAtUtc);
             File.WriteAllText(path, csv, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             return path;
         }

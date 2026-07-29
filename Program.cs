@@ -144,6 +144,9 @@ try
     // without live EXO/on-prem, and is resolved per-job from a fresh scope by the runner.
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.IMessageTraceDetailSource>(
         sp => sp.GetRequiredService<MessageTraceService>());
+    // Single owner of the export directory, filename convention, and jobId validation, shared by the
+    // detail-export writer and the Downloadable Reports page so the two cannot drift apart.
+    builder.Services.AddScoped<MessageTraceExportStore>();
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobProcessor>();
     builder.Services.AddScoped<MailboxPermissionService>();
     builder.Services.AddScoped<CalendarPermissionService>();

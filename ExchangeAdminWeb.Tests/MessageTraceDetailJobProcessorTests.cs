@@ -66,8 +66,8 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var details = new FakeDetailSource();
 
-        var processor = new MessageTraceDetailJobProcessor(details, email, audit, config,
-            NullLogger<MessageTraceDetailJobProcessor>.Instance);
+        var processor = new MessageTraceDetailJobProcessor(details, email, audit,
+            new MessageTraceExportStore(config), NullLogger<MessageTraceDetailJobProcessor>.Instance);
 
         return new Fixture { Details = details, Email = email, Audit = audit, Processor = processor };
     }
@@ -93,7 +93,10 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         };
         return new BulkJob
         {
-            Id = "jt1",
+            // A real GUID "N", as BulkJobRepository assigns at enqueue. The export store validates
+            // this shape before touching the filesystem, so a placeholder id here would not exercise
+            // the production path.
+            Id = Guid.NewGuid().ToString("N"),
             ModuleId = MessageTraceDetailJobProcessor.ModuleName,
             JobType = MessageTraceDetailJobPayload.JobType,
             Status = BulkJobStatus.Running,
