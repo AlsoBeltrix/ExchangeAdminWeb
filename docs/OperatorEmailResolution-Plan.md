@@ -40,10 +40,15 @@ The claim read dates to `e62ae73` (the page's original commit) and has been carr
 regression from `docs/MessageTraceDownloadLink-Plan.md` slice 4 (`2f0b99c`); that slice
 consumed an already-empty variable.
 
-**Assumption to verify during implementation, not a blocker:** historical search has
-therefore never succeeded from this page, because `:710` blocks before reaching
-`StartHistoricalSearchAsync`. Confirm on dev; if it has succeeded, an unknown claim source
-exists and this plan's premise must be re-checked before landing.
+**Historical search has never been used** (owner, 2026-07-29). This is why a permanently
+blocking guard survived three months unreported: `:710` refuses before reaching
+`StartHistoricalSearchAsync`, and no operator ever hit it. Treat the historical-search path as
+**unproven end to end**, not as working code with one broken guard -- nothing downstream of
+`:710` has executed in this deployment.
+
+Consequence for this plan: removing the false refusal is in scope, but making historical search
+*work* is not, and cannot be verified here. Manual check 5 below is therefore exploratory --
+its purpose is to discover what the next failure is, if any, not to gate this plan. See OQ-2.
 
 ## Owner Decisions
 
@@ -227,9 +232,10 @@ checks below.
   3. Clear the box and export; no mail is sent and the export still lists on the reports page
      (D4(a) is unchanged by this plan).
   4. The historical-search "Send report to" field renders the address and remains disabled.
-  5. Submit a historical search with a range beyond the realtime window; it is accepted rather
-     than refused. **Records whether the pre-existing block was the only thing preventing
-     historical search from ever working** -- see the Problem section's assumption.
+  5. Submit a historical search with a range beyond the realtime window; confirm it is accepted
+     rather than refused. **Exploratory, not a gate** -- this path has never been exercised
+     (see Problem), so a failure here is a discovery about untested code, not a defect in this
+     change. Record what happens and stop; do not fix it under this plan (OQ-2).
   6. Sign in as a second operator; the box shows *their* address, not the first operator's
      (guards against a resolution cached across circuits).
 
@@ -238,7 +244,14 @@ checks below.
 - **OQ-1 (non-blocking):** other pages may want the operator's address later. This plan
   registers a shared singleton so they can, but converts no other page. Any such conversion is
   separate work.
-- **OQ-2 (non-blocking):** if manual check 5 shows historical search still fails after this
-  fix, the cause is downstream of `userEmail` (EXO permissions on `Start-HistoricalSearch`, or
-  the cmdlet rejecting the address). That is a separate defect and does not invalidate this
-  plan; record it and stop rather than widening scope.
+- **OQ-2 (non-blocking):** the historical-search path beyond `:710` has never executed in this
+  deployment (owner, 2026-07-29). Anything it hits after the refusal is removed -- EXO
+  permissions on `Start-HistoricalSearch`, the cmdlet rejecting the address, an unhandled
+  response shape -- is undiscovered, not regressed. Record and stop; fixing it is separate work
+  needing its own plan.
+- **OQ-3 (non-blocking, owner-facing):** an unused feature that has never worked is a candidate
+  for removal rather than repair. This plan does not propose that -- it only stops the page
+  lying about why the feature refuses -- but if historical search is not wanted, deleting it
+  (the tab section at `:315-338`, `RunHistoricalSearch`, and
+  `MessageTraceService.StartHistoricalSearchAsync`) is less code than making it work. Owner's
+  call, not blocking.
