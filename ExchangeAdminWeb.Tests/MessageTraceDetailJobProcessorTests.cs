@@ -113,12 +113,20 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         Backend = backend,
     };
 
-    private static BulkJob MakeJob(string? userEmail, params MessageTraceResult[] messages)
+    /// <summary>
+    /// A job with no <c>Recipients</c> on its payload - the shape enqueued before the recipient box
+    /// existed, which the processor must still honour by falling back to the submitter's address.
+    /// </summary>
+    private static BulkJob MakeJob(string? userEmail, params MessageTraceResult[] messages) =>
+        MakeJob(userEmail, null, messages);
+
+    private static BulkJob MakeJob(string? userEmail, List<string>? recipients, params MessageTraceResult[] messages)
     {
         var payload = new MessageTraceDetailJobPayload
         {
             Messages = messages.ToList(),
             UserEmail = userEmail,
+            Recipients = recipients,
         };
         return new BulkJob
         {
@@ -208,6 +216,84 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var expected = f.Store.ExpiresAtUtc(job.SubmittedAtUtc);
         await f.Email.Received(1).SendMessageTraceResultAsync(
             Arg.Any<IReadOnlyList<string>>(), 1, "INC1", "jdoe", expected);
+    }
+
+    // -------------------------------------------------------------------------
+    // Recipient set (slice 4, plan D4)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// The operator's edited list is what gets mailed, not their own address. This is the whole
+    /// point of D4 (a): the pre-fill is a default, not a floor.
+    /// </summary>
+    [Fact]
+    public async Task OnJobCompleted_MailsThePayloadRecipients_NotTheSubmitter()
+    {
+        var f = CreateFixture();
+        var job = MakeJob("user@contoso.com", ["someone.else@contoso.com", "second@contoso.com"], Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Is<IReadOnlyList<string>>(r =>
+                r.Count == 2 && r.Contains("someone.else@contoso.com") && r.Contains("second@contoso.com")
+                && !r.Contains("user@contoso.com")),
+            1, "INC1", "jdoe", Arg.Any<DateTime>());
+    }
+
+    /// <summary>
+    /// A CLEARED box means notify nobody. Silently reinstating the submitter would be option (c),
+    /// which the owner rejected. The export is still produced and still listed on the reports page -
+    /// only the mail is skipped, which the send itself already handles for an empty set.
+    /// </summary>
+    [Fact]
+    public async Task OnJobCompleted_EmptyRecipientList_DoesNotFallBackToTheSubmitter()
+    {
+        var f = CreateFixture();
+        var job = MakeJob("user@contoso.com", [], Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 0), 1, "INC1", "jdoe", Arg.Any<DateTime>());
+
+        // The export itself is unaffected: no recipient is not a failure.
+        var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
+        Assert.Single(Directory.GetFiles(exportDir, "*.csv"));
+    }
+
+    /// <summary>
+    /// A job enqueued before the recipient box existed carries no Recipients at all. Null is not the
+    /// same as empty: it must behave as it did when submitted, mailing the submitter.
+    /// </summary>
+    [Fact]
+    public async Task OnJobCompleted_NullRecipients_FallsBackToTheSubmitter()
+    {
+        var f = CreateFixture();
+        var job = MakeJob("user@contoso.com", recipients: null, Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        await f.Email.Received(1).SendMessageTraceResultAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "user@contoso.com"),
+            1, "INC1", "jdoe", Arg.Any<DateTime>());
+    }
+
+    [Fact]
+    public async Task OnJobCompleted_SaveFails_UsesThePayloadRecipientsToo()
+    {
+        var f = CreateFixtureWithUnwritableExportDir();
+        var job = MakeJob("user@contoso.com", ["someone.else@contoso.com"], Message("m1"));
+
+        await f.Processor.ProcessRowAsync(job, 0, CancellationToken.None);
+        await f.Processor.OnJobCompletedAsync(job);
+
+        await f.Email.Received(1).SendMessageTraceFailureAsync(
+            Arg.Is<IReadOnlyList<string>>(r => r.Count == 1 && r[0] == "someone.else@contoso.com"),
+            1, "INC1", "jdoe");
     }
 
     [Fact]

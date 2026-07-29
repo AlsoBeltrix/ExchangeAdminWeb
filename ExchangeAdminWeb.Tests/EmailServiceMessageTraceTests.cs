@@ -73,6 +73,98 @@ public sealed class EmailServiceMessageTraceTests
     }
 
     // -------------------------------------------------------------------------
+    // Recipient input parsing (slice 4, plan D4)
+    // -------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("a@contoso.com,b@contoso.com")]
+    [InlineData("a@contoso.com; b@contoso.com")]
+    [InlineData(" a@contoso.com , b@contoso.com ")]
+    public void ParseRecipientInput_SplitsOnCommaAndSemicolonAndTrims(string input)
+    {
+        var parsed = EmailService.ParseRecipientInput(input, out var invalid);
+
+        Assert.Equal(["a@contoso.com", "b@contoso.com"], parsed);
+        Assert.Empty(invalid);
+    }
+
+    /// <summary>
+    /// D4: "A box the operator has cleared is a valid submission." An empty result must come back
+    /// clean - no invalid entries - so the page cannot be tempted into a required-field error.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    [InlineData(",  ;  ,")]
+    public void ParseRecipientInput_ClearedBox_IsValidAndEmpty(string? input)
+    {
+        var parsed = EmailService.ParseRecipientInput(input, out var invalid);
+
+        Assert.Empty(parsed);
+        Assert.Empty(invalid);
+    }
+
+    [Theory]
+    [InlineData("not-an-address")]
+    [InlineData("@contoso.com")]
+    [InlineData("user@")]
+    [InlineData("user@contoso")]
+    [InlineData("user@@contoso.com")]
+    [InlineData("user@.com")]
+    [InlineData("user@contoso.")]
+    public void ParseRecipientInput_ReportsMalformedAddresses(string input)
+    {
+        var parsed = EmailService.ParseRecipientInput(input, out var invalid);
+
+        Assert.Empty(parsed);
+        Assert.Equal([input], invalid);
+    }
+
+    [Fact]
+    public void ParseRecipientInput_SeparatesTheGoodFromTheBad()
+    {
+        var parsed = EmailService.ParseRecipientInput("good@contoso.com, bogus, other@contoso.com", out var invalid);
+
+        Assert.Equal(["good@contoso.com", "other@contoso.com"], parsed);
+        Assert.Equal(["bogus"], invalid);
+    }
+
+    /// <summary>
+    /// What the box accepts must be exactly what the send uses, or the page validates one set and
+    /// the processor mails another.
+    /// </summary>
+    [Fact]
+    public void ParseRecipientInput_DeduplicatesLikeTheNormalizer()
+    {
+        var parsed = EmailService.ParseRecipientInput("User@Contoso.com, user@contoso.com", out var invalid);
+
+        Assert.Equal(["User@Contoso.com"], parsed);
+        Assert.Empty(invalid);
+    }
+
+    /// <summary>
+    /// D4 forbids domain allow-listing: the mail carries a login-gated link, not the data, so an
+    /// external address is a legitimate submission.
+    /// </summary>
+    [Fact]
+    public void ParseRecipientInput_DoesNotRestrictTheDomain()
+    {
+        var parsed = EmailService.ParseRecipientInput("someone@external-partner.example", out var invalid);
+
+        Assert.Equal(["someone@external-partner.example"], parsed);
+        Assert.Empty(invalid);
+    }
+
+    [Fact]
+    public void ParseRecipientInput_NeverAddsTheConfiguredAdmin()
+    {
+        var parsed = EmailService.ParseRecipientInput("user@contoso.com", out _);
+
+        Assert.DoesNotContain("admin@contoso.com", parsed);
+    }
+
+    // -------------------------------------------------------------------------
     // Reports URL (openreview F3)
     // -------------------------------------------------------------------------
 

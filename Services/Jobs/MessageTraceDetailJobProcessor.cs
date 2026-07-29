@@ -136,13 +136,20 @@ public sealed class MessageTraceDetailJobProcessor : IBulkJobProcessor
     }
 
     /// <summary>
-    /// The notification recipient set: the submitting operator's address from the payload. Slice 4
-    /// widens this to the operator's editable list (plan D4). The configured admin address is NOT
-    /// added - the owner ruled that all admins must not receive the actual results, and now that the
-    /// mail carries a link rather than the data, adding them would also be pointless.
+    /// The notification recipient set: exactly what the operator left in the recipient box (plan
+    /// D4), carried on the payload. The configured admin address is NOT added - the owner ruled that
+    /// all admins must not receive the actual results, and now that the mail carries a link rather
+    /// than the data, adding them would also be pointless.
+    ///
+    /// A null <c>Recipients</c> means a job enqueued before the box existed, so it falls back to the
+    /// submitter's address - the behaviour that job was submitted under. An EMPTY list is not the
+    /// same thing: the operator cleared the box, and clearing it must mean "notify nobody" rather
+    /// than quietly reinstating their address (D4: the pre-fill is a default, not a floor).
     /// </summary>
     private static IReadOnlyList<string> ResolveRecipients(MessageTraceDetailJobPayload payload) =>
-        EmailService.NormalizeRecipients([payload.UserEmail]);
+        payload.Recipients is null
+            ? EmailService.NormalizeRecipients([payload.UserEmail])
+            : EmailService.NormalizeRecipients(payload.Recipients);
 
     /// <summary>
     /// Records the save failure in the job's own record, which is what the Downloadable Reports page

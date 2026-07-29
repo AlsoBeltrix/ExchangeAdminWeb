@@ -519,6 +519,58 @@ public class EmailService
     }
 
     /// <summary>
+    /// Splits an operator-typed recipient box into addresses and reports the malformed ones.
+    ///
+    /// Comma or semicolon separated; the accepted set is exactly what
+    /// <see cref="NormalizeRecipients"/> would keep, so what the page validates is what the send
+    /// uses. A cleared box is valid and yields no addresses (plan D4: the pre-fill is a default, not
+    /// a floor). Format only - no domain allow-listing, because the mail carries a login-gated link
+    /// rather than the data (plan D4, "no domain allow-listing").
+    /// </summary>
+    internal static IReadOnlyList<string> ParseRecipientInput(string? input, out IReadOnlyList<string> invalid)
+    {
+        var bad = new List<string>();
+        invalid = bad;
+
+        if (string.IsNullOrWhiteSpace(input))
+            return [];
+
+        var candidates = input.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries);
+        var good = new List<string>(candidates.Length);
+        foreach (var candidate in candidates)
+        {
+            var trimmed = candidate.Trim();
+            if (trimmed.Length == 0)
+                continue;
+            if (IsPlausibleAddress(trimmed))
+                good.Add(trimmed);
+            else
+                bad.Add(trimmed);
+        }
+
+        return NormalizeRecipients(good);
+    }
+
+    /// <summary>
+    /// A deliberately loose shape check: one at-sign, something either side, a dot in the domain, no
+    /// whitespace. Rejecting valid-but-unusual addresses would block an operator from a delivery
+    /// they are entitled to, and the address is only ever used as an SMTP recipient here.
+    /// </summary>
+    private static bool IsPlausibleAddress(string value)
+    {
+        if (value.Any(char.IsWhiteSpace))
+            return false;
+
+        var at = value.IndexOf('@');
+        if (at <= 0 || at != value.LastIndexOf('@') || at == value.Length - 1)
+            return false;
+
+        var domain = value[(at + 1)..];
+        var dot = domain.IndexOf('.');
+        return dot > 0 && dot < domain.Length - 1;
+    }
+
+    /// <summary>
     /// The absolute URL of the Downloadable Reports page, or null when it cannot be built.
     ///
     /// Returns null - never a relative path - when Application:PublicBaseUrl is unset or is not an

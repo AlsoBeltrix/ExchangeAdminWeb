@@ -39,6 +39,7 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
 - Historical Exchange Online searches are still submitted as background jobs for ranges beyond the realtime window
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
+- The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days by a host scheduled task; the app never deletes them. A row whose export could not be saved shows as Failed, distinct from an expired one
 - Section access key: `MessageTrace`

@@ -14,7 +14,6 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
-@inject IConfiguration Configuration
 @inject IJSRuntime JS
 
 <PageTitle>Message Analysis</PageTitle>
@@ -401,7 +400,22 @@
                         }
                         @if (selectedIndices.Count > 0)
                         {
-                            <div class="form-text mb-0">Emailed reports are sent only to <strong>@DestinationDisplay()</strong> - never a typed-in address.</div>
+                            <div class="mt-2">
+                                <label class="form-label mb-1" for="mt-notify">Notify (optional)</label>
+                                <input id="mt-notify" type="text" class="form-control form-control-sm @(recipientInputError != null ? "is-invalid" : "")"
+                                       placeholder="name@example.com, another@example.com"
+                                       @bind="recipientInput" @bind:event="oninput" disabled="@detailActionBusy" />
+                                @if (recipientInputError != null)
+                                {
+                                    <div class="invalid-feedback d-block">@recipientInputError</div>
+                                }
+                                <div class="form-text mb-0">
+                                    Separate addresses with commas. The message contains a link to the
+                                    <a href="message-analysis/reports">Downloadable Reports</a> page, never the report itself,
+                                    so recipients must sign in and have Message Analysis access to open it.
+                                    Clear the box to notify no one - the export is still produced and still listed there.
+                                </div>
+                            </div>
                         }
                     </div>
 
@@ -411,7 +425,18 @@
                     }
                     @if (emailJobSubmitted)
                     {
-                        <div class="alert alert-success">Detail export submitted as a background job. The zipped report will be emailed to <strong>@DestinationDisplay()</strong> when it is ready - you can close this tab.</div>
+                        <div class="alert alert-success">
+                            Detail export submitted as a background job - you can close this tab. When it is ready it will be
+                            listed on the <a href="message-analysis/reports">Downloadable Reports</a> page.
+                            @if (submittedRecipientsDisplay is { Length: > 0 })
+                            {
+                                <text>A link will be emailed to <strong>@submittedRecipientsDisplay</strong>.</text>
+                            }
+                            else
+                            {
+                                <text>No notification was requested, so no email will be sent.</text>
+                            }
+                        </div>
                     }
 
                     <div class="table-responsive">
@@ -541,6 +566,13 @@
     private string? detailActionError;
     private bool emailJobSubmitted;
 
+    // The notification recipient box (plan D4). Pre-filled with the operator's own address in
+    // OnInitializedAsync as a DEFAULT, not a floor: they may edit it or clear it entirely, and a
+    // cleared box is a valid submission meaning "notify nobody".
+    private string recipientInput = "";
+    private string? recipientInputError;
+    private string? submittedRecipientsDisplay;
+
     private bool SelectionCappedAt50 => selectedIndices.Count >= MessageTraceDetailReport.EmailMax;
     private bool AllSelectableChecked =>
         response?.Results is { Count: > 0 } results
@@ -582,6 +614,9 @@
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
+
+        // Pre-fill only; the operator owns the box from here (plan D4).
+        recipientInput = userEmail;
     }
 
     private static DateTime EffectiveEndDate(DateTime end)
@@ -916,19 +951,6 @@
             ? selectedIndices.OrderBy(i => i).Where(i => i >= 0 && i < results.Count).Select(i => results[i]).ToList()
             : new List<MessageTraceResult>();
 
-    // The read-only destination shown to the operator: authenticated mailbox + configured admins,
-    // never a typed-in address (decision 6, exfiltration prevention).
-    private string DestinationDisplay()
-    {
-        var adminCsv = Configuration["Email:AdminNotificationEmail"] ?? "";
-        var recipients = new List<string>();
-        if (!string.IsNullOrWhiteSpace(userEmail)) recipients.Add(userEmail.Trim());
-        if (!string.IsNullOrWhiteSpace(adminCsv))
-            recipients.AddRange(adminCsv.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(a => a.Trim()));
-        recipients = recipients.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        return recipients.Count > 0 ? string.Join(", ", recipients) : "(no recipient configured)";
-    }
-
     private async Task DownloadSelectedDetails()
     {
         var messages = SelectedMessages();
@@ -983,6 +1005,16 @@
             return Task.CompletedTask;
         }
 
+        // Format check only, and a cleared box stays valid (plan D4). No domain allow-listing: the
+        // mail carries a login-gated link, not the data.
+        var recipients = ExchangeAdminWeb.Services.EmailService.ParseRecipientInput(recipientInput, out var invalid);
+        if (invalid.Count > 0)
+        {
+            recipientInputError = $"Not a valid email address: {string.Join(", ", invalid)}";
+            return Task.CompletedTask;
+        }
+        recipientInputError = null;
+
         detailActionError = null;
         emailJobSubmitted = false;
         detailActionBusy = true;
@@ -990,12 +1022,14 @@
         var target = string.Join(",", messages.Select(m => string.IsNullOrWhiteSpace(m.MessageId) ? m.MessageTraceId : m.MessageId));
         try
         {
-            // Off-circuit bulk job (decision 5): the zipped report is emailed to the authenticated
-            // user + admins by the processor; the destination is never operator-typed (decision 6).
+            // Off-circuit bulk job (decision 5). The processor mails a LINK to the reports page to
+            // whatever the operator left in the box - an empty set means notify nobody, and the
+            // export is still produced (docs/MessageTraceDownloadLink-Plan.md D4).
             var payload = new ExchangeAdminWeb.Services.Jobs.MessageTraceDetailJobPayload
             {
                 Messages = messages,
                 UserEmail = userEmail?.Trim(),
+                Recipients = recipients.ToList(),
             };
             var job = new ExchangeAdminWeb.Services.Jobs.BulkJob
             {
@@ -1012,7 +1046,9 @@
             };
             BulkJobs.Enqueue(job);
             emailJobSubmitted = true;
-            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}", ticketNumber.Trim());
+            submittedRecipientsDisplay = string.Join(", ", recipients);
+            var notified = recipients.Count == 0 ? "no notification" : string.Join(", ", recipients);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace_DetailEmailJob", target, true, $"{messages.Count} message(s); job {job.Id}; notify: {notified}", ticketNumber.Trim());
         }
         catch (Exception ex)
         {
