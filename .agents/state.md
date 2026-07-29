@@ -15,11 +15,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Commits `4dff069`(plan) `f5b329b`(slice1) `942dd10`(slice2) `5c7cc93`(slice3 tests)
   `c35f056`(slice4 docs) `456e07c`(version). Build/format/827 tests green; two new guard tests
   non-vacuity-proven (fallback restored -> both fail).
-  **OPEN — host cleanup (slice 5, runtime, per box, after deploy):** remove the
-  `Security.ExcludedUsers` block from `D:\inetpub\ExchangeAdminWebDev\appsettings.json` and
-  `D:\inetpub\ExchangeAdminWeb\appsettings.json` (leave `PreventSelfGrant`, `AllowedGroups`).
-  DB reconciled read-only on both installs pre-removal: the three must-stay principals already
-  in the DB store.
+  **OPEN — host cleanup (slice 5, runtime, per box):** deploy precondition now met (`2.3.30` in
+  prod + dev, 2026-07-29). Remove the now-dead `Security.ExcludedUsers` block from
+  `D:\inetpub\ExchangeAdminWebDev\appsettings.json` and `D:\inetpub\ExchangeAdminWeb\appsettings.json`
+  (leave `PreventSelfGrant`, `AllowedGroups`). The block is inert once `2.3.30` is running (no reader
+  consults it), so this is tidy-up, not a functional fix. DB reconciled read-only on both installs
+  pre-removal: the three must-stay principals already in the DB store.
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
@@ -53,32 +54,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 - **App version `2.3.30`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.29`
   (`456e07c`) for retiring the `Security:ExcludedUsers` appsettings fallback; `2.3.29` was the
   app-wide log-root fail-fast change (`3eac48a`).
-- **Deployed:** prod is on `2.3.27`, validated good (owner, 2026-06-29). `2.3.29` (this session's
-  log-root work) is **deployed to dev** (owner, 2026-07-22; `D:\inetpub\ExchangeAdminWebDev`) but
-  **NOT yet manually validated** and **NOT in prod**. (Dev started the day on `2.3.28`/Bulk Job
-  Runner, deployed 2026-07-20; `2.3.29` supersedes it in dev.)
+- **Deployed:** **prod and dev are both on `2.3.30`, validated good (owner, 2026-07-29)** — deployed
+  to dev, validated, then promoted to prod. `2.3.30` supersedes all prior deployed builds, so it
+  carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root fail-fast, and the `2.3.30`
+  ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27` (validated 2026-06-29).
 - **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
   Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
   `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
   `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
   **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
   `appsettings.json` must set it before deploying `2.3.29`.
-- **OPEN:** live validation of `2.3.29` not yet performed (runs against PROD AD/Exchange from the
-  dev instance, same as Bulk Job Runner); promote `2.3.29` to prod once validated (needs owner
-  go; deploy is script-only).
-- **This session landed (2026-07-21), all pushed + CI green:**
-  - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
-    decisions.md + repo-guidance; resolved the long-open versioning exception).
-  - `c2e2f6f` -- ASCII sweep of code/logging (77 `.cs`/`.ps1`, 329/329 char swaps). Scope narrowed
-    by owner to code/logging only; docs, `.razor` UI, `EmailService.cs` email emoji excluded.
-  - `502dd0e` -- ASCII CI lint gate `tools/Test-AsciiOnly.ps1` (excludes `EmailService.cs`), wired
-    into `.github/workflows/ci.yml` powershell job.
-  - `8c6f83f` -- fixed xUnit1051 warning that had reddened CI since 2026-07-20 (format check treats
-    analyzer warnings as fatal).
-  - `9dd39cd` -- state note recording that format-warning trap.
-  - `b978362` -- fixed `ConferenceRoomProtectionGateTests` hardcoded `E:\WWWOutput` log path (was
-    masked until format gate went green; failed only on CI, not the ADI dev box).
-  - `71d1daa` -- Approved plan `docs/RemoveHardcodedLogRoot-Plan.md`.
+- **RESOLVED (2026-07-29):** `2.3.29`'s log-root fail-fast is now validated in prod — it ships
+  inside `2.3.30`, which the owner deployed + validated + promoted to prod. The startup guard is
+  inherently exercised: the app cannot boot without `Audit:LogRoot`, and it booted.
+- **2026-07-21 landed slices** (ff443ca, c2e2f6f, 502dd0e, 8c6f83f, 9dd39cd, b978362, 71d1daa)
+  archived verbatim: `docs/history/state-archive.md` (Archived 2026-07-29).
 - **AccountLockoutRemediation: TURNED OFF by owner** (2026-07-21). Does not work in this environment:
   WinRM reaches only ~5 of 38 domain controllers (HTTP 400 / Access denied / unreachable); permanent
   (owner: "won't be changed"). Discovery hides unreachable DCs (looks like "no lockouts found"); sweep

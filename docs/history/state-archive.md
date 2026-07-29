@@ -11,6 +11,24 @@ Landed and superseded `## Now` entries rotated out of `.agents/state.md` by the
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-07-29 (catchup sweep)
+
+### 2026-07-21 landed slices (all pushed + CI green)
+
+- **This session landed (2026-07-21), all pushed + CI green:**
+  - `ff443ca` -- decision+docs: new module does not bump base app version (Constitution +
+    decisions.md + repo-guidance; resolved the long-open versioning exception).
+  - `c2e2f6f` -- ASCII sweep of code/logging (77 `.cs`/`.ps1`, 329/329 char swaps). Scope narrowed
+    by owner to code/logging only; docs, `.razor` UI, `EmailService.cs` email emoji excluded.
+  - `502dd0e` -- ASCII CI lint gate `tools/Test-AsciiOnly.ps1` (excludes `EmailService.cs`), wired
+    into `.github/workflows/ci.yml` powershell job.
+  - `8c6f83f` -- fixed xUnit1051 warning that had reddened CI since 2026-07-20 (format check treats
+    analyzer warnings as fatal).
+  - `9dd39cd` -- state note recording that format-warning trap.
+  - `b978362` -- fixed `ConferenceRoomProtectionGateTests` hardcoded `E:\WWWOutput` log path (was
+    masked until format gate went green; failed only on CI, not the ADI dev box).
+  - `71d1daa` -- Approved plan `docs/RemoveHardcodedLogRoot-Plan.md`.
+
 ## Archived 2026-07-28 (catchup sweep)
 
 ### MessageTrace per-message delivery-detail (MT-detail) — landed complete 2026-07-27
