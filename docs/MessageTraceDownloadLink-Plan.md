@@ -1,7 +1,7 @@
 # Message Analysis Export Delivery: Reports Page + Notification Link -- Plan
 
-Status: **Draft -- awaiting owner approval and a ruling on D4 (see Owner Gate).**
-Decisions D1, D2 and D3 are ruled. No code is written until this plan is Approved.
+Status: **Draft -- awaiting owner approval.** All four decisions (D1-D4) are ruled;
+D4 was ruled 2026-07-29. No code is written until this plan is Approved.
 Independently reviewed 2026-07-29 (openreview, codex-commercial / gpt-5.6-sol / max,
 range `68bfd25..1e98eaf`): four findings, all repaired in this revision -- see
 `.agents/review/findings/mt-export-delivery-plan.md`.
@@ -126,10 +126,22 @@ into a URL. Routing through the page means the ticket is **prompted for at downl
 time**, so the owner's "download link requiring a ticket number as the audit check"
 is actually enforced rather than nominal.
 
-### D4 -- Email recipients: the default set when the operator types nothing (OPEN -- BLOCKS SLICE 3)
+### D4 -- Email recipients: the default set when the operator types nothing (RULED)
 
-See the Owner Gate at the end of this document. Slices 1, 2 and 4 do not depend on it
-and may proceed once this plan is Approved.
+**Option (a): pre-fill the operator's own address, editable** (owner, 2026-07-29).
+
+The recipient field is pre-filled with the operator's claim address and may be changed,
+added to, or cleared. An operator who ignores the box gets today's behavior. Binding
+consequences:
+
+- The pre-filled value is a **default, not a floor**. The operator may remove their own
+  address entirely. Do not implement it as an always-included recipient -- that is option
+  (c), which was not chosen.
+- A box the operator has cleared is a valid submission. Do not add a required-field
+  validation error on the recipient input.
+- Admins are never in the set (owner-ruled independently of D4).
+- Client-side format validation only. No domain allow-listing: the data stays behind the
+  login gate, which is the point of the redesign.
 
 ## Non-Goals
 
@@ -366,15 +378,16 @@ New `Components/Pages/MessageTraceReports.razor`, `@page "/message-analysis/repo
 - Add the page to the Trace Search tab as a link, and confirm it does **not** need a
   `ModuleCatalog` nav entry -- it is a sub-page of an existing module, not a new one.
 
-### Slice 3 -- Email: link to the reports page, no attachment (BLOCKED ON D4)
+### Slice 3 -- Email: link to the reports page, no attachment
 
 `Services/EmailService.cs`:
 
 - Change `SendMessageTraceResultAsync` to take a **reports-page URL** and an **expiry
   date** in place of `byte[] zipBytes` / `zipFileName`.
-- Delete `ResolveMessageTraceRecipients` (`:483-496`) and its call site; replace it with
-  the recipient set D4 selects. **Admins leave the trace-data path either way** -- that
-  half is owner-ruled independent of D4.
+- Delete `ResolveMessageTraceRecipients` (`:483-496`) and its call site. Per D4 the
+  recipient set is whatever the operator submitted, carried on the job payload; the
+  service no longer merges in `Email:AdminNotificationEmail`. **Admins are never in the
+  set** -- assert that in a test, it is the security-relevant half of this slice.
 - Rewrite the body (`:455-470`): drop "attached as a zip file"; state that the export is
   ready, link to the reports page, and give the availability date. Note that a ticket
   number will be requested at download. HTML-encode every interpolated value via the
@@ -405,17 +418,20 @@ and `ContactEmail`); `deploy.ps1:735-738` (same block); and
 `tools/promote-dev-to-prod.ps1` beside the existing `Application:PathBase` patch, so dev
 and prod do not silently share one URL.
 
-### Slice 4 -- Remove the leaked UI string; wire the recipient input (BLOCKED ON D4 for the input only)
+### Slice 4 -- Remove the leaked UI string; wire the recipient input
 
 `Components/Pages/MessageTrace.razor`:
 
 - Delete the `- never a typed-in address` clause at `:399`, and update the submission
   confirmation at `:409` which likewise promises a zipped report by email.
-- Under D4 the surrounding sentence is either rewritten to name the chosen recipient or
-  removed along with `DestinationDisplay()` (`:916-925`).
-- Add the recipient input if D4 calls for one, with client-side format validation only.
-  Do not add domain allow-listing: the data is behind the login gate, which is the point
-  of the redesign.
+- Remove the surrounding sentence along with `DestinationDisplay()` (`:916-925`): under
+  D4 the destination is no longer fixed, so a sentence naming it is wrong by
+  construction. Replace it with text describing the input.
+- **Add the recipient input** (D4 (a)): pre-filled with the operator's own claim address,
+  freely editable, valid when cleared. Do not enforce a required field and do not re-add
+  the operator's address behind their back -- the pre-fill is a default, not a floor.
+- Client-side format validation only. No domain allow-listing: the data is behind the
+  login gate, which is the point of the redesign.
 - Leave `DownloadSelectedDetails()` (`:927-968`) untouched. The live 1-10 path stays an
   in-browser blob that persists nothing, so the reports page lists **emailed/bulk exports
   only**. Say so on the page, so the absence of live downloads reads as intended rather
@@ -526,35 +542,11 @@ vacuous and must be replaced.
 
 ---
 
-## Owner Gate -- D4
+## Owner Gate -- D4 (CLOSED)
 
-**Context.** The export email is changing from a zip attachment to a link to the reports
-page, so the recipient address becomes only a notification target -- the data stays
-behind the login gate. Admins stop receiving trace data in every option below; that part
-is settled. What is not settled is who receives the notification when the operator types
-nothing.
+Ruled **(a)** by the owner, 2026-07-29: pre-fill the operator's own address, editable and
+clearable. The question was who receives the notification when the operator types
+nothing; (b) required-recipient and (c) operator-always-included were rejected. The
+binding form of the ruling is D4 under Owner Decisions -- read that, not this note.
 
-**Question.** When an operator submits an export and leaves the recipient box empty, who
-gets the notification email?
-
-**Options.**
-
-- **(a) Default to the operator, box editable.** The operator's own address is pre-filled
-  and can be replaced or added to. *Changes:* one pre-populated input; matches today's
-  behavior for anyone who ignores the box.
-- **(b) No default, recipient required.** The operator must type at least one address
-  before submitting. *Changes:* an extra required field and a validation error on empty
-  submit; nobody is ever mailed by accident.
-- **(c) Always the operator, plus optional extras.** The operator's address is always
-  included and cannot be removed; typed addresses are added to it. *Changes:* the
-  requester always keeps a copy for their own record, at the cost of an unremovable
-  recipient.
-
-**Recommendation: (a).** It preserves current behavior for the common case (the requester
-wants their own export), makes the arbitrary-recipient capability available without
-forcing it, and adds no new way to fail a submit. (b) adds friction to the normal path;
-(c) removes a choice the link-based design no longer needs to take away.
-
-**Blocked until ruled:** slice 3 (email) and the recipient-input half of slice 4. Slices
-1, 2, and the string removal in slice 4 are unaffected and can proceed as soon as this
-plan is Approved. Silence authorizes nothing.
+No open owner gates remain in this plan. It awaits approval as a whole.

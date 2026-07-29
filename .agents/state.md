@@ -47,9 +47,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   an audit prompt only, never an authorization control; **D3** delivery is a Razor page reusing the
   existing base64 + `downloadFile` JS blob mechanism — **no HTTP endpoint** (owner rejected the
   first draft's minimal-API premise; routing through a page also makes the ticket prompt real
-  rather than an empty `?ticket=` in an emailed URL). **OPEN (D4, blocks slice 3):** the default
-  email recipient when the operator types nothing. Base app `2.3.30 -> 2.3.31` + MessageTrace
-  `1.2.1 -> 1.3.0`. No code written.
+  rather than an empty `?ticket=` in an emailed URL); **D4** (ruled 2026-07-29) the recipient box
+  is pre-filled with the operator's own address, editable and clearable -- a default, not a floor,
+  and never a required field. Base app `2.3.30 -> 2.3.31` + MessageTrace `1.2.1 -> 1.3.0`.
+  All four decisions ruled; no open owner gates. **Awaiting plan approval; no code written.**
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
