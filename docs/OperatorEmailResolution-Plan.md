@@ -1,7 +1,8 @@
 # Operator Email Resolution From Active Directory -- Plan
 
-Status: **Draft, awaiting owner approval.** Decisions D1-D3 are ruled (owner, 2026-07-29);
-see Owner Decisions. Implementation may not begin until the status line reads Approved.
+Status: **Approved** (owner, 2026-07-29). Decisions D1-D3 are ruled (owner, 2026-07-29);
+see Owner Decisions. The owner approved the post-review design -- SID-keyed lookup and all
+-- explicitly, after being told F1 had replaced the plan's central mechanism.
 **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max,
 range `64b211a..ace6230`): verdict **findings** (3), all accepted and repaired here; record
 at `.agents/review/findings/operator-email-resolution-plan.md`. F1 (HIGH) replaced this
