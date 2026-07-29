@@ -1,6 +1,10 @@
 # Operator Email Resolution From Active Directory -- Plan
 
-Status: **Approved** (owner, 2026-07-29). Decisions D1-D3 are ruled (owner, 2026-07-29);
+Status: **Implemented** (2026-07-29, `8594813` + `928dd0a` + `14f4ef1`). Approved by the owner
+2026-07-29. Deployed nowhere; the 8 manual post-deploy checks below have not been run, and the
+implementation openreview pass was attempted twice and **not obtained** (reviewer harness timed
+out; record in `.agents/review/findings/operator-email-resolution-plan.md`).
+Decisions D1-D3 are ruled (owner, 2026-07-29);
 see Owner Decisions. The owner approved the post-review design -- SID-keyed lookup and all
 -- explicitly, after being told F1 had replaced the plan's central mechanism.
 **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max,

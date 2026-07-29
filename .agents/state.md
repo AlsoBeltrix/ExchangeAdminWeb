@@ -185,6 +185,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Active Directory instead of blaming the operator's account (D3); guard structure unchanged.
   **Versions DONE** (`14f4ef1`): app `2.3.31 -> 2.3.32`, MessageTrace `1.3.0 -> 1.3.1`.
   Build/format/ASCII/`git diff --check` clean, **935 tests green**.
+  **Implementation openreview ATTEMPTED TWICE, NOT OBTAINED (2026-07-29).** Both dispatches to
+  `codex-commercial` (MCP) / `gpt-5.6-sol` / high over `55ec9af..14f4ef1` died on a 1800s silent
+  transport abort, and the `codex` CLI fallback fails auth at the gateway (`Failed to refresh
+  token` + missing `x-portkey-*` header). Per the playbook's fail-closed rule a missing envelope
+  is not a clean pass, so **this code carries no independent review** -- re-dispatch when the
+  harness is healthy, or the owner adjudicates shipping without it. Record:
+  `.agents/review/findings/operator-email-resolution-plan.md`.
   **NEXT: the plan's 8 manual post-deploy checks** -- none run; page behavior is not
   unit-testable (no bUnit harness), so they are the only evidence this works. Check 7 is the
   load-bearing one: it confirms `ClaimTypes.PrimarySid` is actually populated on this deployment.
@@ -367,8 +374,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
   all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
-  `docs/OperatorEmailResolution-Plan.md` (**Approved 2026-07-29, code complete** -- app
-  `2.3.32`, deployed nowhere; 8 manual post-deploy checks not run).
+  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, deployed
+  nowhere; 8 manual post-deploy checks not run; implementation openreview not obtained).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory

@@ -1,7 +1,9 @@
 # operator-email-resolution-plan: openreview of the operator email resolution plan
 
 **Severity**: HIGH (worst of 3 findings)
-**Status**: Findings accepted (3 of 3); plan + state revised, re-review not yet run
+**Status**: Findings accepted (3 of 3); plan + state revised; plan approved and implemented.
+Implementation openreview **attempted twice and not obtained** (reviewer harness timed out;
+CLI fallback has broken auth) -- see the last section.
 **Branch**: `master` (committed directly per repo policy; no per-finding branch)
 **Range reviewed**: `64b211a..ace6230` (plan commits `b7b9c94` + `3962904` + `186d4e0`, state commit `ace6230`)
 
@@ -169,3 +171,30 @@ has already decided is acceptable. Recorded here rather than settled silently.
    on a materially different design than the one first drafted. No owner ruling (D1-D3)
    was contradicted by any repair -- D1 asked for an AD lookup and still gets one; the
    SID is only the key it looks up by.
+   *Closed 2026-07-29: the owner approved the post-review design explicitly, after being
+   told F1 had replaced the plan's central mechanism.*
+
+## Implementation openreview: ATTEMPTED, NOT OBTAINED (2026-07-29)
+
+The implementation (`55ec9af..14f4ef1`: `8594813` slice 1, `928dd0a` slice 2, `14f4ef1`
+versions) was dispatched for a second, independent openreview pass. **No verdict was
+obtained.** Recorded here so a future reader does not mistake an absent review for a
+clean one.
+
+- Attempt 1: `codex-commercial` (MCP) / `gpt-5.6-sol` / `high` / frontier,
+  `sandbox=workspace-write`, `cwd=D:\source\ExchangeAdminWeb`, base `55ec9af`, head
+  `14f4ef1`, neutral question and verdict schema per the `openreview` playbook. The tool
+  sent no response or progress for 1800s and the transport aborted.
+- Attempt 2: identical dispatch, bounded ("do not build or run the test suite"). Same
+  1800s silent abort.
+- CLI fallback probed and rejected: `codex-cli 0.145.0` is on PATH, but a bounded smoke
+  test (`codex exec ... "Reply with exactly the word: SMOKEOK"`) exited 1 on
+  `Failed to refresh token` plus `Either x-portkey-config or x-portkey-provider header is
+  required`. Auth is broken at the gateway, so the CLI is not a usable second harness
+  right now.
+
+Per the playbook's fail-closed rule, a missing envelope is **not** a clean pass. The
+implementation therefore carries no independent review. What it does carry: build, format,
+ASCII, and `git diff --check` clean; 935/935 xUnit; non-vacuity proven per guard (SID gate
+8 failures, UPN fallback 3, SID pass-through 5, fail-soft catch 1). Re-dispatch when the
+reviewer harness is healthy, or have the owner adjudicate shipping without it.
