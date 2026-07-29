@@ -124,8 +124,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   supported state -- the mail then carries prose and no hyperlink (that is manual check 9), not a
   broken relative link.
 
-- **Operator email resolution from AD -- PLAN DRAFT, awaiting owner approval; no code written.**
-  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev running `2.3.31`
+- **Operator email resolution from AD -- CODE COMPLETE 2026-07-29, not deployed anywhere.**
+  `docs/OperatorEmailResolution-Plan.md` Status: Approved (owner, 2026-07-29). Owner reported on dev running `2.3.31`
   (2026-07-29, confirmed) that the new recipient box does not pre-fill. Pre-fill *is* the design
   (D4(a) of the download-link plan), so this is a bug. Root cause at
   `Components/Pages/MessageTrace.razor:610-613`: `userEmail` is read from `ClaimTypes.Email` /
@@ -169,6 +169,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   deployed-version contradiction, flagged in the version block below rather than guessed.
   Also confirmed: `ADDirectorySearchService` is `sealed`, so the narrow test interface is
   required, not optional.
+  **Slice 1 DONE** (`8594813`): `IOperatorDirectory` (one-member seam, needed because the AD
+  service is sealed), `ADDirectorySearchService.FindUserBySid` (bound `Get-ADUser -Identity <sid>`
+  on the existing pooled runspace, fail-soft, SID never logged -- it identifies the operator and
+  the call runs on every page load), and `OperatorEmailResolver` (SID-format gate before any
+  directory call, `mail` then UPN, `Task.Run`). 16 tests; non-vacuity proven per guard by
+  reverting each: SID gate 8 failures, UPN fallback 3, SID pass-through 5, fail-soft catch 1.
+  **Slice 2 DONE** (`928dd0a`): `MessageTrace.razor` reads `ClaimTypes.PrimarySid` and defers the
+  lookup to `OnAfterRenderAsync`, so the AD service's 30s throttle lock never sits on the render
+  path. The resolve is cached as a **`Task`, not a result**, so a Search click racing the deferred
+  first resolve awaits the same AD call instead of issuing a second behind that lock. A
+  `recipientTouched` flag (the box moved from `@bind` to explicit `value`/`@oninput` to observe
+  first input) stops the late result overwriting a typed address. The historical-search guard
+  awaits the same task rather than reading a possibly-unpopulated field, and its refusal now names
+  Active Directory instead of blaming the operator's account (D3); guard structure unchanged.
+  **Versions DONE** (`14f4ef1`): app `2.3.31 -> 2.3.32`, MessageTrace `1.3.0 -> 1.3.1`.
+  Build/format/ASCII/`git diff --check` clean, **935 tests green**.
+  **NEXT: the plan's 8 manual post-deploy checks** -- none run; page behavior is not
+  unit-testable (no bUnit harness), so they are the only evidence this works. Check 7 is the
+  load-bearing one: it confirms `ClaimTypes.PrimarySid` is actually populated on this deployment.
+  Check 5 (historical search accepted rather than refused) is **exploratory, not a gate** (OQ-2)
+  -- but its outcome must be recorded here either way.
 
 - **MessageTrace per-message delivery-detail (MT-detail) — DONE, landed 2026-07-27.**
   Plan `docs/MessageTraceDetail-Plan.md` Status: Implemented; all 9 slices on `master`,
@@ -199,11 +220,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.31`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
-  `2.3.30` (`2f0b99c`) for the MessageTrace export delivery redesign; `2.3.30` (`456e07c`)
-  retired the `Security:ExcludedUsers` appsettings fallback and `2.3.29` (`3eac48a`) was the
-  app-wide log-root fail-fast change.
+- **App version `2.3.32`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+  `2.3.31` (`14f4ef1`) for the operator-email resolver; `2.3.31` (`2f0b99c`) was the MessageTrace
+  export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
+  fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.3.31`, prod `2.3.30`** (owner-confirmed 2026-07-29 from the dev sidebar).
+  `2.3.32` exists in the repo only; it is deployed nowhere.
   Dev carries the MessageTrace export delivery redesign and the MessageTrace NRE fix; prod
   carries neither and is **not yet validated** against them. `2.3.30` was deployed to dev,
   validated, then promoted to prod, and supersedes all prior deployed builds, so prod still
@@ -345,8 +367,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
   all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
-  `docs/OperatorEmailResolution-Plan.md` (**Draft 2026-07-29, awaiting owner approval** -- no
-  code until the status line reads Approved).
+  `docs/OperatorEmailResolution-Plan.md` (**Approved 2026-07-29, code complete** -- app
+  `2.3.32`, deployed nowhere; 8 manual post-deploy checks not run).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
