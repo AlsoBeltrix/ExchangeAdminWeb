@@ -13,6 +13,7 @@
 @inject IAuthorizationService AuthorizationService
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
+@inject OperatorEmailResolver OperatorEmail
 @inject ExchangeAdminWeb.Services.Jobs.BulkJobService BulkJobs
 @inject IJSRuntime JS
 
@@ -404,7 +405,7 @@
                                 <label class="form-label mb-1" for="mt-notify">Notify (optional)</label>
                                 <input id="mt-notify" type="text" class="form-control form-control-sm @(recipientInputError != null ? "is-invalid" : "")"
                                        placeholder="name@example.com, another@example.com"
-                                       @bind="recipientInput" @bind:event="oninput" disabled="@detailActionBusy" />
+                                       value="@recipientInput" @oninput="OnRecipientInput" disabled="@detailActionBusy" />
                                 @if (recipientInputError != null)
                                 {
                                     <div class="invalid-feedback d-block">@recipientInputError</div>
@@ -579,6 +580,11 @@
         && selectedIndices.Count == MessageTraceDetailReport.SelectAllCount(results.Count);
     private string currentUser = "";
     private string userEmail = "";
+    private string? operatorSid;
+    private bool authChecked;
+    private bool emailResolveStarted;
+    private Task<string>? emailResolve;
+    private bool recipientTouched;
     private string clientIpAddress = "Unknown";
 
     private string headerText = "";
@@ -607,16 +613,61 @@
             return;
         }
 
-        userEmail = user.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
-            ?? user.FindFirst("email")?.Value
-            ?? user.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
-            ?? "";
+        // The Negotiate token carries no mail, email, or UPN claim - only the account name and
+        // SIDs - so the address has to be looked up. The SID is the key, never the account name:
+        // see docs/OperatorEmailResolution-Plan.md ("Why the SID"). Read it the same way
+        // Components/Pages/SelfServiceGroups.razor:325 does.
+        operatorSid = user.FindFirst(System.Security.Claims.ClaimTypes.PrimarySid)?.Value;
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
             : ClientInfo.GetIpForUser(currentUser);
 
-        // Pre-fill only; the operator owns the box from here (plan D4).
-        recipientInput = userEmail;
+        authChecked = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || emailResolveStarted || !authChecked)
+            return;
+
+        emailResolveStarted = true;
+
+        // Deferred off the render path: the AD call sits behind a process-wide lock that can
+        // wait up to 30 seconds, and this page must not stall on it to populate a text box
+        // (plan "Asynchronous by construction").
+        userEmail = await ResolveOperatorEmailAsync();
+
+        // Pre-fill only, and only while the operator has not touched the box - a late-arriving
+        // resolution must never overwrite something they typed (plan D4(a) + F2).
+        if (!recipientTouched && !string.IsNullOrEmpty(userEmail))
+            recipientInput = userEmail;
+
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Resolve once per circuit and reuse. Returns "" when the address cannot be resolved -
+    /// callers treat that as "AD could not tell us" (plan D3).
+    /// </summary>
+    /// <remarks>
+    /// Caches the <see cref="Task{TResult}"/>, not the result: the operator can hit Search while
+    /// the deferred first resolve is still in flight, and awaiting the same task makes that the
+    /// same AD call rather than a second one behind the service's 30-second lock.
+    /// </remarks>
+    private Task<string> ResolveOperatorEmailAsync()
+        => emailResolve ??= ResolveOperatorEmailCoreAsync();
+
+    private async Task<string> ResolveOperatorEmailCoreAsync()
+    {
+        userEmail = await OperatorEmail.ResolveAsync(operatorSid) ?? "";
+        return userEmail;
+    }
+
+    private void OnRecipientInput(ChangeEventArgs e)
+    {
+        // First keystroke hands the box to the operator for the rest of the circuit.
+        recipientTouched = true;
+        recipientInput = e.Value?.ToString() ?? "";
     }
 
     private static DateTime EffectiveEndDate(DateTime end)
@@ -706,10 +757,14 @@
 
     private async Task RunHistoricalSearch()
     {
-        var notifyAddress = userEmail?.Trim();
+        // Await the resolve rather than reading the field: the operator can reach this button
+        // before the deferred lookup lands.
+        var notifyAddress = (await ResolveOperatorEmailAsync()).Trim();
         if (string.IsNullOrWhiteSpace(notifyAddress) || !notifyAddress.Contains('@'))
         {
-            validationError = "Your authenticated email address is required for historical search results delivery.";
+            // Name the real cause. The old text blamed the operator's account for what is almost
+            // always Active Directory being unreachable (plan D3).
+            validationError = "Your email address could not be looked up in Active Directory, so there is nowhere to send the report. This usually means the directory is unreachable - contact an administrator.";
             return;
         }
 
