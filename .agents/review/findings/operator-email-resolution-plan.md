@@ -123,12 +123,18 @@ Both cannot be true: the recipient box does not exist before `2.3.31` (it landed
 Predicted failure: a later session picks a deploy baseline from whichever line it reads
 first, and either redeploys over a newer build or validates against the wrong version.
 
-Repair: the contradiction is recorded as an open question for the owner rather than
-silently resolved. Which line is stale is a fact about the host that the repo cannot
-settle by reading itself -- guessing a version into the canonical state file is exactly
-the failure the flag-conflicts invariant exists to prevent. `.agents/state.md` now flags
-both readings and names the one-line check that settles it (the version in the dev
-sidebar, which `BuildInfo` renders).
+Repair: the contradiction was recorded as an open question for the owner rather than
+silently resolved -- which line was stale is a fact about the host that the repo cannot
+settle by reading itself, and guessing a version into the canonical state file is exactly
+the failure the flag-conflicts invariant exists to prevent.
+
+**Resolved by the owner, 2026-07-29: dev is running `2.3.31`.** The "not yet deployed
+anywhere" claim was the stale half. `.agents/state.md` now records dev `2.3.31` / prod
+`2.3.30` and the three downstream claims that depended on the wrong reading were corrected
+with it: the export-delivery redesign is on dev (its 9 manual checks are runnable now, not
+blocked on a deploy), the MessageTrace NRE fix is on dev but still absent from prod, and the
+empty pre-fill this plan fixes was observed against a real `2.3.31` build rather than an
+unknown one.
 
 ## Guard proof
 

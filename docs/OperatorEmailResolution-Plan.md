@@ -6,8 +6,8 @@ see Owner Decisions. Implementation may not begin until the status line reads Ap
 range `64b211a..ace6230`): verdict **findings** (3), all accepted and repaired here; record
 at `.agents/review/findings/operator-email-resolution-plan.md`. F1 (HIGH) replaced this
 plan's central mechanism -- the lookup key is now the authenticated **primary SID**, not the
-account name -- so the owner is ruling on a materially revised design. One open owner gate:
-OQ-4 (a contradiction in the recorded dev version, which the repo cannot settle by itself).
+account name -- so the owner is ruling on a materially revised design. No open owner gates
+(OQ-4 closed by the owner, 2026-07-29: dev is `2.3.31`).
 App version: `2.3.31` -> `2.3.32` (shared service + DI registration, used by more than one
 page over time).
 Module: `MessageTrace` `1.3.0` -> `1.3.1` (module behavior change: the recipient box now
@@ -327,12 +327,9 @@ covered by the manual checks below.
   only way L2 can run a search beyond the realtime window without escalating to L3-4. Removal
   was considered and rejected. Do not re-raise deletion as a simplification in any later work
   on this page.
-- **OQ-4 (OPEN, owner gate -- blocks nothing in this plan, but the state file is wrong until
-  it is answered):** `.agents/state.md` gives two incompatible answers about dev. The
-  operator-email entry records the missing pre-fill being observed on dev against `2.3.31`;
-  the version block says `2.3.31` is deployed nowhere and that dev and prod are both on
-  `2.3.30`. Both cannot hold -- the recipient box did not exist before `2.3.31` (`2f0b99c`),
-  so a `2.3.30` host cannot exhibit "the box does not pre-fill". Raised by openreview (F3).
-  Settled by one look at the version in the dev sidebar (`BuildInfo` renders it). Not guessed
-  here: writing a version into the canonical state file on inference is the failure the
-  flag-conflicts invariant exists to prevent.
+- **OQ-4 -- CLOSED (owner, 2026-07-29): dev is running `2.3.31`.** Raised by openreview (F3):
+  `.agents/state.md` claimed both that `2.3.31` was deployed nowhere and that the missing
+  pre-fill was seen on dev, which the box's existence makes impossible. The "deployed nowhere"
+  half was the stale one. Consequences now recorded in `.agents/state.md`: the export-delivery
+  redesign and the MessageTrace NRE fix are both live on dev and neither is on prod (`2.3.30`),
+  and the empty pre-fill this plan fixes was observed against the real `2.3.31` build.

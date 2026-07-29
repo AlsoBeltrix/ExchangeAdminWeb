@@ -20,7 +20,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `AllowedGroups` left in place). The ExcludedUsers-fallback retirement is now fully complete,
   code + host, both environments.
 
-- **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29, NOT yet deployed.**
+- **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29; on dev in `2.3.31`, NOT on
+  prod (prod is `2.3.30`, still carrying the defect).**
   Plan `docs/MessageTraceNullRow-Plan.md` Status: Implemented. Live prod symptom: an EXO
   summary search failed with `Object reference not set to an instance of an object.` (banner
   doubled because `:348` and `:423` both format the same string). Root cause at
@@ -32,11 +33,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `GetProperty*` helper takes a non-nullable `PSObject` and dereferences `.Properties`.
   MessageTrace module `1.2.0 -> 1.2.1`, no base app bump. 830 tests green; non-vacuity proven
   per guard against the exact production exception.
-  **OPEN:** deploy + live re-run of the failing search. **OPEN (OQ-1, non-blocking):** why EXO
-  emits a null row at all is undiagnosed; the guard is correct regardless.
+  **OPEN:** live re-run of the failing search (now possible on dev, which has the fix), then
+  promote to prod. **OPEN (OQ-1, non-blocking):** why EXO emits a null row at all is
+  undiagnosed; the guard is correct regardless.
 
 - **MessageTrace export delivery: reports page + notification link — CODE COMPLETE 2026-07-29,
-  NOT deployed.** Plan `docs/MessageTraceDownloadLink-Plan.md` Status: Implemented. Replaces the emailed zip attachment with a Downloadable Reports page inside the
+  ON DEV as `2.3.31`, not on prod.** Plan `docs/MessageTraceDownloadLink-Plan.md` Status:
+  Implemented. Replaces the emailed zip attachment with a Downloadable Reports page inside the
   app; the email carries a link to that page, so an arbitrary notification recipient is safe (the
   data never leaves the login gate) and admins leave the trace-data path. Supersedes
   `docs/MessageTraceDetail-Plan.md` decisions 5 + 6. Owner rulings recorded in the plan:
@@ -92,13 +95,14 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the marker.
   **Pushed to both remotes 2026-07-29** (owner go given; fast-forward from `2b9c47e`, no rewrite;
   both remotes verified at `4dd805f`).
-  **NEXT: deploy to dev and run the plan's 9 manual post-deploy checks.** None of them has been
-  run; nothing from this plan is deployed.
+  **DEPLOYED TO DEV as `2.3.31` (owner, 2026-07-29).** Not on prod (prod stays `2.3.30`).
+  **NEXT: run the plan's 9 manual post-deploy checks on dev.** None of them has been run.
   Highest-value ones: an 11+ message export arrives as a link with no attachment; the ticket
   prompt gates the download; an unwritable export dir yields the **failure** notice and a
   **Failed** row (not Expired) with the job still completing; with `Application:PublicBaseUrl`
-  unset the mail contains prose and no bare `/message-analysis/reports`. Note the deploy also
-  carries the undeployed MessageTrace NRE fix.
+  unset the mail contains prose and no bare `/message-analysis/reports`. The dev deploy also
+  carried the MessageTrace NRE fix (`68bfd25`), so re-running the search that failed in prod is
+  worth folding into the same session -- still prod-unfixed until `2.3.31` is promoted.
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
@@ -121,10 +125,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   broken relative link.
 
 - **Operator email resolution from AD -- PLAN DRAFT, awaiting owner approval; no code written.**
-  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev (2026-07-29)
-  that the new recipient box does not pre-fill -- **see the deployed-version conflict flagged
-  in the version block below; which build that report came from is unsettled.** Pre-fill
-  *is* the design
+  `docs/OperatorEmailResolution-Plan.md` Status: Draft. Owner reported on dev running `2.3.31`
+  (2026-07-29, confirmed) that the new recipient box does not pre-fill. Pre-fill *is* the design
   (D4(a) of the download-link plan), so this is a bug. Root cause at
   `Components/Pages/MessageTrace.razor:610-613`: `userEmail` is read from `ClaimTypes.Email` /
   `email` / `ClaimTypes.Upn`, but the app is **Negotiate-only** (`Program.cs:38-39`) and a
@@ -197,21 +199,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.31`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`), **not yet deployed
-  anywhere**. Bumped from `2.3.30` (`2f0b99c`) for the MessageTrace export delivery redesign;
-  `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings fallback and `2.3.29`
-  (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed:** **prod and dev are both on `2.3.30`, validated good (owner, 2026-07-29)** — deployed
-  to dev, validated, then promoted to prod. `2.3.30` supersedes all prior deployed builds, so it
+- **App version `2.3.31`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+  `2.3.30` (`2f0b99c`) for the MessageTrace export delivery redesign; `2.3.30` (`456e07c`)
+  retired the `Security:ExcludedUsers` appsettings fallback and `2.3.29` (`3eac48a`) was the
+  app-wide log-root fail-fast change.
+- **Deployed: dev `2.3.31`, prod `2.3.30`** (owner-confirmed 2026-07-29 from the dev sidebar).
+  Dev carries the MessageTrace export delivery redesign and the MessageTrace NRE fix; prod
+  carries neither and is **not yet validated** against them. `2.3.30` was deployed to dev,
+  validated, then promoted to prod, and supersedes all prior deployed builds, so prod still
   carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root fail-fast, and the `2.3.30`
   ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27` (validated 2026-06-29).
-- **CONFLICT, UNRESOLVED (flagged 2026-07-29 by openreview F3) — what is actually on dev.**
-  The two bullets above say `2.3.31` is deployed nowhere and dev is on `2.3.30`. But the
-  owner's report that the recipient box does not pre-fill can only come from a host running
-  `2.3.31`: the box did not exist before it (`2f0b99c`). Both readings cannot be true.
-  **Do not assume either** when choosing a deploy baseline. Settled by one look at the version
-  in the dev sidebar (`BuildInfo` renders it); record the answer here and delete this bullet.
-  Tracked as OQ-4 in `docs/OperatorEmailResolution-Plan.md`.
+  (This settles the conflict openreview F3 flagged: the "not deployed anywhere" claim was the
+  stale half. OQ-4 in `docs/OperatorEmailResolution-Plan.md` is closed.)
 - **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
   Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
   `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
@@ -345,7 +344,7 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
-  all four slices landed; **9 manual post-deploy checks not run, nothing deployed**);
+  all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
   `docs/OperatorEmailResolution-Plan.md` (**Draft 2026-07-29, awaiting owner approval** -- no
   code until the status line reads Approved).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
