@@ -35,9 +35,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **OPEN:** deploy + live re-run of the failing search. **OPEN (OQ-1, non-blocking):** why EXO
   emits a null row at all is undiagnosed; the guard is correct regardless.
 
-- **MessageTrace export delivery: reports page + notification link — PLAN APPROVED 2026-07-29,
-  implementation starting at slice 1.** Plan `docs/MessageTraceDownloadLink-Plan.md`
-  Status: Approved. Replaces the emailed zip attachment with a Downloadable Reports page inside the
+- **MessageTrace export delivery: reports page + notification link — CODE COMPLETE 2026-07-29,
+  NOT deployed.** Plan `docs/MessageTraceDownloadLink-Plan.md` Status: Implemented. Replaces the emailed zip attachment with a Downloadable Reports page inside the
   app; the email carries a link to that page, so an arbitrary notification recipient is safe (the
   data never leaves the login gate) and admins leave the trace-data path. Supersedes
   `docs/MessageTraceDetail-Plan.md` decisions 5 + 6. Owner rulings recorded in the plan:
@@ -77,13 +76,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   PSScriptAnalyzer adds one finding per touched script, each in a category already dominant there,
   none at Error severity. Non-vacuity proven per guard by reverting each: save-failure branch 4
   failures, no-relative-link rule 2, admin exclusion 6.
-  **NEXT: slice 4** (UI: remove the leaked string at `MessageTrace.razor:399`/`:409`, drop
-  `DestinationDisplay()` at `:916-925`, add the D4(a) recipient input pre-filled with the
-  operator's own address -- editable, valid when cleared, no required-field validation, client-side
-  format check only -- leave `DownloadSelectedDetails()` untouched, and say on the page that only
-  emailed/bulk exports are listed). Version bumps (`2.3.30 -> 2.3.31`, MessageTrace
-  `1.2.1 -> 1.3.0`) land at the end. One commit per slice. Nothing deploys without a separate
-  owner go.
+  **Slice 4 DONE** (`2f0b99c`): removed the two strings the redesign made false
+  (`MessageTrace.razor` "never a typed-in address" + the zipped-report banner) and
+  `DestinationDisplay()`, which merged the admin address into a display of who gets trace data;
+  the page's `IConfiguration` injection went with it. Added the D4(a) recipient box -- pre-filled
+  with the operator's claim address, freely editable, **valid when cleared**, no required-field
+  validation -- backed by `EmailService.ParseRecipientInput` (comma/semicolon split, format-only
+  validation accepting exactly what `NormalizeRecipients` keeps, no domain allow-listing). New
+  `MessageTraceDetailJobPayload.Recipients` carries the set; **null** (a job enqueued before the
+  box existed) falls back to the submitter, an **empty list** deliberately does not.
+  `DownloadSelectedDetails()` untouched, so the reports page still lists emailed/bulk exports
+  only. Versions bumped here: base app `2.3.30 -> 2.3.31`, MessageTrace `1.2.1 -> 1.3.0`.
+  919 tests green; non-vacuity proven (cleared-box rule 1 failure, format validation 8).
+  Follow-up `86f55ce`: corrected the `SaveFailedMarker` comment that still claimed nothing wrote
+  the marker.
+  **NEXT: push (owner go required — see push policy), then deploy to dev and run the plan's 9
+  manual post-deploy checks.** None of them has been run; nothing from this plan is deployed.
+  Highest-value ones: an 11+ message export arrives as a link with no attachment; the ticket
+  prompt gates the download; an unwritable export dir yields the **failure** notice and a
+  **Failed** row (not Expired) with the job still completing; with `Application:PublicBaseUrl`
+  unset the mail contains prose and no bare `/message-analysis/reports`. Note the deploy also
+  carries the undeployed MessageTrace NRE fix.
   **Independently reviewed 2026-07-29** (openreview, codex-commercial / gpt-5.6-sol / max, range
   `68bfd25..1e98eaf`): verdict **findings** (4), all repaired in the plan; record at
   `.agents/review/findings/mt-export-delivery-plan.md`. The one that mattered (F1, HIGH): removing
@@ -130,9 +143,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.30`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.29`
-  (`456e07c`) for retiring the `Security:ExcludedUsers` appsettings fallback; `2.3.29` was the
-  app-wide log-root fail-fast change (`3eac48a`).
+- **App version `2.3.31`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`), **not yet deployed
+  anywhere**. Bumped from `2.3.30` (`2f0b99c`) for the MessageTrace export delivery redesign;
+  `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings fallback and `2.3.29`
+  (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed:** **prod and dev are both on `2.3.30`, validated good (owner, 2026-07-29)** — deployed
   to dev, validated, then promoted to prod. `2.3.30` supersedes all prior deployed builds, so it
   carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root fail-fast, and the `2.3.30`
@@ -269,8 +283,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - `.agents/repo-map.json` — automated verification map.
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
-  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Approved 2026-07-29,
-  **In progress** -- slices 1-3 landed, slice 4 next).
+  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
+  all four slices landed; **9 manual post-deploy checks not run, nothing deployed**).
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory

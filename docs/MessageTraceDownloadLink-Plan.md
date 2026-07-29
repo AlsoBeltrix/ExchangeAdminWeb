@@ -1,8 +1,11 @@
 # Message Analysis Export Delivery: Reports Page + Notification Link -- Plan
 
-Status: **Approved 2026-07-29.** All four decisions (D1-D4) are ruled. Implementation may
-proceed slice by slice, one commit per slice; implementation must not exceed plan scope.
-Scope changes go back through the plan.
+Status: **Implemented 2026-07-29.** All four decisions (D1-D4) ruled, all four slices landed
+one commit per slice: `b007ad5` (slice 1, export store), `87941b0` (slice 2, reports page),
+`e4d2497` (slice 3, email link + save-failure branch), `2f0b99c` (slice 4, recipient box +
+version bumps). Automated verification green -- 919 xUnit, 65 Pester, build/format/ASCII
+clean -- and every new guard non-vacuity-proven. **The manual post-deploy checks below have
+NOT been run**; nothing from this plan is deployed.
 Independently reviewed 2026-07-29 (openreview, codex-commercial / gpt-5.6-sol / max,
 range `68bfd25..1e98eaf`): four findings, all repaired in this revision -- see
 `.agents/review/findings/mt-export-delivery-plan.md`.
