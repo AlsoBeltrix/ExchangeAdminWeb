@@ -121,15 +121,36 @@ public class PermissionValidator
 
             if (requiresFullResolution)
             {
-                var resolved = await _protectedPrincipalService.ResolveDirectoryPrincipalAsync(targetMailbox);
-                if (resolved == null)
+                var (resolved, status) = await _protectedPrincipalService.ResolveWithExchangeFallbackAsync(targetMailbox);
+
+                if (status == ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
                     _logger.LogWarning(
-                        "Blocking operation on {Target} - cannot resolve full identity but Group/OU/Pattern rules are configured",
+                        "Blocking operation on {Target} - identity is ambiguous in Active Directory",
+                        targetMailbox);
+                    return "Access denied: This identity is ambiguous - it matches multiple directory objects. Contact your administrator.";
+                }
+
+                if (status == ProtectedPrincipalService.ResolutionStatus.Unavailable)
+                {
+                    _logger.LogWarning(
+                        "Blocking operation on {Target} - directory unreachable and Group/OU/Pattern rules are configured",
                         targetMailbox);
                     return "Access denied: Protected-principal identity resolution is unavailable. Contact your administrator.";
                 }
-                principal = resolved;
+
+                if (status == ProtectedPrincipalService.ResolutionStatus.NotFound)
+                {
+                    // Both directories answered and neither has this recipient. Naming that is the
+                    // point of the change: the old blanket message read like an outage and sent
+                    // support chasing the wrong problem when the real cause was a bad address.
+                    _logger.LogWarning(
+                        "Blocking operation on {Target} - not found in Active Directory or Exchange Online",
+                        targetMailbox);
+                    return $"Access denied: '{targetMailbox}' was not found in Active Directory or Exchange Online. Check the address.";
+                }
+
+                principal = resolved!;
             }
             else
             {

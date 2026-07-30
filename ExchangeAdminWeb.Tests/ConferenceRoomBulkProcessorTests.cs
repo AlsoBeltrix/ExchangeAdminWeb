@@ -62,7 +62,10 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
             : base(env, config, moduleConfig, repo, delinea, NullLogger<ProtectedPrincipalService>.Instance)
         { }
 
-        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithStatusAsync(string identity)
+        // Scripts the seam the gate actually calls - resolution now falls back to Exchange Online
+        // when AD misses. Overriding ResolveWithStatusAsync instead would let the real fallback run
+        // and fail closed, so EvalCount would stay at zero and the allow cases would not be tested.
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
         {
             EvalCount++;
             ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved

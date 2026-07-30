@@ -205,4 +205,145 @@ public class PermissionValidatorTests
         var secondResult = await validator.ValidateTargetMailboxAsync("user@company.com");
         Assert.Null(secondResult);
     }
+
+    // --- Resolution outcomes: the operator-facing message must name the real cause ---
+
+    /// <summary>
+    /// Scripts the resolution seam so the four outcomes can be driven without a directory. The
+    /// gate calls ResolveWithExchangeFallbackAsync, so that is what is overridden.
+    /// </summary>
+    private sealed class ScriptedPpService : ProtectedPrincipalService
+    {
+        public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.Resolved;
+
+        public ScriptedPpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
+            ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository repo, DelineaService delinea)
+            : base(env, config, moduleConfig, repo, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>())
+        { }
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        {
+            ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved
+                ? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
+                : null;
+            return Task.FromResult((p, Status));
+        }
+    }
+
+    /// <summary>
+    /// Builds a validator whose protected-principal config has a Group rule, which is what makes
+    /// ValidateTargetMailboxAsync require full resolution and reach the scripted seam.
+    /// </summary>
+    private static (PermissionValidator validator, ScriptedPpService pp) CreateValidatorWithScriptedResolution()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), "eaw-res-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(testDir, "config"));
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = testDir
+        }).Build();
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(testDir);
+
+        var catalog = new ModuleCatalog();
+        var moduleConfig = new ModuleConfigService(catalog, env, TestConfigStore.CreateModuleConfig(testDir), Substitute.For<ILogger<ModuleConfigService>>());
+
+        File.WriteAllText(Path.Combine(testDir, "config", "protected-principals.json"),
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                ProtectedPrincipals = new
+                {
+                    Users = Array.Empty<string>(),
+                    Groups = new[] { "CN=VIPs,OU=Groups,DC=contoso,DC=com" },
+                    OrganizationalUnits = Array.Empty<string>(),
+                    SamAccountNamePatterns = Array.Empty<string>()
+                }
+            }));
+
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), Substitute.For<ILogger<ExtendedLogService>>());
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var trace = new OperationTraceService(config, jsonlLog);
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
+
+        var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
+
+        var enablement = new ModuleEnablementService(catalog, env, moduleConfig, TestConfigStore.CreateModuleEnablement(testDir), config, Substitute.For<ILogger<ModuleEnablementService>>());
+        var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, Substitute.For<ILogger<ExoConnectionPool>>(), trace);
+
+        var scopeFactory = Substitute.For<IServiceScopeFactory>();
+        var scope = Substitute.For<IServiceScope>();
+        scopeFactory.CreateScope().Returns(scope);
+        scope.ServiceProvider.Returns(Substitute.For<IServiceProvider>());
+
+        var validator = new PermissionValidator(config, moduleConfig, exoPool, pp,
+            Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
+
+        return (validator, pp);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_NotFoundInEitherDirectory_SaysCheckTheAddress()
+    {
+        // The reported defect: a target neither directory knows used to produce
+        // "identity resolution is unavailable. Contact your administrator." That reads like an
+        // outage and sent L1/L2 support chasing the wrong problem when the cause was a bad
+        // address. Both directories answered here, so the message must say so.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+
+        var result = await validator.ValidateTargetMailboxAsync("nosuchbox@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("was not found in Active Directory or Exchange Online", result);
+        Assert.Contains("nosuchbox@company.com", result);
+        Assert.DoesNotContain("Contact your administrator", result);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_ResolutionUnavailable_StillDenies()
+    {
+        // A directory that could not be reached must keep denying, with the administrator
+        // message. This is the fail-closed half of the change (Known Failure Class #3).
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Unavailable;
+
+        var result = await validator.ValidateTargetMailboxAsync("someone@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("unavailable", result, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Contact your administrator", result);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_Ambiguous_SaysAmbiguous_NotUnavailable()
+    {
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Ambiguous;
+
+        var result = await validator.ValidateTargetMailboxAsync("dupe@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("ambiguous", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_Resolved_ProceedsToTheProtectionCheck()
+    {
+        // A resolved target must not be denied by the resolution branch at all. The configured
+        // Group rule cannot be evaluated without a directory-read credential, so the protection
+        // check fails closed - which proves the resolution branch was passed rather than skipped.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Resolved;
+
+        var result = await validator.ValidateTargetMailboxAsync("user@company.com");
+
+        Assert.NotNull(result);
+        Assert.DoesNotContain("was not found", result);
+        Assert.DoesNotContain("ambiguous", result, StringComparison.OrdinalIgnoreCase);
+    }
 }

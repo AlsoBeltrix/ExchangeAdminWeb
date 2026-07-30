@@ -53,15 +53,18 @@ public sealed class ConferenceRoomProtectionGate
 
     /// <summary>
     /// The protection decision. Returns a <see cref="ProtectionDenial"/> to block, or null to allow.
-    /// Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception all deny. NotFound (AD could
-    /// not resolve, e.g. a cloud-only mailbox) is treated as not protected - an accepted, documented
-    /// limitation consistent with the other gated modules.
+    /// Fail-closed: Unavailable / Ambiguous / CheckFailed / any exception all deny. NotFound is
+    /// treated as not protected - an accepted limitation, and a much narrower one since resolution
+    /// began falling back to Exchange: a mailbox reached by a secondary SMTP alias, a mail-enabled
+    /// group, and a cloud-only mailbox all used to land here as NotFound and be allowed through.
+    /// The alias case was a real bypass, because protected rows are stored as primary addresses.
+    /// NotFound now means both directories were asked and neither knows the recipient.
     /// </summary>
     private async Task<ProtectionDenial?> EvaluateAsync(string identity)
     {
         try
         {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
+            var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
                 var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous

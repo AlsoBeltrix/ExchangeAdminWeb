@@ -32,9 +32,10 @@ public class GroupManagementServiceTests : IDisposable
     }
 
     // Builds a service whose ProtectedPrincipalService has NO directory-read secret
-    // configured. ResolveWithStatusAsync therefore returns Unavailable, which the
-    // in-service gate must treat as fail-closed (deny before any AD write). No real
-    // runspace or AD module is touched because the gate aborts first.
+    // configured. Resolution therefore returns Unavailable before it can reach the
+    // Exchange fallback, and the in-service gate must treat that as fail-closed (deny
+    // before any AD write). No real runspace or AD module is touched because the gate
+    // aborts first.
     private GroupManagementService CreateServiceWithUnavailableResolver()
     {
         var config = new ConfigurationBuilder()
@@ -91,5 +92,109 @@ public class GroupManagementServiceTests : IDisposable
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
+    }
+
+    /// <summary>
+    /// Scripts only the Exchange-fallback seam. ResolveWithStatusAsync is left as the real
+    /// method, which returns Unavailable here (no directory-read credential) - so a gate still
+    /// calling the AD-only method denies, and one calling the fallback sees the scripted verdict.
+    /// That difference is what makes this test able to detect the wrong seam.
+    /// </summary>
+    private sealed class FallbackOnlyPpService : ProtectedPrincipalService
+    {
+        public ProtectedPrincipalService.ResolutionStatus FallbackStatus = ResolutionStatus.Resolved;
+        public ProtectedPrincipalResult Verdict = ProtectedPrincipalResult.NotProtected();
+
+        public FallbackOnlyPpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
+            ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository repo, DelineaService delinea)
+            : base(env, config, moduleConfig, repo, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>())
+        { }
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        {
+            ResolvedDirectoryPrincipal? p = FallbackStatus == ResolutionStatus.Resolved
+                ? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
+                : null;
+            return Task.FromResult((p, FallbackStatus));
+        }
+
+        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
+            => Task.FromResult(Verdict);
+    }
+
+    private GroupManagementService CreateServiceWith(FallbackOnlyPpService pp, out ModuleConfigService moduleConfig)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = _tempDir
+            }).Build();
+
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_tempDir);
+        moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>());
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var trace = new OperationTraceService(config, jsonlLog);
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
+        var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
+
+        return new GroupManagementService(moduleConfig, moduleCredentials, pp,
+            Substitute.For<ILogger<GroupManagementService>>());
+    }
+
+    private FallbackOnlyPpService CreateFallbackPp()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = _tempDir
+            }).Build();
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_tempDir);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(_tempDir), Substitute.For<ILogger<ModuleConfigService>>());
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(_tempDir), Substitute.For<ILogger<ExtendedLogService>>());
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var trace = new OperationTraceService(config, jsonlLog);
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
+        return new FallbackOnlyPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
+    }
+
+    [Fact]
+    public async Task AddMemberAsync_ResolvesThroughTheExchangeFallback_NotAdAlone()
+    {
+        // The alias bypass this module carried: protected rows are stored as primary SMTP
+        // addresses, so a protected member supplied by a secondary alias missed AD entirely,
+        // resolved NotFound, and was allowed straight through. The gate must consult the
+        // Exchange-backed seam, which returns the canonical identity that then matches.
+        var pp = CreateFallbackPp();
+        pp.FallbackStatus = ProtectedPrincipalService.ResolutionStatus.Resolved;
+        pp.Verdict = ProtectedPrincipalResult.Protected("matched", "User:vip@contoso.com");
+        var service = CreateServiceWith(pp, out _);
+
+        var result = await service.AddMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", "SomeGroup");
+
+        Assert.False(result.Success);
+        Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RemoveMemberAsync_ResolvesThroughTheExchangeFallback_NotAdAlone()
+    {
+        var pp = CreateFallbackPp();
+        pp.FallbackStatus = ProtectedPrincipalService.ResolutionStatus.Resolved;
+        pp.Verdict = ProtectedPrincipalResult.Protected("matched", "User:vip@contoso.com");
+        var service = CreateServiceWith(pp, out _);
+
+        var result = await service.RemoveMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", "SomeGroup");
+
+        Assert.False(result.Success);
+        Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 }

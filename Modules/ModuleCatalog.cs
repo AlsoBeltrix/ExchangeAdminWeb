@@ -141,7 +141,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.0.4",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
@@ -287,7 +287,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.1.0",
+            Version = "2.1.1",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -400,7 +400,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.3.0",
+            Version = "2.3.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [

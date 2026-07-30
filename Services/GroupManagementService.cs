@@ -32,6 +32,12 @@ public class GroupManagementService
     /// any non-page caller bypassed protection entirely. Fails closed when resolution
     /// is Unavailable or Ambiguous, mirroring ADAttributeEditorService.SaveAsync.
     /// Returns null when the member is clear to mutate, or a Fail result to abort.
+    ///
+    /// Resolution falls back to Exchange, which closes a real bypass here: protected rows are
+    /// stored as primary SMTP addresses, so a protected member supplied by a secondary alias
+    /// resolved NotFound and was allowed straight through. Exchange returns the canonical address,
+    /// which then resolves in AD and matches. A cloud-only member cannot reach an on-prem group in
+    /// any case - AddMemberAsync's own Get-ADUser lookup rejects it before the write.
     /// </summary>
     private async Task<PermissionResult?> CheckProtectedAsync(string member)
     {
@@ -40,7 +46,7 @@ public class GroupManagementService
 
         try
         {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(member);
+            var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(member);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
