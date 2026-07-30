@@ -359,13 +359,34 @@ public class ProtectedPrincipalService
             return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
         }
 
-        // Exchange knows this recipient under the same address AD just missed, so it has no
-        // on-prem object. Handling that cloud-only case is slice 3 of the plan; until it lands,
-        // report the conservative answer AD already gave.
+        // Exchange knows this recipient under the address AD just missed, so it has no on-prem
+        // object. Group and OU rules are evaluated from an on-prem DN, which this principal does
+        // not have and cannot have - a cloud-only object cannot be a member of an on-prem group.
+        // Those rules are therefore not "skipped", they are inapplicable. The user rows still
+        // apply and are what must protect such a principal; the SamAccountName patterns cannot
+        // match either, for the same reason. See docs/ProjectConstitution.md (Protected
+        // Principals) and docs/ProtectedPrincipalResolution-Plan.md D4.
+        //
+        // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
+        // DN without raising a failure, so this is logged rather than left silent: an operator
+        // reading the audit trail has to be able to see which rules could not be evaluated.
         _logger.LogInformation(
-            "Exchange resolved {Identity} with no on-premises object - cloud-only handling not yet enabled",
+            "Exchange resolved {Identity} as a cloud-only recipient with no on-premises object - "
+            + "group, OU and SamAccountName-pattern rules were NOT evaluated; only protected user "
+            + "rows apply",
             identity);
-        return (null, ResolutionStatus.NotFound);
+
+        var cloudOnly = new ResolvedDirectoryPrincipal(
+            Source: "ProtectedPrincipalService-EXO",
+            DisplayName: recipient.PrimarySmtpAddress,
+            UserPrincipalName: recipient.PrimarySmtpAddress,
+            SamAccountName: null,
+            PrimarySmtpAddress: recipient.PrimarySmtpAddress,
+            DistinguishedName: null,
+            ObjectGuid: null,
+            EntraObjectId: recipient.ExternalDirectoryObjectId);
+
+        return (cloudOnly, ResolutionStatus.Resolved);
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)

@@ -89,6 +89,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 - OU and group checks must be based on resolved directory objects, not substring matches.
 - Mutations against directory principals should bind to immutable identifiers such as GUID/DN and re-read before write when practical.
 - Never bypass protected-principal checks in privileged modules unless the bypass is narrowly scoped, documented, and required for compensation cleanup.
+- **A cloud-only principal must be protected by address, never by group membership.** Group, OU and SamAccountName-pattern rules are evaluated from an on-premises distinguished name. A recipient that exists only in Exchange Online has no such object and cannot be a member of an on-premises group, so those three rule types can never match it — this is a structural limit, not an implementation gap. Protecting such a principal requires an entry in the protected **user** rows. Whoever adds a cloud-only mailbox to the protected set must verify this; a group rule that appears to cover it does not.
 
 ### Module System
 

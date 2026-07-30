@@ -293,22 +293,76 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
         Assert.Equal(new[] { "user@contoso.com" }, service.AdLookups);
     }
 
-    // ---- cloud-only: deferred to slice 3 ------------------------------------
+    // ---- cloud-only ----------------------------------------------------------
 
     [Fact]
-    public async Task CloudOnlyRecipient_IsNotFoundInThisSlice()
+    public async Task CloudOnlyRecipient_ResolvesWithNoDistinguishedName()
     {
-        // Exchange knows the recipient under the same address AD missed, so there is no on-prem
-        // object. Slice 3 turns this into a Resolved cloud-only principal; until then it keeps the
-        // conservative answer AD already gave.
+        // Exchange knows the recipient under the address AD missed, so there is no on-prem object.
+        // A null DN is the point: it is what makes the group and OU rules inapplicable rather than
+        // skipped, and CheckAsync must not be handed a fabricated one.
         var service = CreateService(ResolverReturning(
             new ResolvedRecipient("jabil.support@contoso.com", "ext-9", "UserMailbox", ExistsOnPrem: false)));
         service.AdReturns("jabil.support@contoso.com", ResolutionStatus.NotFound);
 
         var (principal, status) = await service.ResolveWithExchangeFallbackAsync("jabil.support@contoso.com");
 
-        Assert.Equal(ResolutionStatus.NotFound, status);
-        Assert.Null(principal);
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.Equal("jabil.support@contoso.com", principal!.PrimarySmtpAddress);
+        Assert.Equal("jabil.support@contoso.com", principal.UserPrincipalName);
+        Assert.Equal("ProtectedPrincipalService-EXO", principal.Source);
+        Assert.Equal("ext-9", principal.EntraObjectId);
+        Assert.Null(principal.DistinguishedName);
+        Assert.Null(principal.SamAccountName);
+    }
+
+    [Fact]
+    public async Task CloudOnlyRecipient_StillMatchesProtectedUserRows()
+    {
+        // The rule types a cloud-only principal CAN be protected by must actually fire. This is
+        // the guarantee behind the Constitution's "protect by address, never by group membership".
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ProtectedPrincipals = new
+            {
+                Users = new[] { "vip.cloud@contoso.com" },
+                Groups = Array.Empty<string>(),
+                OrganizationalUnits = Array.Empty<string>(),
+                SamAccountNamePatterns = Array.Empty<string>()
+            }
+        });
+        File.WriteAllText(Path.Combine(_tempDir, "config", "protected-principals.json"), json);
+
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
+        service.AdReturns("vip.cloud@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.cloud@contoso.com");
+        Assert.Equal(ResolutionStatus.Resolved, status);
+
+        var verdict = await service.CheckAsync(principal!);
+
+        Assert.True(verdict.IsProtected);
+        Assert.False(verdict.CheckFailed);
+        Assert.Contains("User:vip.cloud@contoso.com", verdict.MatchedRules);
+    }
+
+    [Fact]
+    public async Task MailEnabledGroup_FlowsThroughCheckAsyncWithoutError()
+    {
+        // Get-Recipient returns groups, which Get-ADUser never could. The resolved principal has
+        // to survive CheckAsync - MatchesIdentity compares strings and must not assume a user.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("adspstaff@contoso.com", "ext-grp", "MailUniversalDistributionGroup", ExistsOnPrem: false)));
+        service.AdReturns("adspstaff@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("adspstaff@contoso.com");
+        Assert.Equal(ResolutionStatus.Resolved, status);
+
+        var verdict = await service.CheckAsync(principal!);
+
+        Assert.False(verdict.IsProtected);
+        Assert.False(verdict.CheckFailed);
     }
 
     // ---- the legacy entry point is untouched --------------------------------
