@@ -1,10 +1,16 @@
 # Protected-Principal Identity Resolution via Exchange -- Plan
 
-Status: **Approved (owner, 2026-07-30).** D1 ruled go. D2 and D4 were withdrawn as decisions --
+Status: **Implemented (2026-07-30).** All four slices landed on `master`: `6faa92d` (slice 1),
+`76bfead` (slice 2), `eb30786` (slice 3), `0eca01e` (slice 4). 974 tests green; every
+fail-closed guard proven non-vacuous. **Not deployed** -- the manual post-deploy checks below
+are unrun, and check 3 (the alias-bypass regression) must also be re-run on prod after
+promotion. OQ-1 was not closed against a live tenant; see Open Questions.
+
+Approved by the owner 2026-07-30. D1 ruled go. D2 and D4 were withdrawn as decisions --
 both dissolved on owner challenge into consequences of D1 rather than choices; see their
 sections for the reasoning, which is load-bearing for the design. D3 withdrawn as a decision:
 the owner ruled "anywhere it's broken it needs to be fixed", so all three gated modules are in
-scope unconditionally. No open owner gates. Not yet implemented.
+scope unconditionally. No open owner gates.
 App version: `2.3.32` -> `2.3.33` (shared service change in `ProtectedPrincipalService`,
 consumed by more than one module).
 Module: `MailboxPermissions` `1.0.3` -> `1.0.4` (module behavior change: targets that
@@ -409,9 +415,14 @@ Per `docs/ProjectConstitution.md` (Deployment And Versioning), both rules fire:
 
 ## Open Questions
 
-- **OQ-1.** Which `Get-Recipient` property authoritatively distinguishes a synced from a
-  cloud-only recipient in this tenant. Must be settled against a live session during slice 1.
-  Blocks slice 3 only.
+- **OQ-1. NOT CLOSED (2026-07-30).** Which `Get-Recipient` property authoritatively
+  distinguishes a synced from a cloud-only recipient in this tenant. No live EXO session is
+  reachable from the dev workstation, so this could not be settled against the tenant. It did
+  not block slice 3: `ExistsOnPrem` reads `IsDirSynced` and treats absent or unparseable as
+  cloud-only, the conservative branch (it cannot match group rules, so it cannot silently
+  un-protect). Manual check 1 exercises it on dev. If `IsDirSynced` turns out not to be
+  populated in this tenant, the effect is that every EXO-resolved recipient takes the
+  cloud-only path -- degraded, not unsafe.
 - **OQ-2.** Whether `sporting.tickets@analog.com` and `Jabil.support@analog.com` are mailboxes
   that *should* be administratively reachable at all, or artifacts of a decommission that was
   never finished. Not a blocker -- the plan makes them resolvable either way -- but worth an

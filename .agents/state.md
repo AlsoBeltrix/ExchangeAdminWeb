@@ -6,8 +6,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Protected-principal resolution — plan APPROVED 2026-07-30; implementation not started.**
-  `docs/ProtectedPrincipalResolution-Plan.md` Status: Approved. Triggered by an owner
+- **Protected-principal resolution via Exchange — CODE COMPLETE 2026-07-30, all 4 slices on
+  `master`; NOT deployed (dev is `2.3.32`, repo is now `2.3.33`). 6 manual checks unrun.**
+  `docs/ProtectedPrincipalResolution-Plan.md` Status: Implemented. Triggered by an owner
   report of L1/L2 friction: Mailbox Permissions denies cloud-only mailboxes and mail-enabled
   groups with "Protected-principal identity resolution is unavailable", which reads as an
   outage but is an affirmative AD miss. Investigation found a second, unreported defect — the
@@ -23,10 +24,36 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   EXO), and the cloud-only branch relaxes nothing because a cloud-only mailbox cannot be an
   on-prem group member in the first place (`Services/GroupManagementService.cs:246-247` throws
   before the write). Both reduced to consequences of D1; reasoning kept in the plan so they are
-  not revived as questions. 4 slices, none started. App `2.3.32 -> 2.3.33`,
-  `MailboxPermissions 1.0.3 -> 1.0.4`, `ConferenceRooms 2.3.0 -> 2.3.1`,
-  `GroupManagement 2.1.0 -> 2.1.1`. Carries a Constitution edit (protected-groups cannot reach
-  cloud-only objects; protect those by address).
+  not revived as questions.
+  **Slice 1 DONE** (`6faa92d`): `ResolvedRecipient` + `IIdentityResolver.ResolveRecipientAsync`
+  on `ExchangeIdentityResolver`. The load-bearing property is that `null` means Exchange
+  affirmatively reported no such recipient and nothing else -- a lookup that could not run
+  throws, because a caller may allow on a null. `IsRecipientNotFound` and `MapRecipient` are
+  `internal static` so that boundary is testable without a live EXO session. 18 tests.
+  **Slice 2 DONE** (`76bfead`): `ProtectedPrincipalService.ResolveWithExchangeFallbackAsync`.
+  Only `NotFound` falls through to Exchange -- Resolved/Ambiguous/Unavailable return exactly as
+  AD produced them, so nothing that denies today starts allowing. An Exchange lookup that could
+  not run returns `Unavailable`, never `NotFound`. The service is a singleton and
+  `IIdentityResolver` is scoped, so the fallback opens its own DI scope; the scope factory is an
+  optional ctor param (nine test files construct the service directly) and a null factory fails
+  closed. 13 tests.
+  **Slice 3 DONE** (`eb30786`): the cloud-only branch returns a Resolved principal with a **null
+  DN** -- that is the point, since group/OU/pattern rules read an on-prem DN a cloud-only object
+  cannot have. Those rules are inapplicable, not skipped, and the branch logs which ones were
+  not evaluated because both degrade silently (`:582`, `:682`). Constitution edit landed here.
+  **Slice 4 DONE** (`0eca01e`): all three gates switched; four distinct messages replace the
+  blanket denial. Versions bumped: app `2.3.32 -> 2.3.33`, `MailboxPermissions 1.0.3 -> 1.0.4`,
+  `ConferenceRooms 2.3.0 -> 2.3.1`, `GroupManagement 2.1.0 -> 2.1.1`. Both ConferenceRooms test
+  fakes scripted `ResolveWithStatusAsync`, which the gates no longer call -- the full suite
+  caught that as 4 failures; their overrides moved to the seam actually used.
+  **974 tests green**, build/format/ASCII/`git diff --check` clean. Non-vacuity proven per guard
+  by reverting each: Exchange-throw-is-Unavailable 1 failure, fall-through-on-any-status 2,
+  alias re-resolution 3, fabricated cloud-only DN 1, dropped cloud-only address 2, blanket
+  denial restored 2, ConferenceRooms gate back to AD-only 7, GroupManagement the same 2.
+  **NEXT: the plan's 6 manual post-deploy checks on dev** -- none run. Check 3 is the
+  load-bearing one (an alias as target must be **denied** citing the CEO user rule); it is the
+  GAP 4 regression test and must be re-run on prod after promotion. **No independent review**
+  has been obtained for this work.
 
 - **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29; on dev in `2.3.31`, NOT on
   prod (prod is `2.3.30`, still carrying the defect).**
@@ -234,8 +261,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.32`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
-  `2.3.31` (`14f4ef1`) for the operator-email resolver; `2.3.31` (`2f0b99c`) was the MessageTrace
+- **App version `2.3.33`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+  `2.3.32` (`0eca01e`) for Exchange-backed protected-principal resolution; `2.3.32` (`14f4ef1`)
+  was the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.3.32`, prod `2.3.30`** (as of `f3b402a`; both re-verified 2026-07-30 from the
@@ -243,6 +271,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `2.3.32.0`, `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` FileVersion `2.3.30.0`).
   Dev carries the operator-email resolver, the MessageTrace export delivery redesign, and the
   MessageTrace NRE fix; prod carries **none** of them and is **not yet validated** against them.
+  **Neither instance carries `2.3.33`** (Exchange-backed protected-principal resolution), so the
+  GAP 4 alias bypass and the L1/L2 denial friction are both still live on dev and prod.
   `2.3.30` was deployed to dev, validated, then promoted to prod, and supersedes all prior
   deployed builds, so prod still carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root
   fail-fast, and the `2.3.30` ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27`
@@ -292,14 +322,16 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
   dry-run+logoff, protected-block) when ready. Gates the rule-4 user-notify decision above.
   Note the module is currently disabled by the owner as unusable in this environment (see `## Now`).
-- **All known protected-principal *coverage* gaps CLOSED:** GAP 1 (`M365GroupManagementService`,
+- **All known protected-principal *coverage* gaps CLOSED (in repo):** GAP 1 (`M365GroupManagementService`,
   2026-06-29), GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk,
   2026-07-02), and the single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated
   into `ConferenceRoomProtectionGate`). Every mutating module routes through the gate. Governing
   rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals. This closes
   *which callers are gated*; GAP 4 below is a defect in *what the gate resolves*.
-- **OPEN — GAP 4: protected principals are reachable by secondary SMTP alias** (found 2026-07-30,
-  verified against live AD). `ProtectedPrincipalService.ResolveViaActiveDirectory`
+- **GAP 4 — FIXED IN REPO 2026-07-30, NOT YET DEPLOYED (dev `2.3.32`, prod `2.3.30`; the fix is
+  `2.3.33`). Still live on both instances until promoted.** Protected principals are reachable by
+  secondary SMTP alias (found 2026-07-30, verified against live AD).
+  `ProtectedPrincipalService.ResolveViaActiveDirectory`
   (`Services/ProtectedPrincipalService.cs:290-291`) queries only
   `(|(userPrincipalName=)(mail=)(sAMAccountName=))` — never `proxyAddresses` — and
   `MatchesIdentity` (`:438-465`) does not carry aliases in its candidate set. All 4 protected
@@ -315,16 +347,27 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
     `Services/GroupManagementService.cs:44-50`).
   - **Binding consequence:** relaxing `NotFound` to "allow" anywhere without simultaneously
     broadening resolution converts the masked bypass into a live one. Recorded here because it
-    constrains any future work in this area, not only the plan below.
-  - Fix approved in `docs/ProtectedPrincipalResolution-Plan.md` (owner, 2026-07-30);
-    implementation not started. Regression check: alias as target must be denied citing the
-    CEO user rule.
-- **OPEN — MailboxPermissions denies cloud-only mailboxes and mail-enabled groups** (reported by
-  the owner 2026-07-30 as L1/L2 support friction). 16 prod denials 2026-06-30..2026-07-30 over 7
-  targets; 4 are permanent under the current AD-only filter (`Jabil.support@analog.com`,
+    constrains any future work in this area, not only the fix below.
+  - **Fix landed** (`docs/ProtectedPrincipalResolution-Plan.md`, Implemented 2026-07-30, commits
+    `6faa92d`..`0eca01e`): resolution now falls back to Exchange, which returns the canonical
+    primary address, so the alias case stops resolving `NotFound`. The `NotFound`-allows rule in
+    ConferenceRooms and GroupManagement is deliberately unchanged -- the bypass closes because
+    the alias no longer reaches it. The AD filter was **not** broadened to `proxyAddresses` (plan
+    Non-Goals: two mechanisms for one job).
+  - **Regression check, not yet run:** an alias as target must be denied citing the CEO user
+    rule. Required on dev, then again on prod after promotion.
+- **MailboxPermissions denies cloud-only mailboxes and mail-enabled groups — FIXED IN REPO
+  2026-07-30, NOT YET DEPLOYED; still live on prod (`2.3.30`).** Reported by the owner
+  2026-07-30 as L1/L2 support friction. 16 prod denials 2026-06-30..2026-07-30 over 7 targets; 4
+  were permanent under the AD-only filter (`Jabil.support@analog.com`,
   `sporting.tickets@analog.com` cloud-only; `adspstaff@analog.com`, `globalevents@analog.com`
   mail-enabled groups), 2 were AD-sync timing and self-resolved, 1 was malformed input. Not a
-  regression from 2.3.32 — the code last changed functionally 2026-05-29. Same plan as GAP 4.
+  regression from 2.3.32 — the code last changed functionally 2026-05-29. Fixed by the same work
+  as GAP 4; the malformed-input case now gets an accurate not-found message rather than the
+  outage-sounding one. **Open (plan OQ-2, non-blocking):** whether
+  `sporting.tickets@analog.com` and `Jabil.support@analog.com` should be administratively
+  reachable at all, or are artifacts of an unfinished decommission. Worth an answer before
+  treating the friction as fully closed.
 
 ## Verification
 
@@ -360,7 +403,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
   all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
   `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, **on dev**,
-  not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained).
+  not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained);
+  `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`,
+  **deployed nowhere**; 6 manual post-deploy checks not run; no independent review).
 - **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
   carry a pre-landing `Status:` although code evidence says they shipped —
   `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at
