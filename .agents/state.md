@@ -6,6 +6,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Protected-principal resolution — plan drafted 2026-07-30, AWAITING OWNER RULING; no code
+  written.** `docs/ProtectedPrincipalResolution-Plan.md` Status: Draft. Triggered by an owner
+  report of L1/L2 friction: Mailbox Permissions denies cloud-only mailboxes and mail-enabled
+  groups with "Protected-principal identity resolution is unavailable", which reads as an
+  outage but is an affirmative AD miss. Investigation found a second, unreported defect — the
+  alias bypass recorded as GAP 4 under Blockers, which is *live* in ConferenceRooms and
+  GroupManagement. Design routes an AD miss through the existing
+  `ExchangeIdentityResolver.ResolveToObjectIdAsync` (`Services/ExchangeIdentityResolver.cs:10-31`,
+  already registered `Program.cs:173`, unused by the protection path) so Exchange returns the
+  canonical primary address; that closes the alias hole and makes groups and cloud-only
+  mailboxes resolvable in one change. Four owner decisions open (D1 fall back to Exchange,
+  D2 unavailable-still-denies, D3 scope across the three gated modules, D4 what a confirmed
+  cloud-only recipient gets). **Blocked until ruled** — D1/D2 gate slices 1, 2, 4; D4 gates
+  slice 3. Would be app `2.3.32 -> 2.3.33` + `MailboxPermissions 1.0.3 -> 1.0.4`.
+
 - **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29; on dev in `2.3.31`, NOT on
   prod (prod is `2.3.30`, still carrying the defect).**
   Plan `docs/MessageTraceNullRow-Plan.md` Status: Implemented. Live prod symptom: an EXO
@@ -270,11 +285,43 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
   dry-run+logoff, protected-block) when ready. Gates the rule-4 user-notify decision above.
   Note the module is currently disabled by the owner as unusable in this environment (see `## Now`).
-- **All known protected-principal gaps CLOSED:** GAP 1 (`M365GroupManagementService`, 2026-06-29),
-  GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk, 2026-07-02), and the
-  single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated into
-  `ConferenceRoomProtectionGate`). No known open PP gap remains. Governing rule:
-  `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals.
+- **All known protected-principal *coverage* gaps CLOSED:** GAP 1 (`M365GroupManagementService`,
+  2026-06-29), GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk,
+  2026-07-02), and the single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated
+  into `ConferenceRoomProtectionGate`). Every mutating module routes through the gate. Governing
+  rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals. This closes
+  *which callers are gated*; GAP 4 below is a defect in *what the gate resolves*.
+- **OPEN — GAP 4: protected principals are reachable by secondary SMTP alias** (found 2026-07-30,
+  verified against live AD). `ProtectedPrincipalService.ResolveViaActiveDirectory`
+  (`Services/ProtectedPrincipalService.cs:290-291`) queries only
+  `(|(userPrincipalName=)(mail=)(sAMAccountName=))` — never `proxyAddresses` — and
+  `MatchesIdentity` (`:438-465`) does not carry aliases in its candidate set. All 4 protected
+  `user` rows in prod `protected_principal` carry 3 secondary aliases each; the CEO row
+  `vincent.roche@analog.com` also answers to `VRoche@O365.analog.com`,
+  `VRoche@analog.mail.onmicrosoft.com`, `Vincent.Roche@exchange.analog.com`. The app's exact
+  filter returns 0 matches for the alias; the same filter plus `(proxyAddresses=smtp:...)`
+  returns 1.
+  - **Masked in MailboxPermissions**, where 0 matches means `null` means blanket denial
+    (`Services/PermissionValidator.cs:124-131`) — the denial is currently the only control.
+  - **Live in ConferenceRooms and GroupManagement**, which treat `NotFound` as *not protected*
+    and allow (`Services/ConferenceRoomProtectionGate.cs:56-58`,
+    `Services/GroupManagementService.cs:44-50`).
+  - **Binding consequence:** relaxing `NotFound` to "allow" anywhere without simultaneously
+    broadening resolution converts the masked bypass into a live one. Recorded here because it
+    constrains any future work in this area, not only the plan below.
+  - Fix drafted in `docs/ProtectedPrincipalResolution-Plan.md` (Draft — awaiting owner ruling
+    on D1-D4). Regression check: alias as target must be denied citing the CEO user rule.
+- **OPEN — `NotFound`-allows rule unexamined for genuinely cloud-only objects** (raised
+  2026-07-30, OQ-3 of `docs/ProtectedPrincipalResolution-Plan.md`). Separate from GAP 4: once
+  aliases resolve, the residual question is whether a confirmed cloud-only conference room or
+  group member should be allowed through a gate that cannot evaluate on-prem group rules
+  against it. Owner decision D4 of that plan settles it.
+- **OPEN — MailboxPermissions denies cloud-only mailboxes and mail-enabled groups** (reported by
+  the owner 2026-07-30 as L1/L2 support friction). 16 prod denials 2026-06-30..2026-07-30 over 7
+  targets; 4 are permanent under the current AD-only filter (`Jabil.support@analog.com`,
+  `sporting.tickets@analog.com` cloud-only; `adspstaff@analog.com`, `globalevents@analog.com`
+  mail-enabled groups), 2 were AD-sync timing and self-resolved, 1 was malformed input. Not a
+  regression from 2.3.32 — the code last changed functionally 2026-05-29. Same plan as GAP 4.
 
 ## Verification
 
