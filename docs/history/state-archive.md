@@ -11,6 +11,86 @@ Landed and superseded `## Now` entries rotated out of `.agents/state.md` by the
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-07-30 (catchup sweep)
+
+### Retire `Security:ExcludedUsers` appsettings fallback — complete code + host, both environments
+
+- **Retire `Security:ExcludedUsers` appsettings fallback — DONE (code half), landed 2026-07-28.**
+  Plan `docs/RetireExcludedUsersAppsettingsFallback-Plan.md` Status: Implemented;
+  `.agents/decisions.md` 2026-07-28. Both readers (`PermissionValidator.GetConfiguredExclusions`,
+  `ProtectedPrincipalService.GetLegacyExclusions`) no longer fall back to the invisible
+  `Security:ExcludedUsers` appsettings array; exclusions come only from the DB protected-principal
+  store + `MailboxPermissions/ExcludedUsers` module config. Base app `2.3.29 -> 2.3.30`.
+  Commits `4dff069`(plan) `f5b329b`(slice1) `942dd10`(slice2) `5c7cc93`(slice3 tests)
+  `c35f056`(slice4 docs) `456e07c`(version). Build/format/827 tests green; two new guard tests
+  non-vacuity-proven (fallback restored -> both fail).
+  **Slice 5 host cleanup DONE (owner, 2026-07-29):** the `Security.ExcludedUsers` block was
+  removed from the deployed `appsettings.json` on both dev and prod (`PreventSelfGrant`,
+  `AllowedGroups` left in place). The ExcludedUsers-fallback retirement is now fully complete,
+  code + host, both environments.
+
+### Log-root fail-fast — landed and validated in prod
+
+- **Log-root fail-fast IMPLEMENTED** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
+  Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
+  `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
+  `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
+  **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
+  `appsettings.json` must set it before deploying `2.3.29`.
+- **RESOLVED (2026-07-29):** `2.3.29`'s log-root fail-fast is now validated in prod — it ships
+  inside `2.3.30`, which the owner deployed + validated + promoted to prod. The startup guard is
+  inherently exercised: the app cannot boot without `Audit:LogRoot`, and it booted.
+
+### Bulk Job Runner — landed; only live validation remains (tracked in `state.md` Next up)
+
+`docs/BulkJobRunner-Plan.md` (Status: Implemented) · `.agents/decisions.md` 2026-07-02.
+App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`.
+
+ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job (separate
+`config/exchangeadmin-jobs.db`, never promoted). Self-pumping singleton runner (not a hosted
+timer); single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no
+resume); always cancellable; per-row failure aggregation; completion email fires from the job.
+Off-circuit auth = option (a) (capture the authorization decision at submit, re-check per row via
+shared pure `GroupMembershipChecker`). Protected-principal gate enforced in-job per row on
+**both** Finder and Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs
+before recycle (`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green (as of `9d26b5f`);
+build/format/diff-check clean; each slice codex-reviewed with findings fixed before commit.
+(Dev deploy done 2026-07-20.)
+
+### Landed `Next up` items rotated out (2, 5, 6)
+
+2. **Single-room Finder protected-principal gap** — **DONE** (2026-07-21, commit 2a97d09;
+   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` Implemented). Consolidated the
+   module PP check into one `ConferenceRoomProtectionGate` (C2-G). Only remaining follow-up is
+   live-instance/UI validation not yet performed (runs against PROD from the dev instance).
+5. **GM-3 self-service group management (on-prem AD only) — DONE 2026-07-27.** All 6 tasks (plan
+   section 7) landed and codex-reviewed; see the `## Now` pointer and this archive.
+   Only follow-up is live validation, not yet performed (runs against PROD AD from the dev
+   instance). Not next.
+6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
+   code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
+   excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
+   (b) CI gate `tools/Test-AsciiOnly.ps1` wired into `.github/workflows/ci.yml` `powershell` job,
+   non-vacuity proven. See `.agents/decisions.md` 2026-07-21.
+
+### Closed blockers rotated out
+
+- **CLOSED (2026-07-24) — ptk blocker + AD scan-sizing.** At the 2026-07-24 close ptk had been
+  removed (server + the shell-blocking hook that forced AD calls through it), so the "ptk down is
+  a STOP; no direct PowerShell fallback" rule no longer applied. (2026-07-28: ptk is available
+  again this session — use it per global guidance when present.) The one AD read it had gated (a
+  domain-wide `Get-ADGroup` count) was run directly: **41,368 groups** (now in the archive). Moot
+  regardless: the scaled-back task-2 design (2026-07-24) dropped the domain-wide scan entirely.
+  (The trailing fragment carried in this entry — the single-room Room Finder PP-gate description —
+  was a paste artifact duplicating the PP-gaps entry; the canonical record is
+  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` and commit `2a97d09`.)
+- **CLOSED (2026-07-30) — prod BlockedSenders version uncertainty.** The recorded doubt was that
+  the two BlockedSenders fixes (`17910f3`→1.0.1, `cde778f`→1.0.2) are module bumps, not app bumps,
+  so a prod app version could not confirm them. Resolved by direct evidence: prod runs `2.3.30`
+  (deployed assembly `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll`, FileVersion `2.3.30.0`)
+  and both commits are ancestors of the `2.3.30` version-bump commit `456e07c`
+  (`git merge-base --is-ancestor`, verified 2026-07-30). Prod includes both fixes.
+
 ## Archived 2026-07-29 (catchup sweep)
 
 ### 2026-07-21 landed slices (all pushed + CI green)

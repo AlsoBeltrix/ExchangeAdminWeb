@@ -6,20 +6,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Retire `Security:ExcludedUsers` appsettings fallback — DONE (code half), landed 2026-07-28.**
-  Plan `docs/RetireExcludedUsersAppsettingsFallback-Plan.md` Status: Implemented;
-  `.agents/decisions.md` 2026-07-28. Both readers (`PermissionValidator.GetConfiguredExclusions`,
-  `ProtectedPrincipalService.GetLegacyExclusions`) no longer fall back to the invisible
-  `Security:ExcludedUsers` appsettings array; exclusions come only from the DB protected-principal
-  store + `MailboxPermissions/ExcludedUsers` module config. Base app `2.3.29 -> 2.3.30`.
-  Commits `4dff069`(plan) `f5b329b`(slice1) `942dd10`(slice2) `5c7cc93`(slice3 tests)
-  `c35f056`(slice4 docs) `456e07c`(version). Build/format/827 tests green; two new guard tests
-  non-vacuity-proven (fallback restored -> both fail).
-  **Slice 5 host cleanup DONE (owner, 2026-07-29):** the `Security.ExcludedUsers` block was
-  removed from the deployed `appsettings.json` on both dev and prod (`PreventSelfGrant`,
-  `AllowedGroups` left in place). The ExcludedUsers-fallback retirement is now fully complete,
-  code + host, both environments.
-
 - **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29; on dev in `2.3.31`, NOT on
   prod (prod is `2.3.30`, still carrying the defect).**
   Plan `docs/MessageTraceNullRow-Plan.md` Status: Implemented. Live prod symptom: an EXO
@@ -93,8 +79,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   919 tests green; non-vacuity proven (cleared-box rule 1 failure, format validation 8).
   Follow-up `86f55ce`: corrected the `SaveFailedMarker` comment that still claimed nothing wrote
   the marker.
-  **Pushed to both remotes 2026-07-29** (owner go given; fast-forward from `2b9c47e`, no rewrite;
-  both remotes verified at `4dd805f`).
   **DEPLOYED TO DEV as `2.3.31` (owner, 2026-07-29).** Not on prod (prod stays `2.3.30`).
   **NEXT: run the plan's 9 manual post-deploy checks on dev.** None of them has been run.
   Highest-value ones: an 11+ message export arrives as a link with no attachment; the ticket
@@ -124,7 +108,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   supported state -- the mail then carries prose and no hyperlink (that is manual check 9), not a
   broken relative link.
 
-- **Operator email resolution from AD -- CODE COMPLETE 2026-07-29, not deployed anywhere.**
+- **Operator email resolution from AD -- CODE COMPLETE 2026-07-29, ON DEV as `2.3.32`, not on
+  prod. 8 manual checks not yet run.**
   `docs/OperatorEmailResolution-Plan.md` Status: Approved (owner, 2026-07-29). Owner reported on dev running `2.3.31`
   (2026-07-29, confirmed) that the new recipient box does not pre-fill. Pre-fill *is* the design
   (D4(a) of the download-link plan), so this is a bug. Root cause at
@@ -231,24 +216,16 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `2.3.31` (`14f4ef1`) for the operator-email resolver; `2.3.31` (`2f0b99c`) was the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.3.31`, prod `2.3.30`** (owner-confirmed 2026-07-29 from the dev sidebar).
-  `2.3.32` exists in the repo only; it is deployed nowhere.
-  Dev carries the MessageTrace export delivery redesign and the MessageTrace NRE fix; prod
-  carries neither and is **not yet validated** against them. `2.3.30` was deployed to dev,
-  validated, then promoted to prod, and supersedes all prior deployed builds, so prod still
-  carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root fail-fast, and the `2.3.30`
-  ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27` (validated 2026-06-29).
-  (This settles the conflict openreview F3 flagged: the "not deployed anywhere" claim was the
-  stale half. OQ-4 in `docs/OperatorEmailResolution-Plan.md` is closed.)
-- **Log-root fail-fast IMPLEMENTED + pushed** (2026-07-22, `docs/RemoveHardcodedLogRoot-Plan.md`).
-  Hardcoded `E:\WWWOutput` fallback removed from all three services; startup guard aborts boot if
-  `Audit:LogRoot` is unset/blank. Commits `fa40485` (helper + guard), `b14fce6` (services),
-  `821a2f8` (docs), `3eac48a` (app version bump 2.3.28 -> 2.3.29). Build + all 676 tests green.
-  **Deploy note:** the new build fails to start if `Audit:LogRoot` is unset; the target env's
-  `appsettings.json` must set it before deploying `2.3.29`.
-- **RESOLVED (2026-07-29):** `2.3.29`'s log-root fail-fast is now validated in prod — it ships
-  inside `2.3.30`, which the owner deployed + validated + promoted to prod. The startup guard is
-  inherently exercised: the app cannot boot without `Audit:LogRoot`, and it booted.
+- **Deployed: dev `2.3.32`, prod `2.3.30`** (as of `f3b402a`; both re-verified 2026-07-30 from the
+  deployed assemblies — `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` FileVersion
+  `2.3.32.0`, `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` FileVersion `2.3.30.0`).
+  Dev carries the operator-email resolver, the MessageTrace export delivery redesign, and the
+  MessageTrace NRE fix; prod carries **none** of them and is **not yet validated** against them.
+  `2.3.30` was deployed to dev, validated, then promoted to prod, and supersedes all prior
+  deployed builds, so prod still carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root
+  fail-fast, and the `2.3.30` ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27`
+  (validated 2026-06-29). (This settles the conflict openreview F3 flagged: the "not deployed
+  anywhere" claim was the stale half. OQ-4 in `docs/OperatorEmailResolution-Plan.md` is closed.)
 - **2026-07-21 landed slices** (ff443ca, c2e2f6f, 502dd0e, 8c6f83f, 9dd39cd, b978362, 71d1daa)
   archived verbatim: `docs/history/state-archive.md` (Archived 2026-07-29).
 - **AccountLockoutRemediation: TURNED OFF by owner** (2026-07-21). Does not work in this environment:
@@ -257,24 +234,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   silently drops the ~33 it can't reach. Owner disabled the module (runtime enablement, no code change).
 - **Toolkit bug filed:** roethlar/AgentGovernanceBootstrap#7 -- completing a tracked item should
   auto-update the state record, not gate it behind an owner ask.
-
-## Last work stream — Bulk Job Runner (DONE, pending dev validation)
-
-`docs/BulkJobRunner-Plan.md` (Status: Implemented) · `.agents/decisions.md` 2026-07-02.
-App `2.3.27`→`2.3.28`; ConferenceRooms module `2.1.0`→`2.2.0`.
-
-ConferenceRooms bulk apply (Finder/Type CSV) now runs as a durable server-side job (separate
-`config/exchangeadmin-jobs.db`, never promoted). <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime jobs DB is intentionally created outside source control) --> Self-pumping singleton runner (not a hosted timer);
-single active job + FIFO queue; startup flips non-terminal jobs to Interrupted (no resume); always
-cancellable; per-row failure aggregation; completion email fires from the job. Off-circuit auth =
-option (a) (capture the authorization decision at submit, re-check per row via shared pure
-`GroupMembershipChecker`). Protected-principal gate enforced in-job per row on **both** Finder and
-Type bulk paths (closes GAP 3). Deploy scripts warn (not block) on active jobs before recycle
-(`tools/JobStateWarning.psm1`). ~671 xUnit + 65 Pester green (as of `9d26b5f`); build/format/diff-check
-clean; each slice codex-reviewed with findings fixed before commit.
-
-**Next action:** run live validation from the dev instance against PROD EXO/AD -- the UI and end-to-end job lifecycle are not
-covered by automated tests. (Dev deploy done 2026-07-20.)
 
 ## Next up (prioritized)
 
@@ -287,10 +246,10 @@ Live backlog only. Items need an approved plan before code unless noted.
    **both** Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays
    unvalidated until a live run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
    write. Do not close out until performed.
-2. **Single-room Finder protected-principal gap** — **DONE** (2026-07-21, commit 2a97d09;
-   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` Implemented). Consolidated the
-   module PP check into one `ConferenceRoomProtectionGate` (C2-G). Only remaining follow-up is
-   live-instance/UI validation not yet performed (runs against PROD from the dev instance).
+2. **Live-validate the ConferenceRooms PP gate + GM-3 self-service groups** — both landed and
+   codex-reviewed; the only outstanding work on each is live/UI validation from the dev instance
+   against PROD (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`,
+   `docs/SelfServiceGroupManagement-Plan.md`). Foldable into the same live session as item 1.
 3. **Module packaging/import — DEFERRED (owner, 2026-07-22)** as low-value/high-cost. Not to be
    worked on or raised as next; no plan. End-state direction retained only as history in
    `.agents/decisions.md` (2026-07-22 deferral, refining 2026-06-29 & 06-18).
@@ -298,40 +257,19 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
-5. **GM-3 self-service group management (on-prem AD only) — DONE 2026-07-27.** All 6 tasks (plan
-   section 7) landed and codex-reviewed; see the `## Now` pointer and `docs/history/state-archive.md`.
-   Only follow-up is live validation, not yet performed (runs against PROD AD from the dev instance). Not next.
-6. **ASCII cleanup sweep + enforcement lint** -- **DONE** (2026-07-21). Scope narrowed by owner to
-   code/logging only (`.cs`/`.ps1`/`.psm1`); docs, `.razor` UI, and `EmailService.cs` email emoji
-   excluded. (a) Sweep landed commit `c2e2f6f` (329/329 char swaps, 77 files, 672 tests green).
-   (b) CI gate `tools/Test-AsciiOnly.ps1` wired into `.github/workflows/ci.yml` `powershell` job,
-   non-vacuity proven. See `.agents/decisions.md` 2026-07-21.
+
+Landed items 2, 5 and 6 of the previous numbering (single-room Finder PP gap, GM-3 task set, ASCII
+sweep + lint gate) are archived: `docs/history/state-archive.md` (Archived 2026-07-30).
 
 Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in the prod instance
 (gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround: `deploy-pipeline -PlanOnly`).
 
 ## Blockers / open gaps
 
-- **CLOSED (2026-07-24) — ptk blocker + AD scan-sizing.** At the 2026-07-24 close ptk had been
-  removed (server + the shell-blocking hook that forced AD calls through it), so the "ptk down is
-  a STOP; no direct PowerShell fallback" rule no longer applied. (2026-07-28: ptk is available
-  again this session — use it per global guidance when present.) The one AD read it had gated (a
-  domain-wide `Get-ADGroup` count) was run directly: **41,368 groups** (now in the archive). Moot
-  regardless: the scaled-back task-2 design (2026-07-24) dropped the domain-wide scan entirely.
-  single-room Room Finder page path (`ConferenceRooms.razor` `SetupSingleRoom` →
-  `SetRoomMetadataAndListAsync`) previously wrote with no PP gate. Fixed by consolidating the
-  module's protected-principal check into one `ConferenceRoomProtectionGate` (C2-G
-  guarded-execution helper): page Finder+Type and each bulk row route through `GuardThenRunAsync`;
-  the write runs only when the gate clears; the two prior near-duplicate inline checks were removed.
-  672 tests pass; non-vacuity verified. Plan Implemented
-  (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`). **Live/UI validation not yet
-  performed** (runs against PROD from the dev instance, same as Bulk Job Runner).
 - **OPEN — AccountLockoutRemediation not yet exercised on dev** (owner deferred, 2026-06-29). Run
   the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
-  dry-run+logoff, protected-block) when ready. Gates the rule-3 user-notify decision above.
-- **Prod BlockedSenders version uncertainty:** the two BlockedSenders fixes (`17910f3`→1.0.1,
-  `cde778f`→1.0.2) are module bumps, not app bumps, so "prod = app 2.3.27" does not confirm prod
-  includes them. Confirm the prod build commit if BlockedSenders behaviour matters in prod.
+  dry-run+logoff, protected-block) when ready. Gates the rule-4 user-notify decision above.
+  Note the module is currently disabled by the owner as unusable in this environment (see `## Now`).
 - **All known protected-principal gaps CLOSED:** GAP 1 (`M365GroupManagementService`, 2026-06-29),
   GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk, 2026-07-02), and the
   single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated into
@@ -340,12 +278,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 ## Verification
 
-- **Code:** `dotnet build ExchangeAdminWeb.slnx -c Release` then `dotnet test ExchangeAdminWeb.slnx`
-  (always target the `.slnx`; bare `dotnet test` runs zero tests). Add
-  `dotnet format ExchangeAdminWeb.csproj --verify-no-changes --no-restore` and
-  `git diff --check HEAD` where practical.
-- **PowerShell:** `Invoke-ScriptAnalyzer -Path . -Recurse` (CI fails on Error severity only) and
-  `Invoke-Pester tests/ps`. Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
+- Commands are owned by `.agents/repo-guidance.md` (Verification) — read them there, not here.
+  Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
 - **Non-vacuous rule:** a change shipping with a new test must be proven — revert the fix, see the
   test fail, restore. Full policy + manual-check list: `.agents/repo-map.json`, `AGENTS.md`.
 
@@ -368,14 +302,23 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 - `AGENTS.md` — process/behavioral contract (Prime Invariants first).
 - `docs/ProjectConstitution.md` — highest engineering authority.
-- `.agents/decisions.md` — durable decisions (most recent: Bulk Job Runner, 2026-07-02).
+- `.agents/decisions.md` — durable decisions (most recent: 2026-07-28, ExcludedUsers retirement
+  and the GM-3 member-picker Option A ruling).
 - `.agents/repo-map.json` — automated verification map.
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
   all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
-  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, deployed
-  nowhere; 8 manual post-deploy checks not run; implementation openreview not obtained).
+  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, **on dev**,
+  not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained).
+- **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
+  carry a pre-landing `Status:` although code evidence says they shipped —
+  `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at
+  `Components/Pages/BlockedSenders.razor:169`, module `1.0.2`), `docs/Comms10kReplaceUx-Plan.md`
+  (Approved; module is at the plan's target `1.0.4`, commit `5e0c19e`), and
+  `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` (Approved -- In progress; implemented by
+  `430305a`, module now `2.3.0` vs the plan's `2.0.12`). Not corrected in this sweep: marking a
+  plan Implemented is a completion claim, and the ConferenceRooms one may be genuinely partial.
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
 
 ## Unrecorded repo memory
