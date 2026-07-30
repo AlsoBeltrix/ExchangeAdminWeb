@@ -44,6 +44,13 @@ public class ProtectedPrincipalService
     private readonly ProtectedPrincipalRepository _repository;
     private readonly DelineaService _delineaService;
     private readonly ILogger<ProtectedPrincipalService> _logger;
+
+    // This service is a singleton; IIdentityResolver is scoped (Program.cs:167, :173), so the
+    // Exchange fallback has to open its own scope per lookup. Optional because nine test files
+    // construct this service directly; a null factory makes the fallback fail closed
+    // (Unavailable), never NotFound. See ResolveWithExchangeFallbackAsync.
+    private readonly IServiceScopeFactory? _scopeFactory;
+
     private readonly object _cacheLock = new();
 
     private ProtectedPrincipalConfig? _cachedConfig;
@@ -70,7 +77,8 @@ public class ProtectedPrincipalService
         ModuleConfigService moduleConfig,
         ProtectedPrincipalRepository repository,
         DelineaService delineaService,
-        ILogger<ProtectedPrincipalService> logger)
+        ILogger<ProtectedPrincipalService> logger,
+        IServiceScopeFactory? scopeFactory = null)
     {
         _env = env;
         _config = config;
@@ -78,6 +86,7 @@ public class ProtectedPrincipalService
         _repository = repository;
         _delineaService = delineaService;
         _logger = logger;
+        _scopeFactory = scopeFactory;
 
         var legacyPath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
         _legacyFileCorrupt = ImportLegacyIfPresent(legacyPath);
@@ -271,6 +280,92 @@ public class ProtectedPrincipalService
     {
         var (principal, _) = await ResolveWithStatusAsync(identity);
         return principal;
+    }
+
+    /// <summary>
+    /// Resolves an identity through Active Directory, falling back to Exchange Online when AD
+    /// answers "no such object". This is the entry point protection gates should use.
+    /// </summary>
+    /// <remarks>
+    /// AD alone cannot see three legitimate kinds of target: a mailbox addressed by a secondary
+    /// SMTP alias, a mail-enabled group, and a cloud-only recipient. The first is a protection
+    /// bypass, not just a usability gap - protected rows are stored as primary addresses, so an
+    /// alias-addressed protected principal does not match. Exchange normalizes any alias to the
+    /// canonical primary address, so re-resolving through that address is what closes it.
+    ///
+    /// Fail-closed rules, in order of importance:
+    /// - Only <c>NotFound</c> falls through to Exchange. Resolved / Ambiguous / Unavailable are
+    ///   returned exactly as AD produced them, so no path that denies today starts allowing.
+    /// - An Exchange lookup that could not run returns <c>Unavailable</c>, never <c>NotFound</c>.
+    ///   An unreachable directory is not evidence of absence.
+    /// See docs/ProtectedPrincipalResolution-Plan.md.
+    /// </remarks>
+    // virtual: same test seam as ResolveWithStatusAsync - gate tests substitute outcomes without
+    // a live directory.
+    public virtual async Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+    {
+        var (principal, status) = await ResolveWithStatusAsync(identity);
+        if (status != ResolutionStatus.NotFound)
+            return (principal, status);
+
+        if (_scopeFactory == null)
+        {
+            _logger.LogWarning(
+                "Cannot attempt Exchange fallback for {Identity} - no service scope factory. Failing closed.",
+                identity);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        ResolvedRecipient? recipient;
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var resolver = scope.ServiceProvider.GetService<IIdentityResolver>();
+            if (resolver == null)
+            {
+                _logger.LogWarning(
+                    "Cannot attempt Exchange fallback for {Identity} - no IIdentityResolver registered. Failing closed.",
+                    identity);
+                return (null, ResolutionStatus.Unavailable);
+            }
+
+            recipient = await resolver.ResolveRecipientAsync(identity);
+        }
+        catch (Exception ex)
+        {
+            // The lookup did not run. Reporting NotFound here would let an EXO outage present as
+            // an affirmative absence, and callers that allow on NotFound would un-protect the
+            // principal. Deny instead.
+            _logger.LogWarning(ex, "Exchange fallback lookup failed for {Identity} - failing closed", identity);
+            return (null, ResolutionStatus.Unavailable);
+        }
+
+        if (recipient == null)
+        {
+            // Both directories answered and neither has this recipient. Now the absence is
+            // affirmative, which is what NotFound is allowed to mean.
+            _logger.LogInformation(
+                "{Identity} not found in Active Directory or Exchange Online", identity);
+            return (null, ResolutionStatus.NotFound);
+        }
+
+        if (!string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase))
+        {
+            // The alias case. Re-resolve against the canonical address so the principal carries a
+            // DN and the group / OU / pattern rules apply normally.
+            _logger.LogInformation(
+                "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
+                identity, recipient.PrimarySmtpAddress);
+            return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+        }
+
+        // Exchange knows this recipient under the same address AD just missed, so it has no
+        // on-prem object. Handling that cloud-only case is slice 3 of the plan; until it lands,
+        // report the conservative answer AD already gave.
+        _logger.LogInformation(
+            "Exchange resolved {Identity} with no on-premises object - cloud-only handling not yet enabled",
+            identity);
+        return (null, ResolutionStatus.NotFound);
     }
 
     private ResolvedDirectoryPrincipal? ResolveViaActiveDirectory(string identity, string username, string password, string domain)
