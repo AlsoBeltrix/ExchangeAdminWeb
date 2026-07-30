@@ -6,8 +6,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Protected-principal resolution — plan drafted 2026-07-30, AWAITING OWNER RULING; no code
-  written.** `docs/ProtectedPrincipalResolution-Plan.md` Status: Draft. Triggered by an owner
+- **Protected-principal resolution — plan APPROVED 2026-07-30; implementation not started.**
+  `docs/ProtectedPrincipalResolution-Plan.md` Status: Approved. Triggered by an owner
   report of L1/L2 friction: Mailbox Permissions denies cloud-only mailboxes and mail-enabled
   groups with "Protected-principal identity resolution is unavailable", which reads as an
   outage but is an affirmative AD miss. Investigation found a second, unreported defect — the
@@ -16,10 +16,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `ExchangeIdentityResolver.ResolveToObjectIdAsync` (`Services/ExchangeIdentityResolver.cs:10-31`,
   already registered `Program.cs:173`, unused by the protection path) so Exchange returns the
   canonical primary address; that closes the alias hole and makes groups and cloud-only
-  mailboxes resolvable in one change. Four owner decisions open (D1 fall back to Exchange,
-  D2 unavailable-still-denies, D3 scope across the three gated modules, D4 what a confirmed
-  cloud-only recipient gets). **Blocked until ruled** — D1/D2 gate slices 1, 2, 4; D4 gates
-  slice 3. Would be app `2.3.32 -> 2.3.33` + `MailboxPermissions 1.0.3 -> 1.0.4`.
+  mailboxes resolvable in one change. **No open owner gates.** D1 (fall back to EXO) ruled go;
+  D3 ruled "anywhere it's broken it needs to be fixed" — all three gated modules in scope.
+  D2 and D4 were withdrawn as decisions on owner challenge: EXO-down is unobservable as a
+  policy choice (MailboxPermissions writes via the same pool, GroupManagement never touches
+  EXO), and the cloud-only branch relaxes nothing because a cloud-only mailbox cannot be an
+  on-prem group member in the first place (`Services/GroupManagementService.cs:246-247` throws
+  before the write). Both reduced to consequences of D1; reasoning kept in the plan so they are
+  not revived as questions. 4 slices, none started. App `2.3.32 -> 2.3.33`,
+  `MailboxPermissions 1.0.3 -> 1.0.4`, `ConferenceRooms 2.3.0 -> 2.3.1`,
+  `GroupManagement 2.1.0 -> 2.1.1`. Carries a Constitution edit (protected-groups cannot reach
+  cloud-only objects; protect those by address).
 
 - **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29; on dev in `2.3.31`, NOT on
   prod (prod is `2.3.30`, still carrying the defect).**
@@ -309,13 +316,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   - **Binding consequence:** relaxing `NotFound` to "allow" anywhere without simultaneously
     broadening resolution converts the masked bypass into a live one. Recorded here because it
     constrains any future work in this area, not only the plan below.
-  - Fix drafted in `docs/ProtectedPrincipalResolution-Plan.md` (Draft — awaiting owner ruling
-    on D1-D4). Regression check: alias as target must be denied citing the CEO user rule.
-- **OPEN — `NotFound`-allows rule unexamined for genuinely cloud-only objects** (raised
-  2026-07-30, OQ-3 of `docs/ProtectedPrincipalResolution-Plan.md`). Separate from GAP 4: once
-  aliases resolve, the residual question is whether a confirmed cloud-only conference room or
-  group member should be allowed through a gate that cannot evaluate on-prem group rules
-  against it. Owner decision D4 of that plan settles it.
+  - Fix approved in `docs/ProtectedPrincipalResolution-Plan.md` (owner, 2026-07-30);
+    implementation not started. Regression check: alias as target must be denied citing the
+    CEO user rule.
 - **OPEN — MailboxPermissions denies cloud-only mailboxes and mail-enabled groups** (reported by
   the owner 2026-07-30 as L1/L2 support friction). 16 prod denials 2026-06-30..2026-07-30 over 7
   targets; 4 are permanent under the current AD-only filter (`Jabil.support@analog.com`,

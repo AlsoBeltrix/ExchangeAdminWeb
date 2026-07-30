@@ -1,13 +1,15 @@
 # Protected-Principal Identity Resolution via Exchange -- Plan
 
-Status: **Draft -- awaiting owner approval.** Two open owner decisions (D3, D4) block the
-slices that depend on them; D1 and D2 are the plan's core and are also unruled. No code
-moves until the owner rules. Nothing here is implemented.
+Status: **Approved (owner, 2026-07-30).** D1 ruled go. D2 and D4 were withdrawn as decisions --
+both dissolved on owner challenge into consequences of D1 rather than choices; see their
+sections for the reasoning, which is load-bearing for the design. D3 withdrawn as a decision:
+the owner ruled "anywhere it's broken it needs to be fixed", so all three gated modules are in
+scope unconditionally. No open owner gates. Not yet implemented.
 App version: `2.3.32` -> `2.3.33` (shared service change in `ProtectedPrincipalService`,
 consumed by more than one module).
 Module: `MailboxPermissions` `1.0.3` -> `1.0.4` (module behavior change: targets that
 previously produced a blanket denial now resolve or produce an accurate message).
-Additional module bumps depend on D3; see Versioning.
+`ConferenceRooms` `2.3.0` -> `2.3.1` and `GroupManagement` `2.1.0` -> `2.1.1`; see Versioning.
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 
@@ -123,9 +125,11 @@ to the app.
 
 ## Owner Decisions
 
-Each decision below is unruled. Implementation proceeds only behind the rulings it has.
+All settled 2026-07-30. D1 ruled; D2, D3 and D4 withdrawn as decisions on owner challenge.
+The withdrawal reasoning is recorded because it constrains the design -- an implementer who
+revives one of these as an open question has misread the code.
 
-### D1 -- Fall back to Exchange when AD does not resolve (UNRULED)
+### D1 -- Fall back to Exchange Online when AD does not resolve (RULED: GO)
 
 **Problem.** On-prem AD alone cannot resolve cloud-only mailboxes, mail-enabled groups, or
 alias-addressed recipients. All three are legitimate administrative targets and all three
@@ -139,75 +143,83 @@ protection rules against whichever identity was obtained.
 these logs: 0.1-4s). Successful AD resolutions are unaffected. Introduces a dependency on EXO
 availability for a path that currently depends only on AD -- mitigated by D2's fail-closed rule.
 
-### D2 -- Exchange unavailable still denies (UNRULED)
+### D2 -- EXO unavailable still denies (WITHDRAWN: not a decision)
 
-**Problem.** Adding a second directory adds a second thing that can be down.
+Drafted as a policy choice. The owner challenged it and the challenge is correct: there is no
+deployment state in which the choice is observable.
 
-**Change.** `Unavailable` from either directory continues to deny. Only an affirmative
-"this recipient does not exist" from Exchange, or an affirmative resolution, changes the
-outcome. The denial message distinguishes the three cases:
+- **MailboxPermissions** writes through the same `ExoConnectionPool` the fallback lookup uses
+  (`Services/MailboxPermissionService.cs:44`, `:63`, `:343`). If EXO is unreachable the write
+  fails regardless of what the gate decides. Allow and deny are indistinguishable to the
+  operator.
+- **GroupManagement** never touches EXO -- it writes on-prem via `Add-ADGroupMember`
+  (`Services/GroupManagementService.cs:251`). EXO reachability is irrelevant to whether its
+  write succeeds. And per D4 the fallback cannot produce an addable member for this module
+  anyway.
+
+What survives is a **message** requirement, not a policy: `Unavailable` continues to deny (that
+is unchanged current behavior, preserving Known Failure Class #3), and the message must name
+which directory could not be reached. Implementers: do not re-open this as an allow/deny
+question.
 
 | Situation | Message |
 | --- | --- |
-| Neither directory can be reached | `Access denied: Protected-principal identity resolution is unavailable. Contact your administrator.` (unchanged) |
+| AD unreachable | `Access denied: Protected-principal identity resolution is unavailable (Active Directory unreachable). Contact your administrator.` |
+| AD missed, EXO unreachable | `Access denied: Protected-principal identity resolution is unavailable (Exchange Online unreachable). Contact your administrator.` |
 | Both answered; no such recipient | `Access denied: '<target>' was not found in Active Directory or Exchange Online. Check the address.` |
 | Ambiguous | existing ambiguous message, unchanged |
 
-**Cost / risk.** None to the security posture -- this preserves Known Failure Class #3
-(fail-closed authorization) exactly. The gain is diagnostic: an operator learns whether to fix
-their typing or raise a ticket.
+### D3 -- Scope (WITHDRAWN: ruled unconditionally)
 
-### D3 -- Scope: MailboxPermissions only, or all three gated modules (UNRULED)
+Drafted as a choice between fixing `ProtectedPrincipalService` alone versus also reviewing the
+`NotFound`-allows rule in the two other gated modules. Owner ruling, 2026-07-30: **"anywhere
+it's broken it needs to be fixed"** -- no per-module scoping.
 
-**Problem.** `ConferenceRoomProtectionGate.EvaluateAsync`
-(`Services/ConferenceRoomProtectionGate.cs:60-92`) and `GroupManagementService.CheckProtectedAsync`
-(`Services/GroupManagementService.cs:36-68`) already treat `NotFound` as **not protected** and
-allow the operation (documented at `ConferenceRoomProtectionGate.cs:56-58` as an accepted
-limitation). Combined with the alias gap above, those two modules have a **live** bypass today,
-not a masked one: a protected principal addressed by secondary alias resolves `NotFound` and is
-allowed through.
+All three gated modules switch to the new resolution entry point:
 
-**Change.** Option A: fix `ProtectedPrincipalService` only, and let all three modules inherit
-the improvement (they share `ResolveWithStatusAsync`). Option B: Option A plus an explicit
-review of the `NotFound`-allows rule in those two modules.
+- `Services/PermissionValidator.cs:124-131` (MailboxPermissions)
+- `Services/ConferenceRoomProtectionGate.cs:60-92` (ConferenceRooms)
+- `Services/GroupManagementService.cs:36-68` (GroupManagement)
 
-**Cost / risk.** Option A closes the alias bypass in all three modules automatically, because
-resolution now returns the canonical identity instead of `NotFound`. It leaves the
-`NotFound`-allows rule itself unexamined for genuinely-cloud-only conference rooms and group
-members. Option B is a larger diff touching three modules and three version bumps.
+The last two treat `NotFound` as **not protected** and allow (documented at
+`ConferenceRoomProtectionGate.cs:56-58` as an accepted limitation). Combined with the alias gap
+in Problem, that is a **live** bypass today, not a masked one: a protected principal addressed
+by secondary alias resolves `NotFound` and is allowed through. The shared fix closes it in all
+three, because resolution now returns the canonical identity instead of `NotFound`.
 
-**Recommendation: Option A**, with the `NotFound`-allows rule recorded in `.agents/state.md`
-as a separate open item. Rationale: Option A removes the exploitable path with the smallest
-diff; the residual question is about cloud-only objects, which is exactly what D4 settles and
-should be settled once rather than per-module.
+### D4 -- Confirmed cloud-only recipient (WITHDRAWN: not a decision)
 
-### D4 -- What happens to a confirmed cloud-only recipient (UNRULED)
+Drafted as allow-vs-deny for a recipient that Exchange confirms exists with no on-prem AD
+object. The owner challenged the framing -- "we cannot add Exchange Online only mailboxes to
+on-prem groups, they don't exist in the on-prem directory" -- and the code agrees. The branch
+is reachable in exactly one module, and there it relaxes nothing.
 
-**Problem.** After D1, a recipient like `Jabil.support@analog.com` is confirmed by Exchange to
-exist with no on-prem AD object. It can be checked against the 4 protected **user** rows by
-address, but it cannot be checked against the 3 protected **group** rows -- group membership is
-evaluated by on-prem DN via `memberOf` chasing (`ProtectedPrincipalService.cs:554-631`,
-`CheckTransitiveGroupMembership`), and a cloud-only object has no DN. `:587-588` returns no
-matches when `targetDn` is empty.
+**GroupManagement: unreachable.** `AddMemberAsync` resolves the member with `Get-ADUser` and
+throws `User '<member>' not found in AD.` at `Services/GroupManagementService.cs:246-247`
+before `Add-ADGroupMember` at `:251`, which needs an on-prem DN
+(`:253`). A cloud-only mailbox cannot be added to an on-prem group by any path. The protection
+gate's answer for such a member never affects an outcome.
 
-**Change.** Option A: allow the operation once the address clears the user rows and the
-SamAccountName patterns, accepting that group rules cannot apply to an object that cannot be a
-member of an on-prem group. Option B: continue to deny, with the accurate message from D2.
+**ConferenceRooms: not applicable in practice.** Room mailboxes targeted by that module are
+on-prem-backed; a cloud-only room hitting this branch is not a case the module serves.
 
-**Cost / risk.** Option A is the only option that makes `Jabil.support` and `sporting.tickets`
-manageable -- the L1/L2 friction that prompted this plan. Its exposure: a cloud-only mailbox
-that *should* be protected must be listed by address, because group rules cannot reach it. All
-4 current protected users are synced on-prem accounts with DNs, so no currently-protected
-principal relies on group rules being applied to a cloud-only object. Option B keeps today's
-denial for exactly the cases the owner reported as friction.
+**MailboxPermissions: the only live case, and nothing is relaxed.** The target is an EXO
+mailbox and the write is `Add-MailboxPermission` against EXO. On-prem group rules were never
+applicable to such a target -- not "applicable but skipped". Today it is denied by an accident
+of the AD-only lookup, not by a protection decision.
 
-**Recommendation: Option A.** The exposure is bounded and already accepted elsewhere in the
-app (`ConferenceRoomProtectionGate.cs:56-58` documents the same trade-off), and Option B
-delivers no relief for the reported problem.
+So the behavior is a consequence of D1, not a policy choice: a confirmed cloud-only recipient
+is checked against the protected **user** rows and the SamAccountName patterns, and allowed if
+it clears them. Group rules cannot apply to an object that cannot be a member of an on-prem
+group -- `CheckTransitiveGroupMembership` (`ProtectedPrincipalService.cs:554-631`) evaluates
+membership by on-prem DN and `:587-588` returns no matches when `targetDn` is empty.
 
-**If D4 is ruled Option A**, the implementer must add the protected-groups-do-not-apply
-limitation to `docs/ProjectConstitution.md`'s protected-principal section as a documented,
-owner-accepted boundary -- not leave it implicit in code.
+**Still required of the implementer:** record the protected-groups-cannot-reach-cloud-only
+boundary in `docs/ProjectConstitution.md`'s protected-principal section as a documented
+limitation. It is a true constraint on how protection can be configured -- a cloud-only mailbox
+must be protected by address, never by group membership -- and it must not stay implicit in
+code. Verified 2026-07-30: all 4 current protected `user` rows are synced on-prem accounts with
+DNs, so no currently-protected principal depends on group rules reaching a cloud-only object.
 
 ## Non-Goals
 
@@ -227,7 +239,7 @@ owner-accepted boundary -- not leave it implicit in code.
 
 ## Design
 
-Behind D1 + D2. Slice 3 additionally behind D4.
+Fully approved; no part of this section waits on a ruling.
 
 ### Extend `ResolutionStatus` consumption, not the enum
 
@@ -302,8 +314,8 @@ Distinguish "returned nothing" from "call failed": `ExchangeIdentityResolver`'s 
 `catch` (`:26-30`) collapses both to `null`. `ResolveRecipientAsync` must not repeat that --
 it needs to throw or signal failure distinctly so step 4 and step 5 stay separable. A caught
 exception that becomes `null` would make an EXO outage look like an affirmative absence and
-would allow the operation under D4/Option A. **This is the single most dangerous line in the
-change; get it right.**
+would allow the operation through the cloud-only branch. **This is the single most dangerous
+line in the change; get it right.**
 
 ### Caller change
 
@@ -318,9 +330,10 @@ if (status == ResolutionStatus.NotFound)
 principal = resolved!;
 ```
 
-`ConferenceRoomProtectionGate` and `GroupManagementService` inherit the fix by switching their
-`ResolveWithStatusAsync` call to `ResolveWithExchangeFallbackAsync`. Under D3/Option A their
-`NotFound`-allows rule is otherwise untouched.
+`ConferenceRoomProtectionGate` (`:64`) and `GroupManagementService` (`:43`) inherit the fix by
+switching their `ResolveWithStatusAsync` call to `ResolveWithExchangeFallbackAsync`. Their
+`NotFound`-allows rule is otherwise untouched -- the fix works by making the alias case stop
+returning `NotFound`, not by changing what `NotFound` means.
 
 ### Mail-enabled groups
 
@@ -332,8 +345,8 @@ strings and does not assume a user object.
 ### Non-negotiable invariants
 
 - No path may return `NotFound` when a directory was unreachable.
-- No path may allow an operation that today denies it, except via the D4-ruled cloud-only
-  branch.
+- No path may allow an operation that today denies it, except the cloud-only branch described
+  under D4 -- and that branch must still clear the protected user rows and patterns.
 - Every new denial path logs at `LogWarning` with the target identity, as the current code does.
 - ASCII only in all `.cs` changes (CI gate).
 
@@ -349,12 +362,8 @@ Each slice is one commit, verified before the next begins.
    confirmed absence returns `NotFound`. Cloud-only (step 7) is **not** in this slice; it
    returns `NotFound` here. Tests cover each status transition with a substituted
    `IIdentityResolver`.
-3. **Cloud-only branch (step 7).** Behind D4/Option A only. If D4 is ruled Option B, this
-   slice is dropped and step 7 keeps returning `NotFound`.
-4. **Caller switch + messages.** `PermissionValidator`, and under D3/Option A the two other
-   gated modules. Version bumps land here.
-
-Slices 1, 2 and 4 are implementable under D1 + D2 alone.
+3. **Cloud-only branch (step 7)**, plus the Constitution note required by D4.
+4. **Caller switch + messages.** All three gated modules. Version bumps land here.
 
 ## Verification
 
@@ -377,8 +386,7 @@ exact defect class the plan exists to prevent.
 
 Automated tests cannot cover live directory behavior. On dev, after deploy:
 
-1. `Jabil.support@analog.com` as target -- resolves, or gives the accurate not-found message
-   (which it is depends on D4).
+1. `Jabil.support@analog.com` as target -- resolves and the operation proceeds.
 2. `adspstaff@analog.com` as target -- resolves as a group, operation proceeds to the EXO call.
 3. `VRoche@O365.analog.com` as target -- **must be denied as a protected principal**, citing
    the CEO user rule. This is the alias-bypass regression test and is the most important
@@ -396,8 +404,8 @@ Per `docs/ProjectConstitution.md` (Deployment And Versioning), both rules fire:
 - App `2.3.32` -> `2.3.33` in `ExchangeAdminWeb.csproj` (`VersionPrefix`, `AssemblyVersion`,
   `FileVersion`): `ProtectedPrincipalService` and `IIdentityResolver` are shared.
 - `MailboxPermissions` `1.0.3` -> `1.0.4` in `Modules/ModuleCatalog.cs`.
-- Under D3/Option A, `ConferenceRooms` `2.3.0` -> `2.3.1` and `GroupManagement` `2.1.0` ->
-  `2.1.1` as well, since their observable denial behavior changes.
+- `ConferenceRooms` `2.3.0` -> `2.3.1` and `GroupManagement` `2.1.0` -> `2.1.1`, since their
+  observable denial behavior changes (D3).
 
 ## Open Questions
 
@@ -408,6 +416,6 @@ Per `docs/ProjectConstitution.md` (Deployment And Versioning), both rules fire:
   that *should* be administratively reachable at all, or artifacts of a decommission that was
   never finished. Not a blocker -- the plan makes them resolvable either way -- but worth an
   answer before treating the L1/L2 friction as fully closed.
-- **OQ-3.** The `NotFound`-allows rule in `ConferenceRoomProtectionGate` and
-  `GroupManagementService` (see D3). Recorded in `.agents/state.md` as an open item under
-  D3/Option A.
+- **OQ-3.** CLOSED by the D3 ruling (2026-07-30): all three gated modules are in scope. The
+  `NotFound`-allows rule in `ConferenceRoomProtectionGate` and `GroupManagementService` stays
+  as written; the fix removes the alias case from reaching it. No separate follow-up item.
