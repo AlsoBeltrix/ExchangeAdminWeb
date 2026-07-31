@@ -1,0 +1,119 @@
+namespace ExchangeAdminWeb.Services;
+
+/// <summary>
+/// What the admin page should do with one typed protected-principal entry.
+/// </summary>
+/// <param name="Accepted">True when <paramref name="ValueToAdd"/> should join the list.</param>
+/// <param name="ValueToAdd">
+/// The value to store - the directory's canonical form where it supplied one, so the saved entry
+/// matches what the protection engine will later resolve rather than whatever the operator typed.
+/// </param>
+/// <param name="ErrorMessage">Operator-facing refusal text; null when accepted.</param>
+/// <param name="ClearInput">
+/// Whether the input box should be emptied. False on every refusal, so the operator can see and
+/// correct what they typed.
+/// </param>
+/// <param name="ConsultedDirectory">
+/// Whether a directory lookup was warranted. False for blank and duplicate input, which are
+/// decided without a round-trip.
+/// </param>
+public sealed record EntryValidationDecision(
+    bool Accepted,
+    string? ValueToAdd,
+    string? ErrorMessage,
+    bool ClearInput,
+    bool ConsultedDirectory);
+
+/// <summary>
+/// Decides whether a typed protected-principal entry may be saved. Extracted from
+/// <c>Components/Pages/AdminSettings.razor</c> because this repo has no bUnit harness, so page
+/// markup cannot be tested - the same reason <c>MessageTraceExportListing</c> exists.
+///
+/// See docs/ProtectedPrincipalInputValidation-Plan.md.
+/// </summary>
+public static class ProtectedPrincipalEntryValidator
+{
+    public const string UnavailableMessage = "Active Directory is unreachable. Try again later.";
+
+    /// <summary>
+    /// Should this entry be looked up at all? Blank input has nothing to resolve, and a duplicate
+    /// is already present - neither is worth a directory round-trip.
+    /// </summary>
+    public static bool ShouldConsultDirectory(IReadOnlyCollection<string> existing, string raw)
+    {
+        var v = raw.Trim();
+        return !string.IsNullOrWhiteSpace(v)
+            && !existing.Contains(v, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Turns a directory outcome into the page's action.
+    /// </summary>
+    /// <remarks>
+    /// The two refusal messages MUST stay distinct. NotFound means the directory answered and the
+    /// operator should check what they typed; Unavailable means the lookup never ran and they
+    /// should retry. Collapsing them tells an admin their correct entry was a typo during an
+    /// outage, and sends them chasing a mistake they did not make (owner ruling 2026-07-31, plan D1).
+    ///
+    /// Both refusals leave the entry out of the list. An unvalidated entry is not inert: a bad
+    /// user or OU row silently matches nothing, and a bad group row makes group expansion fail
+    /// closed, turning every later check into a denial that reads as a directory fault.
+    /// </remarks>
+    public static EntryValidationDecision Decide(
+        IReadOnlyCollection<string> existing,
+        string raw,
+        string objectKind,
+        DirectoryValidationResult result)
+    {
+        var v = raw.Trim();
+
+        if (string.IsNullOrWhiteSpace(v))
+            return new EntryValidationDecision(false, null, null, ClearInput: false, ConsultedDirectory: false);
+
+        if (existing.Contains(v, StringComparer.OrdinalIgnoreCase))
+        {
+            // Already protected. Not an error - just clear the box.
+            return new EntryValidationDecision(false, null, null, ClearInput: true, ConsultedDirectory: false);
+        }
+
+        switch (result.Outcome)
+        {
+            case DirectoryLookupOutcome.Unavailable:
+                return new EntryValidationDecision(
+                    false, null, UnavailableMessage, ClearInput: false, ConsultedDirectory: true);
+
+            case DirectoryLookupOutcome.NotFound:
+                return new EntryValidationDecision(
+                    false,
+                    null,
+                    $"'{v}' was not found in Active Directory. Check the name - note that "
+                    + "cloud-only objects cannot be protected.",
+                    ClearInput: false,
+                    ConsultedDirectory: true);
+        }
+
+        return new EntryValidationDecision(
+            true, CanonicalValue(v, objectKind, result.Match), null, ClearInput: true, ConsultedDirectory: true);
+    }
+
+    /// <summary>
+    /// Prefers the directory's own form of the identity over the typed one, so the stored entry is
+    /// what the protection engine resolves. Groups and OUs store the DN, which
+    /// <c>MatchesDnToProtectedGroup</c> and <c>CheckOuMatches</c> compare directly; users store the
+    /// UPN, falling back to mail. Falls back to the typed value when the directory supplied none.
+    /// </summary>
+    internal static string CanonicalValue(string typed, string objectKind, ADSearchResult? match)
+    {
+        if (match == null)
+            return typed;
+
+        var canonical = objectKind switch
+        {
+            "Group" => match.DistinguishedName,
+            "OU" => match.DistinguishedName,
+            _ => match.UserPrincipalName ?? match.Email
+        };
+
+        return string.IsNullOrWhiteSpace(canonical) ? typed : canonical;
+    }
+}

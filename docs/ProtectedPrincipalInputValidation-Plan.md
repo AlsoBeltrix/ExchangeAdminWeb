@@ -373,8 +373,7 @@ Per `docs/ProjectConstitution.md` (Deployment And Versioning), both rules fire:
   resolve. Unknown until slice 4 ships or an equivalent check is run by hand. Not a blocker --
   the flagging exists to answer it -- but a stale group row is currently producing fail-closed
   denials that read as directory faults, so the answer is worth having early.
-- **OQ-2.** Whether `Get-ADOrganizationalUnit` is available under the app-pool identity in this
-  environment. The RSAT AD module is confirmed loadable (`ADDirectorySearchService` depends on
-  it), and D2's ruling states read access is undifferentiated here, so this is expected to work.
-  Confirm during slice 1 rather than assuming; if it does not, the OU picker degrades to the
-  current raw text input and slice 3 is dropped, with slices 1, 2 and 4 unaffected.
+- **OQ-2. CLOSED (2026-07-31): `Get-ADOrganizationalUnit` works.** Verified on the dev box by
+  importing the `ActiveDirectory` module into a bare runspace under the ambient identity and
+  running a `distinguishedName` LDAP filter: the cmdlet is present and the query completes with
+  `HadErrors=False`. Slice 3 (the OU picker) is therefore unblocked and is not dropped.

@@ -14,6 +14,7 @@
 @inject ModuleEnablementService Enablement
 @inject ProtectedPrincipalService ProtectedPrincipalService
 @inject ModuleConfigService ModuleConfigSvc
+@inject ADDirectorySearchService ADSearch
 
 <PageTitle>Admin Settings</PageTitle>
 
@@ -124,8 +125,8 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN" @bind-Value="ppNewUser" Placeholder="user@contoso.com" />
-                        <button class="btn btn-outline-success" @onclick="AddPpUser" disabled="@string.IsNullOrWhiteSpace(ppNewUser)">Add</button>
+                        <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN" @bind-Value="ppNewUser" Placeholder="user@contoso.com" Disabled="@ppValidating" />
+                        <button class="btn btn-outline-success" @onclick="AddPpUser" disabled="@(ppValidating || string.IsNullOrWhiteSpace(ppNewUser))">@(ppValidating ? "Checking..." : "Add")</button>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -146,8 +147,8 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="DN" @bind-Value="ppNewGroup" Placeholder="Search AD groups..." />
-                        <button class="btn btn-outline-success" @onclick="AddPpGroup" disabled="@string.IsNullOrWhiteSpace(ppNewGroup)">Add</button>
+                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="DN" @bind-Value="ppNewGroup" Placeholder="Search AD groups..." Disabled="@ppValidating" />
+                        <button class="btn btn-outline-success" @onclick="AddPpGroup" disabled="@(ppValidating || string.IsNullOrWhiteSpace(ppNewGroup))">@(ppValidating ? "Checking..." : "Add")</button>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -168,8 +169,8 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" @bind="ppNewOu" @bind:event="oninput" @onkeydown="OnPpOuKey" placeholder="OU=Tier0,DC=ad,DC=contoso,DC=com" />
-                        <button class="btn btn-outline-success" @onclick="AddPpOu" disabled="@string.IsNullOrWhiteSpace(ppNewOu)">Add</button>
+                        <input type="text" class="form-control" @bind="ppNewOu" @bind:event="oninput" @onkeydown="OnPpOuKey" placeholder="OU=Tier0,DC=ad,DC=contoso,DC=com" disabled="@ppValidating" />
+                        <button class="btn btn-outline-success" @onclick="AddPpOu" disabled="@(ppValidating || string.IsNullOrWhiteSpace(ppNewOu))">@(ppValidating ? "Checking..." : "Add")</button>
                     </div>
                 </div>
                 <div class="col-md-6">
@@ -195,6 +196,13 @@
                     </div>
                 </div>
             </div>
+
+            @if (!string.IsNullOrEmpty(ppAddError))
+            {
+                <div class="alert alert-warning py-2 px-3 mt-3 mb-0" role="alert">
+                    <small>@ppAddError</small>
+                </div>
+            }
 
             <div class="row mt-3">
                 <div class="col-md-4">
@@ -252,6 +260,11 @@
     private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "";
     private string ppDirectoryReadSecretId = "";
     private string? ppLoadError;
+
+    // Surfaced next to the add controls, not through statusMessage: a refused Add must not
+    // overwrite an unrelated save result.
+    private string? ppAddError;
+    private bool ppValidating;
 
     protected override async Task OnInitializedAsync()
     {
@@ -386,15 +399,83 @@
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
     }
 
-    private void OnPpUserKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpUser(); }
-    private void OnPpGroupKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpGroup(); }
-    private void OnPpOuKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpOu(); }
+    private async Task OnPpUserKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpUser(); }
+    private async Task OnPpGroupKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpGroup(); }
+    private async Task OnPpOuKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpOu(); }
     private void OnPpPatternKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpPattern(); }
 
-    private void AddPpUser() { var v = ppNewUser.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppUsers.Contains(v, StringComparer.OrdinalIgnoreCase)) ppUsers.Add(v); ppNewUser = ""; }
-    private void AddPpGroup() { var v = ppNewGroup.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppGroups.Contains(v, StringComparer.OrdinalIgnoreCase)) ppGroups.Add(v); ppNewGroup = ""; }
-    private void AddPpOu() { var v = ppNewOu.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppOus.Contains(v, StringComparer.OrdinalIgnoreCase)) ppOus.Add(v); ppNewOu = ""; }
+    // Users, Groups and OUs are validated against AD before they enter the list: an entry that
+    // corresponds to no directory object is not inert. A bad user or OU row silently matches
+    // nothing, and a bad GROUP row is worse - group expansion fails closed
+    // (ProtectedPrincipalService.CheckGroupMembershipAsync), turning every subsequent check into
+    // a denial that reads as a directory fault. See docs/ProtectedPrincipalInputValidation-Plan.md.
+    //
+    // Patterns are deliberately NOT validated - they are wildcards matched against a resolved
+    // target at check time, so there is no object for them to correspond to, and one matching
+    // nothing today is legitimate (it may exist to catch future accounts).
+    private async Task AddPpUser() => await AddValidatedAsync(ppUsers, ppNewUser, "User", v => ppNewUser = v);
+    private async Task AddPpGroup() => await AddValidatedAsync(ppGroups, ppNewGroup, "Group", v => ppNewGroup = v);
+    private async Task AddPpOu() => await AddValidatedAsync(ppOus, ppNewOu, "OU", v => ppNewOu = v);
+
     private void AddPpPattern() { var v = ppNewPattern.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase)) ppPatterns.Add(v); ppNewPattern = ""; }
+
+    /// <summary>
+    /// Validates one typed entry against Active Directory and appends it only when the directory
+    /// confirms it exists. A refusal leaves the input box untouched so the operator can see and
+    /// correct what they typed.
+    /// </summary>
+    /// <remarks>
+    /// The two refusal messages must stay distinct. NotFound means the directory answered and the
+    /// operator should check the name; Unavailable means the lookup never ran and they should
+    /// retry. Collapsing them would tell an admin their correct entry was a typo during an outage
+    /// (owner ruling, .agents/decisions.md and the plan's D1).
+    /// </remarks>
+    private async Task AddValidatedAsync(List<string> target, string raw, string objectKind, Action<string> setInput)
+    {
+        // Blank and duplicate are settled without a directory round-trip.
+        if (!ProtectedPrincipalEntryValidator.ShouldConsultDirectory(target, raw))
+        {
+            var quick = ProtectedPrincipalEntryValidator.Decide(
+                target, raw, objectKind, new DirectoryValidationResult(DirectoryLookupOutcome.NotFound, null));
+            ppAddError = quick.ErrorMessage;
+            if (quick.ClearInput) setInput("");
+            return;
+        }
+
+        ppValidating = true;
+        ppAddError = null;
+        StateHasChanged();
+
+        DirectoryValidationResult result;
+        try
+        {
+            // Off the render path: ValidateExists is synchronous and takes a lock that can block
+            // for up to 30s, which would freeze the circuit if called inline.
+            result = await Task.Run(() => ADSearch.ValidateExists(raw.Trim(), objectKind));
+        }
+        catch (Exception ex)
+        {
+            // Fail closed on an unexpected fault: refuse the entry rather than admit an
+            // unvalidated one, and say the lookup failed rather than blame the input.
+            Logger.LogWarning(ex, "Protected-principal validation threw for {ObjectKind}", objectKind);
+            result = new DirectoryValidationResult(DirectoryLookupOutcome.Unavailable, null);
+        }
+        finally
+        {
+            ppValidating = false;
+        }
+
+        var decision = ProtectedPrincipalEntryValidator.Decide(target, raw, objectKind, result);
+
+        if (decision.Accepted && decision.ValueToAdd is { } toAdd
+            && !target.Contains(toAdd, StringComparer.OrdinalIgnoreCase))
+        {
+            target.Add(toAdd);
+        }
+
+        ppAddError = decision.ErrorMessage;
+        if (decision.ClearInput) setInput("");
+    }
 
     private async Task SaveProtectedPrincipals()
     {
