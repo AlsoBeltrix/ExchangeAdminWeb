@@ -317,6 +317,78 @@ public class ProtectedPrincipalExchangeFallbackTests : IDisposable
     }
 
     [Fact]
+    public async Task CloudOnlyRecipient_AddressedByAlias_StillResolves()
+    {
+        // Review finding ppv-1. A cloud-only mailbox can carry secondary aliases, so "is an alias"
+        // and "is cloud-only" are independent. Branching on address equality first sent this
+        // intersection down the alias path, where re-querying AD necessarily returned NotFound -
+        // and the gates that allow on NotFound then let the operation through. Protection must not
+        // depend on which of a principal's addresses the operator typed.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+        service.AdReturns("vip.cloud@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Resolved, status);
+        Assert.NotNull(principal);
+        // The CANONICAL address, not the alias that was typed - that is what the protected user
+        // rows are stored as and matched against.
+        Assert.Equal("vip.cloud@contoso.com", principal!.PrimarySmtpAddress);
+        Assert.Equal("vip.cloud@contoso.com", principal.UserPrincipalName);
+        Assert.Null(principal.DistinguishedName);
+    }
+
+    [Fact]
+    public async Task CloudOnlyRecipient_AddressedByAlias_IsProtectedByTheUserRow()
+    {
+        // The end-to-end consequence of ppv-1: the same principal must be protected whether it is
+        // addressed by its primary address or by an alias.
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            ProtectedPrincipals = new
+            {
+                Users = new[] { "vip.cloud@contoso.com" },
+                Groups = Array.Empty<string>(),
+                OrganizationalUnits = Array.Empty<string>(),
+                SamAccountNamePatterns = Array.Empty<string>()
+            }
+        });
+        File.WriteAllText(Path.Combine(_tempDir, "config", "protected-principals.json"), json);
+
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("vip.cloud@contoso.com", "ext-vip", "UserMailbox", ExistsOnPrem: false)));
+        service.AdReturns("vip.alias@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("vip.alias@contoso.com");
+        Assert.Equal(ResolutionStatus.Resolved, status);
+
+        var verdict = await service.CheckAsync(principal!);
+
+        Assert.True(verdict.IsProtected);
+        Assert.Contains("User:vip.cloud@contoso.com", verdict.MatchedRules);
+    }
+
+    [Fact]
+    public async Task ExchangeSaysSyncedButAdMissedIt_IsUnavailable_NotCloudOnly()
+    {
+        // Adjacent case the ppv-1 restructure had to define: Exchange reports the recipient as
+        // directory-synced, yet AD missed it under that same address. The directories disagree, so
+        // nothing is established. Treating it as cloud-only would hand back a null-DN principal
+        // and silently skip the group and OU rules a synced object IS subject to - an
+        // un-protecting guess. Fail closed instead.
+        var service = CreateService(ResolverReturning(
+            new ResolvedRecipient("synced@contoso.com", null, "UserMailbox", ExistsOnPrem: true)));
+        service.AdReturns("synced@contoso.com", ResolutionStatus.NotFound);
+
+        var (principal, status) = await service.ResolveWithExchangeFallbackAsync("synced@contoso.com");
+
+        Assert.Equal(ResolutionStatus.Unavailable, status);
+        Assert.Null(principal);
+    }
+
+    [Fact]
     public async Task CloudOnlyRecipient_StillMatchesProtectedUserRows()
     {
         // The rule types a cloud-only principal CAN be protected by must actually fire. This is

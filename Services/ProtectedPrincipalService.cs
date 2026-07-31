@@ -349,32 +349,55 @@ public class ProtectedPrincipalService
             return (null, ResolutionStatus.NotFound);
         }
 
-        if (!string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase))
+        // Branch on whether the recipient has an on-premises object, NOT on whether the typed
+        // address happened to differ from the canonical one. Those are independent: a cloud-only
+        // mailbox can have secondary aliases too. Testing address equality first sent that
+        // intersection down the alias path, where the AD re-query necessarily returned NotFound
+        // (a cloud-only object is in AD under no address), which the gates that allow on NotFound
+        // then read as "not protected" - reinstating the alias bypass for exactly the principals
+        // this method exists to protect. Review finding ppv-1.
+        if (recipient.ExistsOnPrem)
         {
-            // The alias case. Re-resolve against the canonical address so the principal carries a
-            // DN and the group / OU / pattern rules apply normally.
-            _logger.LogInformation(
-                "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
-                identity, recipient.PrimarySmtpAddress);
-            return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+            if (!string.Equals(recipient.PrimarySmtpAddress, identity, StringComparison.OrdinalIgnoreCase))
+            {
+                // The alias case. Re-resolve against the canonical address so the principal
+                // carries a DN and the group / OU / pattern rules apply normally.
+                _logger.LogInformation(
+                    "Exchange resolved {Identity} to canonical address {Canonical} - re-resolving in AD",
+                    identity, recipient.PrimarySmtpAddress);
+                return await ResolveWithStatusAsync(recipient.PrimarySmtpAddress);
+            }
+
+            // Exchange says this recipient IS on-prem-backed, yet AD just missed it under the very
+            // same address. The two directories disagree, so nothing here is established: treat it
+            // as an unavailable lookup rather than inventing a cloud-only principal that would
+            // skip the group and OU rules this synced object is subject to.
+            _logger.LogWarning(
+                "Exchange reports {Identity} as directory-synced but Active Directory did not "
+                + "resolve it - directories disagree, failing closed",
+                identity);
+            return (null, ResolutionStatus.Unavailable);
         }
 
-        // Exchange knows this recipient under the address AD just missed, so it has no on-prem
-        // object. Group and OU rules are evaluated from an on-prem DN, which this principal does
-        // not have and cannot have - a cloud-only object cannot be a member of an on-prem group.
-        // Those rules are therefore not "skipped", they are inapplicable. The user rows still
-        // apply and are what must protect such a principal; the SamAccountName patterns cannot
-        // match either, for the same reason. See docs/ProjectConstitution.md (Protected
-        // Principals) and docs/ProtectedPrincipalResolution-Plan.md D4.
+        // Cloud-only: no on-premises object, under this or any address. Group and OU rules are
+        // evaluated from an on-prem DN, which this principal does not have and cannot have - a
+        // cloud-only object cannot be a member of an on-prem group. Those rules are therefore not
+        // "skipped", they are inapplicable. The user rows still apply and are what must protect
+        // such a principal; the SamAccountName patterns cannot match either, for the same reason.
+        // See docs/ProjectConstitution.md (Protected Principals) and
+        // docs/ProtectedPrincipalResolution-Plan.md D4.
+        //
+        // Built from the CANONICAL address, never the typed one, so an alias-addressed cloud-only
+        // principal is matched against the protected user rows by its real identity.
         //
         // CheckOuMatches and CheckTransitiveGroupMembership both degrade to "no match" on a null
         // DN without raising a failure, so this is logged rather than left silent: an operator
         // reading the audit trail has to be able to see which rules could not be evaluated.
         _logger.LogInformation(
-            "Exchange resolved {Identity} as a cloud-only recipient with no on-premises object - "
-            + "group, OU and SamAccountName-pattern rules were NOT evaluated; only protected user "
-            + "rows apply",
-            identity);
+            "Exchange resolved {Identity} as a cloud-only recipient (canonical {Canonical}) with no "
+            + "on-premises object - group, OU and SamAccountName-pattern rules were NOT evaluated; "
+            + "only protected user rows apply",
+            identity, recipient.PrimarySmtpAddress);
 
         var cloudOnly = new ResolvedDirectoryPrincipal(
             Source: "ProtectedPrincipalService-EXO",
