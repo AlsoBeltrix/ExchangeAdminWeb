@@ -5,7 +5,7 @@ allowed through the ConferenceRooms and GroupManagement gates, which is the exac
 class the Exchange-fallback work existed to close.
 **Status**: Verified
 **Branch**: default-branch mode (one commit per finding, per repo policy)
-**Commit**: `ee5a24b`
+**Commit**: `a6927b2`
 
 ## Evidence
 

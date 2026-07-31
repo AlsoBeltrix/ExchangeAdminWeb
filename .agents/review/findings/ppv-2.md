@@ -5,7 +5,7 @@ built, so a valid group or OU is refused as nonexistent and an already-saved one
 stale, inviting removal of a working protection rule.
 **Status**: Verified
 **Branch**: default-branch mode (one commit per finding, per repo policy)
-**Commit**: (filled in after commit)
+**Commit**: `0940964`
 
 ## Evidence
 

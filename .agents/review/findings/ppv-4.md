@@ -5,7 +5,7 @@ indistinguishable from real coverage, which is the exact trap this work stream a
 tripped over twice.
 **Status**: Verified
 **Branch**: default-branch mode (one commit per finding, per repo policy)
-**Commit**: (filled in after commit)
+**Commit**: `9a43455`
 
 ## Evidence
 

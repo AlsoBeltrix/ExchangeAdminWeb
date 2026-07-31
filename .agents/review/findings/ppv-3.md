@@ -5,7 +5,7 @@ entry they just added is absent from the store; it appears in the page afterward
 loss is invisible until a reload.
 **Status**: Verified
 **Branch**: default-branch mode (one commit per finding, per repo policy)
-**Commit**: (filled in after commit)
+**Commit**: `49b134d`
 
 ## Evidence
 
