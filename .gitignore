@@ -55,6 +55,9 @@ Thumbs.db
 .claude/settings.local.json
 .antigravitycli/
 .playwright-mcp/
+# Reviewer-harness incantations + tier pins: machine-specific (CLI paths, versions,
+# model routes), self-authored by the codereview playbook, never hand-maintained.
+.agents/review/*.local.json
 
 # Local/private cleanup archive
 _not_for_github/

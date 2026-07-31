@@ -5,17 +5,21 @@ namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
 /// Exercises <see cref="ADDirectorySearchService"/> against the REAL directory when one is
-/// reachable, and no-ops when it is not.
+/// reachable, and reports an explicit SKIP when it is not.
 ///
 /// Every other AD test in this repo asserts on pure functions, because CI (windows-latest) has no
 /// RSAT. That leaves one thing unproven: whether the PowerShell property names the mapping code
 /// reads actually match what the cmdlets return. A typo there compiles, passes every unit test,
 /// and produces empty strings at runtime.
 ///
-/// So these are conditional by design - but note the trap recorded in .agents/state.md: a test
-/// that SKIPS when AD is absent must never be the only coverage of a rule, because on a
-/// developer box with RSAT it silently skips in the other direction. These complement the pure
-/// tests; they do not replace them.
+/// Two rules keep this suite honest, both learned the hard way (see .agents/state.md):
+///
+/// 1. Skip LOUDLY, never by an early <c>return</c>. A returned test reports PASSED, so on a host
+///    without AD these would be indistinguishable from real coverage - green tests that asserted
+///    nothing. Review finding ppv-4; the sibling fixture-missing case had already been caught the
+///    same way one commit earlier.
+/// 2. Never let a conditional live test be the only coverage of a rule. On CI it does not run at
+///    all. These complement the pure tests; they never replace them.
 /// </summary>
 public class ADDirectoryLiveTests
 {
@@ -51,7 +55,7 @@ public class ADDirectoryLiveTests
         // Guards the property names in the OU branch: Get-ADOrganizationalUnit returns "Name",
         // not "DisplayName", and reading the wrong one yields a blank suggestion label.
         var svc = CreateService();
-        if (!Reachable(svc)) return;
+        Assert.SkipWhen(!Reachable(svc), "Active Directory is not reachable from this host.");
 
         var ou = FindAnyOu(svc);
         Assert.SkipWhen(ou is null, "No OU in this directory matched any probe fragment.");
@@ -71,7 +75,7 @@ public class ADDirectoryLiveTests
         // "Any" is the people-and-groups picker used elsewhere in the app. Leaking containers into
         // it would be noise on every other page that uses this component.
         var svc = CreateService();
-        if (!Reachable(svc)) return;
+        Assert.SkipWhen(!Reachable(svc), "Active Directory is not reachable from this host.");
 
         var results = svc.Search("adm", "Any", maxResults: 25);
 
@@ -83,7 +87,7 @@ public class ADDirectoryLiveTests
     {
         // The end-to-end shape of the OU validation path: filter -> cmdlet -> mapped result.
         var svc = CreateService();
-        if (!Reachable(svc)) return;
+        Assert.SkipWhen(!Reachable(svc), "Active Directory is not reachable from this host.");
 
         // Discover an OU rather than hardcoding one, so this is not tied to one environment.
         var ou = FindAnyOu(svc);
@@ -102,7 +106,7 @@ public class ADDirectoryLiveTests
         // returned Unavailable here, every refusal would read as an outage and the operator would
         // never be told they mistyped.
         var svc = CreateService();
-        if (!Reachable(svc)) return;
+        Assert.SkipWhen(!Reachable(svc), "Active Directory is not reachable from this host.");
 
         var result = svc.ValidateExists("OU=NoSuchOuAnywhere-a7f3,DC=invalid,DC=example", "OU");
 
@@ -113,7 +117,7 @@ public class ADDirectoryLiveTests
     public void ValidateExists_NonexistentUser_IsNotFound_NotUnavailable()
     {
         var svc = CreateService();
-        if (!Reachable(svc)) return;
+        Assert.SkipWhen(!Reachable(svc), "Active Directory is not reachable from this host.");
 
         var result = svc.ValidateExists("no.such.person.a7f3@invalid.example", "User");
 
