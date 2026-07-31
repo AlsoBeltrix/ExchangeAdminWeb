@@ -527,7 +527,7 @@ public sealed class ModuleCatalog
             SortOrder = 900,
             EnabledByDefault = true,
             IsSystemModule = true,
-            Version = "1.0.1",
+            Version = "1.0.2",
             MainPermission = new("Access", "AdminSettings")
         },
         new()

@@ -97,6 +97,24 @@ public static class ProtectedPrincipalEntryValidator
     }
 
     /// <summary>
+    /// Whether an entry ALREADY SAVED in the store should be flagged as not resolving in AD.
+    /// </summary>
+    /// <remarks>
+    /// Only an affirmative <see cref="DirectoryLookupOutcome.NotFound"/> flags a row. A lookup
+    /// that could not run must NOT flag: during an outage every entry would fail at once, and a
+    /// page full of warnings reads as "your protection rules have been lost" - alarming and
+    /// false. The badge's absence therefore means "not known to be stale", never "verified".
+    ///
+    /// This is the mirror of the rule in <see cref="Decide"/>. There, a failed lookup is
+    /// conservative because it REFUSES a new entry; here it is conservative because it stays
+    /// SILENT about an existing one. Both follow from the same principle - a directory that did
+    /// not answer is not evidence about the object - but they point in opposite directions, so
+    /// the two must not be collapsed into one helper.
+    /// </remarks>
+    public static bool ShouldFlagAsStale(DirectoryLookupOutcome outcome)
+        => outcome == DirectoryLookupOutcome.NotFound;
+
+    /// <summary>
     /// Prefers the directory's own form of the identity over the typed one, so the stored entry is
     /// what the protection engine resolves. Groups and OUs store the DN, which
     /// <c>MatchesDnToProtectedGroup</c> and <c>CheckOuMatches</c> compare directly; users store the

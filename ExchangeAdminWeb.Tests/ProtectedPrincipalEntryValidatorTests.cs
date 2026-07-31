@@ -151,6 +151,45 @@ public class ProtectedPrincipalEntryValidatorTests
         Assert.False(d.ConsultedDirectory);
     }
 
+    // ---- flagging already-saved entries (slice 4) ---------------------------
+
+    [Fact]
+    public void ShouldFlagAsStale_NotFound_Flags()
+    {
+        Assert.True(ProtectedPrincipalEntryValidator.ShouldFlagAsStale(DirectoryLookupOutcome.NotFound));
+    }
+
+    [Fact]
+    public void ShouldFlagAsStale_DirectoryUnreachable_StaysSilent()
+    {
+        // THE case. During an outage every saved entry fails to resolve at once; badging them all
+        // would read as "your protection rules have been lost" - alarming and false. Silence is
+        // correct, so the badge's absence means "not known to be stale", never "verified".
+        Assert.False(ProtectedPrincipalEntryValidator.ShouldFlagAsStale(DirectoryLookupOutcome.Unavailable));
+    }
+
+    [Fact]
+    public void ShouldFlagAsStale_Found_DoesNotFlag()
+    {
+        Assert.False(ProtectedPrincipalEntryValidator.ShouldFlagAsStale(DirectoryLookupOutcome.Found));
+    }
+
+    [Fact]
+    public void StaleFlagging_And_EntryRefusal_TreatAFailedLookupOppositely_ByDesign()
+    {
+        // Both rules follow from "a directory that did not answer is not evidence about the
+        // object", but they point in opposite directions: a failed lookup REFUSES a new entry
+        // while staying SILENT about an existing one. Pinned so a later refactor does not
+        // "simplify" them into one shared helper.
+        var refusesNewEntry = !ProtectedPrincipalEntryValidator
+            .Decide(Empty, "x@contoso.com", "User", Unavailable).Accepted;
+        var silentOnExisting = !ProtectedPrincipalEntryValidator
+            .ShouldFlagAsStale(DirectoryLookupOutcome.Unavailable);
+
+        Assert.True(refusesNewEntry);
+        Assert.True(silentOnExisting);
+    }
+
     // ---- store what the protection engine will resolve ----------------------
 
     [Fact]

@@ -1,8 +1,14 @@
 # Protected-Principal Admin Input Validation -- Plan
 
-Status: **Approved (owner, 2026-07-31).** D1 (refuse on AD unreachable) and D2 (validate under
-the app-pool identity, not the Delinea directory-read secret) both ruled. No open owner gates.
-Not yet implemented.
+Status: **Implemented (2026-07-31).** All four slices landed on `master`: `4aa310e` (slice 1),
+`67f2412` (slice 2), `3f9cec8` (slice 3), plus slice 4. 1032+ tests green; every fail-closed
+rule proven non-vacuous. **Not deployed and not exercised through the real page** - the manual
+checks below are unrun, and checks 4 (an O365-only group is refused) and 7 (AD unreachable
+yields the retry message, not not-found) are the load-bearing ones.
+
+D1 (refuse on AD unreachable) and D2 (validate under the app-pool identity, not the Delinea
+directory-read secret) both ruled by the owner 2026-07-31. No open owner gates. OQ-2 closed
+during implementation.
 App version: `2.3.33` -> `2.3.34` (shared `ADDirectorySearchService` gains a new method).
 Module: `AdminSettings` `1.0.1` -> `1.0.2` (the page's observable behavior changes).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,

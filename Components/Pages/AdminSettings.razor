@@ -117,7 +117,7 @@
                             {
                                 var captured = u;
                                 <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured</small>
+                                    <small>@captured @StaleBadge(captured)</small>
                                     <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppUsers.Remove(captured)">×</button>
                                 </div>
                             }
@@ -139,7 +139,7 @@
                             {
                                 var captured = g;
                                 <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured</small>
+                                    <small>@captured @StaleBadge(captured)</small>
                                     <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppGroups.Remove(captured)">×</button>
                                 </div>
                             }
@@ -161,7 +161,7 @@
                             {
                                 var captured = o;
                                 <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured</small>
+                                    <small>@captured @StaleBadge(captured)</small>
                                     <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppOus.Remove(captured)">×</button>
                                 </div>
                             }
@@ -266,6 +266,12 @@
     private string? ppAddError;
     private bool ppValidating;
 
+    // Entries already in the store that AD says do not exist. Populated after first render, not
+    // during load - see SweepExistingEntriesAsync. Absence from this set is NOT a claim of
+    // validity: an entry whose lookup failed never enters it, deliberately.
+    private readonly HashSet<string> ppStaleEntries = new(StringComparer.OrdinalIgnoreCase);
+    private bool ppSweepDone;
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -284,6 +290,19 @@
         selectedLogLevel = ExtendedLog.CurrentLevel;
         LoadProtectedPrincipals();
         authChecked = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Deferred to after first paint: the sweep serializes N directory lookups behind a lock
+        // that can block 30s each, which would stall the page if run during initialization.
+        // Guarded by ppSweepDone rather than firstRender alone - authChecked gates the whole
+        // markup, so the first render can complete before the lists exist.
+        if (ppSweepDone || !authChecked || ppLoadError != null)
+            return;
+
+        ppSweepDone = true;
+        await SweepExistingEntriesAsync();
     }
 
     private async Task SaveEnablement()
@@ -418,6 +437,76 @@
     private async Task AddPpOu() => await AddValidatedAsync(ppOus, ppNewOu, "OU", v => ppNewOu = v);
 
     private void AddPpPattern() { var v = ppNewPattern.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase)) ppPatterns.Add(v); ppNewPattern = ""; }
+
+    /// <summary>
+    /// Marks a saved entry that Active Directory says does not exist. Renders nothing for an
+    /// entry that resolves, and nothing for one whose lookup could not run.
+    /// </summary>
+    /// <remarks>
+    /// The silence on an unreachable directory is deliberate. A warning shown during an outage
+    /// would read as "your protection rules have been lost" across every row at once - alarming
+    /// and false. Absence of a badge therefore means "not known to be stale", never "verified".
+    /// </remarks>
+    private MarkupString StaleBadge(string entry)
+        => ppStaleEntries.Contains(entry)
+            ? new MarkupString("<span class=\"badge bg-warning text-dark ms-1\" title=\"This entry does not resolve in Active Directory, so it protects nothing. Remove it or replace it with a current one.\">not in AD</span>")
+            : new MarkupString("");
+
+    /// <summary>
+    /// Re-checks the entries already in the store and flags those that no longer resolve.
+    /// Informational only: it never blocks Save and never removes a row.
+    /// </summary>
+    /// <remarks>
+    /// Runs from OnAfterRenderAsync rather than during load. Each lookup takes a shared lock that
+    /// can block for up to 30s, and the list is long enough that doing this inline would delay
+    /// first paint by minutes in the worst case. The rows render immediately; badges appear when
+    /// the sweep finishes.
+    ///
+    /// Patterns are not swept - they are wildcards with no directory object to correspond to.
+    ///
+    /// Not blocking Save is a requirement, not an oversight: a decommissioned group must stay
+    /// removable. Blocking would make the stale row permanent.
+    /// </remarks>
+    private async Task SweepExistingEntriesAsync()
+    {
+        var targets = new List<(string Entry, string Kind)>();
+        targets.AddRange(ppUsers.Select(u => (u, "User")));
+        targets.AddRange(ppGroups.Select(g => (g, "Group")));
+        targets.AddRange(ppOus.Select(o => (o, "OU")));
+
+        if (targets.Count == 0)
+            return;
+
+        var stale = await Task.Run(() =>
+        {
+            var found = new List<string>();
+            foreach (var (entry, kind) in targets)
+            {
+                try
+                {
+                    // ONLY an affirmative NotFound flags a row. Unavailable is skipped so an
+                    // outage cannot make every entry look broken at once.
+                    if (ProtectedPrincipalEntryValidator.ShouldFlagAsStale(
+                            ADSearch.ValidateExists(entry, kind).Outcome))
+                        found.Add(entry);
+                }
+                catch (Exception ex)
+                {
+                    // Same reasoning: a failed lookup is not evidence the entry is bad.
+                    Logger.LogWarning(ex, "Stale-entry sweep failed for a {Kind} entry", kind);
+                }
+            }
+            return found;
+        });
+
+        if (stale.Count == 0)
+            return;
+
+        foreach (var s in stale)
+            ppStaleEntries.Add(s);
+
+        await InvokeAsync(StateHasChanged);
+    }
 
     /// <summary>
     /// Validates one typed entry against Active Directory and appends it only when the directory

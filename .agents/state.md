@@ -6,8 +6,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Protected-principal admin input validation — plan APPROVED 2026-07-31; implementation not
-  started.** `docs/ProtectedPrincipalInputValidation-Plan.md` Status: Approved. Owner asked why
+- **Protected-principal admin input validation — CODE COMPLETE 2026-07-31, all 4 slices on
+  `master`; NOT deployed and NOT exercised through the real page.**
+  `docs/ProtectedPrincipalInputValidation-Plan.md` Status: Implemented. Owner asked why
   an O365 group cannot be added to protected principals; investigation found the real defect is
   that `Components/Pages/AdminSettings.razor:394-397` saves **any** typed string — the
   `ADIdentityAutocomplete` on Users and Groups (`:127`, `:149`) only suggests, and the add
@@ -25,9 +26,30 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   correct entry as a typo during an outage — a new `ValidateExists` carries an explicit
   Found/NotFound/Unavailable outcome, and exact-match filters replace the autocomplete's wildcard
   (`jdoe` must not match `jdoe2`; same reasoning `FindUserBySid` already documents at `:110-123`).
-  4 slices, none started. App `2.3.33 -> 2.3.34`, `AdminSettings 1.0.1 -> 1.0.2`.
-  **OQ-2 gates slice 3 only:** whether `Get-ADOrganizationalUnit` works under the app-pool
-  identity; if not, the OU picker is dropped and the other three slices are unaffected.
+  **Slice 1 DONE** (`4aa310e`): `ADDirectorySearchService.ValidateExists` with
+  Found/NotFound/Unavailable. Exact-match filters mirroring what the protection engine resolves;
+  `DOMAIN\` prefix stripped with a trailing-backslash guard (stripping there leaves an empty
+  term, and an empty exact-match filter matches EVERY object). 28 tests.
+  **Slice 2 DONE** (`67f2412`): the three add-handlers gate on the outcome. Decision logic lives
+  in `Services/ProtectedPrincipalEntryValidator.cs`, not the page (no bUnit harness — same reason
+  `MessageTraceExportListing` exists). An accepted entry is stored in the directory's **canonical
+  form** (DN for groups/OUs, UPN then mail for users) so the saved rule matches what the engine
+  resolves rather than depending on which format was typed — this was not in the plan, added
+  during implementation. 20 tests.
+  **Slice 3 DONE** (`3f9cec8`): OU picker. `Search` gains an OU branch that is deliberately NOT
+  part of `Any`. Also removed three dead keydown handlers — unreachable before this work began.
+  **Slice 4 DONE**: already-saved rows that AD says do not exist get a "not in AD" badge, swept
+  from `OnAfterRenderAsync` so N lock-serialized lookups never delay first paint. Versions bumped
+  here: app `2.3.33 -> 2.3.34`, `AdminSettings 1.0.1 -> 1.0.2`.
+  **OQ-2 CLOSED:** `Get-ADOrganizationalUnit` works under the app-pool identity here (verified
+  directly), so the OU picker was not dropped.
+  **The inverted-rule pair is the subtle part of this work stream:** a failed lookup REFUSES a
+  new entry but stays SILENT about an existing one. Both follow from "a directory that did not
+  answer is not evidence about the object", yet they point opposite ways — badging every row
+  during an outage would read as "your protection rules have been lost". A test pins them apart
+  so a later refactor cannot collapse them into one helper.
+  **NEXT: the plan's 10 manual checks** — none run. Checks 4 (an O365-only group is refused) and
+  7 (AD unreachable gives the retry message, NOT not-found) are load-bearing.
 
 - **Protected-principal resolution via Exchange — CODE COMPLETE 2026-07-30, all 4 slices on
   `master`; NOT deployed (dev is `2.3.32`, repo is now `2.3.33`). 6 manual checks unrun.**
@@ -284,9 +306,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.33`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
-  `2.3.32` (`0eca01e`) for Exchange-backed protected-principal resolution; `2.3.32` (`14f4ef1`)
-  was the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
+- **App version `2.3.34`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+  `2.3.33` for protected-principal admin input validation; `2.3.33` (`0eca01e`) was
+  Exchange-backed protected-principal resolution, `2.3.32` (`14f4ef1`)
+  the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.3.32`, prod `2.3.30`** (as of `f3b402a`; both re-verified 2026-07-30 from the
@@ -294,8 +317,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `2.3.32.0`, `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` FileVersion `2.3.30.0`).
   Dev carries the operator-email resolver, the MessageTrace export delivery redesign, and the
   MessageTrace NRE fix; prod carries **none** of them and is **not yet validated** against them.
-  **Neither instance carries `2.3.33`** (Exchange-backed protected-principal resolution), so the
-  GAP 4 alias bypass and the L1/L2 denial friction are both still live on dev and prod.
+  **Neither instance carries `2.3.33`** (Exchange-backed protected-principal resolution) **or
+  `2.3.34`** (protected-principal admin input validation), so the GAP 4 alias bypass, the L1/L2
+  denial friction, and the unvalidated admin input are all still live on dev and prod.
   `2.3.30` was deployed to dev, validated, then promoted to prod, and supersedes all prior
   deployed builds, so prod still carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root
   fail-fast, and the `2.3.30` ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27`
