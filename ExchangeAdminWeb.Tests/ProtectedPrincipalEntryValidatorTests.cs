@@ -190,6 +190,32 @@ public class ProtectedPrincipalEntryValidatorTests
         Assert.True(silentOnExisting);
     }
 
+    // ---- save vs in-flight validation (ppv-3) -------------------------------
+
+    [Fact]
+    public void ShouldBlockSave_ValidationInFlight_Refuses()
+    {
+        // Review finding ppv-3. Add validates on a background task, so the circuit stays free and
+        // the operator can click Save mid-check. Saving then persists the list WITHOUT the pending
+        // entry, reports success, and the entry appears in the page moments later - store and page
+        // disagree, and nothing says so until a reload loses it.
+        Assert.True(ProtectedPrincipalEntryValidator.ShouldBlockSave(validationInFlight: true));
+    }
+
+    [Fact]
+    public void ShouldBlockSave_NothingInFlight_Allows()
+    {
+        Assert.False(ProtectedPrincipalEntryValidator.ShouldBlockSave(validationInFlight: false));
+    }
+
+    [Fact]
+    public void SaveBlockedMessage_TellsTheOperatorToWaitAndRetry()
+    {
+        // The refusal is transient, so the message must say so rather than reading as a failure.
+        Assert.Contains("Wait", ProtectedPrincipalEntryValidator.SaveBlockedMessage);
+        Assert.Contains("save", ProtectedPrincipalEntryValidator.SaveBlockedMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ---- store what the protection engine will resolve ----------------------
 
     [Fact]

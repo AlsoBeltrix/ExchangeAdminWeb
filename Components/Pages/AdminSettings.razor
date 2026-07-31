@@ -96,7 +96,7 @@
     <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
             <strong>Protected Principals</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveProtectedPrincipals" disabled="@saving">Save Protected Principals</button>
+            <button class="btn btn-primary btn-sm" @onclick="SaveProtectedPrincipals" disabled="@(saving || ppValidating)">Save Protected Principals</button>
         </div>
         <div class="card-body">
             <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.</small></p>
@@ -577,6 +577,19 @@
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
             var authResult = await AuthorizationService.AuthorizeAsync(authState.User, "AdminSettings");
             if (!authResult.Succeeded) { statusMessage = "Authorization check failed."; statusIsError = true; return; }
+
+            // Refuse rather than snapshot a list an in-flight Add is about to mutate. Without
+            // this, saving mid-validation persists the list WITHOUT the pending entry, reports
+            // success, and then shows the entry in the page once validation completes - so the
+            // loss is invisible until a reload. The button is also disabled while validating;
+            // this is the guarantee behind that, since "UI hiding is not security" is already
+            // this repo's rule for the protection path. Review finding ppv-3.
+            if (ProtectedPrincipalEntryValidator.ShouldBlockSave(ppValidating))
+            {
+                statusMessage = ProtectedPrincipalEntryValidator.SaveBlockedMessage;
+                statusIsError = true;
+                return;
+            }
 
             var newConfig = new ProtectedPrincipalConfig
             {

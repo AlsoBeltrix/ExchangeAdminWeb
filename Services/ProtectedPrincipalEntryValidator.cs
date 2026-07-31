@@ -96,6 +96,22 @@ public static class ProtectedPrincipalEntryValidator
             true, CanonicalValue(v, objectKind, result.Match), null, ClearInput: true, ConsultedDirectory: true);
     }
 
+    public const string SaveBlockedMessage =
+        "Still checking an entry against Active Directory. Wait for it to finish, then save.";
+
+    /// <summary>
+    /// Whether a save must be refused because a directory lookup is still running.
+    /// </summary>
+    /// <remarks>
+    /// The add path validates on a background task, so the circuit stays free and the operator can
+    /// click Save while an Add is mid-flight. Saving then snapshots the list WITHOUT the pending
+    /// entry, reports success, and the entry appears in the page moments later - so the store and
+    /// the page disagree and nothing says so until a reload. Refusing is a guarantee behind the
+    /// disabled button, not a duplicate of it: "UI hiding is not security" is already this repo's
+    /// rule for the protection path. Review finding ppv-3.
+    /// </remarks>
+    public static bool ShouldBlockSave(bool validationInFlight) => validationInFlight;
+
     /// <summary>
     /// Whether an entry ALREADY SAVED in the store should be flagged as not resolving in AD.
     /// </summary>
