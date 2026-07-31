@@ -332,6 +332,20 @@ therefore asserted against a pure `ClassifyOutcome(ValidationStep)` function, wh
 any host. Treat CI (`windows-latest`, no RSAT) and this dev box as *different* environments for
 any AD-touching test.
 
+**One thing pure functions cannot prove: that the PowerShell property names are right.** A
+`Properties["DisplayName"]` where the cmdlet returns `Name` compiles, passes every unit test,
+and yields an empty string at runtime. `ADDirectoryLiveTests` covers exactly that gap by running
+against the real directory when one is reachable. Two rules make it honest rather than
+decorative:
+
+- **Never let a conditional live test be the only coverage of a rule** -- on CI it does not run
+  at all. It complements the pure tests; it never replaces them.
+- **Use `Assert.SkipWhen` for "no fixture available", never a bare early `return`.** A silent
+  return is indistinguishable from a pass. The slice-3 probe caught this: the first version
+  searched for the literal `"OU="` expecting to match every DN, AD does not substring-match
+  `distinguishedName` that way, zero rows came back, and the test passed green with the mapping
+  code deliberately broken. Discover a fixture by probing real name fragments instead.
+
 **Non-vacuity proof is mandatory for the absence/failure split.** Change the `Unavailable`
 branch to return `NotFound`, confirm the test fails, restore, confirm green. That collapse is
 the specific defect this design exists to prevent.

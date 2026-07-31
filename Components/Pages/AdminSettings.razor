@@ -153,7 +153,7 @@
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected OUs</label>
-                    <small class="text-muted d-block mb-1">Distinguished Name — all objects beneath are protected</small>
+                    <small class="text-muted d-block mb-1">Search by OU name — all objects beneath are protected</small>
                     <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
                         @if (ppOus.Count > 0)
                         {
@@ -169,7 +169,7 @@
                         else { <small class="text-muted fst-italic">None</small> }
                     </div>
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control" @bind="ppNewOu" @bind:event="oninput" @onkeydown="OnPpOuKey" placeholder="OU=Tier0,DC=ad,DC=contoso,DC=com" disabled="@ppValidating" />
+                        <ADIdentityAutocomplete ObjectKind="OU" ReturnValueKind="DN" @bind-Value="ppNewOu" Placeholder="Search AD OUs..." Disabled="@ppValidating" />
                         <button class="btn btn-outline-success" @onclick="AddPpOu" disabled="@(ppValidating || string.IsNullOrWhiteSpace(ppNewOu))">@(ppValidating ? "Checking..." : "Add")</button>
                     </div>
                 </div>
@@ -399,9 +399,9 @@
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
     }
 
-    private async Task OnPpUserKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpUser(); }
-    private async Task OnPpGroupKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpGroup(); }
-    private async Task OnPpOuKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") await AddPpOu(); }
+    // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
+    // ADIdentityAutocomplete, which owns its own Enter key (it selects the highlighted
+    // suggestion), so page-level handlers for those fields were unreachable markup and are gone.
     private void OnPpPatternKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e) { if (e.Key == "Enter") AddPpPattern(); }
 
     // Users, Groups and OUs are validated against AD before they enter the list: an entry that

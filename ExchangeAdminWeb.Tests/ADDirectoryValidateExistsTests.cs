@@ -202,6 +202,28 @@ public class ADDirectoryValidateExistsTests
         Assert.DoesNotContain("CONTOSO", filter);
     }
 
+    // ---- OU search (slice 3) -------------------------------------------------
+
+    [Theory]
+    [InlineData("User")]
+    [InlineData("Group")]
+    [InlineData("OU")]
+    [InlineData("Any")]
+    public void Search_AllObjectKindsIncludingOu_DoNotThrow(string objectKind)
+    {
+        // OU routes to Get-ADOrganizationalUnit rather than Get-ADUser/Get-ADGroup, so it needs
+        // its own smoke coverage; the existing suite only knew about User/Group/Any.
+        var results = CreateService().Search("test search term", objectKind);
+        Assert.NotNull(results);
+    }
+
+    [Fact]
+    public void Search_OuTermTooShort_ReturnsEmpty()
+    {
+        // The 3-character minimum is a shared guard, but OU was added after it was written.
+        Assert.Empty(CreateService().Search("ou", "OU"));
+    }
+
     // ---- result shape --------------------------------------------------------
 
     [Fact]

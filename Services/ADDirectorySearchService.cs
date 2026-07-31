@@ -62,8 +62,13 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
     /// Search Active Directory for users, groups, or both.
     /// </summary>
     /// <param name="term">Search term (minimum 3 characters).</param>
-    /// <param name="objectKind">"User", "Group", or "Any".</param>
+    /// <param name="objectKind">"User", "Group", "OU", or "Any".</param>
     /// <param name="maxResults">Maximum results to return (default 25).</param>
+    /// <remarks>
+    /// "OU" is exclusive: it is never included in "Any", because organizational units are only a
+    /// meaningful suggestion where an OU is specifically being chosen, and mixing containers into
+    /// a people-and-groups picker would be noise everywhere else.
+    /// </remarks>
     public List<ADSearchResult> Search(string term, string objectKind, int maxResults = 25)
     {
         if (string.IsNullOrWhiteSpace(term) || term.Trim().Length < 3)
@@ -520,6 +525,48 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
             {
                 var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADGroup search failed";
                 _logger.LogWarning("AD group search had errors: {Error}", errMsg);
+                ps.Streams.Error.Clear();
+            }
+        }
+
+        // Deliberately NOT part of "Any" - see the remarks on Search. An OU suggestion is only
+        // wanted where an OU is being picked.
+        if (objectKind is "OU")
+        {
+            // Matched on name and DN: an operator either recalls what the OU is called, or is
+            // pasting/refining a path they already have.
+            var ouFilter = $"(&(objectClass=organizationalUnit)(|(name=*{escaped}*)(distinguishedName=*{escaped}*)))";
+
+            ps.AddCommand("Get-ADOrganizationalUnit")
+              .AddParameter("LDAPFilter", ouFilter)
+              .AddParameter("Properties", new[] { "Name", "DistinguishedName" })
+              .AddParameter("ResultSetSize", maxResults)
+              .AddParameter("ErrorAction", "Stop");
+
+            var ous = ps.Invoke();
+            ps.Commands.Clear();
+
+            foreach (var obj in ous)
+            {
+                if (obj is null)
+                    continue;
+
+                results.Add(new ADSearchResult(
+                    // "Name", not "DisplayName" - Get-ADOrganizationalUnit does not return the
+                    // latter, and reading it yields a blank suggestion label. Guarded by
+                    // ADDirectoryLiveTests.Search_Ou_MapsNameAndDistinguishedName.
+                    DisplayName: obj.Properties["Name"]?.Value?.ToString() ?? "",
+                    DistinguishedName: obj.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+                    SamAccountName: null,
+                    UserPrincipalName: null,
+                    Email: null,
+                    ObjectType: "OU"));
+            }
+
+            if (ps.HadErrors)
+            {
+                var errMsg = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "Get-ADOrganizationalUnit search failed";
+                _logger.LogWarning("AD OU search had errors: {Error}", errMsg);
                 ps.Streams.Error.Clear();
             }
         }

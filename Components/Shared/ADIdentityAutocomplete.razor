@@ -32,7 +32,7 @@
                                 @GetSecondaryText(result)
                             </span>
                         </div>
-                        <span class="badge @(result.ObjectType == "User" ? "bg-primary" : "bg-secondary") ms-2"
+                        <span class="badge @BadgeClass(result.ObjectType) ms-2"
                               style="font-size: 0.7rem;">
                             @result.ObjectType
                         </span>
@@ -138,6 +138,13 @@
         };
     }
 
+    private static string BadgeClass(string objectType) => objectType switch
+    {
+        "User" => "bg-primary",
+        "OU" => "bg-info text-dark",
+        _ => "bg-secondary"
+    };
+
     private string GetSecondaryText(ExchangeAdminWeb.Services.ADSearchResult result)
     {
         if (result.ObjectType == "User")
@@ -146,6 +153,12 @@
                 return result.UserPrincipalName;
             if (!string.IsNullOrEmpty(result.SamAccountName))
                 return result.SamAccountName;
+        }
+        else if (result.ObjectType == "OU")
+        {
+            // The DN IS the useful detail for an OU - two OUs can share a name at different
+            // points in the tree, and the DN is what gets stored and matched.
+            return result.DistinguishedName;
         }
         else
         {

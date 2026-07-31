@@ -420,6 +420,15 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   AD-dependent logic through a pure function instead (see
   `ADDirectorySearchService.ClassifyOutcome`); a slice-1 non-vacuity probe caught this pattern
   passing with the fix reverted.
+  - Corollary: a test that skips when a fixture is missing must use `Assert.SkipWhen`, never a
+    bare early `return` -- a silent return is indistinguishable from a pass. Caught again in
+    slice 3, where a live OU test searched for the literal `"OU="` expecting to match every DN
+    (AD does not substring-match `distinguishedName`), got zero rows, and passed green with the
+    mapping code deliberately broken. `ExchangeAdminWeb.Tests/ADDirectoryLiveTests.cs` is the
+    pattern to copy: probe real name fragments to discover a fixture, skip loudly if none.
+  - What live tests are FOR: pure functions cannot prove a PowerShell property name is right.
+    `Properties["DisplayName"]` where the cmdlet returns `Name` compiles, passes every unit
+    test, and yields an empty string at runtime. That class of bug needs a real directory.
 - `deploy.ps1` still lacks a native `-PlanOnly` (deferred with owner visibility;
   `deploy-pipeline -PlanOnly` covers the prod dry-run requirement).
 
