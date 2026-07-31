@@ -185,6 +185,31 @@ public class ADDirectoryValidateExistsTests
         Assert.Equal(expected, ADDirectorySearchService.NormalizeIdentity(input));
     }
 
+    [Theory]
+    [InlineData("OU=Sales\\, East,DC=contoso,DC=com")]
+    [InlineData("CN=VIP\\, Tier0,OU=Groups,DC=contoso,DC=com")]
+    [InlineData("CN=Doe\\, Jane,OU=Users,DC=contoso,DC=com")]
+    public void NormalizeIdentity_DnWithEscapedComma_IsNotTreatedAsADomainPrefix(string dn)
+    {
+        // Review finding ppv-2. A backslash inside a DN escapes a comma - legal AD, and exactly
+        // what the group and OU pickers store. Stripping through it turned
+        // "OU=Sales\, East,DC=contoso,DC=com" into ", East,DC=contoso,DC=com", so a valid entry
+        // was refused as nonexistent and a saved one was badged stale.
+        Assert.Equal(dn, ADDirectorySearchService.NormalizeIdentity(dn));
+    }
+
+    [Theory]
+    [InlineData("OU=Sales\\, East,DC=contoso,DC=com", "OU")]
+    [InlineData("CN=VIP\\, Tier0,OU=Groups,DC=contoso,DC=com", "Group")]
+    public void BuildExactMatchFilter_DnWithEscapedComma_KeepsTheWholeDn(string dn, string kind)
+    {
+        var filter = ADDirectorySearchService.BuildExactMatchFilter(dn, kind);
+
+        // The whole DN survives to the filter (LDAP-escaped), rather than only the tail after
+        // the escape character.
+        Assert.Contains(ProtectedPrincipalService.EscapeLdapFilter(dn), filter);
+    }
+
     [Fact]
     public void NormalizeIdentity_TrailingBackslash_KeepsTheOriginal()
     {

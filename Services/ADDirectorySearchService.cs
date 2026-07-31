@@ -420,6 +420,19 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
     /// <c>ProtectedPrincipalService.ResolveProtectedGroupDn</c> already strips it the same way -
     /// without this a legitimate <c>CONTOSO\Admins</c> entry would be rejected as nonexistent.
     /// </summary>
+    /// <remarks>
+    /// A backslash means two different things depending on the input's shape, and conflating them
+    /// corrupts real data. In <c>CONTOSO\jdoe</c> it separates a NetBIOS domain; in
+    /// <c>OU=Sales\, East,DC=contoso,DC=com</c> it ESCAPES a comma inside a distinguished name,
+    /// which is legal AD and exactly the form the group and OU pickers store
+    /// (<c>ReturnValueKind="DN"</c>). Stripping through the first backslash unconditionally turned
+    /// that DN into <c>, East,DC=contoso,DC=com</c>, so a valid group was refused as nonexistent
+    /// and a saved one was badged stale. Review finding ppv-2.
+    ///
+    /// The discriminator is shape, not object kind: users can be entered as DNs too, and the group
+    /// filter matches <c>distinguishedName</c> among other attributes. A DN always carries an
+    /// <c>=</c> before any backslash; a <c>DOMAIN\name</c> prefix never does.
+    /// </remarks>
     internal static string NormalizeIdentity(string identity)
     {
         var trimmed = identity.Trim();
@@ -428,6 +441,11 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
         // A trailing backslash leaves nothing to search for; keep the original so the caller
         // gets a NotFound on the literal input rather than an empty filter matching everything.
         if (slash < 0 || slash == trimmed.Length - 1)
+            return trimmed;
+
+        // DN-shaped: the backslash is an escape, not a domain separator. Pass it through intact
+        // for EscapeLdapFilter to handle.
+        if (trimmed.AsSpan(0, slash).Contains('='))
             return trimmed;
 
         return trimmed[(slash + 1)..];
