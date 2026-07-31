@@ -322,6 +322,16 @@ outcome-mapping into testable units the way `ExchangeIdentityResolver` does with
 `IsRecipientNotFound` / `MapRecipient` (`internal static`, `InternalsVisibleTo` already
 configured).
 
+**Do not gate a test on `IsAvailable`.** The existing `ADDirectorySearchServiceTests` uses
+`if (!svc.IsAvailable)` guards (`:100`, `:111`, `:121`), which were written assuming the test
+host has no RSAT. **This dev box does** -- verified 2026-07-31 by importing the ActiveDirectory
+module in a bare runspace: it loads with no errors, so `IsAvailable` is true and every such
+guard silently skips. A validation test written that way passes whether or not the code is
+correct; the slice-1 non-vacuity probe caught exactly that. The absence/failure split is
+therefore asserted against a pure `ClassifyOutcome(ValidationStep)` function, which holds on
+any host. Treat CI (`windows-latest`, no RSAT) and this dev box as *different* environments for
+any AD-touching test.
+
 **Non-vacuity proof is mandatory for the absence/failure split.** Change the `Unavailable`
 branch to return `NotFound`, confirm the test fails, restore, confirm green. That collapse is
 the specific defect this design exists to prevent.

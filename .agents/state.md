@@ -411,6 +411,15 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   need `-p:EnableWindowsTargeting=true`; Pester needs `pwsh` +
   `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec`.
 - On this Windows dev box, `sqlite3.exe` is on PATH via winget; Pester runs under `pwsh`.
+- **RSAT IS installed on this dev box** (verified 2026-07-31: importing the `ActiveDirectory`
+  module in a bare runspace succeeds with no errors), so
+  `ADDirectorySearchService.IsAvailable` is **true** here and **false** on CI
+  (`windows-latest`). Any test written as `if (!svc.IsAvailable) { ...assert... }` therefore
+  **silently skips locally and only really runs on CI** -- it passes whether or not the code is
+  correct. `ADDirectorySearchServiceTests.cs:100`, `:111`, `:121` are written that way. Assert
+  AD-dependent logic through a pure function instead (see
+  `ADDirectorySearchService.ClassifyOutcome`); a slice-1 non-vacuity probe caught this pattern
+  passing with the fix reverted.
 - `deploy.ps1` still lacks a native `-PlanOnly` (deferred with owner visibility;
   `deploy-pipeline -PlanOnly` covers the prod dry-run requirement).
 
