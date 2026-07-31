@@ -6,6 +6,29 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Protected-principal admin input validation — plan APPROVED 2026-07-31; implementation not
+  started.** `docs/ProtectedPrincipalInputValidation-Plan.md` Status: Approved. Owner asked why
+  an O365 group cannot be added to protected principals; investigation found the real defect is
+  that `Components/Pages/AdminSettings.razor:394-397` saves **any** typed string — the
+  `ADIdentityAutocomplete` on Users and Groups (`:127`, `:149`) only suggests, and the add
+  handlers never check that the value came from a suggestion. OUs (`:171`) have no picker at all.
+  An unresolvable **user** or **OU** row silently matches nothing; an unresolvable **group** row
+  is worse in a different way — `CheckGroupMembershipAsync` (`Services/ProtectedPrincipalService.cs:629-633`)
+  fails **closed**, so it turns every check into a denial that reads as a directory fault.
+  **Owner rulings:** *(a)* cloud-only objects are **non-protected by design**, so refusing an
+  Entra-only group is correct behavior and Graph is a non-goal; *(b)* **D1** AD-unreachable
+  refuses the Add with "try again later" (admin-only page, and nothing works without AD anyway);
+  *(c)* **D2** validation runs under the **app-pool identity, not the Delinea secret** — least
+  privilege, recorded in `.agents/decisions.md` 2026-07-31 **with its environment-scope limit**.
+  Key design constraint: `ADDirectorySearchService.Search` is fail-soft (returns `[]` on
+  unavailable, throttle timeout, exception, and short term alike), so reusing it would report a
+  correct entry as a typo during an outage — a new `ValidateExists` carries an explicit
+  Found/NotFound/Unavailable outcome, and exact-match filters replace the autocomplete's wildcard
+  (`jdoe` must not match `jdoe2`; same reasoning `FindUserBySid` already documents at `:110-123`).
+  4 slices, none started. App `2.3.33 -> 2.3.34`, `AdminSettings 1.0.1 -> 1.0.2`.
+  **OQ-2 gates slice 3 only:** whether `Get-ADOrganizationalUnit` works under the app-pool
+  identity; if not, the OU picker is dropped and the other three slices are unaffected.
+
 - **Protected-principal resolution via Exchange — CODE COMPLETE 2026-07-30, all 4 slices on
   `master`; NOT deployed (dev is `2.3.32`, repo is now `2.3.33`). 6 manual checks unrun.**
   `docs/ProtectedPrincipalResolution-Plan.md` Status: Implemented. Triggered by an owner
@@ -405,7 +428,8 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, **on dev**,
   not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained);
   `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`,
-  **deployed nowhere**; 6 manual post-deploy checks not run; no independent review).
+  **deployed nowhere**; 6 manual post-deploy checks not run; no independent review);
+  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Approved 2026-07-31**, not started).
 - **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
   carry a pre-landing `Status:` although code evidence says they shipped —
   `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at

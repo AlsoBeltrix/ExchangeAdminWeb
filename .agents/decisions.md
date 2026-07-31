@@ -5,6 +5,38 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-07-31 - Protected-principal admin input is validated under the app-pool identity, not the Delinea directory-read secret
+
+Status: Active. Plan `docs/ProtectedPrincipalInputValidation-Plan.md` (Approved, owner
+2026-07-31), D2.
+
+Owner direction 2026-07-31. The Protected Principals admin page will validate typed entries
+against Active Directory before accepting them. Two credentials could perform that lookup: the
+app pool's ambient Windows identity (already used by `Services/ADDirectorySearchService.cs`,
+no secret) or the protected-principal directory-read secret from Delinea (used by enforcement,
+`ProtectedPrincipalService.GetDirectoryReadSecretId`). Validation uses the **app-pool identity**.
+
+The drafted recommendation was the Delinea secret, reasoning that only the enforcement
+credential can prove a rule will work at enforcement time. The owner rejected that on least
+privilege: "the delinea stored secret has vastly more permissions than the app pool, and we need
+to use it only when necessary." The divergence the recommendation guarded against does not exist
+here - anonymous LDAP lookups are permitted in this environment and any authenticated user can
+read any user or group, so both credentials see the same objects for a read-only existence
+check. This sits inside the Constitution's Credential Isolation carve-out for "an operation that
+is explicitly read-only and approved for ambient Windows identity".
+
+**Scope limit - do not inherit this silently.** The ruling is explicitly conditioned on this
+deployment ("at present, in this environment"). If a deployment ever restricts directory read
+access so the app pool and the directory-read secret see different objects, this must be
+revisited: an entry could then validate clean under the weaker credential and still fail at
+enforcement.
+
+Related but distinct: the 2026-07-28 Option A entry below also reuses the app-pool-credentialed
+AD read, but its justification was that the picker "only assists typing" and the real write
+re-validates under the module credential. That reasoning does **not** transfer here - what the
+admin page saves *is* the rule, with no second check. This decision stands on the environment
+fact above, not on that precedent.
+
 ### 2026-07-28 - Retire the `Security:ExcludedUsers` appsettings fallback (exclusions are module-config only)
 
 Status: Active. Plan `docs/RetireExcludedUsersAppsettingsFallback-Plan.md` (Approved,
