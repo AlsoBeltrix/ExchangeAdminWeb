@@ -6,8 +6,23 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **BOTH protected-principal work streams — CODE COMPLETE + REVIEWED 2026-07-31, ON DEV as
+  `2.3.34` (deployed by the owner 2026-07-31, verified from the assembly). Manual checks NOT
+  run — owner checking Monday. Prod is still `2.3.30` and carries every defect below.**
+  A `codereview` generation pass over `10d1593..521bb6e` (both streams, 10 commits, ~2950
+  lines) returned **4 findings, all real, all fixed** — see `.agents/review/index.md` rows
+  `ppv-1..4` and `.agents/review/findings/ppv-*.md`. **ppv-1 was HIGH and is the load-bearing
+  lesson: the Exchange-fallback work closed the alias bypass for on-prem principals and
+  REINSTATED it for cloud-only ones**, because `ResolveWithExchangeFallbackAsync` branched on
+  address equality instead of the `ExistsOnPrem` flag that same work had introduced and never
+  read. Both streams had been reported complete with "every guard proven non-vacuous" before
+  the review found it — the guards were sound, the gap was in what was thought to test.
+  Fixes: `a6927b2` (ppv-1), `0940964` (ppv-2, a DN with an escaped comma was mangled by
+  `DOMAIN\` stripping), `49b134d` (ppv-3, Save mid-validation dropped the pending entry),
+  `9a43455` (ppv-4, live tests reported PASSED not SKIPPED with no directory).
+
 - **Protected-principal admin input validation — CODE COMPLETE 2026-07-31, all 4 slices on
-  `master`; NOT deployed and NOT exercised through the real page.**
+  `master`; on dev as `2.3.34`, NOT yet exercised through the real page.**
   `docs/ProtectedPrincipalInputValidation-Plan.md` Status: Implemented. Owner asked why
   an O365 group cannot be added to protected principals; investigation found the real defect is
   that `Components/Pages/AdminSettings.razor:394-397` saves **any** typed string — the
@@ -312,19 +327,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.3.32`, prod `2.3.30`** (as of `f3b402a`; both re-verified 2026-07-30 from the
-  deployed assemblies — `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` FileVersion
-  `2.3.32.0`, `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll` FileVersion `2.3.30.0`).
-  Dev carries the operator-email resolver, the MessageTrace export delivery redesign, and the
-  MessageTrace NRE fix; prod carries **none** of them and is **not yet validated** against them.
-  **Neither instance carries `2.3.33`** (Exchange-backed protected-principal resolution) **or
-  `2.3.34`** (protected-principal admin input validation), so the GAP 4 alias bypass, the L1/L2
-  denial friction, and the unvalidated admin input are all still live on dev and prod.
-  `2.3.30` was deployed to dev, validated, then promoted to prod, and supersedes all prior
-  deployed builds, so prod still carries the `2.3.28` Bulk Job Runner, the `2.3.29` log-root
-  fail-fast, and the `2.3.30` ExcludedUsers-fallback retirement. Prior prod baseline was `2.3.27`
-  (validated 2026-06-29). (This settles the conflict openreview F3 flagged: the "not deployed
-  anywhere" claim was the stale half. OQ-4 in `docs/OperatorEmailResolution-Plan.md` is closed.)
+- **Deployed: dev `2.3.34`, prod `2.3.30`.** Dev deployed by the owner 2026-07-31 and verified
+  from the assembly (`D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` FileVersion
+  `2.3.34.0`, written 2026-07-31); prod re-verified the same day at `2.3.30.0`.
+  **Dev now carries, none of it validated against a live directory yet:** the operator-email
+  resolver + MessageTrace export redesign + MessageTrace NRE fix (`2.3.31`-`2.3.32`),
+  Exchange-backed protected-principal resolution (`2.3.33`), protected-principal admin input
+  validation (`2.3.34`), and the four `ppv-*` review fixes.
+  **Prod carries NONE of them.** Still live on prod: the GAP 4 alias bypass, the L1/L2
+  cloud-only + mail-enabled-group denial friction, unvalidated admin input, and the
+  MessageTrace null-row NRE. `2.3.30` was deployed to dev, validated, then promoted, and
+  supersedes all prior deployed builds, so prod does carry the `2.3.28` Bulk Job Runner, the
+  `2.3.29` log-root fail-fast, and the `2.3.30` ExcludedUsers-fallback retirement. Prior prod
+  baseline was `2.3.27` (validated 2026-06-29). (Settles the conflict openreview F3 flagged:
+  the "not deployed anywhere" claim was the stale half. OQ-4 in
+  `docs/OperatorEmailResolution-Plan.md` is closed.)
 - **2026-07-21 landed slices** (ff443ca, c2e2f6f, 502dd0e, 8c6f83f, 9dd39cd, b978362, 71d1daa)
   archived verbatim: `docs/history/state-archive.md` (Archived 2026-07-29).
 - **AccountLockoutRemediation: TURNED OFF by owner** (2026-07-21). Does not work in this environment:
@@ -337,6 +354,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Next up (prioritized)
 
 Live backlog only. Items need an approved plan before code unless noted.
+0. **Work through `docs/DevValidation-2.3.34.md` on dev (owner, Monday 2026-08-03).** The
+   single consolidated checklist for everything that reached dev unvalidated -- four work
+   streams' manual checks, ordered by consequence rather than by plan. Sections A-B are the
+   protection controls and the reported L1/L2 friction; A1 (alias-addressed protected user
+   is denied) is the GAP 4 regression test and must be re-run on prod after promotion.
+   Nothing in it has been run. It copies no reasoning: each item cites its source plan.
 1. **Live-validate the Bulk Job Runner (owner-deferred, 2026-07-20).** Runs from the dev instance
    against real PROD AD/Exchange (the only tenant there is; both instances on this server point at
    it). The runner *logic* is already covered by xUnit without a live run -- lifecycle (FIFO queue,
@@ -481,6 +504,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   `430305a`, module now `2.3.0` vs the plan's `2.0.12`). Not corrected in this sweep: marking a
   plan Implemented is a completion claim, and the ConferenceRooms one may be genuinely partial.
 - Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
+- Review loop findings ppv-1..4 (2026-07-31): all four fixed and committed; see `## Now` and
+  `.agents/review/index.md`. Dispatch artifacts (prompt, schema, raw verdict) are tracked at
+  `.agents/review/ppvalidation.*` so the pass is reproducible.
 
 ## Unrecorded repo memory
 
