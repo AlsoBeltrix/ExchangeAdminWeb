@@ -473,6 +473,12 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
     (AD does not substring-match `distinguishedName`), got zero rows, and passed green with the
     mapping code deliberately broken. `ExchangeAdminWeb.Tests/ADDirectoryLiveTests.cs` is the
     pattern to copy: probe real name fragments to discover a fixture, skip loudly if none.
+  - **SWEPT 2026-07-31: no `IsAvailable`-gated silent skips remain.** All three in
+    `ADDirectorySearchServiceTests` (`:100`, `:111`, `:122`) now use `Assert.SkipWhen` and
+    report as skipped here rather than passing. Note the asymmetry that remains by design:
+    those three assert the fail-soft contract and so run on CI and skip on this box, while
+    `ADDirectoryLiveTests` does the reverse. **Neither file alone proves the service works** --
+    the pure-function tests are what hold on every host.
   - What live tests are FOR: pure functions cannot prove a PowerShell property name is right.
     `Properties["DisplayName"]` where the cmdlet returns `Name` compiles, passes every unit
     test, and yields an empty string at runtime. That class of bug needs a real directory.

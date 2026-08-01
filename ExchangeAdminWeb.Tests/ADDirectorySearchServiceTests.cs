@@ -92,38 +92,41 @@ public class ADDirectorySearchServiceTests
         Assert.IsType<bool>(available);
     }
 
+    // These three assert the fail-soft contract, which only holds when AD is ABSENT - so they
+    // are inherently conditional. Skip loudly rather than returning: a returned test reports
+    // PASSED, so on this dev box (RSAT installed, IsAvailable true) the wrapped assertions
+    // silently never ran and the result was indistinguishable from real coverage. Same defect as
+    // review finding ppv-4, which fixed the sibling pattern in ADDirectoryLiveTests; these
+    // predated that range and are cleaned up here.
+    //
+    // Note the asymmetry this leaves: these run on CI and skip locally, while ADDirectoryLiveTests
+    // does the reverse. Neither file alone proves the service works.
+
     [Fact]
     public void Search_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        // If RSAT is not installed (typical CI), this returns empty gracefully
-        if (!svc.IsAvailable)
-        {
-            var results = svc.Search("test user search", "User");
-            Assert.Empty(results);
-        }
+        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
+
+        Assert.Empty(svc.Search("test user search", "User"));
     }
 
     [Fact]
     public void SearchUsers_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        if (!svc.IsAvailable)
-        {
-            var results = svc.SearchUsers("test user");
-            Assert.Empty(results);
-        }
+        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
+
+        Assert.Empty(svc.SearchUsers("test user"));
     }
 
     [Fact]
     public void SearchGroups_WhenAdUnavailable_ReturnsEmpty()
     {
         var svc = CreateService();
-        if (!svc.IsAvailable)
-        {
-            var results = svc.SearchGroups("test group");
-            Assert.Empty(results);
-        }
+        Assert.SkipWhen(svc.IsAvailable, "Active Directory IS reachable here; the fail-soft path cannot be exercised.");
+
+        Assert.Empty(svc.SearchGroups("test group"));
     }
 
     // ---------------------------------------------------------------
