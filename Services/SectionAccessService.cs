@@ -70,6 +70,43 @@ public class SectionAccessService
         return data.TryGetValue(section, out var groups) ? groups : Array.Empty<string>();
     }
 
+    /// <summary>
+    /// Friendly names for stored group values, keyed by the stored value (a SID after migration).
+    /// For display only - no authorization path consults this, so a stale name is cosmetic.
+    /// Returns an empty map if the store cannot be read.
+    /// </summary>
+    public Dictionary<string, string> GetGroupDisplayNames()
+    {
+        try
+        {
+            return _repository.GetDisplayNames();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read section-access display names");
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    /// <summary>
+    /// Stores friendly names for group values. Never throws: a display name is cosmetic, and
+    /// failing here must not fail an access save that already succeeded.
+    /// </summary>
+    public void SaveGroupDisplayNames(IReadOnlyDictionary<string, string> displayNames)
+    {
+        try
+        {
+            lock (_writeLock)
+            {
+                _repository.SaveDisplayNames(displayNames);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not save section-access display names; groups will show their stored value");
+        }
+    }
+
     public Dictionary<string, string[]> GetSectionAccess()
     {
         var (data, _) = ReadSectionAccess();

@@ -135,6 +135,13 @@ try
     // so it never reaches the wildcard autocomplete search (OperatorEmailResolution-Plan).
     builder.Services.AddSingleton<IOperatorDirectory>(sp => sp.GetRequiredService<ADDirectorySearchService>());
     builder.Services.AddSingleton<OperatorEmailResolver>();
+    // The section-access SID migration gets its OWN directory service rather than reusing the
+    // autocomplete one: it must throw when a lookup fails (a migration that reads an outage as
+    // "no such group" deletes live access grants), and it must not queue behind the shared
+    // 30-second autocomplete lock at startup. See SectionAccessSidStorage-Plan.
+    builder.Services.AddSingleton<ExchangeAdminWeb.Authorization.ISectionAccessGroupDirectory,
+        SectionAccessGroupDirectory>();
+    builder.Services.AddSingleton<SectionAccessSidMigration>();
     builder.Services.AddScoped<EmergencyDisableService>();
     builder.Services.AddScoped<AccountLockoutRemediationService>();
     builder.Services.AddScoped<LicensingUpdatesService>();
@@ -206,6 +213,16 @@ try
         // startup write stays banned. No-op on a corrupt store.
         var enablement = app.Services.GetRequiredService<ModuleEnablementService>();
         enablement.SeedMissingModules();
+
+        // Convert section-access group names to SIDs (docs/SectionAccessSidStorage-Plan.md).
+        // Runs on every start and is idempotent: a row already holding a SID is left alone, so a
+        // run deferred by an AD outage simply picks up later. Never throws and never half-writes -
+        // this is the table deciding who reaches every module, and it runs before anyone can log
+        // in to repair anything, so failing to start would be a worse outage than the ambiguity
+        // being fixed. Every failure path leaves the store exactly as it was.
+        var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
+        var sidMigrationStatus = sectionAccessSids.Run();
+        Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
 
         // One-time repair of the renamed Graph credential key (DelineaSecretId ->
         // GraphDelineaSecretId): moves any value stranded under the old key for Graph modules so

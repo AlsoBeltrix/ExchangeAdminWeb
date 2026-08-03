@@ -130,6 +130,15 @@ public sealed class ConfigStoreMigrator
             marker INTEGER PRIMARY KEY
         );
         """,
+
+        // v6 - display name alongside the section-access group value, so group_value can become a
+        // SID while the admin page still shows a name (SectionAccessSidStorage-Plan). Nullable and
+        // never read by any authorization path: a stale display name is cosmetic, the SID is the
+        // identity. DDL only - the data conversion is a separate, AD-dependent step that must be
+        // able to fail and retry without blocking startup, which a schema migration cannot.
+        """
+        ALTER TABLE section_access ADD COLUMN group_display_name TEXT;
+        """,
     ];
 
     /// <summary>The schema version this build expects (the count of migration steps).</summary>

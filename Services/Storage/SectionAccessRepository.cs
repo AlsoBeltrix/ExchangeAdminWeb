@@ -130,6 +130,21 @@ public sealed class SectionAccessRepository
     private static void ClearAndInsert(SqliteConnection connection, SqliteTransaction transaction,
         IReadOnlyDictionary<string, string[]> access)
     {
+        // Carry display names across the delete-and-reinsert. Without this, every admin save wipes
+        // the names of groups it did not touch, and the page falls back to showing raw SIDs until
+        // the next migration run - which, being idempotent, would never run again.
+        var displayNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText =
+                "SELECT group_value, group_display_name FROM section_access " +
+                "WHERE group_display_name IS NOT NULL AND group_display_name <> '';";
+            using var reader = read.ExecuteReader();
+            while (reader.Read())
+                displayNames[reader.GetString(0)] = reader.GetString(1);
+        }
+
         using (var delete = connection.CreateCommand())
         {
             delete.Transaction = transaction;
@@ -147,13 +162,134 @@ public sealed class SectionAccessRepository
                 using var insert = connection.CreateCommand();
                 insert.Transaction = transaction;
                 insert.CommandText =
-                    "INSERT INTO section_access (policy_alias, group_value) VALUES ($alias, $group) " +
+                    "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
+                    "VALUES ($alias, $group, $display) " +
                     "ON CONFLICT(policy_alias, group_value) DO NOTHING;";
                 insert.Parameters.AddWithValue("$alias", alias);
                 insert.Parameters.AddWithValue("$group", group);
+                insert.Parameters.AddWithValue("$display",
+                    displayNames.TryGetValue(group, out var name) ? name : (object)DBNull.Value);
                 insert.ExecuteNonQuery();
             }
         }
+    }
+
+    /// <summary>
+    /// Every row as (policy_alias, group_value), for the SID migration. Flat rather than grouped:
+    /// the migration reports per-row failures and needs the alias beside each value.
+    /// </summary>
+    public IReadOnlyList<(string PolicyAlias, string GroupValue)> GetAllRows()
+    {
+        return _store.Read(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT policy_alias, group_value FROM section_access;";
+            var rows = new List<(string, string)>();
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                rows.Add((reader.GetString(0), reader.GetString(1)));
+            return (IReadOnlyList<(string, string)>)rows;
+        });
+    }
+
+    /// <summary>
+    /// The display name stored against each SID, for the admin page. Rows with no display name are
+    /// omitted, so a caller falls back to showing the stored value itself.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by group value alone, not by (alias, value): the same group appears under several
+    /// aliases and its name does not differ between them. Never consulted by an authorization
+    /// path - see the migration plan's Design section.
+    /// </remarks>
+    public Dictionary<string, string> GetDisplayNames()
+    {
+        return _store.Read(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT group_value, group_display_name FROM section_access " +
+                "WHERE group_display_name IS NOT NULL AND group_display_name <> '';";
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                map[reader.GetString(0)] = reader.GetString(1);
+            return map;
+        });
+    }
+
+    /// <summary>
+    /// Stores friendly names against existing rows. Updates only; never inserts, so a name for a
+    /// group that is not granted anything cannot create a grant.
+    /// </summary>
+    public void SaveDisplayNames(IReadOnlyDictionary<string, string> displayNames)
+    {
+        if (displayNames.Count == 0)
+            return;
+
+        _store.Write((connection, transaction) =>
+        {
+            foreach (var (groupValue, name) in displayNames)
+            {
+                if (string.IsNullOrWhiteSpace(groupValue) || string.IsNullOrWhiteSpace(name))
+                    continue;
+
+                using var update = connection.CreateCommand();
+                update.Transaction = transaction;
+                update.CommandText =
+                    "UPDATE section_access SET group_display_name = $name WHERE group_value = $group;";
+                update.Parameters.AddWithValue("$name", name);
+                update.Parameters.AddWithValue("$group", groupValue);
+                update.ExecuteNonQuery();
+            }
+        });
+    }
+
+    /// <summary>
+    /// Rewrites every row to its SID plus display name, in ONE transaction.
+    /// </summary>
+    /// <remarks>
+    /// Delete-then-insert rather than per-row UPDATE, because two names can map to one SID
+    /// (<c>IAM</c> and <c>ANALOG\IAM</c> are both in the prod store) and updating them in place
+    /// would collide on the (policy_alias, group_value) primary key. Inserting into an emptied
+    /// table lets the ON CONFLICT clause merge them, which is the correct outcome: one grant.
+    ///
+    /// The presence marker is deliberately re-asserted. Emptying the table without it would, for
+    /// the instant before the insert, mean "never configured" - and if anything went wrong between
+    /// the two, the store would fall back to the permissive appsettings path rather than deny.
+    /// The transaction already prevents that being observable; the marker makes it true even in
+    /// the state the transaction is hiding.
+    /// </remarks>
+    public void ReplaceAllWithSids(IReadOnlyList<(string PolicyAlias, string Sid, string? DisplayName)> rows)
+    {
+        _store.Write((connection, transaction) =>
+        {
+            using (var delete = connection.CreateCommand())
+            {
+                delete.Transaction = transaction;
+                delete.CommandText = "DELETE FROM section_access;";
+                delete.ExecuteNonQuery();
+            }
+
+            foreach (var (alias, sid, display) in rows)
+            {
+                if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(sid))
+                    continue;
+
+                using var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                insert.CommandText =
+                    "INSERT INTO section_access (policy_alias, group_value, group_display_name) " +
+                    "VALUES ($alias, $group, $display) " +
+                    "ON CONFLICT(policy_alias, group_value) DO UPDATE SET " +
+                    "group_display_name = COALESCE(excluded.group_display_name, group_display_name);";
+                insert.Parameters.AddWithValue("$alias", alias);
+                insert.Parameters.AddWithValue("$group", sid);
+                insert.Parameters.AddWithValue("$display", (object?)display ?? DBNull.Value);
+                insert.ExecuteNonQuery();
+            }
+
+            MarkPresent(connection, transaction);
+        });
     }
 
     private static void MarkPresent(SqliteConnection connection, SqliteTransaction transaction)
