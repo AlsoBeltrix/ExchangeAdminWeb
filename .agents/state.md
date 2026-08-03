@@ -6,6 +6,41 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Section-access groups stored as SIDs — SLICE 1 OF 4 LANDED 2026-08-03, not deployed.**
+  `docs/SectionAccessSidStorage-Plan.md` Status: Approved, no open owner gates. The defect: a
+  bare group name does not identify a group, and both comparison sites
+  (`GroupAuthorizationHandler:97-101`, `GroupMembershipChecker:38-45`) strip any `DOMAIN\`
+  prefix and accept either form, so a foreign-domain same-named group is indistinguishable.
+  Exposure measured, not assumed: of 10 trusts only **2 are BiDirectional**
+  (`winroot.analog.com`, `maxim-ic.internal`), so the collision surface is 3 domains, not 10 —
+  narrow, not zero, and it sits in the field deciding entry to privileged modules.
+  **Two measurements constrain the whole work stream.** (a) The Windows token already carries
+  **333 group SIDs**, never names — the app converts SIDs to names in order to compare names, so
+  storing SIDs REMOVES a translation. `WindowsPrincipal.IsInRole` accepts a SID string directly.
+  (b) Prod log 2026-08-03: **1687 authorizations via `user.IsInRole`, 0 via the claims path** —
+  `ClaimTypes.Role` is never populated under Negotiate. `GroupMembershipChecker` is therefore
+  dead in the live path but NOT dead code (the bulk job runner's off-circuit re-check needs it),
+  so changing only the handler would leave the job runner comparing names against SIDs.
+  **Slice 1 DONE**: `Authorization/SectionAccessGroupIdentity.cs` — pure, directory-free, so the
+  decisions the migration depends on hold on CI too. Refuses SDDL aliases (`new
+  SecurityIdentifier("BA")` SUCCEEDS and yields BUILTIN\Administrators; `"DA"` is an account SID
+  passing every check but the round-trip), well-known SIDs via `IsAccountSid()` so no blocklist
+  needs maintaining, and the bare domain SID (parses, round-trips, `IsAccountSid()` true, yet
+  names a domain). 43 tests; non-vacuity proven per guard (6/3/1/1/1/2/3 failures on revert).
+  **Two data facts pinned in code, both verified against live AD 2026-08-03:** the NetBIOS domain
+  half is load-bearing — `Enterprise Admins` without `-Server` returns **0** matches, so the
+  current normalization's stripping would turn a live cross-domain grant into an unresolvable
+  row; and the lookup must query `sAMAccountName`, `cn` AND `name`, because
+  `$KOO300-S3AMUVVBVMI1` is a sAMAccountName whose `cn` is `Employees-All`.
+  **All 18 distinct prod values resolve to exactly one group** (58 rows: 46 `ANALOG\`, 1
+  `winroot\`, 11 bare). There is no unresolved-row class in this data — the plan's D2 was
+  withdrawn on owner challenge after the apparent exception turned out to be a probe bug
+  (`Get-ADGroup -Filter` expands `$` as a PowerShell variable).
+  **NEXT: slice 2** — store migration + `group_display_name` column, idempotent and
+  transactional, halting rather than half-writing an authorization table. Slices 3 (comparison
+  switch in handler + `GroupMembershipChecker` + `JobAuthorizationSnapshot`, version bumps land
+  there) and 4 (admin page display/picker) follow. **Nothing authorizes differently yet.**
+
 - **BOTH protected-principal work streams — CODE COMPLETE + REVIEWED 2026-07-31, ON DEV as
   `2.3.34` (deployed by the owner 2026-07-31, verified from the assembly). Manual checks NOT
   run — owner checking Monday. Prod is still `2.3.30` and carries every defect below.**
@@ -500,7 +535,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained);
   `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`,
   **deployed nowhere**; 6 manual post-deploy checks not run; no independent review);
-  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Approved 2026-07-31**, not started).
+  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Approved 2026-07-31**, not started);
+  `docs/SectionAccessSidStorage-Plan.md` (**Approved 2026-08-03**, slice 1 of 4 landed,
+  no open owner gates).
 - **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
   carry a pre-landing `Status:` although code evidence says they shipped —
   `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at

@@ -13,8 +13,8 @@ Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 ## Problem
 
 `section_access` stores a free-text group string per policy alias. Verified against the
-prod store 2026-08-03: **58 rows across 30 policy aliases; 47 carry a `DOMAIN\` prefix,
-11 do not.** The 11 unqualified rows span 6 aliases:
+prod store 2026-08-03: **58 rows across 30 policy aliases; 47 carry a `DOMAIN\` prefix (46
+`ANALOG\`, 1 `winroot\`), 11 do not.** The 11 unqualified rows span 6 aliases:
 
 ```
 AccountLockoutRemediation        | ExchangeWebAdmins
@@ -188,7 +188,10 @@ A store migration (`ConfigStoreMigrator`, next schema version) that:
    values are not consistently one attribute (`$KOO300-S3AMUVVBVMI1` is a sAMAccountName
    whose `cn` is `Employees-All`; a `cn`-only or `name`-only query returns nothing for it).
    Use `-LDAPFilter` with single-quoted values, never `-Filter`, which expands `$` as a
-   PowerShell variable.
+   PowerShell variable. **A `DOMAIN\name` value must be resolved against THAT domain** (`-Server`
+   its DNS root, mapped from the NetBIOS name via the `CN=Partitions` crossRef objects):
+   verified 2026-08-03, `Enterprise Admins` queried without `-Server` returns **0** matches, so
+   treating the domain half as noise loses the winroot grant. Slice 1's `Parse` preserves it.
 3. **Refuses well-known SIDs** (`S-1-1-0`, `S-1-5-32-*`) and anything resolving to 0 or 2+
    objects.
 4. On any failure: **halt, roll back, log every offending row** (D2 option (a), pending the
@@ -219,7 +222,14 @@ both halves; free-typed text is refused, the same rule slice 2 of
 ## Slices
 
 1. **SID validation + resolution helper**, with well-known-SID refusal. Pure functions,
-   fully unit-testable, no store or UI change.
+   fully unit-testable, no store or UI change. **DONE 2026-08-03** --
+   `Authorization/SectionAccessGroupIdentity.cs`, 43 tests, non-vacuity proven per guard.
+   Two additions the plan did not specify, both forced by live-AD evidence gathered while
+   implementing: `Parse` **keeps** the NetBIOS domain half rather than stripping it (resolving
+   `Enterprise Admins` without `-Server` returns 0 matches, so stripping loses the winroot
+   grant), and a DN-shaped value is reported `Unusable` rather than split on its backslash --
+   in a DN that backslash escapes a comma, which is review finding ppv-2's exact defect. All
+   18 distinct prod values re-verified as resolving to exactly one group.
 2. **Store migration + schema column.** Idempotent, transactional, halts on any unresolved
    row. Ships with all 11 real values as fixtures, including `$KOO300-S3AMUVVBVMI1` ->
    `S-1-5-21-8915387-325452579-1788637320-123668` (`Employees-All`), which is the case that
