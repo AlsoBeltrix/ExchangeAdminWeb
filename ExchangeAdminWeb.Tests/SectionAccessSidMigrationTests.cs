@@ -269,6 +269,48 @@ public class SectionAccessSidMigrationTests : IDisposable
         Assert.Equal(SectionAccessMigrationStatus.AlreadyMigrated, CreateMigration(Directory2()).Run());
     }
 
+    // ---------------------------------------------------------------- Legacy import ordering
+
+    [Fact]
+    public void LegacyImportedRowsAreMigratedInTheSameStartup()
+    {
+        // Review finding sid-2. The legacy sectionaccess.json import is a SIDE EFFECT of the
+        // SectionAccessService constructor, so on a lazily-constructed singleton its timing is
+        // decided by whoever resolves it first. If that happens after the migration, the table
+        // holds names for the whole process lifetime - and since non-SID rows are now inert
+        // (sid-1), everyone configured only through that file is denied until a restart.
+        //
+        // This drives the real constructor, exactly as Program.cs now does before Run().
+        WriteLegacyFile(@"{""Security"":{""SectionAccess"":{""SelfServiceGroups"":[""IAM""]}}}");
+        _ = CreateRealSectionAccessService();
+
+        var status = CreateMigration(Directory2()).Run();
+
+        Assert.Equal(SectionAccessMigrationStatus.Migrated, status);
+        Assert.Equal([IamSid], Read()["SelfServiceGroups"]);
+    }
+
+    private void WriteLegacyFile(string json)
+    {
+        var configDir = Path.Combine(_tempDir, "config");
+        System.IO.Directory.CreateDirectory(configDir);
+        File.WriteAllText(Path.Combine(configDir, "sectionaccess.json"), json);
+    }
+
+    private SectionAccessService CreateRealSectionAccessService()
+    {
+        var config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
+        var env = Substitute.For<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_tempDir);
+
+        return new SectionAccessService(
+            config,
+            Substitute.For<ILogger<SectionAccessService>>(),
+            env,
+            new ExchangeAdminWeb.Modules.ModuleCatalog(),
+            _repository);
+    }
+
     // ---------------------------------------------------------------- Display names (slice 4)
 
     [Fact]

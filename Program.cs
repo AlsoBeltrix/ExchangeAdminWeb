@@ -220,6 +220,15 @@ try
         // this is the table deciding who reaches every module, and it runs before anyone can log
         // in to repair anything, so failing to start would be a worse outage than the ambiguity
         // being fixed. Every failure path leaves the store exactly as it was.
+        // Resolve SectionAccessService FIRST. Its constructor performs the one-time import of a
+        // legacy config\sectionaccess.json (SectionAccessService.cs, ImportLegacyIfPresent), and
+        // because that is a constructor side effect on a lazily-constructed singleton, its timing
+        // is otherwise decided by whichever request happens to touch authorization first - i.e.
+        // AFTER this migration. On a legacy upgrade that leaves the table holding names for the
+        // whole process lifetime, which now means denying everyone configured only through that
+        // file until someone restarts. Review finding sid-2.
+        _ = app.Services.GetRequiredService<SectionAccessService>();
+
         var sectionAccessSids = app.Services.GetRequiredService<SectionAccessSidMigration>();
         var sidMigrationStatus = sectionAccessSids.Run();
         Log.Information("Section-access SID migration: {Status}", sidMigrationStatus);
