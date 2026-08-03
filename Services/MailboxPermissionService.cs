@@ -34,12 +34,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 return PermissionResult.Fail(ex.Message);
             }
 
-            var successes = new List<string>();
-            var failures = new List<string>();
+            var outcomes = new List<RightOutcome>();
 
             if (fullAccess)
             {
-                try
+                outcomes.Add(TryRight("FullAccess", () =>
                 {
                     ps.AddCommand("Add-MailboxPermission")
                       .AddParameter("Identity", targetMailbox)
@@ -48,17 +47,12 @@ public class MailboxPermissionService : ExchangeServiceBase
                       .AddParameter("AutoMapping", autoMapping)
                       .AddParameter("Confirm", false);
                     Invoke(ps, tracker);
-                    successes.Add("FullAccess");
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"FullAccess: {ex.Message}");
-                }
+                }));
             }
 
             if (sendAs)
             {
-                try
+                outcomes.Add(TryRight("SendAs", () =>
                 {
                     ps.AddCommand("Add-RecipientPermission")
                       .AddParameter("Identity", targetMailbox)
@@ -66,23 +60,10 @@ public class MailboxPermissionService : ExchangeServiceBase
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
                     Invoke(ps, tracker);
-                    successes.Add("SendAs");
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"SendAs: {ex.Message}");
-                }
+                }));
             }
 
-            if (failures.Count > 0 && successes.Count > 0)
-                return new PermissionResult { Success = false, Message = $"Partial: granted {string.Join(", ", successes)} on {targetMailbox}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
-            if (failures.Count > 0)
-                return PermissionResult.Fail($"Failed on {targetMailbox}: {string.Join("; ", failures)}");
-
-            var rights = string.Join(" and ", successes);
-            var message = $"{user} has been granted {rights} rights to {targetMailbox}";
-            var detail = $"Users can access this mailbox in Outlook or at the following link:\nhttps://outlook.office.com/mail/{targetMailbox}/";
-            return new PermissionResult { Success = true, Message = message, Detail = detail };
+            return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes);
         });
     }
 
@@ -102,12 +83,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 return PermissionResult.Fail(ex.Message);
             }
 
-            var successes = new List<string>();
-            var failures = new List<string>();
+            var outcomes = new List<RightOutcome>();
 
             if (fullAccess)
             {
-                try
+                outcomes.Add(TryRight("FullAccess", () =>
                 {
                     ps.AddCommand("Remove-MailboxPermission")
                       .AddParameter("Identity", targetMailbox)
@@ -115,17 +95,12 @@ public class MailboxPermissionService : ExchangeServiceBase
                       .AddParameter("AccessRights", "FullAccess")
                       .AddParameter("Confirm", false);
                     Invoke(ps, tracker);
-                    successes.Add("FullAccess");
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"FullAccess: {ex.Message}");
-                }
+                }));
             }
 
             if (sendAs)
             {
-                try
+                outcomes.Add(TryRight("SendAs", () =>
                 {
                     ps.AddCommand("Remove-RecipientPermission")
                       .AddParameter("Identity", targetMailbox)
@@ -133,22 +108,57 @@ public class MailboxPermissionService : ExchangeServiceBase
                       .AddParameter("AccessRights", "SendAs")
                       .AddParameter("Confirm", false);
                     Invoke(ps, tracker);
-                    successes.Add("SendAs");
-                }
-                catch (Exception ex)
-                {
-                    failures.Add($"SendAs: {ex.Message}");
-                }
+                }));
             }
 
-            if (failures.Count > 0 && successes.Count > 0)
-                return new PermissionResult { Success = false, Message = $"Partial: removed {string.Join(", ", successes)} on {targetMailbox}. Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
-            if (failures.Count > 0)
-                return PermissionResult.Fail($"Failed on {targetMailbox}: {string.Join("; ", failures)}");
-
-            var rights = string.Join(" and ", successes);
-            return new PermissionResult { Success = true, Message = $"{rights} rights removed for {user} on {targetMailbox}" };
+            return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes);
         });
+    }
+
+    /// <summary>
+    /// Applies one right and records whether it took. A throw is captured, never propagated, so a
+    /// later right is still attempted and the caller can report a partial result.
+    /// </summary>
+    /// <remarks>
+    /// <c>Invoke(ps, tracker)</c> still flags connection errors before throwing, so a poisoned
+    /// pooled connection is discarded by <c>RunPooledQueryAsync</c> even though the failure is
+    /// swallowed here.
+    /// </remarks>
+    private static RightOutcome TryRight(string right, Action apply)
+    {
+        try
+        {
+            apply();
+            return RightOutcome.Ok(right);
+        }
+        catch (Exception ex)
+        {
+            return RightOutcome.Failed(right, ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// <see cref="TryRight"/> for the on-premises paths, which additionally reset the shared
+    /// PowerShell instance.
+    /// </summary>
+    /// <remarks>
+    /// The clear is load-bearing, not tidiness: the on-prem paths reuse ONE PowerShell instance
+    /// across both rights, so a failed command left in the pipeline (or its error stream) would be
+    /// re-invoked with, and attributed to, the next right.
+    /// </remarks>
+    private static RightOutcome TryRightOnPrem(PowerShell ps, string right, Action apply)
+    {
+        try
+        {
+            apply();
+            return RightOutcome.Ok(right);
+        }
+        catch (Exception ex)
+        {
+            ps.Commands.Clear();
+            ps.Streams.Error.Clear();
+            return RightOutcome.Failed(right, ex.Message);
+        }
     }
 
     public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber)
@@ -333,12 +343,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
-                var successes = new List<string>();
-                var failures = new List<string>();
+                var outcomes = new List<RightOutcome>();
 
                 if (fullAccess)
                 {
-                    try
+                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", () =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $User) Add-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
@@ -346,19 +355,12 @@ public class MailboxPermissionService : ExchangeServiceBase
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { targetMailbox, user });
                         Invoke(ps);
-                        successes.Add("FullAccess");
-                    }
-                    catch (Exception ex)
-                    {
-                        ps.Commands.Clear();
-                        ps.Streams.Error.Clear();
-                        failures.Add($"FullAccess: {ex.Message}");
-                    }
+                    }));
                 }
 
                 if (sendAs)
                 {
-                    try
+                    outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $Trustee) Add-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
@@ -366,21 +368,10 @@ public class MailboxPermissionService : ExchangeServiceBase
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { targetMailbox, user });
                         Invoke(ps);
-                        successes.Add("SendAs");
-                    }
-                    catch (Exception ex)
-                    {
-                        ps.Commands.Clear();
-                        ps.Streams.Error.Clear();
-                        failures.Add($"SendAs: {ex.Message}");
-                    }
+                    }));
                 }
 
-                if (failures.Count > 0 && successes.Count > 0)
-                    return new PermissionResult { Success = false, Message = $"Partial: granted {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
-                if (failures.Count > 0)
-                    return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
-                return new PermissionResult { Success = true, Message = $"{user} has been granted {string.Join(" and ", successes)} on {targetMailbox} (on-premises)." };
+                return MailboxPermissionOutcome.ForGrant(targetMailbox, user, outcomes, onPrem: true);
             }
             finally
             {
@@ -415,12 +406,11 @@ public class MailboxPermissionService : ExchangeServiceBase
                 ConnectOnPrem(ps, creds.Value.username, creds.Value.password, creds.Value.domain);
                 var session = ps.Runspace.SessionStateProxy.GetVariable("onpremSession");
 
-                var successes = new List<string>();
-                var failures = new List<string>();
+                var outcomes = new List<RightOutcome>();
 
                 if (fullAccess)
                 {
-                    try
+                    outcomes.Add(TryRightOnPrem(ps, "FullAccess", () =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $User) Remove-MailboxPermission -Identity $Identity -User $User -AccessRights FullAccess -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
@@ -428,19 +418,12 @@ public class MailboxPermissionService : ExchangeServiceBase
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { targetMailbox, user });
                         Invoke(ps);
-                        successes.Add("FullAccess");
-                    }
-                    catch (Exception ex)
-                    {
-                        ps.Commands.Clear();
-                        ps.Streams.Error.Clear();
-                        failures.Add($"FullAccess: {ex.Message}");
-                    }
+                    }));
                 }
 
                 if (sendAs)
                 {
-                    try
+                    outcomes.Add(TryRightOnPrem(ps, "SendAs", () =>
                     {
                         var script = ScriptBlock.Create("param($Identity, $Trustee) Remove-ADPermission -Identity $Identity -User $Trustee -ExtendedRights 'Send As' -Confirm:$false -ErrorAction Stop");
                         ps.AddCommand("Invoke-Command")
@@ -448,21 +431,10 @@ public class MailboxPermissionService : ExchangeServiceBase
                           .AddParameter("ScriptBlock", script)
                           .AddParameter("ArgumentList", new object[] { targetMailbox, user });
                         Invoke(ps);
-                        successes.Add("SendAs");
-                    }
-                    catch (Exception ex)
-                    {
-                        ps.Commands.Clear();
-                        ps.Streams.Error.Clear();
-                        failures.Add($"SendAs: {ex.Message}");
-                    }
+                    }));
                 }
 
-                if (failures.Count > 0 && successes.Count > 0)
-                    return new PermissionResult { Success = false, Message = $"Partial: removed {string.Join(", ", successes)} on {targetMailbox} (on-premises). Failed: {string.Join("; ", failures)}", Detail = string.Join(", ", successes) };
-                if (failures.Count > 0)
-                    return PermissionResult.Fail($"Failed on {targetMailbox} (on-premises): {string.Join("; ", failures)}");
-                return new PermissionResult { Success = true, Message = $"{string.Join(" and ", successes)} removed for {user} on {targetMailbox} (on-premises)." };
+                return MailboxPermissionOutcome.ForRevoke(targetMailbox, user, outcomes, onPrem: true);
             }
             finally
             {
