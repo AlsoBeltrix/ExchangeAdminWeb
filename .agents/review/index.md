@@ -38,8 +38,24 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | ppv-2 | MEDIUM | DOMAIN-prefix stripping mangles a DN with an escaped comma, refusing a valid group/OU and badging saved ones stale | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed `0940964`; DN shape check before stripping; probe fails 5 |
 | ppv-3 | MEDIUM | Save mid-validation persists the list without the pending entry and still reports success | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — Save disabled + server-side refusal; probe fails 1. Browser timing manual-check NOT run |
 | ppv-4 | LOW | Live AD tests reported passed, not skipped, when the directory is unreachable | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — Assert.SkipWhen at 5 sites; simulating no-AD now yields "Skipped: 5" where it previously said "Passed: 5" |
+| sid-1 | HIGH | An unmigrated name row still authorizes, so the same-name ambiguity survives the whole work stream | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.146.0, generation pass, base b872861..0a50d01, capability_ok) — fixed `54e762d`; non-SID allowed values discarded in handler, checker and job snapshot; probe fails 7 |
+| sid-2 | MEDIUM | Legacy sectionaccess.json imports AFTER the migration, leaving names in the table for the process lifetime | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed `019b814`; SectionAccessService resolved before the migration; probe reproduces the bug, fails 1 |
 
 Notes:
+- **sid-1..2 came from one generation-half dispatch** over the four SID-storage slices
+  (`b872861..0a50d01`). Verdict **findings** (2), `capability_ok`, both SHAs echoed. Both were
+  verified against the code before any fix; neither was declined. **sid-1 contradicted a claim
+  I made in the slice-3 commit message** -- that an unmigrated store "fails CLOSED" under exact
+  comparison. It does not: measured on a domain-joined host, `IsInRole("Domain Users")` is
+  **true**, so `WindowsPrincipal.IsInRole` resolves names as well as SIDs. Until the fix, a
+  deferred or halted migration left name rows authorizing exactly as before -- during precisely
+  the window the migration was designed to survive. The lesson is the same shape as ppv-1: the
+  guards were sound, the reasoning about what they guaranteed was not.
+- **Routing exception, both findings:** T1 (sensitive paths) matched this diff and should have
+  routed to **frontier**. The recorded frontier pin `@azure-openai-eus2-global/gpt-5.6-sol`
+  returns 404 at the gateway, so the pass ran at **standard** (`gpt-5.5-dzs` @ xhigh). Recorded
+  in `.agents/review/harnesses.local.json` under `tiers.frontier.unavailable`. **A frontier
+  re-review of this range is still owed** once the owner names a live frontier model.
 - **ppv-1..4 came from one generation-half dispatch** (`codereview codex <model> xhigh
   10d1593..521bb6e`) over the two protected-principal work streams: Exchange-backed
   resolution and admin input validation, 10 commits, ~2950 lines. Verdict **findings** (4),
@@ -54,3 +70,4 @@ Notes:
   Only follow-up: live-tenant/UI validation (deferred, no dev tenant).
 - Scratch dispatch artifacts (`*.prompt.txt`, `*.schema.json`, `*.result.json`) are
   left untracked pending the owner's commit-vs-clean decision.
+

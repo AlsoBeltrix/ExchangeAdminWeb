@@ -6,7 +6,29 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Section-access groups stored as SIDs — SLICE 1 OF 4 LANDED 2026-08-03, not deployed.**
+- **Section-access groups stored as SIDs — ALL 4 SLICES LANDED + REVIEWED 2026-08-03, app
+  `2.3.35`, NOT DEPLOYED (dev is `2.3.34`, prod `2.3.30`).**
+  `docs/SectionAccessSidStorage-Plan.md` Status: Implemented. A `codereview` generation pass
+  over `b872861..0a50d01` returned **2 findings, both real, both fixed** — `sid-1` (HIGH,
+  `54e762d`) and `sid-2` (MEDIUM, `019b814`); see `.agents/review/findings/sid-*.md`.
+  **sid-1 is the load-bearing lesson and it contradicted my own slice-3 commit message:** I
+  wrote that an unmigrated store "fails CLOSED" under exact comparison. It does not.
+  `WindowsPrincipal.IsInRole` resolves NAMES as well as SIDs — measured,
+  `IsInRole("Domain Users")` is **true** — so until the fix a deferred or halted migration left
+  name rows authorizing exactly as before, with the cross-domain ambiguity intact, during
+  precisely the window the migration exists to survive. Non-SID values are now discarded at all
+  three comparison sites (handler, checker, job snapshot). Same shape as ppv-1: the guards were
+  sound, the reasoning about what they guaranteed was not.
+  **A frontier re-review of this range is still OWED.** T1 (sensitive paths) matched and should
+  have routed frontier; the recorded pin `@azure-openai-eus2-global/gpt-5.6-sol` **404s at the
+  gateway**, so the pass ran at standard. Recorded in `.agents/review/harnesses.local.json`
+  under `tiers.frontier.unavailable` — the owner must name a live frontier model.
+  **NEXT: the plan's 6 manual post-deploy checks on dev — none run.** Authorization cannot be
+  proven off-host and a mistake locks people out of every module, so dev first. Check 6 (app
+  boots and authorizes from stored SIDs with AD unreachable) and check 3 (`winroot\Enterprise
+  Admins` still reaches DhcpAuthorization) are the load-bearing ones.
+
+- **Section-access SIDs — slice detail (all landed 2026-08-03).**
   `docs/SectionAccessSidStorage-Plan.md` Status: Approved, no open owner gates. The defect: a
   bare group name does not identify a group, and both comparison sites
   (`GroupAuthorizationHandler:97-101`, `GroupMembershipChecker:38-45`) strip any `DOMAIN\`
@@ -36,10 +58,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `winroot\`, 11 bare). There is no unresolved-row class in this data — the plan's D2 was
   withdrawn on owner challenge after the apparent exception turned out to be a probe bug
   (`Get-ADGroup -Filter` expands `$` as a PowerShell variable).
-  **NEXT: slice 2** — store migration + `group_display_name` column, idempotent and
-  transactional, halting rather than half-writing an authorization table. Slices 3 (comparison
-  switch in handler + `GroupMembershipChecker` + `JobAuthorizationSnapshot`, version bumps land
-  there) and 4 (admin page display/picker) follow. **Nothing authorizes differently yet.**
+  **Slice 2 DONE** (`16ef8c0`): schema v6 (`group_display_name`), pure
+  `SectionAccessSidMigrationPlanner`, `SectionAccessGroupDirectory` (AD + the NetBIOS->DNS
+  crossRef mapping), `SectionAccessSidMigration` runner. Never blocks boot, never half-writes:
+  one unconvertible row stops the whole write, and a directory failure propagates rather than
+  becoming "no such group" — an outage must not send an admin to fix correct data. The AD
+  lookup is a **separate service** from `ADDirectorySearchService` because that one is fail-soft
+  by design and this one must throw.
+  **Slice 3 DONE** (`f361281`): app `2.3.34 -> 2.3.35`. Reads `ClaimTypes.GroupSid` (which
+  Negotiate populates) instead of `ClaimTypes.Role` (which it does not); normalization deleted.
+  **Slice 4 DONE** (`0a50d01`): picker returns a SID with no name fallback, badges show names,
+  free-typed text refused. `SaveAll` carries display names across its delete-and-reinsert —
+  without that every admin save would blank names the idempotent migration would never restore.
 
 - **BOTH protected-principal work streams — CODE COMPLETE + REVIEWED 2026-07-31, ON DEV as
   `2.3.34` (deployed by the owner 2026-07-31, verified from the assembly). Manual checks NOT
@@ -356,8 +386,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.34`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
-  `2.3.33` for protected-principal admin input validation; `2.3.33` (`0eca01e`) was
+- **App version `2.3.35`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+  `2.3.34` for section-access SID storage (shared authorization path); `2.3.34` was
+  protected-principal admin input validation; `2.3.33` (`0eca01e`) was
   Exchange-backed protected-principal resolution, `2.3.32` (`14f4ef1`)
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
