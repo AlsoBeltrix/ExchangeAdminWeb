@@ -56,7 +56,10 @@ public sealed class JobAuthorizationSnapshot
         var authorized = new List<string>();
         foreach (var group in allowedGroupsForSection)
         {
-            if (string.IsNullOrWhiteSpace(group))
+            // SIDs only, mirroring the handler: IsInRole resolves names too, so an unmigrated row
+            // would otherwise be captured as an authorizing group and keep authorizing every row
+            // of the job on a name. Review finding sid-1.
+            if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(group))
                 continue;
             // Full live check: the Windows principal (IsInRole) OR group claims - mirrors
             // GroupAuthorizationHandler. No DOMAIN\-stripping variant: allowed values are SIDs,

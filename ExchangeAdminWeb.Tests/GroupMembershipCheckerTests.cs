@@ -41,14 +41,45 @@ public class GroupMembershipCheckerTests
     }
 
     [Fact]
-    public void ExactNonSidValuesStillMatch_SoAnUnmigratedStoreFailsClosedRatherThanCrashing()
+    public void BlankAllowedValuesAreIgnored()
     {
-        // Nothing rejects a non-SID allowed value: if the migration deferred, exact comparison
-        // simply stops matching the SID claims a real principal carries. Refusing outright would
-        // take the app down over a transient AD outage.
-        Assert.True(GroupMembershipChecker.IsMemberOfAny([@"CORP\ConfRoomAdmins"], [@"CORP\ConfRoomAdmins"]));
-        Assert.False(GroupMembershipChecker.IsMemberOfAny([IamSid], ["IAM"]));
+        Assert.False(GroupMembershipChecker.IsMemberOfAny([IamSid], ["", "   "]));
     }
+
+    [Theory]
+    [InlineData("IAM")]
+    [InlineData(@"ANALOG\IAM")]
+    [InlineData(@"CORP\ConfRoomAdmins")]
+    [InlineData("S-1-5-32-544")]  // well-known: unambiguous but far too broad
+    public void NonSidAllowedValueMatchesNothing(string allowed)
+    {
+        // Asserted the OPPOSITE until review finding sid-1: the claim was that exact comparison
+        // alone made an unmigrated store fail closed. It does not. A role claim can carry a name,
+        // and IsInRole resolves names as well as SIDs, so a name-valued row would keep authorizing
+        // - with the same-name ambiguity intact - during exactly the window the migration is
+        // designed to survive. Discarding non-SIDs is what makes the fail-closed claim true.
+        Assert.False(GroupMembershipChecker.IsMemberOfAny([allowed], [allowed]));
+    }
+
+    [Fact]
+    public void UnmigratedRowsAreDroppedButSidsBesideThemStillMatch()
+    {
+        // A partially-migrated section must not be all-or-nothing at authorization time: the rows
+        // that did convert keep working.
+        Assert.True(GroupMembershipChecker.IsMemberOfAny([IamSid], ["IAM", IamSid]));
+    }
+
+    [Fact]
+    public void UsableSidsOnly_KeepsSidsAndDropsTheRest()
+    {
+        var filtered = GroupMembershipChecker.UsableSidsOnly([IamSid, "IAM", @"ANALOG\IAM", "", "S-1-1-0"]);
+
+        Assert.Equal([IamSid], filtered);
+    }
+
+    [Fact]
+    public void UsableSidsOnly_HandlesNull()
+        => Assert.Empty(GroupMembershipChecker.UsableSidsOnly(null));
 
     [Fact]
     public void NoMatch_WhenNoOverlap()
@@ -78,7 +109,6 @@ public class GroupMembershipCheckerTests
     [Fact]
     public void BlankAllowedGroupEntries_AreIgnored()
     {
-        Assert.False(GroupMembershipChecker.IsMemberOfAny([IamSid], ["", "   "]));
         Assert.True(GroupMembershipChecker.IsMemberOfAny([IamSid], ["", IamSid]));
     }
 

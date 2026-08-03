@@ -36,6 +36,14 @@ public static class GroupMembershipChecker
     ];
 
     /// <summary>
+    /// The allowed values usable as authorization subjects - the SIDs. Anything else is a row the
+    /// migration has not converted yet and must not be compared against; see the remarks on
+    /// <see cref="IsMemberOfAny"/>.
+    /// </summary>
+    public static List<string> UsableSidsOnly(IEnumerable<string>? allowedGroups)
+        => allowedGroups?.Where(SectionAccessGroupIdentity.IsUsableGroupSid).ToList() ?? [];
+
+    /// <summary>
     /// Every group identifier a principal carries, across all of <see cref="GroupClaimTypes"/>.
     /// </summary>
     public static List<string> ExtractGroupClaims(ClaimsPrincipal? user)
@@ -64,9 +72,16 @@ public static class GroupMembershipChecker
     /// are SIDs now (docs/SectionAccessSidStorage-Plan.md), which are self-qualifying, so no
     /// normalization is needed or wanted - re-adding any would reopen the hole.
     ///
-    /// Nothing here rejects a non-SID allowed value. That is deliberate: an unmigrated store simply
-    /// stops matching, which fails CLOSED. Refusing outright would take the app down on a store the
-    /// migration deferred, and silently accepting names again is the bug.
+    /// A non-SID allowed value is DISCARDED, not compared. Exact comparison alone does not make an
+    /// unmigrated store fail closed, which an earlier version of this comment wrongly claimed:
+    /// measured on a domain-joined host, <c>WindowsPrincipal.IsInRole</c> resolves names as well as
+    /// SIDs (<c>IsInRole("Domain Users")</c> is true), and a role claim can carry a name too. So
+    /// while the migration is deferred or halted, a name-valued row would authorize exactly as it
+    /// did before this work - the same-name ambiguity intact, during precisely the window the
+    /// migration was designed to survive. Discarding makes the fail-closed property real:
+    /// a section whose rows are all names denies everyone until the migration completes, which is
+    /// the correct trade against authorizing on an identifier the app cannot disambiguate.
+    /// Review finding sid-1.
     /// </remarks>
     public static bool IsMemberOfAny(IEnumerable<string>? groupClaims, IEnumerable<string>? allowedGroups)
     {
@@ -79,7 +94,7 @@ public static class GroupMembershipChecker
 
         foreach (var allowedGroup in allowedGroups)
         {
-            if (string.IsNullOrWhiteSpace(allowedGroup))
+            if (!SectionAccessGroupIdentity.IsUsableGroupSid(allowedGroup))
                 continue;
 
             foreach (var claim in claims)

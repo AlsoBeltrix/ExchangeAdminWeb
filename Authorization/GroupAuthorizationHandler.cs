@@ -85,24 +85,36 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             return Task.CompletedTask;
         }
 
+        // SIDs only, for BOTH comparisons below. IsInRole also resolves NAMES (measured:
+        // IsInRole("Domain Users") is true), so passing an unmigrated row straight through would
+        // authorize on a name and keep the same-name ambiguity alive during exactly the window the
+        // migration is built to survive. Review finding sid-1.
+        var usableGroups = GroupMembershipChecker.UsableSidsOnly(groups);
+
+        if (usableGroups.Count < groups.Length)
+        {
+            _logger.LogWarning(
+                "Section {Section}: {Skipped} of {Total} configured group(s) are not SIDs and were "
+                + "ignored - the section-access SID migration has not completed for them",
+                requirement.SectionName, groups.Length - usableGroups.Count, groups.Length);
+        }
+
         // Claims-based match goes through the shared pure checker so the live handler and the bulk
         // job runner's off-circuit re-check can never diverge (see GroupMembershipChecker). The
         // IsInRole() check remains as well because it consults the live Windows principal, which
         // only exists on a circuit - a job worker has only the captured claims.
-        if (GroupMembershipChecker.IsMemberOfAny(groupClaims, groups))
+        if (GroupMembershipChecker.IsMemberOfAny(groupClaims, usableGroups))
         {
             _logger.LogInformation("User {User} authorized via a section-access group claim", userName);
             context.Succeed(requirement);
             return Task.CompletedTask;
         }
 
-        foreach (var allowedGroup in groups)
+        foreach (var allowedGroup in usableGroups)
         {
             // No DOMAIN\-stripping fallback. It existed to make a bare name match a qualified one,
             // which is exactly what made two same-named groups in different domains
-            // indistinguishable. Stored values are SIDs now, and WindowsPrincipal.IsInRole
-            // resolves a SID string against the token's SIDs natively - so this compares
-            // self-qualifying identifiers with no normalization at all.
+            // indistinguishable.
             if (user.IsInRole(allowedGroup))
             {
                 _logger.LogInformation("User {User} authorized via group {Group}", userName, allowedGroup);

@@ -72,10 +72,17 @@ public class GroupAuthorizationHandlerTests : IDisposable
         _enablementRepo.SaveAll(state);
     }
 
-    private static ClaimsPrincipal MakeUser(params string[] roles)
+    // Real group SIDs from this deployment, so the fixtures are the shape production stores.
+    private const string DomainSid = "S-1-5-21-8915387-325452579-1788637320";
+    private const string ExchangeAdminsSid = DomainSid + "-677335";
+    private const string OtherGroupSid = DomainSid + "-586078";
+
+    private static ClaimsPrincipal MakeUser(params string[] groups)
     {
+        // GroupSid, not Role: that is what Negotiate actually populates (0 of 1687 prod
+        // authorizations came through Role). The handler reads both.
         var claims = new List<Claim> { new(ClaimTypes.Name, "CONTOSO\\tester") };
-        claims.AddRange(roles.Select(r => new Claim(ClaimTypes.Role, r)));
+        claims.AddRange(groups.Select(g => new Claim(ClaimTypes.GroupSid, g)));
         return new ClaimsPrincipal(new ClaimsIdentity(claims, "TestAuth"));
     }
 
@@ -94,7 +101,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
         var handler = CreateHandler();
         var requirement = new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true);
 
-        var context = await HandleAsync(handler, requirement, MakeUser("AllUsersGroup"));
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
 
         Assert.False(context.HasSucceeded);
         Assert.True(context.HasFailed);
@@ -104,11 +111,11 @@ public class GroupAuthorizationHandlerTests : IDisposable
     public async Task DynamicSection_DisabledModule_DeniesEvenForGroupMember()
     {
         var handler = CreateHandler();
-        WriteSectionAccess(new() { ["MailboxPermissions"] = ["ExchangeAdmins"] });
+        WriteSectionAccess(new() { ["MailboxPermissions"] = [ExchangeAdminsSid] });
         WriteEnablement(new() { ["ExchangeOnline"] = true, ["MailboxPermissions"] = false });
         var requirement = new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true);
 
-        var context = await HandleAsync(handler, requirement, MakeUser("ExchangeAdmins"));
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
 
         Assert.False(context.HasSucceeded);
         Assert.True(context.HasFailed);
@@ -118,11 +125,47 @@ public class GroupAuthorizationHandlerTests : IDisposable
     public async Task DynamicSection_EnabledModuleAndGroupMember_Succeeds()
     {
         var handler = CreateHandler();
+        WriteSectionAccess(new() { ["MailboxPermissions"] = [ExchangeAdminsSid] });
+        WriteEnablement(new() { ["ExchangeOnline"] = true, ["MailboxPermissions"] = true });
+        var requirement = new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true);
+
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
+
+        Assert.True(context.HasSucceeded);
+    }
+
+    [Fact]
+    public async Task DynamicGroups_UnmigratedNameValue_DeniesEveryone()
+    {
+        // Review finding sid-1. A section whose rows are still names must authorize NOBODY, even
+        // the very people the name denotes. Exact comparison alone does not achieve this: a role
+        // claim can carry a name, and IsInRole resolves names as well as SIDs, so without the
+        // filter this user would be let in on an ambiguous identifier.
+        var handler = CreateHandler();
         WriteSectionAccess(new() { ["MailboxPermissions"] = ["ExchangeAdmins"] });
         WriteEnablement(new() { ["ExchangeOnline"] = true, ["MailboxPermissions"] = true });
         var requirement = new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true);
 
-        var context = await HandleAsync(handler, requirement, MakeUser("ExchangeAdmins"));
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "CONTOSO\\tester"), new Claim(ClaimTypes.Role, "ExchangeAdmins")],
+            "TestAuth"));
+        var context = await HandleAsync(handler, requirement, user);
+
+        Assert.False(context.HasSucceeded);
+        Assert.True(context.HasFailed);
+    }
+
+    [Fact]
+    public async Task DynamicGroups_PartiallyMigratedSection_StillHonoursTheMigratedRows()
+    {
+        // Dropping unmigrated rows must not be all-or-nothing: a section mid-migration keeps
+        // working for the groups that did convert.
+        var handler = CreateHandler();
+        WriteSectionAccess(new() { ["MailboxPermissions"] = ["LegacyName", ExchangeAdminsSid] });
+        WriteEnablement(new() { ["ExchangeOnline"] = true, ["MailboxPermissions"] = true });
+        var requirement = new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true);
+
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
 
         Assert.True(context.HasSucceeded);
     }
@@ -148,9 +191,9 @@ public class GroupAuthorizationHandlerTests : IDisposable
     public async Task StaticGroups_MatchIsCaseInsensitive()
     {
         var handler = CreateHandler();
-        var requirement = new GroupAuthorizationRequirement(["exchangeADMINS"]);
+        var requirement = new GroupAuthorizationRequirement([ExchangeAdminsSid.ToLowerInvariant()]);
 
-        var context = await HandleAsync(handler, requirement, MakeUser("ExchangeAdmins"));
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
 
         Assert.True(context.HasSucceeded);
     }
@@ -159,9 +202,9 @@ public class GroupAuthorizationHandlerTests : IDisposable
     public async Task StaticGroups_NonMember_Denies()
     {
         var handler = CreateHandler();
-        var requirement = new GroupAuthorizationRequirement(["ExchangeAdmins"]);
+        var requirement = new GroupAuthorizationRequirement([ExchangeAdminsSid]);
 
-        var context = await HandleAsync(handler, requirement, MakeUser("SomeOtherGroup"));
+        var context = await HandleAsync(handler, requirement, MakeUser(OtherGroupSid));
 
         Assert.False(context.HasSucceeded);
         Assert.True(context.HasFailed);
@@ -174,7 +217,7 @@ public class GroupAuthorizationHandlerTests : IDisposable
         var handler = CreateHandler();
         var requirement = new GroupAuthorizationRequirement(Array.Empty<string>());
 
-        var context = await HandleAsync(handler, requirement, MakeUser("AllUsersGroup"));
+        var context = await HandleAsync(handler, requirement, MakeUser(ExchangeAdminsSid));
 
         Assert.False(context.HasSucceeded);
         Assert.True(context.HasFailed);
