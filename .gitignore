@@ -78,4 +78,6 @@ examplescripts/
 GroupMembershipDelegation-*.csv
 .tokensave/
  
- 
+ .serena/
+.claude/.headroom_wrap_marker.json
+.serena/**
