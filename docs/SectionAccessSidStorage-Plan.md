@@ -1,9 +1,11 @@
 # Section-Access Groups Stored As SIDs -- Plan
 
-Status: **Approved (owner, 2026-08-03).** D1 ruled: store an unambiguous identifier, display
-the friendly name; the existing 11 unqualified rows are migrated by lookup, neither rejected
-nor grandfathered. D2 withdrawn as a decision -- the single unresolved row was a probe bug,
-not a data class; see its section. No open owner gates. Not yet implemented.
+Status: **Implemented (2026-08-03); all 4 slices on `master`, NOT deployed.** D1 ruled: store an
+unambiguous identifier, display the friendly name; the existing 11 unqualified rows are migrated
+by lookup, neither rejected nor grandfathered. D2 withdrawn as a decision -- the single
+unresolved row was a probe bug, not a data class; see its section. No open owner gates.
+**The manual post-deploy checks below have NOT been run, and authorization cannot be fully
+proven off-host: a mistake here locks people out of every module. Dev first.**
 App version: `2.3.34` -> `2.3.35` (shared authorization path + config store).
 Module: none. `AdminSettings` `1.0.2` -> `1.0.3` only if the admin page markup changes
 (slice 3); the authorization change itself is app-wide, not module-scoped.
@@ -234,9 +236,31 @@ both halves; free-typed text is refused, the same rule slice 2 of
    row. Ships with all 11 real values as fixtures, including `$KOO300-S3AMUVVBVMI1` ->
    `S-1-5-21-8915387-325452579-1788637320-123668` (`Employees-All`), which is the case that
    proves the multi-attribute lookup is required rather than merely tidy.
+   **DONE 2026-08-03** -- schema v6 (`group_display_name`), `SectionAccessSidMigrationPlanner`
+   (pure: all-or-nothing, ambiguity, idempotence), `SectionAccessGroupDirectory` (AD, with the
+   NetBIOS->DNS crossRef mapping), `SectionAccessSidMigration` (the runner), wired in
+   `Program.cs`. 34 tests.
+   One structural decision the plan did not specify: the AD lookup is a **separate service**
+   from `ADDirectorySearchService`, not another method on it, because that service is fail-soft
+   everywhere by design and this one must throw -- a migration that reads an outage as "no such
+   group" deletes live access grants. Bolting a throwing method onto a fail-soft service invites
+   a later refactor to "make it consistent".
 3. **Comparison switch** in handler, `GroupMembershipChecker`, and `JobAuthorizationSnapshot`;
-   normalization deleted. Version bumps land here.
-4. **Admin page display/picker.**
+   normalization deleted. Version bumps land here. **DONE 2026-08-03** -- app `2.3.34` ->
+   `2.3.35`. The checker now reads `ClaimTypes.GroupSid` (which Negotiate populates) rather than
+   `ClaimTypes.Role` (which it does not), and compares exactly. Two existing tests asserted the
+   OLD behavior as correct -- `GroupMembershipCheckerTests` and
+   `GroupAuthorizationHandlerTests.StaticGroups_DomainQualifiedConfigEntry_*` -- and are inverted
+   rather than retained, with the reason recorded at each. A non-SID stored value is not
+   rejected: it simply stops matching, which fails **closed**, so a deferred migration degrades
+   to denial rather than to an outage.
+4. **Admin page display/picker.** **DONE 2026-08-03** -- picker returns `ReturnValueKind="SID"`
+   (no name fallback: a caller that asked for a SID and silently got a name would store an
+   ambiguous value in an authorization field), badges show the friendly name with the stored
+   value as tooltip, and free-typed text is refused. `ADSearchResult` gains an optional
+   `ObjectSid`. `SaveAll` now carries display names across its delete-and-reinsert -- without
+   that, every admin save would blank the names of groups it did not touch and the idempotent
+   migration would never run again to restore them.
 
 ## Verification
 

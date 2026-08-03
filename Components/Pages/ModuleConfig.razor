@@ -7,6 +7,7 @@
 @inject ModuleAdminService ModuleAdmin
 @inject ModuleEnablementService Enablement
 @inject SectionAccessService SectionAccess
+@inject ExchangeAdminWeb.Services.ADDirectorySearchService ADSearch
 @inject ModuleCatalog Catalog
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
@@ -146,8 +147,8 @@
                                         @foreach (var group in groups.ToList())
                                         {
                                             var cg = group;
-                                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.8em;">
-                                                @cg
+                                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.8em;" title="@cg">
+                                                @DisplayNameFor(cg)
                                                 <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
                                                       @onclick="() => RemoveAccessGroup(capturedAlias, cg)">&times;</span>
                                             </span>
@@ -160,7 +161,8 @@
                                 </td>
                                 <td>
                                     <div class="input-group input-group-sm">
-                                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="accessInputs[capturedAlias]" Placeholder="Search AD groups..." />
+                                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="accessInputs[capturedAlias]"
+                                                                OnResultSelected="RememberGroupDisplayName" Placeholder="Search AD groups..." />
                                         <button class="btn btn-outline-success" type="button"
                                                 @onclick="() => AddAccessGroup(capturedAlias)">Add</button>
                                     </div>
@@ -481,6 +483,10 @@
     private Dictionary<string, List<string>> accessState = new();
     private Dictionary<string, string> accessInputs = new();
 
+    // SID -> friendly name, for display only. Seeded from the store and topped up as groups are
+    // picked, so a group added in this session shows its name before any save/reload.
+    private Dictionary<string, string> accessDisplayNames = new(StringComparer.OrdinalIgnoreCase);
+
     private string? loadedModuleId;
     private bool moduleEnabled;
     private bool enablementStoreCorrupt;
@@ -551,6 +557,18 @@
         {
             accessState[alias] = new List<string>(SectionAccess.GetGroupsForSection(alias));
             accessInputs[alias] = string.Empty;
+        }
+
+        // Display names are cosmetic, so a store that cannot supply them must not break the page:
+        // DisplayNameFor falls back to the stored value.
+        try
+        {
+            accessDisplayNames = SectionAccess.GetGroupDisplayNames();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not read section-access display names; showing stored values");
+            accessDisplayNames = new(StringComparer.OrdinalIgnoreCase);
         }
 
         if (module.Id == "ADAttributeEditor")
@@ -725,6 +743,9 @@
                 allAccess[alias] = accessState[alias].ToArray();
             }
             SectionAccess.SaveSectionAccess(allAccess);
+            // Persisted separately from the grants, and after them: a display name is cosmetic, so
+            // failing to store one must never fail the access save that already succeeded.
+            SectionAccess.SaveGroupDisplayNames(accessDisplayNames);
 
             var ip = ClientInfo.GetIpForUser(currentUser);
             foreach (var alias in policyAliases)
@@ -796,14 +817,64 @@
         return value;
     }
 
+    /// <remarks>
+    /// Only a value picked from the AD suggestion list is accepted, because only that carries a
+    /// SID. Free-typed text is refused rather than stored: this field decides who can reach a
+    /// module, and a typo here would either silently grant nothing or - before SIDs - match a
+    /// same-named group in another domain. Same rule, same reason, as the protected-principal
+    /// entry validator (docs/ProtectedPrincipalInputValidation-Plan.md).
+    /// </remarks>
     private void AddAccessGroup(string alias)
     {
         var input = accessInputs[alias]?.Trim();
         if (string.IsNullOrWhiteSpace(input)) return;
+
+        if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(input))
+        {
+            statusMessage = ADSearch.IsAvailable
+                ? "Pick a group from the suggestion list - typed text is not accepted here, because "
+                  + "only a selected group supplies the identifier this field stores."
+                : "Active Directory is unreachable, so groups cannot be looked up. Try again later.";
+            statusIsError = true;
+            return;
+        }
+
+        statusMessage = null;
         if (!accessState[alias].Contains(input, StringComparer.OrdinalIgnoreCase))
             accessState[alias].Add(input);
         accessInputs[alias] = string.Empty;
     }
+
+    /// <summary>
+    /// The friendly name for a stored group value, falling back to the value itself.
+    /// </summary>
+    /// <remarks>
+    /// Display only - never consulted by an authorization path, so a stale name is cosmetic. The
+    /// fallback matters during the window before the SID migration has run, and for a row whose
+    /// display name was never captured: showing a raw SID is unhelpful but honest, whereas showing
+    /// nothing would make the row look empty.
+    /// </remarks>
+    /// <summary>
+    /// Records the picked group's name so the badge reads as a name straight away, before the save
+    /// round-trip that persists it.
+    /// </summary>
+    private void RememberGroupDisplayName(ExchangeAdminWeb.Services.ADSearchResult result)
+    {
+        if (string.IsNullOrWhiteSpace(result.ObjectSid))
+            return;
+
+        var name = !string.IsNullOrWhiteSpace(result.DisplayName)
+            ? result.DisplayName
+            : result.SamAccountName;
+
+        if (!string.IsNullOrWhiteSpace(name))
+            accessDisplayNames[result.ObjectSid] = name;
+    }
+
+    private string DisplayNameFor(string groupValue)
+        => accessDisplayNames.TryGetValue(groupValue, out var name) && !string.IsNullOrWhiteSpace(name)
+            ? name
+            : groupValue;
 
     private void RemoveAccessGroup(string alias, string group) => accessState[alias].Remove(group);
 

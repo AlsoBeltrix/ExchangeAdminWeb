@@ -58,6 +58,13 @@
     [Parameter] public string Placeholder { get; set; } = "";
     [Parameter] public bool Disabled { get; set; }
 
+    /// <summary>
+    /// Raised with the whole selected object, for callers that need more than the return value -
+    /// e.g. a SID to store plus a name to show. Not raised on typed input, which resolves to no
+    /// directory object.
+    /// </summary>
+    [Parameter] public EventCallback<ExchangeAdminWeb.Services.ADSearchResult> OnResultSelected { get; set; }
+
     private List<ExchangeAdminWeb.Services.ADSearchResult> _results = [];
     private bool _showDropdown;
     private bool _isSearching;
@@ -124,6 +131,8 @@
         _results = [];
         _highlightedIndex = -1;
         await ValueChanged.InvokeAsync(selectedValue);
+        if (OnResultSelected.HasDelegate)
+            await OnResultSelected.InvokeAsync(result);
     }
 
     private string GetReturnValue(ExchangeAdminWeb.Services.ADSearchResult result)
@@ -134,6 +143,11 @@
             "SAM" => result.SamAccountName ?? result.DisplayName,
             "DN" => result.DistinguishedName,
             "DisplayName" => result.DisplayName,
+            // No name fallback. Every other kind degrades to a display name when its attribute is
+            // missing, which is right for a hint but wrong for an identity: a caller that asked
+            // for a SID and silently got a name would store an ambiguous value in an
+            // authorization field. Empty is refused by the caller; a wrong-shaped value is not.
+            "SID" => result.ObjectSid ?? string.Empty,
             _ => result.SamAccountName ?? result.DisplayName
         };
     }

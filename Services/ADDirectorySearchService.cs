@@ -521,7 +521,7 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
 
             ps.AddCommand("Get-ADGroup")
               .AddParameter("LDAPFilter", groupFilter)
-              .AddParameter("Properties", new[] { "DisplayName", "DistinguishedName", "SamAccountName", "mail" })
+              .AddParameter("Properties", new[] { "DisplayName", "DistinguishedName", "SamAccountName", "mail", "objectSid" })
               .AddParameter("ResultSetSize", maxResults)
               .AddParameter("ErrorAction", "Stop");
 
@@ -536,7 +536,10 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
                     SamAccountName: obj.Properties["SamAccountName"]?.Value?.ToString(),
                     UserPrincipalName: null,
                     Email: obj.Properties["mail"]?.Value?.ToString(),
-                    ObjectType: "Group"));
+                    ObjectType: "Group",
+                    // SecurityIdentifier.ToString() yields the canonical "S-1-5-21-..." form, which
+                    // is what section access stores and what IsInRole resolves.
+                    ObjectSid: obj.Properties["objectSid"]?.Value?.ToString()));
             }
 
             if (ps.HadErrors)
@@ -672,10 +675,16 @@ public sealed record DirectoryValidationResult(
 /// <param name="UserPrincipalName">UPN (users only, null for groups).</param>
 /// <param name="Email">Primary email address if set.</param>
 /// <param name="ObjectType">"User" or "Group".</param>
+/// <param name="ObjectSid">
+/// The object's security identifier, populated for group results. Optional with a null default so
+/// the many existing construction sites are unaffected; a caller needing an identity must treat
+/// null as "no SID available" rather than falling back to a name.
+/// </param>
 public sealed record ADSearchResult(
     string DisplayName,
     string DistinguishedName,
     string? SamAccountName,
     string? UserPrincipalName,
     string? Email,
-    string ObjectType);
+    string ObjectType,
+    string? ObjectSid = null);
