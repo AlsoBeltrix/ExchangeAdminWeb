@@ -18,7 +18,15 @@ jobs:
       - name: Format check
         run: dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore
       - name: Test
-        run: dotnet test ExchangeAdminWeb.slnx -c Release --no-build --logger "trx" --results-directory TestResults
+        run: dotnet test ExchangeAdminWeb.slnx -c Release --no-build --logger "trx" --collect:"XPlat Code Coverage" --results-directory TestResults
+      # A ratchet on the security-critical paths only. Coverage had never been measured before
+      # 2026-08-03 despite coverlet being a declared dependency; the suite was 1145 tests at 27.8%
+      # line coverage with both mailbox-permission services at 0%. Scoped rather than global
+      # because a global number is satisfied by testing whatever is easiest, which is how that
+      # shape arose. See docs/TestSuiteRemediation-Plan.md.
+      - name: Coverage floor (security-critical paths)
+        shell: pwsh
+        run: ./tools/Test-CoverageFloor.ps1
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
