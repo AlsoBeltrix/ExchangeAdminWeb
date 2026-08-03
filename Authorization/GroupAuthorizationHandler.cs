@@ -64,8 +64,12 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             }
         }
 
-        var roleClaims = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
-        _logger.LogDebug("User {User} has role claims: {Roles}", userName, string.Join(", ", roleClaims));
+        // Group SIDs, not role claims. ClaimTypes.Role is empty on every request under Negotiate
+        // (measured: 0 of 1687 prod authorizations came through it), while the Windows token
+        // carries 333 group SIDs. Only the count is logged - 333 SIDs per request would drown the
+        // log and they identify the operator.
+        var groupClaims = GroupMembershipChecker.ExtractGroupClaims(user);
+        _logger.LogDebug("User {User} carries {Count} group claim(s)", userName, groupClaims.Count);
 
         var groups = requirement.ResolveDynamically
             ? _sectionAccessService.GetGroupsForSection(requirement.SectionName)
@@ -83,9 +87,9 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
 
         // Claims-based match goes through the shared pure checker so the live handler and the bulk
         // job runner's off-circuit re-check can never diverge (see GroupMembershipChecker). The
-        // IsInRole() checks remain here because they consult the live Windows principal's token
-        // roles, which only exist on a circuit - a job worker has only the captured role claims.
-        if (GroupMembershipChecker.IsMemberOfAny(roleClaims, groups))
+        // IsInRole() check remains as well because it consults the live Windows principal, which
+        // only exists on a circuit - a job worker has only the captured claims.
+        if (GroupMembershipChecker.IsMemberOfAny(groupClaims, groups))
         {
             _logger.LogInformation("User {User} authorized via a section-access group claim", userName);
             context.Succeed(requirement);
@@ -94,11 +98,12 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
 
         foreach (var allowedGroup in groups)
         {
-            var normalizedAllowedGroup = allowedGroup.Contains('\\')
-                ? allowedGroup.Split('\\')[1]
-                : allowedGroup;
-
-            if (user.IsInRole(allowedGroup) || user.IsInRole(normalizedAllowedGroup))
+            // No DOMAIN\-stripping fallback. It existed to make a bare name match a qualified one,
+            // which is exactly what made two same-named groups in different domains
+            // indistinguishable. Stored values are SIDs now, and WindowsPrincipal.IsInRole
+            // resolves a SID string against the token's SIDs natively - so this compares
+            // self-qualifying identifiers with no normalization at all.
+            if (user.IsInRole(allowedGroup))
             {
                 _logger.LogInformation("User {User} authorized via group {Group}", userName, allowedGroup);
                 context.Succeed(requirement);

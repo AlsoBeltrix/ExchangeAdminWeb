@@ -128,16 +128,20 @@ public class GroupAuthorizationHandlerTests : IDisposable
     }
 
     [Fact]
-    public async Task StaticGroups_DomainQualifiedConfigEntry_MatchesBareRoleClaim()
+    public async Task StaticGroups_DomainQualifiedConfigEntry_NoLongerMatchesBareRoleClaim()
     {
-        // Config lists CONTOSO\Admins; Windows auth may surface the bare group
-        // name as the role claim. The handler normalizes the domain prefix.
+        // Asserted True until 2026-08-03: the handler stripped "CONTOSO\" and matched any bare
+        // "Admins" claim. That normalization WAS the defect - it made CONTOSO\Admins and a
+        // different trusted domain's Admins indistinguishable in the field that decides who
+        // reaches a privileged module. Stored values are SIDs now, which are self-qualifying, so
+        // the comparison is exact and this must NOT match.
+        // See docs/SectionAccessSidStorage-Plan.md.
         var handler = CreateHandler();
         var requirement = new GroupAuthorizationRequirement(["CONTOSO\\Admins"]);
 
         var context = await HandleAsync(handler, requirement, MakeUser("Admins"));
 
-        Assert.True(context.HasSucceeded);
+        Assert.False(context.HasSucceeded);
     }
 
     [Fact]

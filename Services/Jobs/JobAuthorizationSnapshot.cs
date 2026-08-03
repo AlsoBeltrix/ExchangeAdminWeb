@@ -24,15 +24,20 @@ public sealed class JobAuthorizationSnapshot
     /// <summary>The policy alias / section the job authorizes against (e.g. "ConferenceRooms").</summary>
     public required string Section { get; init; }
 
-    /// <summary>The submitter's role-claim values captured at submit time (kept for audit/debug).</summary>
+    /// <summary>
+    /// The submitter's group-claim values captured at submit time (kept for audit/debug). Named
+    /// RoleClaims because that is the persisted JSON property name on every job already in the
+    /// database; renaming it would make existing snapshots deserialize with an empty list, which
+    /// fails closed but cancels in-flight jobs for no reason.
+    /// </summary>
     public required IReadOnlyList<string> RoleClaims { get; init; }
 
     /// <summary>
     /// The section's allowed groups the submitter actually satisfied at submit time - the captured
     /// authorization DECISION, not raw claims. Computed on the circuit using the same match the live
-    /// handler uses (role claims AND <see cref="ClaimsPrincipal.IsInRole"/>), so a user authorized
-    /// only via a Windows token role (common when role claims are SIDs but groups are configured by
-    /// name) is captured correctly and does not fail closed off-circuit.
+    /// handler uses (group claims AND <see cref="ClaimsPrincipal.IsInRole"/>), so a user authorized
+    /// only via the live Windows principal is captured correctly and does not fail closed
+    /// off-circuit.
     /// </summary>
     public required IReadOnlyList<string> AuthorizedGroups { get; init; }
 
@@ -46,20 +51,22 @@ public sealed class JobAuthorizationSnapshot
         ArgumentNullException.ThrowIfNull(user);
         ArgumentNullException.ThrowIfNull(allowedGroupsForSection);
 
-        var roles = user.FindAll(ClaimTypes.Role).Select(c => c.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var claims = GroupMembershipChecker.ExtractGroupClaims(user);
 
         var authorized = new List<string>();
         foreach (var group in allowedGroupsForSection)
         {
             if (string.IsNullOrWhiteSpace(group))
                 continue;
-            var normalized = group.Contains('\\') ? group.Split('\\')[1] : group;
-            // Full live check: token roles (IsInRole) OR role claims - mirrors GroupAuthorizationHandler.
-            if (user.IsInRole(group) || user.IsInRole(normalized) || GroupMembershipChecker.IsMemberOfAny(roles, [group]))
+            // Full live check: the Windows principal (IsInRole) OR group claims - mirrors
+            // GroupAuthorizationHandler. No DOMAIN\-stripping variant: allowed values are SIDs,
+            // which IsInRole resolves natively, and stripping is what made two same-named groups
+            // in different domains indistinguishable.
+            if (user.IsInRole(group) || GroupMembershipChecker.IsMemberOfAny(claims, [group]))
                 authorized.Add(group);
         }
 
-        return new JobAuthorizationSnapshot { Section = section, RoleClaims = roles, AuthorizedGroups = authorized };
+        return new JobAuthorizationSnapshot { Section = section, RoleClaims = claims, AuthorizedGroups = authorized };
     }
 
     /// <summary>

@@ -1,14 +1,16 @@
+using System.Security.Claims;
+
 namespace ExchangeAdminWeb.Authorization;
 
 /// <summary>
 /// The pure, principal-free core of the section-access group match. Extracted from
 /// <see cref="GroupAuthorizationHandler"/> so the exact same comparison runs in two places that must
 /// not diverge: the live authorization handler (on a circuit, with a ClaimsPrincipal) and the bulk
-/// job runner's per-row re-check (off-circuit, with only a captured snapshot of the submitter's role
-/// claims - see docs/BulkJobRunner-Plan.md, off-circuit authorization option (a)).
+/// job runner's per-row re-check (off-circuit, with only a captured snapshot of the submitter's
+/// group SIDs - see docs/BulkJobRunner-Plan.md, off-circuit authorization option (a)).
 ///
 /// The app has no SAM->groups lookup: authorization is entirely claims-based. A job worker thread has
-/// no live principal, so it re-evaluates access against the role claims captured at submit time using
+/// no live principal, so it re-evaluates access against the claims captured at submit time using
 /// this function. That authorizes the submission and re-checks the snapshot per row; it does not
 /// detect mid-job group-membership revocation - which the live one-check-per-loop model also does not
 /// detect today (accepted, matches current behavior).
@@ -16,17 +18,62 @@ namespace ExchangeAdminWeb.Authorization;
 public static class GroupMembershipChecker
 {
     /// <summary>
-    /// True when any of <paramref name="roleClaims"/> matches any of <paramref name="allowedGroups"/>,
-    /// comparing case-insensitively and treating a "DOMAIN\group" allowed value as matching either its
-    /// full form or the bare group name (mirroring the handler's normalization). An empty allowed set
-    /// returns false (fail closed - no groups configured means deny), matching the handler.
+    /// The claim types carrying a principal's group membership, in the order they are searched.
     /// </summary>
-    public static bool IsMemberOfAny(IEnumerable<string>? roleClaims, IEnumerable<string>? allowedGroups)
+    /// <remarks>
+    /// <c>GroupSid</c> is what actually matters here. Measured on this deployment: a Negotiate
+    /// principal carries 333 group entries, every one of them a SID, and
+    /// <c>ClaimTypes.Role</c> is empty on every request - prod logged 1687 authorizations through
+    /// the token path and 0 through the claims path. <c>Role</c> and <c>PrimaryGroupSid</c> are
+    /// searched too because a snapshot captured by an older build holds role claims, and neither
+    /// costs anything when absent.
+    /// </remarks>
+    public static readonly string[] GroupClaimTypes =
+    [
+        ClaimTypes.GroupSid,
+        ClaimTypes.PrimaryGroupSid,
+        ClaimTypes.Role
+    ];
+
+    /// <summary>
+    /// Every group identifier a principal carries, across all of <see cref="GroupClaimTypes"/>.
+    /// </summary>
+    public static List<string> ExtractGroupClaims(ClaimsPrincipal? user)
     {
-        if (roleClaims is null || allowedGroups is null)
+        if (user is null)
+            return [];
+
+        return user.Claims
+            .Where(c => GroupClaimTypes.Contains(c.Type, StringComparer.OrdinalIgnoreCase))
+            .Select(c => c.Value)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// True when any of <paramref name="groupClaims"/> equals any of <paramref name="allowedGroups"/>,
+    /// compared case-insensitively and exactly. An empty allowed set returns false (fail closed - no
+    /// groups configured means deny), matching the handler.
+    /// </summary>
+    /// <remarks>
+    /// The comparison is EXACT. It previously also matched a stored <c>DOMAIN\group</c> against a
+    /// bare <c>group</c> claim, which was the defect: it made
+    /// <c>ANALOG\ExchangeWebAdmins</c> and a foreign domain's <c>ExchangeWebAdmins</c>
+    /// indistinguishable, in the field that decides who reaches a privileged module. Stored values
+    /// are SIDs now (docs/SectionAccessSidStorage-Plan.md), which are self-qualifying, so no
+    /// normalization is needed or wanted - re-adding any would reopen the hole.
+    ///
+    /// Nothing here rejects a non-SID allowed value. That is deliberate: an unmigrated store simply
+    /// stops matching, which fails CLOSED. Refusing outright would take the app down on a store the
+    /// migration deferred, and silently accepting names again is the bug.
+    /// </remarks>
+    public static bool IsMemberOfAny(IEnumerable<string>? groupClaims, IEnumerable<string>? allowedGroups)
+    {
+        if (groupClaims is null || allowedGroups is null)
             return false;
 
-        var claims = roleClaims as ICollection<string> ?? roleClaims.ToList();
+        var claims = groupClaims as ICollection<string> ?? groupClaims.ToList();
         if (claims.Count == 0)
             return false;
 
@@ -35,17 +82,10 @@ public static class GroupMembershipChecker
             if (string.IsNullOrWhiteSpace(allowedGroup))
                 continue;
 
-            var normalized = allowedGroup.Contains('\\')
-                ? allowedGroup.Split('\\')[1]
-                : allowedGroup;
-
             foreach (var claim in claims)
             {
-                if (claim.Equals(allowedGroup, StringComparison.OrdinalIgnoreCase)
-                    || claim.Equals(normalized, StringComparison.OrdinalIgnoreCase))
-                {
+                if (claim.Equals(allowedGroup, StringComparison.OrdinalIgnoreCase))
                     return true;
-                }
             }
         }
 
