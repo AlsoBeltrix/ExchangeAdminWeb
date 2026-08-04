@@ -35,7 +35,7 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
         {
             using var runspace = CreateRunspace();
             var server = netBiosDomain is null ? null : ResolveDomainServer(runspace, netBiosDomain);
-            return QueryGroups(runspace, name, server);
+            return QueryGroups(runspace, name, server, netBiosDomain);
         }
         catch (DirectoryUnavailableException)
         {
@@ -123,7 +123,7 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
         return dnsRoot;
     }
 
-    private List<DirectoryGroupMatch> QueryGroups(Runspace runspace, string name, string? server)
+    private List<DirectoryGroupMatch> QueryGroups(Runspace runspace, string name, string? server, string? netBiosDomain)
     {
         using var ps = PowerShell.Create();
         ps.Runspace = runspace;
@@ -164,19 +164,59 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
                     $"A group matching '{name}' returned no readable objectSid.");
             }
 
-            var display = obj.Properties["DisplayName"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(display))
-                display = obj.Properties["Name"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(display))
-                display = obj.Properties["SamAccountName"]?.Value?.ToString();
+            var bare = obj.Properties["SamAccountName"]?.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(bare))
+                bare = obj.Properties["Name"]?.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(bare))
+                bare = obj.Properties["DisplayName"]?.Value?.ToString();
 
-            matches.Add(new DirectoryGroupMatch(sid, display ?? name));
+            // sAMAccountName first, unlike elsewhere: it is the half of DOMAIN\Name that Windows
+            // itself uses, so the rendered value matches what an admin sees in AD tooling.
+            // DisplayName is a last resort - it is not unique and need not match the logon name.
+            //
+            // The domain comes from translating the SID, not from netBiosDomain: a bare stored
+            // name carries no domain, and that is precisely the row whose display most needs one.
+            // Falls back to the queried domain, then to the bare name.
+            matches.Add(new DirectoryGroupMatch(
+                sid,
+                SectionAccessGroupIdentity.QualifiedDisplayName(
+                    ResolveNetBiosDomain(sid) ?? netBiosDomain, bare ?? name)));
         }
 
         _logger.LogDebug("Section-access group lookup for {Name} on {Server} returned {Count} match(es)",
             name, server ?? "the local domain", matches.Count);
 
         return matches;
+    }
+
+    /// <summary>
+    /// The NetBIOS domain owning a SID, or null when it cannot be determined.
+    /// </summary>
+    /// <remarks>
+    /// Uses the Windows SID translator, which returns <c>DOMAIN\Name</c> and is authoritative
+    /// about which domain a SID belongs to - the question a directory query cannot answer for a
+    /// bare stored name, since it does not know where the match came from.
+    ///
+    /// Fail-soft on purpose: this decorates a DISPLAY string. A translation failure (unreachable
+    /// domain, deleted principal) must leave the operator with a bare name, never fail a lookup
+    /// whose real product is the SID.
+    /// </remarks>
+    private string? ResolveNetBiosDomain(string sid)
+    {
+        try
+        {
+            var account = new System.Security.Principal.SecurityIdentifier(sid)
+                .Translate(typeof(System.Security.Principal.NTAccount))
+                .Value;
+
+            var slash = account.IndexOf('\\');
+            return slash > 0 ? account[..slash] : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not resolve a NetBIOS domain for a group SID; showing the bare name");
+            return null;
+        }
     }
 
     private static string? DrainErrors(PowerShell ps)

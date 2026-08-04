@@ -863,18 +863,74 @@
         if (string.IsNullOrWhiteSpace(result.ObjectSid))
             return;
 
-        var name = !string.IsNullOrWhiteSpace(result.DisplayName)
-            ? result.DisplayName
-            : result.SamAccountName;
+        // sAMAccountName preferred: it is the half of DOMAIN\Name that Windows uses, so the badge
+        // matches what an admin sees in AD tooling. DisplayName is neither unique nor guaranteed
+        // to match the logon name.
+        var name = !string.IsNullOrWhiteSpace(result.SamAccountName)
+            ? result.SamAccountName
+            : result.DisplayName;
 
-        if (!string.IsNullOrWhiteSpace(name))
-            accessDisplayNames[result.ObjectSid] = name;
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        // Qualified for the same reason the badge is qualified everywhere else: three domains can
+        // authenticate here, and a bare name does not say which one a grant applies to. The domain
+        // is derived from the SID, which is authoritative about that.
+        accessDisplayNames[result.ObjectSid] =
+            ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.QualifiedDisplayName(
+                NetBiosDomainOf(result.ObjectSid), name);
+    }
+
+    /// <summary>
+    /// The NetBIOS domain owning a SID, or null. Fail-soft: this only decorates a badge, so a
+    /// translation failure must leave a bare name rather than break the picker.
+    /// </summary>
+    // SID -> NetBIOS domain, memoized. A translation is ~0.6ms, but every badge asks on every
+    // Blazor re-render, so an uncached lookup would put dozens of directory round-trips on each
+    // keystroke elsewhere on the page. Null results are cached too - a SID that will not translate
+    // now will not translate on the next render either.
+    private readonly Dictionary<string, string?> _netBiosDomainCache = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? NetBiosDomainOf(string sid)
+    {
+        if (_netBiosDomainCache.TryGetValue(sid, out var cached))
+            return cached;
+
+        var resolved = TranslateNetBiosDomain(sid);
+        _netBiosDomainCache[sid] = resolved;
+        return resolved;
+    }
+
+    private string? TranslateNetBiosDomain(string sid)
+    {
+        try
+        {
+            var account = new System.Security.Principal.SecurityIdentifier(sid)
+                .Translate(typeof(System.Security.Principal.NTAccount))
+                .Value;
+
+            var slash = account.IndexOf('\\');
+            return slash > 0 ? account[..slash] : null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Could not resolve a NetBIOS domain for a picked group; showing the bare name");
+            return null;
+        }
     }
 
     private string DisplayNameFor(string groupValue)
-        => accessDisplayNames.TryGetValue(groupValue, out var name) && !string.IsNullOrWhiteSpace(name)
-            ? name
-            : groupValue;
+    {
+        if (!accessDisplayNames.TryGetValue(groupValue, out var name) || string.IsNullOrWhiteSpace(name))
+            return groupValue;
+
+        // Qualify at render time as well as at write time. Rows migrated before the display names
+        // were qualified hold a bare name, and re-running the migration will not revisit them - it
+        // is idempotent and those rows are already SIDs. Doing it here means an existing store
+        // reads correctly without a data fix-up.
+        return ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.QualifiedDisplayName(
+            NetBiosDomainOf(groupValue), name);
+    }
 
     private void RemoveAccessGroup(string alias, string group) => accessState[alias].Remove(group);
 

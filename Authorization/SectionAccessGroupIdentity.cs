@@ -203,6 +203,42 @@ public static class SectionAccessGroupIdentity
     }
 
     /// <summary>
+    /// The name to SHOW for a group: <c>DOMAIN\Name</c> where the domain is known, the bare name
+    /// otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Display only - no authorization path reads it, and a stale one is cosmetic.
+    ///
+    /// Qualified because a bare name is ambiguous to a reader in exactly the way the stored value
+    /// no longer is: this deployment authenticates three domains, and "ExchangeWebAdmins" does not
+    /// say which one an entry grants. Storing SIDs removed that ambiguity from the data; showing a
+    /// bare name puts it back in front of the operator, who is the one deciding whether a grant is
+    /// correct.
+    ///
+    /// <c>DOMAIN\Name</c> rather than a UPN or mail address, verified against this directory:
+    /// **no** security group carries a <c>userPrincipalName</c> (that attribute is for users), and
+    /// only 5 of 8 sampled groups have <c>mail</c> - <c>ExchangeWebAdmins</c>, the admin group
+    /// itself, has neither. A scheme that renders blank for the most privileged entry is not a
+    /// display scheme.
+    /// </remarks>
+    public static string QualifiedDisplayName(string? netBiosDomain, string? name)
+    {
+        var bare = (name ?? string.Empty).Trim();
+
+        if (string.IsNullOrEmpty(bare))
+            return string.Empty;
+
+        // Already qualified - do not double up. Values reach here from several places (the picker,
+        // the migration, the store) and not all of them know whether the domain was prepended.
+        if (bare.Contains('\\'))
+            return bare;
+
+        var domain = (netBiosDomain ?? string.Empty).Trim().TrimEnd('\\');
+
+        return string.IsNullOrEmpty(domain) ? bare : $"{domain}\\{bare}";
+    }
+
+    /// <summary>
     /// Turns a match count into an outcome. Pure so the resolver's decision is provable without a
     /// directory: exactly one match resolves, zero is an affirmative absence, and two or more is
     /// ambiguous and must never be narrowed by picking one.

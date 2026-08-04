@@ -243,6 +243,74 @@ public class SectionAccessGroupIdentityTests
         Assert.Contains("$KOO300-S3AMUVVBVMI1", SectionAccessGroupIdentity.BuildGroupLookupFilter("$KOO300-S3AMUVVBVMI1"));
     }
 
+    // ---------------------------------------------------------------- Display name
+
+    [Fact]
+    public void QualifiesADisplayNameWithItsDomain()
+    {
+        // Owner request 2026-08-04: a bare "ExchangeWebAdmins" on the admin page does not say
+        // WHICH domain's group holds the grant, and three domains can authenticate here. Storing
+        // SIDs removed that ambiguity from the data; the display must not put it back.
+        Assert.Equal(@"ANALOG\ExchangeWebAdmins",
+            SectionAccessGroupIdentity.QualifiedDisplayName("ANALOG", "ExchangeWebAdmins"));
+    }
+
+    [Fact]
+    public void DoesNotDoubleQualifyAnAlreadyQualifiedName()
+    {
+        // Values reach this from the picker, the migration and the store, and not all of them know
+        // whether the domain was already prepended. "ANALOG\ANALOG\IAM" would be worse than bare.
+        Assert.Equal(@"ANALOG\IAM",
+            SectionAccessGroupIdentity.QualifiedDisplayName("ANALOG", @"ANALOG\IAM"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void FallsBackToTheBareNameWhenTheDomainIsUnknown(string? domain)
+    {
+        // Domain resolution is fail-soft by design: it decorates a badge, and a directory hiccup
+        // must leave a readable name rather than blank the row or fail the page.
+        Assert.Equal("ExchangeWebAdmins",
+            SectionAccessGroupIdentity.QualifiedDisplayName(domain, "ExchangeWebAdmins"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void EmptyNameYieldsEmpty_NeverABareSeparator(string? name)
+    {
+        // A lone "ANALOG\" would read as a group whose name had been lost.
+        Assert.Equal(string.Empty, SectionAccessGroupIdentity.QualifiedDisplayName("ANALOG", name));
+    }
+
+    [Fact]
+    public void TrimsTheSeparatorFromTheDomain()
+    {
+        Assert.Equal(@"ANALOG\IAM", SectionAccessGroupIdentity.QualifiedDisplayName(@"ANALOG\", "IAM"));
+    }
+
+    [Fact]
+    public void KeepsAForeignDomainDistinct()
+    {
+        // The case the whole work stream exists for, now visible to the operator: two groups of
+        // the same name in different domains must not render identically.
+        var local = SectionAccessGroupIdentity.QualifiedDisplayName("ANALOG", "Enterprise Admins");
+        var foreign = SectionAccessGroupIdentity.QualifiedDisplayName("WINROOT", "Enterprise Admins");
+
+        Assert.NotEqual(local, foreign);
+        Assert.Equal(@"WINROOT\Enterprise Admins", foreign);
+    }
+
+    [Fact]
+    public void PreservesANameBeginningWithDollar()
+    {
+        Assert.Equal(@"ANALOG\$KOO300-S3AMUVVBVMI1",
+            SectionAccessGroupIdentity.QualifiedDisplayName("ANALOG", "$KOO300-S3AMUVVBVMI1"));
+    }
+
     // ---------------------------------------------------------------- Match classification
 
     [Fact]
