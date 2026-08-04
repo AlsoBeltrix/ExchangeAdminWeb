@@ -84,11 +84,13 @@ public class CalendarPermissionService : ExchangeServiceBase
         await foreach (var row in csv.GetRecordsAsync<CalendarPermissionCsvRow>())
         {
             records.Add(row);
-            if (records.Count > 200)
+            // Stop one row past the cap: enough to know the file is oversized, without reading an
+            // unbounded file into memory.
+            if (BulkCsvRowLimit.ShouldStopReading(records.Count))
                 break;
         }
-        if (records.Count > 200)
-            return new BulkOperationResult { TotalRows = records.Count, FailedCount = records.Count, Errors = new() { "CSV exceeds 200 row limit. Please split into smaller files." } };
+        if (BulkCsvRowLimit.Exceeds(records.Count))
+            return BulkCsvRowLimit.Rejected(records.Count);
         var errors = new List<string>();
         var entries = new List<BulkOperationEntry>();
         var successCount = 0;

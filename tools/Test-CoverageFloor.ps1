@@ -42,6 +42,8 @@ $scopePatterns = @(
     '^Services[\\/]ProtectedPrincipal',
     '^Services[\\/]PermissionValidator\.cs',
     '^Services[\\/]MailboxPermissionOutcome\.cs',
+    '^Services[\\/]CalendarFolderIdentity\.cs',
+    '^Services[\\/]BulkCsvRowLimit\.cs',
     '^Services[\\/]SectionAccess'
 )
 

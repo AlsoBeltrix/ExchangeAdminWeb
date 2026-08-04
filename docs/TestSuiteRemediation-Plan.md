@@ -1,8 +1,11 @@
 # Test Suite Remediation -- Plan
 
-Status: **Draft, awaiting owner decisions.** Raised by the owner 2026-08-03: "why do we need
-1142 tests? how many of those are testing things that matter? how many have ever failed?" The
-measurements below answer that; the answer is bad enough to justify a plan.
+Status: **In progress.** Raised by the owner 2026-08-03: "why do we need 1142 tests? how many of
+those are testing things that matter? how many have ever failed?" The measurements below answer
+that; the answer was bad enough to justify a plan. Owner then ruled: "do it correctly."
+**Landed so far:** coverage measured and gated in CI (D1a), and the seam extractions for
+`MailboxPermissionService` and `CalendarPermissionService` (D2a) -- see Progress below.
+**Still open: D3 (pruning), and the untested services listed under Non-Goals.**
 App version: no bump (test/CI only, ships no behavior).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`.
 
@@ -161,6 +164,39 @@ tests plus a build), then add tests in the next. Not both at once.
 
 For each candidate: delete, re-run coverage, confirm no line or branch lost coverage. If
 anything drops, restore it -- it was not redundant.
+
+## Progress
+
+### Landed 2026-08-03
+
+- **Coverage is measured and gated (D1a).** `tools/Test-CoverageFloor.ps1` + a CI step. Scoped to
+  the security-critical paths; floor set at the measured **64.7%**, not at an aspiration. Verified
+  in both directions (exit 0 at the floor, exit 1 at 99%) rather than assumed to work.
+  An empty scope is a hard error -- which fired during development, when the patterns were
+  anchored to backslashes and the Cobertura paths turned out to be repo-relative. A gate that
+  silently matches nothing is worse than no gate, because it reads as proof.
+- **`MailboxPermissionService`: 0% -> tested.** `MailboxPermissionOutcome` extracts the
+  partial-success aggregation that was written out four times inside unreachable closures. 17
+  tests. Found one real defect: an empty right set reported success ("has been granted  rights
+  to ..."). Also rewrote `MailboxPermissionServicePartialSuccessTests`, which asserted the
+  aggregation by grepping the source for `successes.Add("FullAccess")` -- it broke on a variable
+  rename while behavior was identical, and would have passed on correct-looking wrong code.
+- **`CalendarPermissionService`: 0% -> tested.** `CalendarFolderIdentity` extracts the
+  `mailbox:\Folder` construction (13 tests) and `BulkCsvRowLimit` the 200-row upload cap (9).
+  Found a second real defect: an empty `FolderPath` from Exchange produced `mailbox:` -- the
+  mailbox **root** -- so a calendar grant would have applied across the whole mailbox, silently
+  and reported as success. The original `?? @"\Calendar"` guarded null but not empty.
+
+Both defects are in the same class: **a silent wrong-target success**. Neither would have been
+found by adding tests of the kind the suite already had, because neither method was reachable.
+
+### The pattern worth reusing
+
+Both extractions took the same shape, and it is the answer to "how do you test code that needs a
+live tenant": you do not. You separate the DECISION from the CALL. The PowerShell invocation stays
+untestable and uninteresting; the logic that decides what happens and what the operator is told
+moves to a pure function and gets tested properly. What remains in the service is thin enough to
+read.
 
 ## Verification
 
