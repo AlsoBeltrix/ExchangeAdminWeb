@@ -56,9 +56,15 @@ public sealed class JobAuthorizationSnapshot
         var authorized = new List<string>();
         foreach (var group in allowedGroupsForSection)
         {
-            // SIDs only, mirroring the handler: IsInRole resolves names too, so an unmigrated row
-            // would otherwise be captured as an authorizing group and keep authorizing every row
-            // of the job on a name. Review finding sid-1.
+            // SIDs only: IsInRole resolves names too, so an unmigrated row would otherwise be
+            // captured as an authorizing group and keep authorizing every row of the job on a
+            // name. Review finding sid-1.
+            //
+            // Unconditional here, unlike GroupAuthorizationHandler, which filters only its dynamic
+            // path: the sole caller (ConferenceRooms.razor) feeds this from
+            // SectionAccess.GetGroupsForSection - always the migrated section_access store, never
+            // the static appsettings groups. A future caller passing static AdminGroups here would
+            // silently capture nothing; that is fail-closed, but it would be a bug.
             if (!ExchangeAdminWeb.Authorization.SectionAccessGroupIdentity.IsUsableGroupSid(group))
                 continue;
             // Full live check: the Windows principal (IsInRole) OR group claims - mirrors

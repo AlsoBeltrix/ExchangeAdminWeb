@@ -72,16 +72,18 @@ public static class GroupMembershipChecker
     /// are SIDs now (docs/SectionAccessSidStorage-Plan.md), which are self-qualifying, so no
     /// normalization is needed or wanted - re-adding any would reopen the hole.
     ///
-    /// A non-SID allowed value is DISCARDED, not compared. Exact comparison alone does not make an
-    /// unmigrated store fail closed, which an earlier version of this comment wrongly claimed:
-    /// measured on a domain-joined host, <c>WindowsPrincipal.IsInRole</c> resolves names as well as
-    /// SIDs (<c>IsInRole("Domain Users")</c> is true), and a role claim can carry a name too. So
-    /// while the migration is deferred or halted, a name-valued row would authorize exactly as it
-    /// did before this work - the same-name ambiguity intact, during precisely the window the
-    /// migration was designed to survive. Discarding makes the fail-closed property real:
-    /// a section whose rows are all names denies everyone until the migration completes, which is
-    /// the correct trade against authorizing on an identifier the app cannot disambiguate.
-    /// Review finding sid-1.
+    /// This function does NOT filter non-SID values - callers do, via
+    /// <see cref="UsableSidsOnly"/>, because only the caller knows which store the values came
+    /// from. Values from the <c>section_access</c> store must be SIDs (review finding sid-1:
+    /// exact comparison alone does not make an unmigrated store fail closed, since
+    /// <c>WindowsPrincipal.IsInRole</c> resolves names as well as SIDs - measured,
+    /// <c>IsInRole("Domain Users")</c> is true - and a role claim can carry a name too). Values
+    /// from <c>Security:AllowedGroups</c> / <c>Security:AdminGroups</c> in appsettings must NOT be
+    /// filtered: no migration converts them, they ship and deploy as <c>DOMAIN\Name</c>, and
+    /// discarding them locks every admin out of the admin page (review finding sidf-1).
+    ///
+    /// Filtering here instead would apply the wrong rule to one of those two callers whichever way
+    /// it was written.
     /// </remarks>
     public static bool IsMemberOfAny(IEnumerable<string>? groupClaims, IEnumerable<string>? allowedGroups)
     {
@@ -94,7 +96,7 @@ public static class GroupMembershipChecker
 
         foreach (var allowedGroup in allowedGroups)
         {
-            if (!SectionAccessGroupIdentity.IsUsableGroupSid(allowedGroup))
+            if (string.IsNullOrWhiteSpace(allowedGroup))
                 continue;
 
             foreach (var claim in claims)

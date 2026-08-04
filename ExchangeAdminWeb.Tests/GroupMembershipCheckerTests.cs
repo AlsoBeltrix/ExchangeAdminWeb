@@ -51,22 +51,36 @@ public class GroupMembershipCheckerTests
     [InlineData(@"ANALOG\IAM")]
     [InlineData(@"CORP\ConfRoomAdmins")]
     [InlineData("S-1-5-32-544")]  // well-known: unambiguous but far too broad
-    public void NonSidAllowedValueMatchesNothing(string allowed)
+    public void UsableSidsOnly_DiscardsNonSids(string allowed)
     {
-        // Asserted the OPPOSITE until review finding sid-1: the claim was that exact comparison
-        // alone made an unmigrated store fail closed. It does not. A role claim can carry a name,
-        // and IsInRole resolves names as well as SIDs, so a name-valued row would keep authorizing
-        // - with the same-name ambiguity intact - during exactly the window the migration is
-        // designed to survive. Discarding non-SIDs is what makes the fail-closed claim true.
-        Assert.False(GroupMembershipChecker.IsMemberOfAny([allowed], [allowed]));
+        // The sid-1 rule, now asserted on the FILTER rather than on IsMemberOfAny. Exact
+        // comparison alone does not make an unmigrated store fail closed: a role claim can carry
+        // a name, and IsInRole resolves names as well as SIDs, so a name-valued row would keep
+        // authorizing - with the same-name ambiguity intact - during exactly the window the
+        // migration is designed to survive.
+        Assert.Empty(GroupMembershipChecker.UsableSidsOnly([allowed]));
+    }
+
+    [Fact]
+    public void IsMemberOfAny_DoesNotFilter_SoStaticAppsettingsGroupsStillWork()
+    {
+        // Review finding sidf-1. Filtering INSIDE this function applied the SID rule to
+        // Security:AdminGroups too - appsettings values no migration converts, deployed here as
+        // "ANALOG\ExchangeWebAdmins" - which locked admins out of the admin page. The filter
+        // therefore belongs at the caller, which knows which store the values came from.
+        Assert.True(GroupMembershipChecker.IsMemberOfAny(
+            [@"ANALOG\ExchangeWebAdmins"], [@"ANALOG\ExchangeWebAdmins"]));
     }
 
     [Fact]
     public void UnmigratedRowsAreDroppedButSidsBesideThemStillMatch()
     {
         // A partially-migrated section must not be all-or-nothing at authorization time: the rows
-        // that did convert keep working.
-        Assert.True(GroupMembershipChecker.IsMemberOfAny([IamSid], ["IAM", IamSid]));
+        // that did convert keep working. Filter then compare, as the handler's dynamic path does.
+        var allowed = GroupMembershipChecker.UsableSidsOnly(["IAM", IamSid]);
+
+        Assert.True(GroupMembershipChecker.IsMemberOfAny([IamSid], allowed));
+        Assert.False(GroupMembershipChecker.IsMemberOfAny(["IAM"], allowed));
     }
 
     [Fact]

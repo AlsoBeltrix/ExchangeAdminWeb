@@ -85,13 +85,24 @@ public class GroupAuthorizationHandler : AuthorizationHandler<GroupAuthorization
             return Task.CompletedTask;
         }
 
-        // SIDs only, for BOTH comparisons below. IsInRole also resolves NAMES (measured:
-        // IsInRole("Domain Users") is true), so passing an unmigrated row straight through would
-        // authorize on a name and keep the same-name ambiguity alive during exactly the window the
-        // migration is built to survive. Review finding sid-1.
-        var usableGroups = GroupMembershipChecker.UsableSidsOnly(groups);
+        // SIDs only - but ONLY for the dynamic section_access store, which the SID migration
+        // governs. IsInRole resolves NAMES as well as SIDs (measured: IsInRole("Domain Users") is
+        // true), so an unmigrated row passed straight through would authorize on a name and keep
+        // the same-name ambiguity alive during exactly the window the migration is built to
+        // survive (review finding sid-1).
+        //
+        // Static requirements are NOT filtered. They carry Security:AllowedGroups and
+        // Security:AdminGroups from appsettings, which no migration converts and which ship - and
+        // are deployed here - as DOMAIN\Name (verified against live prod:
+        // AdminGroups = ANALOG\ExchangeWebAdmins). Filtering those would empty the allowed set for
+        // the AdminSettings policy and lock every admin out of the page needed to repair the very
+        // thing this work stream changes. Review finding sidf-1; the appsettings fallback is an
+        // explicit Non-Goal of docs/SectionAccessSidStorage-Plan.md.
+        var usableGroups = requirement.ResolveDynamically
+            ? GroupMembershipChecker.UsableSidsOnly(groups)
+            : groups.Where(g => !string.IsNullOrWhiteSpace(g)).ToList();
 
-        if (usableGroups.Count < groups.Length)
+        if (requirement.ResolveDynamically && usableGroups.Count < groups.Length)
         {
             _logger.LogWarning(
                 "Section {Section}: {Skipped} of {Total} configured group(s) are not SIDs and were "

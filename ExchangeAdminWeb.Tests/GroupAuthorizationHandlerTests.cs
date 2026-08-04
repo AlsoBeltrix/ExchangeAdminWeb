@@ -188,6 +188,51 @@ public class GroupAuthorizationHandlerTests : IDisposable
     }
 
     [Fact]
+    public async Task StaticAdminGroups_ByName_StillAuthorize()
+    {
+        // Review finding sidf-1, and the reason it was HIGH. Security:AdminGroups comes from
+        // appsettings, which NO migration converts, and it ships and deploys as DOMAIN\Name -
+        // verified against live prod, where AdminGroups is "ANALOG\ExchangeWebAdmins".
+        //
+        // The sid-1 fix filtered non-SIDs on EVERY requirement, including this one. That emptied
+        // the allowed set for the AdminSettings policy and would have locked every administrator
+        // out of the admin page on deploy - including the page needed to repair section-access
+        // migration fallout. The SID rule is scoped to the dynamic store it governs.
+        var handler = CreateHandler();
+        var requirement = new GroupAuthorizationRequirement([@"ANALOG\ExchangeWebAdmins"]);
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, @"ANALOG\admin"),
+             new Claim(ClaimTypes.Role, @"ANALOG\ExchangeWebAdmins")],
+            "TestAuth"));
+        var context = await HandleAsync(handler, requirement, user);
+
+        Assert.True(context.HasSucceeded);
+    }
+
+    [Fact]
+    public async Task StaticGroups_ByName_AreNotFilteredWhileDynamicOnesAre()
+    {
+        // The two halves of the rule, asserted together so a later refactor cannot collapse them:
+        // the SAME name value authorizes through a static requirement and is refused through a
+        // dynamic one. Static appsettings groups are not migrated; section_access rows are.
+        var handler = CreateHandler();
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, @"ANALOG\admin"),
+             new Claim(ClaimTypes.Role, "ExchangeAdmins")],
+            "TestAuth"));
+
+        var staticCtx = await HandleAsync(handler, new GroupAuthorizationRequirement(["ExchangeAdmins"]), user);
+        Assert.True(staticCtx.HasSucceeded);
+
+        WriteSectionAccess(new() { ["MailboxPermissions"] = ["ExchangeAdmins"] });
+        WriteEnablement(new() { ["ExchangeOnline"] = true, ["MailboxPermissions"] = true });
+        var dynamicCtx = await HandleAsync(
+            handler, new GroupAuthorizationRequirement("MailboxPermissions", dynamic: true), user);
+        Assert.False(dynamicCtx.HasSucceeded);
+    }
+
+    [Fact]
     public async Task StaticGroups_MatchIsCaseInsensitive()
     {
         var handler = CreateHandler();
