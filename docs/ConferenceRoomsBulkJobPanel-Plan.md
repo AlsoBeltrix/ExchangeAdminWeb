@@ -1,7 +1,8 @@
 # Conference Rooms Bulk Jobs Panel Plan
 
-Status: **Approved 2026-08-04. No open owner gates** -- D1 was withdrawn and replaced by the
-owner's rulings below.
+Status: **Implemented 2026-08-04** (all six slices; see Progress). No open owner gates -- D1 was
+withdrawn and replaced by the owner's rulings below. **The 10 manual checks have NOT been run:**
+they need a dev deploy, and the panel is markup, so they are the only evidence it renders.
 
 Reported 2026-08-04: the Conference Rooms page shows a permanent "Bulk Jobs" row with no date, no
 way to remove it, and no way to see what it was.
@@ -280,6 +281,24 @@ Each slice is one commit. Commit each before starting the next
    infrastructure) **and** ConferenceRooms `2.3.1 -> 2.3.2` in `Modules/ModuleCatalog.cs:403`.
    Both rules fire; each is independent (`docs/ProjectConstitution.md`, Deployment And
    Versioning).
+
+## Progress
+
+All six slices landed 2026-08-04. App `2.5.0 -> 2.5.1`, ConferenceRooms `2.3.1 -> 2.3.2`.
+
+| Slice | Commit | Note |
+|---|---|---|
+| 1 Module-scoped reads (F1) | `5413c2b` | 5 tests; 4 fail with the predicates removed |
+| 2 Kind label (F2) | `5e43daa` | 6 tests; 4 fail with the two-way ternary restored |
+| 3 Remove (D2) | `d62dd59` | 10 tests; 3 fail without the terminal guard, 1 without the module check |
+| 4-5 Jobs tab, timestamps, details | this commit | markup; manual checks only |
+| 6 Versions | this commit | both rules fired |
+
+**Method note.** Slices 4-5 moved a 60-line markup block, which is the operation that silently
+deleted two whole tables during the admin redesign while the build stayed green -- absent Razor
+markup is not a compile error. The finished file was therefore checked for 19 expected symbols and
+for tag balance, and the panel's position asserted to be *after* the tab strip, rather than
+trusting the build.
 
 ## Verification
 

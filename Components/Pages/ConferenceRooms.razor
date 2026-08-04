@@ -39,73 +39,21 @@
     </div>
     <h1 class="mb-4">Conference Rooms<ModuleVersion /></h1>
 
-    @* ===== Bulk jobs panel — durable, server-side, shared across operators ===== *@
-    @if (activeJobs.Count > 0 || recentJobs.Count > 0)
-    {
-        <div class="card mb-3">
-            <div class="card-header"><strong>Bulk Jobs</strong> <small class="text-muted">— these run on the server and keep going if you close this tab</small></div>
-            <div class="card-body p-0" style="overflow-x:auto">
-                <table class="table table-sm mb-0 align-middle">
-                    <thead>
-                        <tr>
-                            <th>Kind</th><th>Submitted by</th><th>Ticket</th><th>Status</th>
-                            <th>Progress</th><th>Success</th><th>Partial</th><th>Failed</th><th></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var job in activeJobs)
-                        {
-                            var status = JobDisplayStatus(job);
-                            <tr class="@(status == "Stalled" ? "table-warning" : status == "Running" ? "table-info" : "")">
-                                <td><small>@JobKindLabel(job)</small></td>
-                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
-                                <td><small>@job.Ticket</small></td>
-                                <td>
-                                    <span class="badge @(status == "Running" ? "bg-info" : status == "Stalled" ? "bg-warning text-dark" : "bg-secondary")">@status</span>
-                                    @if (status == "Queued") { <span class="text-muted"><small> (position @(activeJobs.Where(j => j.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued).ToList().IndexOf(job) + 1))</small></span> }
-                                </td>
-                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
-                                <td><small class="text-success">@job.SuccessCount</small></td>
-                                <td><small class="text-warning">@job.PartialCount</small></td>
-                                <td><small class="text-danger">@job.FailedCount</small></td>
-                                <td>
-                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job.Id)">
-                                        @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued ? "Remove" : "Cancel")
-                                    </button>
-                                </td>
-                            </tr>
-                        }
-                        @foreach (var job in recentJobs)
-                        {
-                            <tr>
-                                <td><small>@JobKindLabel(job)</small></td>
-                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
-                                <td><small>@job.Ticket</small></td>
-                                <td><span class="badge @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed && job.FailedCount == 0 && job.PartialCount == 0 ? "bg-success" : job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed ? "bg-warning text-dark" : "bg-secondary")">@job.Status</span></td>
-                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
-                                <td><small class="text-success">@job.SuccessCount</small></td>
-                                <td><small class="text-warning">@job.PartialCount</small></td>
-                                <td><small class="text-danger">@job.FailedCount</small></td>
-                                <td>
-                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job.Id)"
-                                            title="Remove this job from the list for everyone. The audit record is kept.">
-                                        Remove
-                                    </button>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    }
-
+    @* The bulk jobs panel used to sit HERE, above the tab strip, where it pushed the module
+       further down the page with every job and could only be cleared by an app-pool recycle
+       (owner, 2026-08-04). It is a tab now. The count is active jobs only -- a permanent
+       "Jobs (25)" badge would reproduce the same always-present clutter in miniature. *@
     <ul class="nav nav-tabs mb-3">
         <li class="nav-item">
             <button class="nav-link @(activeTab == "finder" ? "active" : "")" @onclick='() => activeTab = "finder"'>Room Finder</button>
         </li>
         <li class="nav-item">
             <button class="nav-link @(activeTab == "type" ? "active" : "")" @onclick='() => activeTab = "type"'>Room Type</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(activeTab == "jobs" ? "active" : "")" @onclick='() => activeTab = "jobs"'>
+                Bulk Jobs@(activeJobs.Count > 0 ? $" ({activeJobs.Count})" : "")
+            </button>
         </li>
     </ul>
 
@@ -506,6 +454,178 @@
             </div>
         </div>
     }
+
+    @* ===== TAB 3: BULK JOBS =====
+       Moved off the top of the page (owner, 2026-08-04): as a permanent panel it pushed the
+       module down with every job. Module-scoped reads (plan F1), so nothing another module
+       submitted appears here or is controllable from here. ===== *@
+    @if (activeTab == "jobs")
+    {
+        <div class="card">
+            <div class="card-header d-flex align-items-baseline gap-2">
+                <strong>Bulk Jobs</strong>
+                <small class="text-muted">
+                    &mdash; these run on the server and keep going if you close this tab.
+                    Finished jobs are kept for 30 days.
+                </small>
+            </div>
+            <div class="card-body p-0" style="overflow-x:auto">
+                @if (activeJobs.Count == 0 && recentJobs.Count == 0)
+                {
+                    <p class="text-muted fst-italic p-3 mb-0"><small>No bulk jobs.</small></p>
+                }
+                else
+                {
+                    <table class="table table-sm mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th>Kind</th><th>Submitted by</th><th>Ticket</th><th>Status</th>
+                                <th>Submitted</th><th>Finished</th>
+                                <th>Progress</th><th>Success</th><th>Partial</th><th>Failed</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var job in activeJobs)
+                            {
+                                var status = JobDisplayStatus(job);
+                                <tr class="@(status == "Stalled" ? "table-warning" : status == "Running" ? "table-info" : "")">
+                                    <td><small>@JobKindLabel(job)</small></td>
+                                    <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                    <td><small>@job.Ticket</small></td>
+                                    <td>
+                                        <span class="badge @(status == "Running" ? "bg-info" : status == "Stalled" ? "bg-warning text-dark" : "bg-secondary")">@status</span>
+                                        @if (status == "Queued") { <span class="text-muted"><small> (position @(activeJobs.Where(j => j.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued).ToList().IndexOf(job) + 1))</small></span> }
+                                    </td>
+                                    <td class="text-nowrap"><small>@LocalTime(job.SubmittedAtUtc)</small></td>
+                                    @* An active job has no finish time; its heartbeat age is the useful signal
+                                       there, and it is what the Stalled classification is derived from. *@
+                                    <td class="text-nowrap"><small class="text-muted">@HeartbeatAge(job)</small></td>
+                                    <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                    <td><small class="text-success">@job.SuccessCount</small></td>
+                                    <td><small class="text-warning">@job.PartialCount</small></td>
+                                    <td><small class="text-danger">@job.FailedCount</small></td>
+                                    <td class="text-nowrap">
+                                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleJobDetails(job.Id)">
+                                            @(detailsJobId == job.Id ? "Hide" : "Details")
+                                        </button>
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job.Id)">
+                                            @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Queued ? "Remove" : "Cancel")
+                                        </button>
+                                    </td>
+                                </tr>
+                                @if (detailsJobId == job.Id)
+                                {
+                                    <tr class="table-light">
+                                        <td colspan="11">
+                                            @if (!string.IsNullOrWhiteSpace(job.Message))
+                                            {
+                                                @* Where the cancel and interrupt reasons live. Nothing surfaced
+                                                   this before, so an Interrupted job gave no reason at all. *@
+                                                <div class="mb-2"><small><strong>Note:</strong> @job.Message</small></div>
+                                            }
+                                            <div class="mb-2">
+                                                <small class="text-muted">
+                                                    Submitted @LocalTime(job.SubmittedAtUtc)
+                                                    by @(job.SubmittedByDisplay ?? job.SubmittedBy)
+                                                    from @job.SubmittedIp
+                                                    @if (!string.IsNullOrWhiteSpace(job.Ticket)) { <text>&mdash; ticket @job.Ticket</text> }
+                                                </small>
+                                            </div>
+                                            @if (detailsRows.Count == 0)
+                                            {
+                                                <small class="text-muted fst-italic">No rows recorded yet.</small>
+                                            }
+                                            else
+                                            {
+                                                <table class="table table-sm mb-0">
+                                                    <thead><tr><th>Target</th><th>Status</th><th>Message</th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var row in detailsRows)
+                                                        {
+                                                            <tr class="@RowStatusCss(row.Status)">
+                                                                <td><small>@row.Target</small></td>
+                                                                <td><small>@RowStatusLabel(row.Status)</small></td>
+                                                                <td><small>@row.Message</small></td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                            @foreach (var job in recentJobs)
+                            {
+                                <tr>
+                                    <td><small>@JobKindLabel(job)</small></td>
+                                    <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                    <td><small>@job.Ticket</small></td>
+                                    <td><span class="badge @(job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed && job.FailedCount == 0 && job.PartialCount == 0 ? "bg-success" : job.Status == ExchangeAdminWeb.Services.Jobs.BulkJobStatus.Completed ? "bg-warning text-dark" : "bg-secondary")">@job.Status</span></td>
+                                    <td class="text-nowrap"><small>@LocalTime(job.SubmittedAtUtc)</small></td>
+                                    <td class="text-nowrap"><small>@LocalTime(job.FinishedAtUtc)</small></td>
+                                    <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                    <td><small class="text-success">@job.SuccessCount</small></td>
+                                    <td><small class="text-warning">@job.PartialCount</small></td>
+                                    <td><small class="text-danger">@job.FailedCount</small></td>
+                                    <td class="text-nowrap">
+                                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleJobDetails(job.Id)">
+                                            @(detailsJobId == job.Id ? "Hide" : "Details")
+                                        </button>
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job.Id)"
+                                                title="Remove this job from the list for everyone. The audit record is kept.">
+                                            Remove
+                                        </button>
+                                    </td>
+                                </tr>
+                                @if (detailsJobId == job.Id)
+                                {
+                                    <tr class="table-light">
+                                        <td colspan="11">
+                                            @if (!string.IsNullOrWhiteSpace(job.Message))
+                                            {
+                                                @* Where the cancel and interrupt reasons live. Nothing surfaced
+                                                   this before, so an Interrupted job gave no reason at all. *@
+                                                <div class="mb-2"><small><strong>Note:</strong> @job.Message</small></div>
+                                            }
+                                            <div class="mb-2">
+                                                <small class="text-muted">
+                                                    Submitted @LocalTime(job.SubmittedAtUtc)
+                                                    by @(job.SubmittedByDisplay ?? job.SubmittedBy)
+                                                    from @job.SubmittedIp
+                                                    @if (!string.IsNullOrWhiteSpace(job.Ticket)) { <text>&mdash; ticket @job.Ticket</text> }
+                                                </small>
+                                            </div>
+                                            @if (detailsRows.Count == 0)
+                                            {
+                                                <small class="text-muted fst-italic">No rows recorded yet.</small>
+                                            }
+                                            else
+                                            {
+                                                <table class="table table-sm mb-0">
+                                                    <thead><tr><th>Target</th><th>Status</th><th>Message</th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var row in detailsRows)
+                                                        {
+                                                            <tr class="@RowStatusCss(row.Status)">
+                                                                <td><small>@row.Target</small></td>
+                                                                <td><small>@RowStatusLabel(row.Status)</small></td>
+                                                                <td><small>@row.Message</small></td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -644,6 +764,46 @@
     }
 
     private void CancelJob(string jobId) => BulkJobs.CancelJob(jobId);
+
+    // One expanded row at a time; clicking the open one closes it.
+    private string? detailsJobId;
+    private IReadOnlyList<ExchangeAdminWeb.Services.Jobs.BulkJobRow> detailsRows =
+        Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>();
+
+    private void ToggleJobDetails(string jobId)
+    {
+        if (detailsJobId == jobId)
+        {
+            detailsJobId = null;
+            detailsRows = Array.Empty<ExchangeAdminWeb.Services.Jobs.BulkJobRow>();
+            return;
+        }
+
+        // Rows are fetched on expand, not for every row on every refresh: this panel re-renders
+        // on every job event.
+        detailsJobId = jobId;
+        detailsRows = BulkJobs.GetRows(jobId);
+    }
+
+    // Server-local, matching MessageTraceReports.razor. Times are rendered in the SERVER's zone
+    // everywhere in this app; that is pre-existing and not this change's scope.
+    private static string LocalTime(DateTime? utc)
+        => utc is null ? "" : utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    // An active job has no finish time. Heartbeat age is the signal the Stalled classification is
+    // derived from, so it is more useful in that column than an empty cell.
+    private static string HeartbeatAge(ExchangeAdminWeb.Services.Jobs.BulkJob job)
+    {
+        if (job.HeartbeatAtUtc is not { } hb)
+            return "";
+
+        var age = DateTime.UtcNow - hb;
+        return age.TotalMinutes < 1
+            ? "just now"
+            : age.TotalHours < 1
+                ? $"{(int)age.TotalMinutes}m ago"
+                : $"{(int)age.TotalHours}h ago";
+    }
 
     // Removal destroys a durable record, so it audits. The audit log is a separate store from the
     // jobs database, which is what makes a hard delete acceptable: who cleared what survives the
