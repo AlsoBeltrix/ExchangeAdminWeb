@@ -171,10 +171,21 @@ where the 1,233-line file gets cut down -- most of it is markup the components n
 2. **Shell** (nav + top bar). Every page inherits it. Smoke pass here, per D1.
    **DONE 2026-08-04.** CSS only -- no `.razor` markup touched, so the nav's authorization logic
    is provably unchanged. Rows 3rem -> ~1.9rem (all 22 modules now fit without scrolling),
-   sidebar 250 -> 218px, brand and top row 3.5 -> 2.9rem. Sidebar, rails and error bar read from
-   the tokens instead of assuming a dark background. **Nav icons needed a real fix:** all 24 SVGs
-   are hardcoded `fill='white'` and vanish on a light sidebar, so each is now used as a CSS mask
-   with `currentColor` -- one asset set, correct in both themes.
+   sidebar 250 -> 218px, brand and top row 3.5 -> 2.9rem. **Nav icons needed a real fix:** all 24
+   SVGs are hardcoded `fill='white'` and vanish on a light sidebar, so each is now used as a CSS
+   mask with `currentColor` -- one asset set, correct in both themes.
+
+   **Corrected 2026-08-04 (this note previously claimed the sidebar read from the tokens; it did
+   not).** Only the CSS-isolation copy in `Components/Layout/NavMenu.razor.css` was migrated.
+   `wwwroot/app.css` carries a duplicate set of the same nav rules -- present deliberately, per
+   its own comment, because isolation scoping has been unreliable on published IIS -- and that
+   copy still had the 1.25rem painted icons, 2.25rem rails and `rgba(255,255,255,.22)` borders.
+   `--sidebar-bg` itself was never a token at all: it was hardcoded `#2c3345` light / `#1a1d2e`
+   dark, so the nav stayed a dark slate slab under light-theme grey label text. Result on dev:
+   every module read as greyed out / disabled. Both copies now resolve to `--ui-nav-bg` and the
+   token set; the dead `--sidebar-active` / `--sidebar-hover` / `--bs-body-bg: #f4f5f7` overrides
+   and the light-mode top-row colour override are gone. **Rule: any nav or shell rule edited in
+   `NavMenu.razor.css` must be edited in the `app.css` mirror in the same change.**
 3. **`PrincipalTable` + `GroupPickerDialog`**, with the B1 global-catalog fix and its tests.
    Shipped behind the existing pages first -- the picker can be swapped in without the redesign.
    **B1 and B2 DONE 2026-08-04**, ahead of the table/dialog components:
@@ -219,13 +230,23 @@ where the 1,233-line file gets cut down -- most of it is markup the components n
    admin.
 5. **`AdminSettings.razor` rebuild** (q2) -- modules, protected principals, logging.
    **DONE 2026-08-04.** Same structure: three tabs, one save bar, counts and dirty dots. The four
-   protected-principal lists were left as fixed-height scroll boxes -- they were already
-   row-per-entry rather than chips, so converting them would have been churn.
+   protected-principal lists were initially left as fixed-height scroll boxes on the reasoning
+   that they were already row-per-entry rather than chips. **Wrong, corrected same day on owner
+   report:** row-per-entry is not row-*delineated*. They were borderless lines inside one bordered
+   box, so at 4+ entries -- and with a wrapping multi-line DN in the mix -- nothing told the eye
+   where one principal ended. All four now use the same `.adm-tbl` as the Access grants table
+   (zebra, hover, per-row rule) inside a capped `.adm-scroll` wrapper, and the per-row control is
+   the same text `Remove` as elsewhere rather than a red X button.
    **Not built: the diagnostics tab** from mockup q2. It shows facts (schema version, domain
    mappings, RSAT availability, "59 of 59 grants stored as SIDs") that nothing in the app
    currently exposes, so it is new capability rather than a redesign of existing capability, and
    OQ-2 (live probes vs cached status) is undecided. Recorded rather than silently dropped.
 6. **Version bumps + docs.** **DONE** -- app `2.4.0`, AdminSettings module `1.1.0`.
+7. **Post-deploy corrections** (owner observation on dev `2.4.0`, 2026-08-04). **DONE** -- app
+   `2.4.1`. Two defects, both only visible on a running instance: the `app.css` nav mirror was
+   never migrated to the tokens (slice 2 note above), and the protected-principal lists had no row
+   delineation (slice 5 note above). Both are CSS/markup only; no service or authorization code
+   touched.
 
 **Method note, recorded because it nearly shipped a broken page.** The two rebuilds were done by
 scripted line-range edits against 1,200-line files. Two of those edits silently deleted the block
