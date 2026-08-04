@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -10,17 +11,30 @@ namespace ExchangeAdminWeb.Services;
 /// two cannot drift apart and orphan existing files
 /// (docs/MessageTraceDownloadLink-Plan.md slice 1).
 ///
-/// Retention note: this app NEVER deletes export files. A scheduled task on the host removes files
-/// older than <see cref="RetentionDays"/> from the audit log root. <see cref="ExpiresAtUtc"/> only
-/// mirrors that external policy so the notification email can state an availability date - it
-/// enforces nothing, and a missing file is an ordinary outcome, not an error. Deliberately a
-/// constant and not a config key: because the value is descriptive, a configurable one would be a
-/// second source of retention truth that could silently disagree with the scheduled task (plan D1,
-/// openreview F4). If the host task's window changes, change this constant in the same commit.
+/// Retention: exports older than <see cref="RetentionDays"/> are deleted by
+/// <see cref="PruneExpired"/>, called once at startup. <see cref="ExpiresAtUtc"/> states the same
+/// window to the notification email and the reports page, so what the app promises and what it
+/// enforces are the same number by construction. A missing file is an ordinary outcome, not an
+/// error.
+///
+/// **Superseded design, recorded so it is not reinstated.** Until 2026-08-04 this was documented as
+/// the job of a host scheduled task, per plan D1. That task was never created on any host -
+/// measured, schtasks listed 266 tasks and none belonged to this app - so nothing enforced the
+/// window, exports accumulated indefinitely, and past day 30 the reports page would show "Expired"
+/// for a file still on disk. Owner ruled 2026-08-04: **"there are and will be no scheduled
+/// tasks."** Retention moved in-process, alongside the bulk-job record prune that already runs
+/// there.
+///
+/// <see cref="RetentionDays"/> stays a constant rather than a config key. Openreview F4's reasoning
+/// still holds and now holds more strongly: one number is read by the pruner, the email and the
+/// page, so a second knob could only create disagreement.
 /// </summary>
 public sealed class MessageTraceExportStore
 {
-    /// <summary>Mirrors the host scheduled task's deletion window. Descriptive only - see the type remarks.</summary>
+    /// <summary>
+    /// How long an export survives. Read by the pruner, the notification email and the reports
+    /// page alike - see the type remarks for why this is one constant and not a setting.
+    /// </summary>
     public const int RetentionDays = 30;
 
     /// <summary>
@@ -103,5 +117,93 @@ public sealed class MessageTraceExportStore
     {
         if (string.IsNullOrEmpty(jobId) || !JobIdPattern.IsMatch(jobId))
             throw new ArgumentException($"Job id is not a GUID \"N\" value: '{jobId}'", nameof(jobId));
+    }
+
+    /// <summary>
+    /// Mirrors <see cref="FileNameFor"/>. Anchored at both ends so only files this app's export
+    /// path wrote can ever match.
+    ///
+    /// This is the load-bearing guard in <see cref="PruneExpired"/>: the export directory sits
+    /// INSIDE the audit log root, so a wildcard sweep there is one configuration mistake away from
+    /// deleting audit data. Matching the exact convention means anything else in that directory -
+    /// an operator's note, a half-written file, a future format - is left alone by construction.
+    /// </summary>
+    private static readonly Regex ExportFilePattern = new(
+        @"^MessageTraceDetail_[0-9a-fA-F]{32}_\d{8}-\d{6}\.csv$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Deletes exports whose age exceeds <see cref="RetentionDays"/>. Returns how many were
+    /// removed. Called once at startup from <c>Program.cs</c>; there is no timer, matching the
+    /// bulk-job runner's rule that nothing in this app runs on a schedule.
+    ///
+    /// Never throws. Retention is housekeeping and must not be able to stop the app booting, so a
+    /// missing directory, an unreadable one, or a locked individual file are all survivable. A
+    /// per-file failure is counted and logged rather than aborting the sweep, so one locked file
+    /// cannot leave the rest of an expired set on disk.
+    /// </summary>
+    /// <param name="nowUtc">Injected so the cutoff is testable without waiting 30 days.</param>
+    public int PruneExpired(DateTime nowUtc, ILogger? logger = null)
+    {
+        string directory;
+        try
+        {
+            directory = DirectoryPath;
+        }
+        catch (Exception ex)
+        {
+            // An unset Audit:LogRoot throws here. That is fatal elsewhere by design, but this path
+            // must not be what surfaces it - the app has a louder, clearer failure for it already.
+            logger?.LogWarning(ex, "Export retention skipped: the export directory could not be resolved");
+            return 0;
+        }
+
+        if (!Directory.Exists(directory))
+        {
+            // The ordinary state before the first export is written. Not an error, and not
+            // something to create.
+            return 0;
+        }
+
+        var cutoff = nowUtc.AddDays(-RetentionDays);
+        var deleted = 0;
+        var failed = 0;
+
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(directory))
+            {
+                if (!ExportFilePattern.IsMatch(Path.GetFileName(path)))
+                    continue;
+
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) >= cutoff)
+                        continue;
+
+                    File.Delete(path);
+                    deleted++;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    logger?.LogWarning(ex, "Could not delete expired export {Path}", path);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "Export retention sweep of {Directory} failed", directory);
+            return deleted;
+        }
+
+        if (deleted > 0 || failed > 0)
+        {
+            logger?.LogInformation(
+                "Export retention: deleted {Deleted} export(s) older than {Days}d from {Directory}; {Failed} could not be deleted",
+                deleted, RetentionDays, directory, failed);
+        }
+
+        return deleted;
     }
 }

@@ -46,15 +46,24 @@ MessageTrace module policy and prompting for a ticket number at download time.
 
 ## Owner Decisions
 
-### D1 -- Retention: out-of-process (RULED)
+### D1 -- Retention: out-of-process (RULED, then SUPERSEDED 2026-08-04)
 
 > "B. cleanup is handled out of this process by a scheduled task."
 > "the task only deletes files older than 30 days. that's enough time. you can even
 > put in the email that the file is available until N date."
 
-The app does **not** delete export files. An existing scheduled task on the host
-removes files older than 30 days from the audit log root. Consequences that bind this
-plan:
+**SUPERSEDED. See `docs/AdminBulkJobs-Plan.md` Part A.** The premise of this ruling was that an
+"existing scheduled task on the host" already did the deleting. It did not exist -- measured
+2026-08-04, `schtasks` listed 266 tasks on the ADI host and none belonged to this app -- so for
+months nothing enforced the window while the app promised it. The owner then ruled: *"there are and
+will be no scheduled tasks."* Retention now runs in-process at startup
+(`MessageTraceExportStore.PruneExpired`).
+
+**Everything below still binds**, because the consequences were never about *which* process does
+the deleting -- only that the app must treat a missing file as ordinary. The 30-day window is
+unchanged.
+
+Consequences that bind this plan:
 
 - The reports page must treat a missing file as a normal, expected state ("expired"),
   never an error or an unhandled exception. **Expired is not the only reason a file can

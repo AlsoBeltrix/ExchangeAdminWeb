@@ -6,23 +6,32 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Export retention task + admin bulk jobs view -- ALL 4 SLICES LANDED 2026-08-04. App stays
-  `2.5.1`; new module `AdminBulkJobs 1.0.0`. NOT DEPLOYED; the scheduled task is NOT INSTALLED.**
-  `docs/AdminBulkJobs-Plan.md` Status: Implemented; **9 manual checks unrun.**
-  **The retention scheduled task never existed.** Measured, not inferred: `schtasks /query` on this
-  host returns **266 tasks, none belonging to this app.** Yet
-  `Services/MessageTraceExportStore.cs:13-24` states as fact that one removes exports older than
-  30 days, `README.md` repeats it to operators, download-link plan D1 records it as an owner
-  ruling, and **openreview F4 rejected a configurable retention key specifically to avoid
-  disagreeing with it.** The single source of truth was never created. Consequence: exports
+- **Export retention + admin bulk jobs view -- LANDED 2026-08-04. App stays `2.5.1`; new module
+  `AdminBulkJobs 1.0.0`. NOT DEPLOYED.** `docs/AdminBulkJobs-Plan.md` Status: Implemented;
+  **9 manual checks unrun.**
+  **DURABLE RULING, owner 2026-08-04: "there are and will be no scheduled tasks."** This supersedes
+  `docs/MessageTraceDownloadLink-Plan.md` D1 and the fallback suggestion at
+  `docs/FutureModules-Plan.md:308`; both are annotated in place. Unattended work in this app is a
+  one-shot call in the `Program.cs` startup pass -- never a timer, never a hosted worker, never an
+  external task.
+  **What prompted it: export retention was documented for months and never performed.** Measured,
+  not inferred: `schtasks /query` on this host returned **266 tasks, none belonging to this app**,
+  while `MessageTraceExportStore` stated as fact that one deleted exports older than 30 days,
+  `README` repeated it to operators, and **openreview F4 rejected a configurable retention key
+  specifically to avoid disagreeing with that task.** Nothing enforced the window: exports
   accumulate forever, and past day 30 the reports page shows **Expired for a file still on disk** --
-  wrong in the direction that matters, claiming data is gone when it is not. Exposure is currently
-  small by luck: 2 files, 0.6 KB each, 6 days old.
-  `tools/Remove-MessageTraceExports.ps1` + `tools/Install-MessageTraceExportRetention.ps1` supply
-  it. **The narrow scope is load-bearing: the export directory sits INSIDE the audit log root**, so
-  deletion matches an anchored filename pattern, never `*.csv`; most of the 20 Pester tests assert
-  what SURVIVES. The 30-day constant stays a constant -- this makes the existing promise true
-  rather than configurable, reinstating F4's reasoning.
+  wrong in the direction that matters. Exposure small by luck: 2 files, 0.6 KB each, 6 days old.
+  **First fix was wrong and was withdrawn.** I shipped two PowerShell scripts plus a task
+  installer, which reproduced the missing-external-dependency shape rather than removing it -- an
+  install step someone must remember on every host forever, whose absence is invisible. The owner
+  ruled it out; the scripts and their Pester file were deleted in the same commit that added
+  `MessageTraceExportStore.PruneExpired`, called at startup beside the existing job-record prune.
+  Records and the files they describe now expire by one mechanism.
+  **The narrow scope is load-bearing: the export directory sits INSIDE the audit log root**, so the
+  sweep matches an anchored filename pattern, is non-recursive, and uses an exclusive cutoff; most
+  of the 11 tests assert what SURVIVES. It never throws -- retention must not be able to stop the
+  app booting. The 30-day constant stays a constant, which reinstates F4's reasoning rather than
+  overturning it.
   **`AdminBulkJobs` closes the gap the Conference Rooms scoping fix opened.** After that fix a
   *running* Message Analysis export was visible nowhere (`/message-analysis/reports` lists only
   terminal exports) and `GetActiveJobs()`/`GetRecentJobs()` had no caller. The new page at
@@ -33,10 +42,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   crossing modules is the page's purpose, and both audit.
   **No base app bump, per the Constitution** ("Adding a new module does not bump the base app
   version"). A `2.5.2` bump was made and reverted on reading that rule.
-  **NEXT, two separate things:** deploy `2.5.1` to dev for the page, and **separately install the
-  scheduled task** (`tools/Install-MessageTraceExportRetention.ps1 -LogRoot E:\WWWOutput`,
-  ELEVATED, `-PlanOnly` first). The task is per-host and deliberately not part of deploy, so a
-  deploy alone leaves retention still unenforced.
+  **NEXT: deploy `2.5.1` to dev.** Nothing to install -- the deploy restarts the app, which runs
+  the retention sweep. Manual check 3 (an audit log in the parent directory survives) is the
+  load-bearing one, since that is the deletion the pattern exists to prevent.
 
 - **Conference Rooms bulk jobs panel -- ALL 6 SLICES LANDED 2026-08-04, app `2.5.1`,
   ConferenceRooms `2.3.2`, NOT DEPLOYED.** `docs/ConferenceRoomsBulkJobPanel-Plan.md` Status:

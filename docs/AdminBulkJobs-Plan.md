@@ -1,26 +1,24 @@
 # Admin Bulk Jobs + Export Retention Plan
 
-Status: **Implemented 2026-08-04** (all four slices). No owner gate is open. Approved by owner
+Status: **Implemented 2026-08-04** (all three slices). No owner gate is open. Approved by owner
 directive: *"fix scheduled jobs, add the admin bulk jobs management."*
-**The 9 manual checks have NOT been run** -- they need a dev deploy, and installing the scheduled
-task is a privileged host action nobody has performed yet.
+**The 9 manual checks have NOT been run** -- they need a dev deploy.
 
 ## Progress
 
 | Slice | Commit | Note |
 |---|---|---|
-| 1 Retention sweep + Pester | `fe0fcdd` | 20 tests; 2 fail if the anchored pattern becomes `*.csv` |
-| 2 Task installer | `fe0fcdd` | PSSA: Write-Host warnings only, the dominant existing category; 0 Errors repo-wide |
-| 3 `AdminBulkJobs` page + catalog | this commit | `FailClosed: true`; policy is generated from the descriptor, no `Program.cs` change |
-| 4 Docs + versions | this commit | README, repo-guidance, state. **No app bump** -- Constitution: a new module does not bump the base version |
+| 1 `PruneExpired` + startup wiring | this commit | 11 tests; 3 guard probes each fail the right one |
+| 2 `AdminBulkJobs` page + catalog | `24a248a` | `FailClosed: true`; policy generated from the descriptor, no DI change |
+| 3 Docs + versions | this commit | README, state. **No app bump** -- Constitution: a new module does not bump the base version |
 
-**Not yet done by anyone: the task is still not registered on this host.** Slice 1-2 supply the
-scripts; installing them is a privileged action, listed as manual check 2.
+**Nothing to install.** Retention runs in the app at startup; there is no scheduled task on any
+host and none is wanted (owner, 2026-08-04).
 
 Two things, related by a common cause: work that runs outside a page has nowhere to be seen and
 nothing to tend it.
 
-## Part A -- the export retention task does not exist
+## Part A -- export retention was documented but never performed
 
 **Measured on this host 2026-08-04, not inferred.** `schtasks /query` returns **266 tasks; none
 belongs to this application.** The only near-match is a Windows built-in
@@ -51,40 +49,53 @@ Consequences, in order:
 - **Message trace exports accumulate forever.** These contain message metadata (sender, recipient,
   subject) for arbitrary mailboxes. An unbounded retention of that is a data-retention exposure,
   not a disk-space one; the files are tiny.
-- **The reasoning behind F4 is void.** The constant was pinned to a policy nothing enforces.
+- **The reasoning behind F4 was void.** The constant was pinned to a policy nothing enforced.
+  Moving retention in-process restores it: the pruner, the email and the page now read one number.
 
 ### Design (Part A)
 
-`tools/Install-MessageTraceExportRetention.ps1` -- a standalone, environment-neutral script that
-registers a daily scheduled task, plus `tools/Remove-MessageTraceExports.ps1` doing the deletion.
+**Owner ruling 2026-08-04: "there are and will be no scheduled tasks."** Retention runs
+**in-process**, at startup.
 
-Two scripts rather than one because they answer to different rules: the remover is the logic that
-needs Pester coverage (`.agents/repo-guidance.md`, Verification: "New `.ps1` logic requires Pester
-coverage"), and the installer performs a privileged host mutation that cannot be unit tested.
-Splitting them means the deletion logic is testable without registering anything.
+*(Superseded first attempt, recorded so it is not revived: this originally shipped as two
+PowerShell scripts -- `Remove-MessageTraceExports.ps1` plus an installer registering a daily task.
+That reproduced the missing-external-dependency shape rather than removing it: an install step
+someone must remember, on every host, forever, whose absence is invisible. The owner ruled it out.
+Both scripts and their Pester file were deleted in the same commit that added the in-process
+version.)*
 
-`Remove-MessageTraceExports.ps1`:
+`MessageTraceExportStore.PruneExpired(nowUtc, logger)`, called once from `Program.cs` in the same
+startup block that already prunes old bulk-job RECORDS. The records and the files they describe now
+expire on the same schedule by the same mechanism, which is the property the external task never
+had.
 
-- `-LogRoot` (required) and `-RetentionDays` (default 30) -- **no built-in default for the root**.
-  A cleanup script that guesses its own target is the failure mode where a wrong guess deletes the
-  wrong tree.
-- Deletes only files under `<LogRoot>\ExchangeAdminWeb\MessageTraceExports` matching the exact
-  export filename pattern `MessageTraceDetail_<32 hex>_<yyyyMMdd-HHmmss>.csv`. **A pattern, not a
-  wildcard**: the directory is inside the audit log root, and a `*.csv` sweep there is one config
-  mistake away from deleting audit data.
-- `-WhatIf` via `SupportsShouldProcess`, matching the repo's `-PlanOnly` norm for ops scripts.
-- Refuses a missing directory quietly (exit 0, nothing to do) but a missing **LogRoot** loudly --
-  the first is the state before the first export, the second means it is pointed somewhere wrong.
-- Writes a one-line summary so the task history shows what it did.
+It lives on `MessageTraceExportStore` because that type already owns the directory, the filename
+convention and the expiry date. Retention as a separate service would be a second place that knows
+where exports live -- exactly the drift `MessageTraceExportStore` exists to prevent.
 
-`Install-MessageTraceExportRetention.ps1`: registers a daily task running the remover as SYSTEM,
-`-LogRoot` supplied at install time. Environment-neutral per architectural invariant 1 (the same
-rule that keeps `Install-ExchangeAdminWeb.ps1` free of ADI specifics). It is **not** wired into
-`deploy.ps1`: deploys must not perform privileged host registration as a side effect, and the task
-is per-host, not per-deploy.
+Rules, each with a test:
 
-**The constant stays 30 and stays a constant.** This work makes the existing promise true rather
-than making it configurable -- F4's reasoning is reinstated, not overturned.
+- **Anchored filename pattern, never a wildcard.** The export directory is INSIDE the audit log
+  root; a `*.csv` sweep there is one configuration mistake from deleting audit data. Only files
+  matching `MessageTraceDetail_<32 hex>_<yyyyMMdd-HHmmss>.csv` are considered.
+- **Non-recursive.** A subdirectory under the export directory is not this sweep's business.
+- **Exclusive cutoff.** A file exactly at the window survives; deleting a day early would make the
+  reports page say Available for a file already gone.
+- **Never throws.** Retention is housekeeping and must not be able to stop the app booting. A
+  missing directory returns 0, an unresolvable log root returns 0, and a per-file failure is
+  counted and logged rather than aborting the sweep -- one locked file must not strand the rest.
+- **Never creates the directory.**
+- `nowUtc` is injected so the cutoff is testable without waiting 30 days.
+
+**The constant stays 30 and stays a constant.** F4's reasoning is not overturned but strengthened:
+one number is now read by the pruner, the notification email and the reports page alike, so a
+second knob could only create disagreement.
+
+**Startup-only, no timer.** Consistent with `BulkJobService` ("does nothing on a schedule, only in
+response to an enqueue") and the 2026-06-17 no-unattended-worker posture. Consequence worth stating:
+on an instance that is never restarted, expired exports persist until the next recycle. Acceptable
+-- IIS recycles daily by default, and the alternative is the background timer this app has
+deliberately refused everywhere else.
 
 ## Part B -- no cross-module view of bulk jobs
 
@@ -140,37 +151,40 @@ across every caller, unchanged by this work and still recorded.
 
 ## Slices
 
-1. **`Remove-MessageTraceExports.ps1` + Pester.** Deletion logic, pattern matching, `-WhatIf`,
-   missing-directory and missing-root behaviour. Tests build a temp tree with a mix of matching
-   exports, non-matching files, and an out-of-window matching file, and assert only the intended
-   ones go.
-2. **`Install-MessageTraceExportRetention.ps1` + PSScriptAnalyzer.** Registers the daily task. Not
-   Pester-testable (registers a host object); the remover holds the logic.
-3. **`AdminBulkJobs` page + catalog entry.** `FailClosed: true`.
-4. **Docs + versions.** README retention section corrected to say the task must be installed and
-   how; `.agents/repo-guidance.md` per-host setup; `.agents/state.md`.
+1. **`PruneExpired` + tests, wired into startup.** The sweep, its guards, and the `Program.cs`
+   call beside the existing job-record prune.
+2. **`AdminBulkJobs` page + catalog entry.** `FailClosed: true`.
+3. **Docs + versions.** README retention line rewritten (it promised a task); `.agents/state.md`.
    **No base app version bump.** The Constitution is explicit: *"Adding a new module does not bump
    the base app version; only the new module's own version is set. A new module is not a
-   shared-infrastructure change."* `AdminBulkJobs` ships at `1.0.0`; the app stays `2.5.1`. The
-   retention scripts are ops tooling and ship no app behaviour, so they bump nothing either.
+   shared-infrastructure change."* `AdminBulkJobs` ships at `1.0.0`; the app stays `2.5.1`.
 
 ## Verification
 
-Per `.agents/repo-guidance.md`: build, `dotnet test`, format, ASCII lint, `git diff --check HEAD`,
-plus `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` for the new scripts.
+Per `.agents/repo-guidance.md`: build, `dotnet test`, format, ASCII lint, `git diff --check HEAD`.
 
 **Known pre-existing failure, do not chase:** `tools/Test-CoverageFloor.ps1` reports 64.7% against
 a 65.06 floor, already failing before this work, traced to `0e35e7b` growing the 0%-covered
 `Services/SectionAccessGroupDirectory.cs`. Confirm the ratio does not move down; do not lower the
 floor.
 
+**Non-vacuity proven 2026-08-04** on the three guards that matter, each failing the right test:
+
+| Probe | Result |
+|---|---|
+| Widen the filename pattern to any `.csv` | fails `LeavesANonExportFileAloneHoweverOld` + `LeavesANearMissFilenameAlone` |
+| Make the cutoff inclusive (delete a day early) | fails `KeepsAFileExactlyAtTheBoundary` |
+| Recurse into subdirectories | fails `DoesNotRecurseIntoSubdirectories` |
+
+All 30 store tests pass restored.
+
 ### Manual checks
 
-1. `Remove-MessageTraceExports.ps1 -WhatIf` against the real export directory names the two
-   existing files as *not* eligible (both 6 days old, window is 30) and deletes nothing.
-2. After installing, `schtasks /query /tn <name>` shows the task Ready, and a manual run exits 0.
-3. **The retention promise is now true:** an export older than 30 days is removed, and its
-   Downloadable Reports row reads Expired -- status and disk agreeing, which is the defect.
+1. **Retention runs at startup:** with an export older than 30 days on disk, restarting the app
+   removes it and logs the count. Nothing to install and no task to check.
+2. The two existing 6-day-old exports on dev survive a restart (inside the window).
+3. An audit log in the parent directory survives a restart. This is the deletion that must never
+   happen; the anchored pattern is what prevents it.
 4. `/admin-bulk-jobs` lists jobs from **both** modules with a Module column.
 5. A non-admin cannot reach `/admin-bulk-jobs` (fail-closed authorization).
 6. A **running** Message Analysis export is visible there -- the gap this closes.
@@ -181,12 +195,16 @@ floor.
 
 ## Non-goals
 
-- Making export retention configurable. The constant is descriptive of the task's window; two
-  knobs is the F4 defect.
-- Deleting audit logs or any other file under the log root. Exports only, by exact pattern.
-- Wiring task installation into `deploy.ps1`.
+- Making export retention configurable. One constant is read by the pruner, the email and the
+  page; a second knob could only create disagreement, which is the F4 defect.
+- Deleting audit logs or any other file under the log root. Exports only, by exact pattern,
+  non-recursive.
+- **Scheduled tasks of any kind.** Owner, 2026-08-04: *"there are and will be no scheduled
+  tasks."* This supersedes `docs/MessageTraceDownloadLink-Plan.md` D1 ("cleanup is handled out of
+  this process by a scheduled task") and the same claim in `docs/FutureModules-Plan.md:308`. Both
+  are history now; do not implement against them.
+- A background timer or hosted worker inside the app. `BulkJobService` "does nothing on a schedule,
+  only in response to an enqueue" (`Services/Jobs/BulkJobService.cs:10`) and the 2026-06-17
+  no-unattended-worker posture both still hold. Retention is a one-shot startup call, which is the
+  same shape as the job-record prune that already runs there -- not a scheduler.
 - Module-checking `BulkJobService.CancelJob` (see above).
-- A scheduler inside the app. `BulkJobService` "does nothing on a schedule, only in response to an
-  enqueue" (`Services/Jobs/BulkJobService.cs:10`) and that stays true;
-  `docs/FutureModules-Plan.md:308` already rules that scheduled cleanup belongs outside the app
-  pool.

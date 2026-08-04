@@ -56,11 +56,6 @@ which should win. Do not silently choose whichever source is convenient.
   SQLite backup, enforces a clean tree unless `-AllowDirty`, and supports `-PlanOnly`. Prod is the
   same script with `-Prod`. Generic install:
   `tools/Install-ExchangeAdminWeb.ps1`.
-- Per-host one-time setup (NOT part of deploy): `tools/Install-MessageTraceExportRetention.ps1
-  -LogRoot <Audit:LogRoot>` from an ELEVATED shell registers the daily task that enforces the
-  30-day Message Analysis export retention the app documents but does not perform. Supports
-  `-PlanOnly`. Without it exports accumulate indefinitely and the reports page's "Available Until"
-  date is a promise nothing keeps.
 - Deploy-host dependency: `sqlite3.exe` must be on PATH (`winget install SQLite.SQLite`).
   The deploy/promote scripts use it to make a verified online backup of
   `config/exchangeadmin.db` before each deploy and fail fast if it is missing (see <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->

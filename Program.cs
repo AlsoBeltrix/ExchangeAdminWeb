@@ -248,6 +248,24 @@ try
         // 2026-06-17 no-unattended-worker posture).
         var bulkJobs = app.Services.GetRequiredService<ExchangeAdminWeb.Services.Jobs.BulkJobService>();
         bulkJobs.InitializeAsync();
+
+        // Message Analysis export retention, in the same one-shot startup pass that prunes old job
+        // RECORDS above - the records and the files they describe now expire on the same schedule
+        // and by the same mechanism.
+        //
+        // This was documented for months as the job of a host scheduled task that was never
+        // created on any host, so nothing enforced the window (docs/AdminBulkJobs-Plan.md Part A).
+        // Owner ruled 2026-08-04 that there are and will be no scheduled tasks, so it lives here.
+        // Never throws; retention must not be able to stop the app booting.
+        using (var retentionScope = app.Services.CreateScope())
+        {
+            var exports = retentionScope.ServiceProvider.GetRequiredService<MessageTraceExportStore>();
+            var retentionLog = retentionScope.ServiceProvider
+                .GetRequiredService<ILogger<MessageTraceExportStore>>();
+            var removed = exports.PruneExpired(DateTime.UtcNow, retentionLog);
+            if (removed > 0)
+                Log.Information("Export retention: removed {Count} expired Message Analysis export(s)", removed);
+        }
     }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');

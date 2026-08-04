@@ -305,7 +305,12 @@ Cleanup performs:
 2. For each expired account: verify sentinel + TargetOU boundary, disable if still enabled, delete AD object
 3. Audit each deletion with the original creation metadata if available
 
-Cleanup does NOT run on a background timer in the app pool. It is operator-initiated. If scheduled cleanup is needed, it should be a separate scheduled task outside the web app.
+Cleanup does NOT run on a background timer in the app pool. It is operator-initiated. <!-- The
+original text here offered "a separate scheduled task outside the web app" as the fallback. That is
+no longer available: owner ruled 2026-08-04 "there are and will be no scheduled tasks"
+(docs/AdminBulkJobs-Plan.md Part A). Unattended cleanup, if ever wanted, is a one-shot call in the
+startup pass alongside the bulk-job prune and the export retention sweep -- not a timer and not an
+external task. -->
 
 ### Recovery Story
 
