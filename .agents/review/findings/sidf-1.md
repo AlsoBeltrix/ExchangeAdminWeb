@@ -5,7 +5,7 @@ administrator the `AdminSettings` policy, including the page needed to repair se
 migration fallout.
 **Status**: Verified
 **Branch**: -- (default-branch mode)
-**Commit**: `4f1de2b`
+**Commit**: `ee7e1f0`
 
 ## Evidence
 
@@ -119,3 +119,4 @@ halt to the owner rather than redispatch, because it would buy nothing.
 The pass was given the earlier sid-1/sid-2 records as readable evidence but explicitly told not
 to treat them as a checklist or as assurance. It found a defect **introduced by the sid-1 fix
 itself** -- which is the argument for second passes over security-critical code.
+

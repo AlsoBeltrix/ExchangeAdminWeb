@@ -40,9 +40,25 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | ppv-4 | LOW | Live AD tests reported passed, not skipped, when the directory is unreachable | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — Assert.SkipWhen at 5 sites; simulating no-AD now yields "Skipped: 5" where it previously said "Passed: 5" |
 | sid-1 | HIGH | An unmigrated name row still authorizes, so the same-name ambiguity survives the whole work stream | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.146.0, generation pass, base b872861..0a50d01, capability_ok) — fixed `54e762d`; non-SID allowed values discarded in handler, checker and job snapshot; probe fails 7 |
 | sid-2 | MEDIUM | Legacy sectionaccess.json imports AFTER the migration, leaving names in the table for the process lifetime | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed `019b814`; SectionAccessService resolved before the migration; probe reproduces the bug, fails 1 |
+| sidf-1 | HIGH | The sid-1 fix filtered STATIC AdminGroups too, locking every admin out of the admin page on deploy | `[x]` | | codex/gpt-5.5-dzs/xhigh/frontier (fallback grade) (codex-cli 0.146.0, second pass, base d2844e1..019b814, capability_ok) — filter scoped to the dynamic store; verified against LIVE PROD config (AdminGroups = ANALOG\ExchangeWebAdmins, a name); probe reinstating it fails 2 |
 | tsr-1 | MEDIUM | Coverage ratchet set 0.7 points below the measured baseline, so tests could be deleted and CI still pass | `[x]` | | codex/default configured model (gpt-5.5-dzs @ xhigh)/std (codex-cli 0.146.0, generation pass, base 802ea74..2543fb9, capability_ok) — floor moved to a committed file at the measured value, comparison de-rounded, 11 Pester tests added for the gate itself; probe: 64.9% coverage passed the shipped gate (exit 0), fails after the fix (exit 1) |
 
 Notes:
+- **sidf-1 was the OWED FRONTIER PASS over the whole SID work stream** (`d2844e1..019b814`,
+  including the sid-1/sid-2 fixes). It found a HIGH defect **introduced by the sid-1 fix itself**:
+  that fix filtered non-SID values on every requirement, including the static
+  `Security:AdminGroups` from appsettings, which no migration converts and which is deployed here
+  as `ANALOG\ExchangeWebAdmins`. Deploying would have locked every admin out of `/admin-settings`
+  — the page needed to repair section-access fallout, so the failure removed its own remedy.
+  Verified against the live prod config, not the sample. **The argument for second passes over
+  security-critical code, in one finding: the first pass's fix was the second pass's defect.**
+- **Frontier tier resolved 2026-08-03/04 (owner ruling).** The recorded pin
+  `@azure-openai-eus2-global/gpt-5.6-sol` 404s at the gateway. The owner ruled codex at its
+  default configured model is the strongest reviewer available here, so frontier now resolves to
+  the same pair as standard (`gpt-5.5-dzs` @ xhigh) with **`grade: fallback`**. Probing also
+  established that effort `max` is REJECTED by this gateway (supported:
+  none/minimal/low/medium/high/xhigh), so xhigh is the ceiling. Consequence per the playbook: a
+  future escalation halts to the owner instead of redispatching, because it would buy nothing.
 - **tsr-1 came from a generation-half dispatch over the test-remediation work**
   (`802ea74..2543fb9`), on the owner's instruction to use codex with its DEFAULT configured model
   (no `--model` flag). Verdict **findings** (1), `capability_ok`, both SHAs echoed. The prompt

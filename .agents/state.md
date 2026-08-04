@@ -19,10 +19,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   precisely the window the migration exists to survive. Non-SID values are now discarded at all
   three comparison sites (handler, checker, job snapshot). Same shape as ppv-1: the guards were
   sound, the reasoning about what they guaranteed was not.
-  **A frontier re-review of this range is still OWED.** T1 (sensitive paths) matched and should
-  have routed frontier; the recorded pin `@azure-openai-eus2-global/gpt-5.6-sol` **404s at the
-  gateway**, so the pass ran at standard. Recorded in `.agents/review/harnesses.local.json`
-  under `tiers.frontier.unavailable` — the owner must name a live frontier model.
+  **Frontier pass DONE 2026-08-04** over the whole range including those fixes: **1 more HIGH
+  finding, `sidf-1` (`4f1de2b`)** — and it was a defect **the sid-1 fix introduced**. That fix
+  filtered non-SID values on EVERY requirement, including the static `Security:AdminGroups` from
+  appsettings, which no migration converts and which is deployed here as
+  `ANALOG\ExchangeWebAdmins` (verified against the live prod file, not the sample). Deploying
+  `2.3.35` would have denied every admin `/admin-settings` — the page needed to repair
+  section-access fallout, so the failure removed its own remedy. The filter is now scoped to
+  `ResolveDynamically`, the flag that distinguishes the migrated store from appsettings.
+  **Frontier tier resolved (owner ruling):** the old pin `gpt-5.6-sol` 404s; codex at its default
+  model is the strongest available here, so frontier = standard pair with `grade: fallback`, and
+  effort `max` is rejected by this gateway (xhigh is the ceiling). A future escalation must halt
+  to the owner rather than redispatch. Recorded in `.agents/review/harnesses.local.json`.
+  **Still open (sidf-1 Known gaps):** `Security:AllowedGroups`/`AdminGroups` remain name-based, so
+  the cross-domain ambiguity is closed for module access and **still open for admin access**.
+  Pre-existing and an explicit plan Non-Goal, not a regression — but it wants its own decision.
   **NEXT: the plan's 6 manual post-deploy checks on dev — none run.** Authorization cannot be
   proven off-host and a mistake locks people out of every module, so dev first. Check 6 (app
   boots and authorizes from stored SIDs with AD unreachable) and check 3 (`winroot\Enterprise
