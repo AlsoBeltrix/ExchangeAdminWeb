@@ -6,6 +6,44 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Admin UI redesign — ALL 6 SLICES LANDED 2026-08-04, app `2.4.0`, NOT DEPLOYED.**
+  `docs/AdminUIRedesign-Plan.md` Status: In progress (manual checks unrun). Owner rejected the
+  existing UI outright — "it does not look like a professional app, it looks like a vibe coded
+  toy... the important security group entry system is half-baked" — after seven mockup rounds
+  were rejected for keeping the same materials. What was finally approved is **structural, not
+  cosmetic**: tabbed panes each with their own scroll, so the page never grows with the group
+  count; grants as aligned table rows, never chips; one save bar per page naming the dirty
+  section. Approved mockups kept at `docs/mockups/q1..q3`; 15 rejected drafts deleted so there is
+  no ambiguity about which is current.
+  **Owner ruling D1: app-wide**, so all 22 pages' chrome changed and all 22 need a smoke pass.
+  **Slices 1-2** (`01a5efc`, `a934e07`): token layer driving both themes with Bootstrap's `--bs-*`
+  pointed at it — that indirection is what lets the ~20 unconverted pages follow the theme
+  without markup changes. OLED dark (`#000` canvas, silver text, cyan accent). Nav rows 3rem ->
+  1.9rem so all 22 modules fit. **Nav icons were a real fix, not a restyle:** all 24 SVGs are
+  hardcoded `fill='white'` and vanish on a light sidebar, so each is now a CSS mask taking
+  `currentColor`.
+  **Slices 4-5** (`708a375`): both admin pages rebuilt. Eight Save buttons -> two save bars.
+  **Deliberately NOT built:** the diagnostics tab from mockup q2 — new capability, not a redesign
+  of existing capability, and its OQ-2 (live probes vs cached) is undecided.
+  **Two bugs fixed rather than restyled around:**
+  **B1** (`4489730`, `1b77dd4`) the picker could not see WINROOT — `Get-ADGroup` was issued with
+  no `-Server`, so only the joined domain was searched; now targets the forest global catalog.
+  Two further defects surfaced *while verifying that fix*, both invisible to unit tests: reading
+  `GlobalCatalogs` off the returned PSObject yields empty, producing the server string `":3268"`
+  which `Get-ADGroup` ACCEPTS while quietly serving locally; and `ResolveGlobalCatalog` cached its
+  own FAILURES, so one transient `Get-ADForest` error would have pinned the picker to
+  local-domain-only for the process lifetime — silently undoing B1 in production.
+  **B2** (`857be64`) the app had **no unsaved-changes guard anywhere** (verified: no
+  `beforeunload`, `NavigationLock` or `OnLocationChanging` in any component). `AdminPageDirtyState`
+  is an extracted service with 14 tests because page fields cannot be tested here.
+  **Two process lessons recorded in the plan, both earned:** a flaky live test was chased rather
+  than muted and turned out to be hiding the real caching defect above (I attributed it to two
+  wrong causes first); and scripted line-range edits silently deleted two whole markup blocks
+  while the project **still built clean**, because absent Razor markup is not a compile error —
+  caught only by diffing against pre-edit backups.
+  **NEXT: deploy `2.4.0` to dev and run the plan's manual checks.** Checks 1-6 are runnable now;
+  7-8 exercise the rebuilt panes. Nothing about this UI has been seen on a running instance.
+
 - **Section-access groups stored as SIDs — ALL 4 SLICES LANDED + REVIEWED 2026-08-03, app
   `2.3.35`, NOT DEPLOYED (dev is `2.3.34`, prod `2.3.30`).**
   `docs/SectionAccessSidStorage-Plan.md` Status: Implemented. A `codereview` generation pass
@@ -397,7 +435,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.3.35`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from
+- **App version `2.4.0`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.36`
+  for the app-wide admin UI redesign; `2.3.36` qualified group display names as `DOMAIN\Name`.
+  Previously bumped from
   `2.3.34` for section-access SID storage (shared authorization path); `2.3.34` was
   protected-principal admin input validation; `2.3.33` (`0eca01e`) was
   Exchange-backed protected-principal resolution, `2.3.32` (`14f4ef1`)
@@ -597,3 +637,4 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 - None known. Engineering rules → `docs/ProjectConstitution.md`; module contract →
   `docs/AdminModuleSpec.md`; work-stream history → `docs/*-Plan.md` + git log.
+
