@@ -1,7 +1,9 @@
 # Admin UI Redesign -- Plan
 
-Status: **Draft, awaiting owner approval.** Owner approved the visual direction 2026-08-04
-(mockups `docs/mockups/q1`, `q2`, `q3`); this plan turns that into shippable work.
+Status: **In progress.** Owner approved the visual direction and D1 (app-wide) 2026-08-04
+(mockups `docs/mockups/q1`, `q2`, `q3`). Slices 1-3 landed; slices 4-5 (the page rebuilds) are
+the remaining work. Both bugs the redesign had to fix rather than restyle around -- B1
+cross-domain picker, B2 unsaved-changes guard -- are done and shipped ahead of the rebuilds.
 App version: `2.3.36` -> `2.4.0` (shared shell + theme + two admin pages).
 Modules: `AdminSettings 1.0.3 -> 1.1.0`; every module inherits the shell without its own bump.
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`, `docs/AdminModuleSpec.md`.
@@ -116,6 +118,11 @@ and `ProtectedPrincipalEntryValidator` exist as extracted services.
 that loses an admin's edit, and this repo has now been bitten twice by logic that no test could
 reach (`MailboxPermissionService`, `CalendarPermissionService`, both at 0% before last week).
 
+**Taken as (a) for the work already landed**, without waiting for a ruling, because B2 shipped
+early: `AdminPageDirtyState` is an extracted service with 14 tests rather than page fields. If
+the owner prefers (b) the service stays -- it costs nothing -- so this is not a decision the
+landed work forecloses.
+
 ### D3 -- Add a bUnit harness?
 
 Out of scope for this plan but it is the honest answer to D2's constraint. Flagged, not proposed.
@@ -162,8 +169,43 @@ where the 1,233-line file gets cut down -- most of it is markup the components n
    brand-tinted ring. **Not yet seen on a running instance:** dev is on `2.3.35` and this needs a
    deploy to observe.
 2. **Shell** (nav + top bar). Every page inherits it. Smoke pass here, per D1.
+   **DONE 2026-08-04.** CSS only -- no `.razor` markup touched, so the nav's authorization logic
+   is provably unchanged. Rows 3rem -> ~1.9rem (all 22 modules now fit without scrolling),
+   sidebar 250 -> 218px, brand and top row 3.5 -> 2.9rem. Sidebar, rails and error bar read from
+   the tokens instead of assuming a dark background. **Nav icons needed a real fix:** all 24 SVGs
+   are hardcoded `fill='white'` and vanish on a light sidebar, so each is now used as a CSS mask
+   with `currentColor` -- one asset set, correct in both themes.
 3. **`PrincipalTable` + `GroupPickerDialog`**, with the B1 global-catalog fix and its tests.
    Shipped behind the existing pages first -- the picker can be swapped in without the redesign.
+   **B1 and B2 DONE 2026-08-04**, ahead of the table/dialog components:
+   - **B1**: group search now targets the forest global catalog, so WINROOT groups are pickable.
+     Two defects surfaced while verifying, both invisible to unit tests -- reading
+     `GlobalCatalogs` off the returned PSObject yields empty, producing the server string
+     `":3268"` which `Get-ADGroup` accepts while quietly serving the local domain; and the first
+     live tests SKIPPED rather than failed when the fix was reverted. Both fixed; the tests now
+     ask the forest its domain count independently of the code under test.
+   - **B2**: `UnsavedChangesGuard` + `AdminPageDirtyState` (14 tests), wired into both admin
+     pages. Every mutation on both pages marks its section dirty; every save clears only its own
+     section. This lands without waiting for slices 4-5, so the data-loss hole closes now.
+   - **A flaky test turned out to be a real product bug, found only because it was chased.** The
+     live test passed in isolation and failed in the full suite, reporting "Forest has 2 domains
+     but group search returned only: ad.analog.com". Two causes, both mine, both fixed:
+     1. The probe term was "admins", which matches exactly 50 groups here -- the service's result
+        cap. `Search` sorts by DisplayName then truncates, so whether the 3 WINROOT matches
+        survived the cut was a race. Now probes "Enterprise Admins" (8 matches). **Rule for live
+        directory tests here: never probe with a term that can saturate the result cap.**
+     2. **The real defect:** `ResolveGlobalCatalog` set its "probed" flag BEFORE running the
+        probe, so one transient `Get-ADForest` failure permanently pinned the service to
+        local-domain-only searching -- silently restoring the very bug being fixed, for the life
+        of the process. Now only a SUCCESS is cached; a failure retries on the next search.
+     3. Residual nondeterminism after both fixes was the environment: several test classes each
+        open their own runspace and contend for the directory, and the services are fail-soft, so
+        a throttled call is indistinguishable from "no matches". All live-AD classes now share a
+        `[Collection]` with parallelisation disabled (`LiveDirectoryCollection`).
+     The first was a bad test. The second would have shipped and degraded the picker in
+     production after any momentary directory hiccup, with no error surfaced to anyone. Worth
+     recording that I attributed this flake to two wrong causes before finding the real one --
+     the lesson is that a flaky live test deserves the same evidence standard as a failing one.
 4. **`ModuleConfig.razor` rebuild** (q1) -- tabs, panes, save bar, guard.
 5. **`AdminSettings.razor` rebuild** (q2) -- modules table, protected principals, diagnostics.
 6. **Version bumps + docs.**
@@ -185,16 +227,25 @@ works.
 
 ### Manual checks
 
+**Checks 1-6 apply to what has landed (slices 1-3) and are runnable as soon as `2.4.0` is on
+dev. Checks 7-8 need the page rebuilds and cannot be run yet.**
+
 1. **Admin page still reachable.** `ANALOG\ExchangeWebAdmins` can open Admin Settings and a
    module config page. This is the finding sidf-1 lockout; it must be re-checked after any change
    near authorization.
-2. Every one of the 22 modules still loads and its main action still works (D1(b) smoke pass).
-3. Light and dark both legible on every admin surface.
-4. Picker returns WINROOT groups; selecting one stores its SID.
+2. Every one of the 22 modules still loads and its main action still works (D1 app-wide smoke
+   pass). The shell changed on every page, so no page is exempt.
+3. Light and dark both legible everywhere -- particularly the **nav icons**, which changed from
+   painted white SVGs to CSS masks, and the **focus ring**, which changed from a two-ring style
+   to a single brand-tinted ring.
+4. Picker returns WINROOT groups; selecting one stores its SID. This is B1, the reported bug.
 5. Typed text in the picker is refused.
-6. Edit a tab, navigate away, confirm the guard warns; confirm Save clears it.
-7. Bulk-select 3 groups, remove, save, reload -- exactly those 3 gone.
-8. A module with 15+ groups scrolls inside its pane; the page itself does not grow.
+6. **The guard**: edit any section on Admin Settings or a module config page, navigate away
+   without saving, confirm the prompt names the section. Then save and confirm navigating away
+   is silent. Also confirm saving ONE section does not clear the warning for another still-edited
+   section -- that is the defect the eight separate Save buttons had.
+7. *(needs slice 4)* Bulk-select 3 groups, remove, save, reload -- exactly those 3 gone.
+8. *(needs slice 4)* A module with 15+ groups scrolls inside its pane; the page does not grow.
 
 ## Open questions
 
