@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Q3 - Group picker (cross-domain)</title>
+<style>
+  :root{
+    --bg:#fff;--fg:#16191d;--fg2:#5a636e;--fg3:#98a0a9;
+    --line:#dfe3e8;--grid:#eef1f4;--hd:#f8fafb;--sel:#e9f2fe;--zebra:#fcfdfd;
+    --brand:#1a6ce8;--on:#12833c;--warn:#8a6400;--danger:#c02b21;--scrim:rgba(20,24,28,.42);
+  }
+  html.dark{
+    --bg:#000000;--fg:#d6dadf;--fg2:#9aa1a9;--fg3:#6b7278;
+    --line:#23262a;--grid:#141619;--hd:#0a0b0d;--sel:#0d2b33;--zebra:#08090a;
+    --brand:#3fd8e8;--on:#4bd67f;--warn:#f0c05a;--danger:#ff6b5e;--scrim:rgba(0,0,0,.66);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.45 "Segoe UI",-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased}
+  html.dark body{background:#050506}
+  .tgl{position:fixed;top:14px;right:16px;z-index:50;font:12px inherit;border:1px solid var(--line);
+    background:var(--bg);color:var(--fg2);padding:3px 9px;border-radius:4px;cursor:pointer}
+  .note{padding:22px 24px 0;color:var(--fg3);font-size:12px;max-width:760px}
+
+  /* Modal over a scrim - the picker is a task, not an inline box */
+  .scrim{position:fixed;inset:0;background:var(--scrim);display:grid;place-items:center;padding:40px}
+  .dlg{width:720px;max-height:82vh;background:var(--bg);border:1px solid var(--line);border-radius:8px;
+    display:flex;flex-direction:column;overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,.28)}
+  html.dark .dlg{box-shadow:0 18px 48px rgba(0,0,0,.7)}
+  .dhd{padding:13px 16px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:10px}
+  .dhd h2{font-size:14px;font-weight:600;margin:0}
+  .dhd .sub{color:var(--fg3);font-size:12px}
+  .grow{flex:1}
+  .x{color:var(--fg3);cursor:pointer;font-size:16px;line-height:1}
+
+  .srch{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+  .srch input{flex:1;font:13px inherit;padding:6px 10px;border:1px solid var(--line);border-radius:5px;
+    background:var(--bg);color:var(--fg)}
+  .srch input:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px rgba(26,108,232,.14)}
+  html.dark .srch input:focus{box-shadow:0 0 0 3px rgba(63,216,232,.16)}
+  .srch select{font:12px inherit;padding:6px 8px;border:1px solid var(--line);border-radius:5px;
+    background:var(--bg);color:var(--fg)}
+
+  .scope{padding:0 16px 10px;font-size:11px;color:var(--fg3);display:flex;gap:14px;align-items:center}
+  .scope b{color:var(--fg2);font-weight:600}
+
+  .res{flex:1;overflow:auto;min-height:180px}
+  table{width:100%;border-collapse:collapse}
+  thead th{position:sticky;top:0;background:var(--hd);text-align:left;font-size:11px;font-weight:600;
+    color:var(--fg3);padding:5px 16px;border-bottom:1px solid var(--line)}
+  html.dark thead th{background:#0a0b0d}
+  td{padding:6px 16px;border-bottom:1px solid var(--grid);white-space:nowrap}
+  tbody tr{cursor:pointer}
+  tbody tr:nth-child(even){background:var(--zebra)}
+  tbody tr:hover,tbody tr.hl{background:var(--sel)}
+  td.ck{width:1%;padding-right:0}
+  td.ck input{width:14px;height:14px;accent-color:var(--brand);margin:0}
+  td.dom{font-size:11px;font-weight:700;color:var(--fg2);width:88px}
+  td.grp{font-weight:500;width:250px}
+  td.sid{font:11px ui-monospace,Consolas,monospace;color:var(--fg3);width:100%}
+  td.num{color:var(--fg2);text-align:right;width:80px}
+  td.has{width:1%;white-space:nowrap;color:var(--fg3);font-size:11px}
+
+  .state{padding:26px 16px;text-align:center;color:var(--fg3);font-size:13px}
+  .state b{display:block;color:var(--fg2);font-weight:600;margin-bottom:3px}
+
+  .dft{padding:10px 16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  .cnt{font-size:12px;color:var(--fg2)}
+  .btn{font:13px inherit;padding:5px 13px;border:1px solid var(--line);border-radius:5px;
+    background:var(--bg);color:var(--fg);cursor:pointer}
+  .btn:hover{background:var(--grid)}
+  .btn.p{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+  html.dark .btn.p{color:#00181c}
+  .btn.p:disabled{opacity:.4;cursor:default}
+  .kbd{font:10px ui-monospace,Consolas,monospace;border:1px solid var(--line);border-radius:3px;
+    padding:1px 4px;color:var(--fg3)}
+</style>
+</head>
+<body>
+<button class="tgl" onclick="document.documentElement.classList.toggle('dark')">◐</button>
+<p class="note">Group picker. Fixes the reported bug: today it queries only the local domain, so
+WINROOT groups are unreachable. This searches the forest global catalog, so both domains return
+in one result set. Typed text is never accepted &mdash; only a selected row carries a SID.</p>
+
+<div class="scrim">
+  <div class="dlg">
+    <div class="dhd">
+      <h2>Add groups</h2>
+      <span class="sub">Conference Rooms &rarr; Section access</span>
+      <span class="grow"></span><span class="x">&times;</span>
+    </div>
+
+    <div class="srch">
+      <input type="text" value="admins" placeholder="Search groups&hellip;" />
+      <select><option>All domains</option><option>ANALOG</option><option>WINROOT</option></select>
+    </div>
+    <div class="scope">
+      <span>Searching <b>global catalog</b> &mdash; ANALOG and WINROOT</span>
+      <span class="grow"></span>
+      <span>7 matches</span>
+    </div>
+
+    <div class="res">
+      <table>
+        <thead><tr><th class="ck"></th><th>Domain</th><th>Group</th><th>Security identifier</th>
+          <th style="text-align:right">Members</th><th></th></tr></thead>
+        <tbody>
+          <tr class="hl"><td class="ck"><input type="checkbox" checked /></td><td class="dom">WINROOT</td>
+            <td class="grp">Enterprise Admins</td>
+            <td class="sid">S-1-5-21-725345543-2052111302-839522115-519</td>
+            <td class="num">10</td><td class="has"></td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">WINROOT</td>
+            <td class="grp">Domain Admins</td>
+            <td class="sid">S-1-5-21-725345543-2052111302-839522115-512</td>
+            <td class="num">7</td><td class="has"></td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+            <td class="grp">ExchangeWebAdmins</td>
+            <td class="sid">S-1-5-21-8915387-325452579-1788637320-677335</td>
+            <td class="num">24</td><td class="has">already added</td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+            <td class="grp">EXCH_CONF_PERMS_ADMINS</td>
+            <td class="sid">S-1-5-21-8915387-325452579-1788637320-651293</td>
+            <td class="num">8</td><td class="has">already added</td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+            <td class="grp">DHCPAdmins</td>
+            <td class="sid">S-1-5-21-8915387-325452579-1788637320-677382</td>
+            <td class="num">6</td><td class="has"></td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+            <td class="grp">TCS.WinAdmins</td>
+            <td class="sid">S-1-5-21-8915387-325452579-1788637320-647333</td>
+            <td class="num">31</td><td class="has"></td></tr>
+          <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+            <td class="grp">ADGTMeetingRoomAdmins</td>
+            <td class="sid">S-1-5-21-8915387-325452579-1788637320-633910</td>
+            <td class="num">5</td><td class="has"></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="dft">
+      <span class="cnt"><b>1</b> selected</span>
+      <span class="kbd">&uarr;&darr;</span><span style="font-size:11px;color:var(--fg3)">move</span>
+      <span class="kbd">space</span><span style="font-size:11px;color:var(--fg3)">select</span>
+      <span class="kbd">enter</span><span style="font-size:11px;color:var(--fg3)">add</span>
+      <span class="grow"></span>
+      <button class="btn">Cancel</button>
+      <button class="btn p">Add 1 group</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

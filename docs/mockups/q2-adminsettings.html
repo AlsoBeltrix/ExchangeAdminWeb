@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Q2 - Admin Settings (global)</title>
+<style>
+  :root{
+    --bg:#fff;--fg:#16191d;--fg2:#5a636e;--fg3:#98a0a9;
+    --line:#dfe3e8;--grid:#eef1f4;--hd:#f8fafb;--sel:#e9f2fe;--zebra:#fcfdfd;
+    --brand:#1a6ce8;--on:#12833c;--off:#98a0a9;--warn:#8a6400;--danger:#c02b21;
+  }
+  html.dark{
+    --bg:#000000;--fg:#d6dadf;--fg2:#9aa1a9;--fg3:#6b7278;
+    --line:#23262a;--grid:#141619;--hd:#0a0b0d;--sel:#0d2b33;--zebra:#08090a;
+    --brand:#3fd8e8;--on:#4bd67f;--off:#5a6068;--warn:#f0c05a;--danger:#ff6b5e;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.45 "Segoe UI",-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased}
+  html.dark main{background:#050506}
+  .app{display:grid;grid-template-columns:206px 1fr;height:100vh}
+
+  nav{background:var(--hd);border-right:1px solid var(--line);overflow:auto;padding-bottom:12px}
+  html.dark nav{background:#000}
+  .brand{padding:12px 14px;font-weight:700;font-size:13px;border-bottom:1px solid var(--line)}
+  .ng{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg3);padding:13px 14px 4px}
+  nav a{display:flex;align-items:center;gap:7px;padding:4px 14px;color:var(--fg2);text-decoration:none;border-left:2px solid transparent}
+  nav a:hover{background:var(--grid);color:var(--fg)}
+  nav a.on{background:var(--sel);border-left-color:var(--brand);color:var(--fg);font-weight:600}
+  nav a .dis{width:5px;height:5px;border-radius:50%;background:var(--off);margin-left:auto}
+
+  main{overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .bar{border-bottom:1px solid var(--line);padding:0 20px;height:46px;display:flex;align-items:center;gap:12px;flex:none}
+  .bar h1{font-size:15px;font-weight:600;margin:0}
+  .bar .crumb{color:var(--fg3);font-size:12px}
+  .grow{flex:1}
+  .btn{font:12px inherit;padding:4px 11px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer}
+  .btn:hover{background:var(--grid)}
+  .btn.p{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+  html.dark .btn.p{color:#00181c}
+  .btn.p:disabled{opacity:.4;cursor:default}
+  .tgl{font:12px inherit;border:1px solid var(--line);background:var(--bg);color:var(--fg2);padding:3px 9px;border-radius:4px;cursor:pointer}
+
+  .tabs{border-bottom:1px solid var(--line);padding:0 20px;display:flex;flex:none;background:var(--hd)}
+  html.dark .tabs{background:#000}
+  .tabs button{font:13px inherit;padding:9px 14px;border:0;background:none;color:var(--fg2);cursor:pointer;
+    border-bottom:2px solid transparent;display:flex;align-items:center;gap:7px}
+  .tabs button:hover{color:var(--fg)}
+  .tabs button.on{color:var(--fg);font-weight:600;border-bottom-color:var(--brand);background:var(--bg)}
+  html.dark .tabs button.on{background:#050506}
+  .tabs .n{font-size:11px;color:var(--fg3);background:var(--grid);border-radius:9px;padding:0 6px;line-height:16px}
+  .tabs button.on .n{background:var(--sel);color:var(--brand)}
+
+  .pane{flex:1;overflow:hidden;display:none;flex-direction:column;min-height:0}
+  .pane.on{display:flex}
+  .tb{padding:9px 20px;display:flex;align-items:center;gap:9px;flex:none;border-bottom:1px solid var(--line)}
+  .tb input.s{font:12px inherit;padding:4px 9px;border:1px solid var(--line);border-radius:4px;width:250px;background:var(--bg);color:var(--fg)}
+  .tb input.s:focus{outline:none;border-color:var(--brand)}
+  .tb select{font:12px inherit;padding:4px 7px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg)}
+  .tb .c{font-size:12px;color:var(--fg3);margin-left:auto}
+
+  .tw{flex:1;overflow:auto;min-height:0}
+  table{width:100%;border-collapse:collapse}
+  thead th{position:sticky;top:0;z-index:2;background:var(--hd);text-align:left;font-size:11px;font-weight:600;
+    color:var(--fg3);padding:6px 20px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer}
+  html.dark thead th{background:#0a0b0d}
+  td{padding:5px 20px;border-bottom:1px solid var(--grid)}
+  tbody tr:nth-child(even){background:var(--zebra)}
+  tbody tr:hover{background:var(--sel)}
+  td.ck,th.ck{width:1%;padding-right:0}
+  td.ck input,th.ck input{width:14px;height:14px;accent-color:var(--brand);margin:0}
+  td.mod{font-weight:500;width:230px;white-space:nowrap}
+  td.mod .m{font:11px ui-monospace,Consolas,monospace;color:var(--fg3);font-weight:400}
+  td.cat{color:var(--fg2);width:150px;white-space:nowrap}
+  td.dep{color:var(--fg3);font-size:12px;width:170px;white-space:nowrap}
+  td.grants{width:90px;text-align:right;color:var(--fg2)}
+  td.ver{font:11px ui-monospace,Consolas,monospace;color:var(--fg3);width:70px}
+  td.tog{width:1%;text-align:right;white-space:nowrap}
+  td.kind{width:110px;font-size:11px;font-weight:700;color:var(--fg2);white-space:nowrap}
+  td.val{font-size:13px}
+  td.val .dn{font:11px ui-monospace,Consolas,monospace;color:var(--fg3)}
+  td.act{width:1%;text-align:right}
+  .rm{color:var(--fg3);cursor:pointer;font-size:12px;opacity:0;padding:1px 6px;border-radius:3px}
+  tr:hover .rm{opacity:1}
+  .rm:hover{background:#fde8e6;color:var(--danger)}
+  html.dark .rm:hover{background:#2b100d}
+
+  .sw{position:relative;width:34px;height:19px;flex:none;display:inline-block;vertical-align:middle}
+  .sw input{opacity:0;width:0;height:0}
+  .sl{position:absolute;inset:0;background:#c9ced4;border-radius:10px;transition:.13s;cursor:pointer}
+  html.dark .sl{background:#2a2e33}
+  .sl:before{content:"";position:absolute;width:15px;height:15px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.13s}
+  html.dark .sl:before{background:#d6dadf}
+  input:checked + .sl{background:var(--on)}
+  input:checked + .sl:before{transform:translateX(15px)}
+  html.dark input:checked + .sl:before{background:#001a0d}
+  input:disabled + .sl{opacity:.4;cursor:default}
+  .sys{font-size:10px;font-weight:700;color:var(--fg3);letter-spacing:.04em}
+
+  .bulk{padding:7px 20px;background:var(--sel);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;font-size:12px;flex:none}
+  .bulk b{font-weight:600}
+  .bulk a{color:var(--brand);cursor:pointer}
+
+  .diag{padding:16px 20px;overflow:auto;flex:1}
+  .dgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:0 26px;max-width:1100px}
+  .d{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:6px 0;border-bottom:1px solid var(--grid);font-size:13px}
+  .d .k{color:var(--fg3);font-size:12px}
+  .d .v{font-weight:500}
+  .d .v.ok{color:var(--on)}
+  .d .v.bad{color:var(--danger)}
+  .d .v.mono{font:11px ui-monospace,Consolas,monospace;font-weight:400}
+  .dh{font-size:11px;font-weight:700;color:var(--fg2);margin:14px 0 2px;padding-bottom:4px;
+    border-bottom:1px solid var(--line);grid-column:1/-1}
+
+  .foot{border-top:1px solid var(--line);padding:8px 20px;display:flex;align-items:center;gap:11px;flex:none;background:var(--bg)}
+  html.dark .foot{background:#050506}
+  .w{font-size:12px;color:var(--warn);font-weight:600}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand">Exchange Admin</div>
+    <div class="ng">Exchange</div>
+    <a href="#">Mailbox Permissions</a><a href="#">Calendar</a><a href="#">Exchange Migration</a>
+    <a href="#">Message Analysis</a><a href="#">Recipient Lookup</a><a href="#">Blocked Senders</a>
+    <a href="#">Conference Rooms</a><a href="#">Out of Office</a><a href="#">Delegation Report</a>
+    <div class="ng">Directory &amp; Groups</div>
+    <a href="#">AD Group Management</a><a href="#">M365 Group Management</a>
+    <a href="#">Self-Service Groups</a><a href="#">AD Attribute Editor</a><a href="#">Comms-10k</a>
+    <div class="ng">Identity &amp; Access</div>
+    <a href="#">MFA Reset</a><a href="#">Named Locations</a><a href="#">Emergency Disable</a>
+    <a href="#">Account Lockout<span class="dis"></span></a>
+    <div class="ng">Infrastructure</div>
+    <a href="#">DHCP Authorization</a><a href="#">Licensing Updates</a>
+    <div class="ng">Administration</div>
+    <a href="#" class="on">Admin Settings</a><a href="#">Event Log</a>
+  </nav>
+
+  <main>
+    <div class="bar">
+      <span class="crumb">Administration /</span><h1>Admin Settings</h1>
+      <span class="grow"></span>
+      <button class="tgl" onclick="document.documentElement.classList.toggle('dark')">◐</button>
+    </div>
+
+    <div class="tabs">
+      <button class="on" onclick="tab(this,'p-mod')">Modules <span class="n">22</span></button>
+      <button onclick="tab(this,'p-pp')">Protected principals <span class="n">7</span></button>
+      <button onclick="tab(this,'p-diag')">Diagnostics</button>
+    </div>
+
+    <!-- MODULES: every module, one row. Config lives on each module's own page. -->
+    <div class="pane on" id="p-mod">
+      <div class="tb">
+        <input class="s" type="text" placeholder="Filter modules&hellip;" />
+        <select><option>All categories</option><option>Exchange</option><option>Directory &amp; Groups</option>
+          <option>Identity &amp; Access</option><option>Infrastructure</option><option>Administration</option></select>
+        <select><option>All states</option><option>Enabled</option><option>Disabled</option></select>
+        <span class="c">22 modules &middot; 21 enabled &middot; 1 disabled</span>
+      </div>
+      <div class="bulk"><b>2 selected</b><a>Enable</a><a>Disable</a>
+        <span class="grow"></span><span style="color:var(--fg3)">Shift-click for a range</span></div>
+      <div class="tw">
+        <table>
+          <thead><tr><th class="ck"><input type="checkbox" /></th><th>Module</th><th>Category</th>
+            <th>Requires</th><th style="text-align:right">Groups</th><th>Version</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Exchange Online <span class="m">ExchangeOnline</span></td><td class="cat">Exchange</td><td class="dep">&mdash;</td><td class="grants">2</td><td class="ver">1.0.6</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Mailbox Permissions <span class="m">MailboxPermissions</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">1.0.4</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Calendar <span class="m">CalendarPermissions</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">1.0.2</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Exchange Migration <span class="m">Migration</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">4</td><td class="ver">1.3.0</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Message Analysis <span class="m">MessageTrace</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">1.3.1</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Recipient Lookup <span class="m">RecipientLookup</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">4</td><td class="ver">1.0.3</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Blocked Senders <span class="m">BlockedSenders</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">1.0.2</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Out of Office <span class="m">OutOfOffice</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">1.0.1</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Delegation Report <span class="m">DelegationReport</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">3</td><td class="ver">1.0.2</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Conference Rooms <span class="m">ConferenceRooms</span></td><td class="cat">Exchange</td><td class="dep">Exchange Online</td><td class="grants">2</td><td class="ver">2.3.1</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Comms-10k <span class="m">Comms10k</span></td><td class="cat">Directory &amp; Groups</td><td class="dep">Exchange Online</td><td class="grants">4</td><td class="ver">1.0.4</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">AD Group Management <span class="m">GroupManagement</span></td><td class="cat">Directory &amp; Groups</td><td class="dep">&mdash;</td><td class="grants">2</td><td class="ver">2.1.1</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">M365 Group Management <span class="m">M365GroupManagement</span></td><td class="cat">Directory &amp; Groups</td><td class="dep">&mdash;</td><td class="grants">1</td><td class="ver">1.1.0</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Self-Service Groups <span class="m">SelfServiceGroups</span></td><td class="cat">Directory &amp; Groups</td><td class="dep">&mdash;</td><td class="grants">4</td><td class="ver">1.2.0</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">AD Attribute Editor <span class="m">ADAttributeEditor</span></td><td class="cat">Directory &amp; Groups</td><td class="dep">&mdash;</td><td class="grants">4</td><td class="ver">1.1.2</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">MFA Reset <span class="m">MfaReset</span></td><td class="cat">Identity &amp; Access</td><td class="dep">&mdash;</td><td class="grants">3</td><td class="ver">1.0.2</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Named Locations <span class="m">NamedLocations</span></td><td class="cat">Identity &amp; Access</td><td class="dep">&mdash;</td><td class="grants">3</td><td class="ver">1.0.3</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Emergency Disable <span class="m">EmergencyDisable</span></td><td class="cat">Identity &amp; Access</td><td class="dep">&mdash;</td><td class="grants">1</td><td class="ver">1.0.5</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr style="color:var(--fg3)"><td class="ck"><input type="checkbox" /></td><td class="mod">Account Lockout Remediation <span class="m">AccountLockoutRemediation</span></td><td class="cat">Identity &amp; Access</td><td class="dep">&mdash;</td><td class="grants">1</td><td class="ver">1.0.1</td><td class="tog"><label class="sw"><input type="checkbox" /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">DHCP Authorization <span class="m">DhcpAuthorization</span></td><td class="cat">Infrastructure</td><td class="dep">&mdash;</td><td class="grants">3</td><td class="ver">1.0.4</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="mod">Licensing Updates <span class="m">LicensingUpdates</span></td><td class="cat">Infrastructure</td><td class="dep">&mdash;</td><td class="grants">2</td><td class="ver">1.0.1</td><td class="tog"><label class="sw"><input type="checkbox" checked /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" disabled /></td><td class="mod">Event Log <span class="m">AdminEventLog</span></td><td class="cat">Administration</td><td class="dep">&mdash;</td><td class="grants">1</td><td class="ver">1.0.2</td><td class="tog"><span class="sys">SYSTEM</span> <label class="sw"><input type="checkbox" checked disabled /><span class="sl"></span></label></td></tr>
+            <tr><td class="ck"><input type="checkbox" disabled /></td><td class="mod">Admin Settings <span class="m">AdminSettings</span></td><td class="cat">Administration</td><td class="dep">&mdash;</td><td class="grants">1</td><td class="ver">1.0.3</td><td class="tog"><span class="sys">SYSTEM</span> <label class="sw"><input type="checkbox" checked disabled /><span class="sl"></span></label></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PROTECTED PRINCIPALS: real dev data, 7 entries -->
+    <div class="pane" id="p-pp">
+      <div class="tb">
+        <input class="s" type="text" placeholder="Filter&hellip;" />
+        <select><option>All kinds</option><option>Users</option><option>Groups</option>
+          <option>Organizational units</option><option>Patterns</option></select>
+        <button class="btn p">+ Add principal</button>
+        <span class="c">7 protected &middot; blocked in every module</span>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th class="ck"><input type="checkbox" /></th><th>Kind</th><th>Value</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">USER</td>
+              <td class="val">vincent.roche@analog.com</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">USER</td>
+              <td class="val">Nitin.Mittal@analog.com</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">USER</td>
+              <td class="val">Russell.Koste@analog.com</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">USER</td>
+              <td class="val">Janene.Asgeirsson@analog.com</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">GROUP</td>
+              <td class="val">ANALOG\VR Staff</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">GROUP</td>
+              <td class="val"><span class="dn">CN=CEO Staff,CN=Users,DC=ad,DC=analog,DC=com</span></td>
+              <td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="kind">GROUP</td>
+              <td class="val"><span class="dn">CN=ADIBoard,OU=SYNC,OU=Distribution Lists,OU=Recipients,OU=Analog,OU=Exchange,DC=ad,DC=analog,DC=com</span></td>
+              <td class="act"><span class="rm">Remove</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DIAGNOSTICS: read-only facts that today are scattered or invisible -->
+    <div class="pane" id="p-diag">
+      <div class="diag">
+        <div class="dgrid">
+          <div class="dh">Application</div>
+          <div class="d"><span class="k">Version</span><span class="v mono">2.3.36</span></div>
+          <div class="d"><span class="k">Environment</span><span class="v">Development</span></div>
+          <div class="d"><span class="k">Config schema</span><span class="v mono">v6</span></div>
+          <div class="d"><span class="k">Log level</span><span class="v">Information</span></div>
+
+          <div class="dh">Directory</div>
+          <div class="d"><span class="k">Forest</span><span class="v mono">analog.com</span></div>
+          <div class="d"><span class="k">ANALOG</span><span class="v mono">ad.analog.com</span></div>
+          <div class="d"><span class="k">WINROOT</span><span class="v mono">winroot.analog.com</span></div>
+          <div class="d"><span class="k">RSAT module</span><span class="v ok">Available</span></div>
+          <div class="d"><span class="k">Global catalog</span><span class="v mono">ASHBFDC1.winroot.analog.com</span></div>
+
+          <div class="dh">Access store</div>
+          <div class="d"><span class="k">Grants</span><span class="v">59 across 22 modules</span></div>
+          <div class="d"><span class="k">Stored as</span><span class="v ok">SIDs (59 of 59)</span></div>
+          <div class="d"><span class="k">Distinct groups</span><span class="v">14</span></div>
+          <div class="d"><span class="k">Cross-domain</span><span class="v">1 &mdash; WINROOT\Enterprise Admins</span></div>
+
+          <div class="dh">Connectivity</div>
+          <div class="d"><span class="k">Exchange Online</span><span class="v ok">Connected</span></div>
+          <div class="d"><span class="k">Delinea</span><span class="v ok">Reachable</span></div>
+          <div class="d"><span class="k">Microsoft Graph</span><span class="v ok">Token valid</span></div>
+          <div class="d"><span class="k">SMTP relay</span><span class="v ok">Reachable</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="w">● 2 unsaved changes in Modules</span>
+      <span class="grow"></span>
+      <button class="btn">Discard</button><button class="btn p">Save</button>
+    </div>
+  </main>
+</div>
+<script>
+function tab(btn,id){
+  document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('on')});
+  document.querySelectorAll('.pane').forEach(function(p){p.classList.remove('on')});
+  btn.classList.add('on');document.getElementById(id).classList.add('on');
+}
+</script>
+</body>
+</html>

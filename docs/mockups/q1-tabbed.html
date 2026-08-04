@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Q1 - Tabbed module admin, fixed panes</title>
+<style>
+  /* NO SCROLLING PAGE. Tabs across the top; each pane is its own fixed-height
+     region with its OWN internal scroll. 2 groups or 200 groups - the page
+     never grows. Tables have sticky headers, filters, and a count.
+     Data: ModuleCatalog.cs + dev database. Nothing invented. */
+  :root{
+    --bg:#fff;--fg:#16191d;--fg2:#5a636e;--fg3:#98a0a9;
+    --line:#dfe3e8;--grid:#eef1f4;--hd:#f8fafb;--sel:#e9f2fe;--zebra:#fcfdfd;
+    --brand:#1a6ce8;--on:#12833c;--off:#98a0a9;--fgn:#a2650a;--warn:#8a6400;--danger:#c02b21;
+  }
+  /* OLED: true #000 canvas. Surfaces lift by a few points of grey rather than by
+     borders, so the panel structure reads without hairlines everywhere. Text is
+     silver, not white - full white on pure black smears at small sizes. Accent is
+     cyan: complementary to the amber/warm tones and legible on black at 12px. */
+  html.dark{
+    --bg:#000000;--fg:#d6dadf;--fg2:#9aa1a9;--fg3:#6b7278;
+    --line:#23262a;--grid:#141619;--hd:#0a0b0d;--sel:#0d2b33;--zebra:#08090a;
+    --brand:#3fd8e8;--on:#4bd67f;--off:#5a6068;--fgn:#d6dadf;--warn:#f0c05a;--danger:#ff6b5e;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:13px/1.45 "Segoe UI",-apple-system,BlinkMacSystemFont,sans-serif;-webkit-font-smoothing:antialiased}
+  .app{display:grid;grid-template-columns:206px 1fr;height:100vh}
+
+  nav{background:var(--hd);border-right:1px solid var(--line);overflow:auto;padding-bottom:12px}
+  .brand{padding:12px 14px;font-weight:700;font-size:13px;border-bottom:1px solid var(--line)}
+  .ng{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--fg3);padding:13px 14px 4px}
+  nav a{display:flex;align-items:center;gap:7px;padding:4px 14px;color:var(--fg2);text-decoration:none;border-left:2px solid transparent}
+  nav a:hover{background:var(--grid);color:var(--fg)}
+  nav a.on{background:var(--sel);border-left-color:var(--brand);color:var(--fg);font-weight:600}
+  nav a .dis{width:5px;height:5px;border-radius:50%;background:var(--off);margin-left:auto}
+
+  main{overflow:hidden;display:flex;flex-direction:column;min-width:0}
+  .bar{border-bottom:1px solid var(--line);padding:0 20px;height:46px;display:flex;align-items:center;gap:12px;flex:none}
+  .bar .crumb{color:var(--fg3);font-size:12px}
+  .bar h1{font-size:15px;font-weight:600;margin:0}
+  .ver{font-size:11px;color:var(--fg3);font-family:ui-monospace,Consolas,monospace}
+  .pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:3px;background:#e6f4ea;color:var(--on)}
+  html.dark .pill{background:#0d2418;color:var(--on)}
+  .grow{flex:1}
+  .btn{font:12px inherit;padding:4px 11px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);cursor:pointer}
+  .btn:hover{background:var(--grid)}
+  .btn.p{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600}
+  html.dark .btn.p{color:#00181c}
+  .btn.p:disabled{opacity:.4;cursor:default}
+  .tgl{font:12px inherit;border:1px solid var(--line);background:var(--bg);color:var(--fg2);padding:3px 9px;border-radius:4px;cursor:pointer}
+
+  /* Tabs: each is a destination, nothing stacked below another */
+  .tabs{border-bottom:1px solid var(--line);padding:0 20px;display:flex;gap:0;flex:none;background:var(--hd)}
+  .tabs button{font:13px inherit;padding:9px 14px;border:0;background:none;color:var(--fg2);cursor:pointer;
+    border-bottom:2px solid transparent;display:flex;align-items:center;gap:7px}
+  .tabs button:hover{color:var(--fg)}
+  .tabs button.on{color:var(--fg);font-weight:600;border-bottom-color:var(--brand);background:var(--bg)}
+  .tabs .n{font-size:11px;color:var(--fg3);background:var(--grid);border-radius:9px;padding:0 6px;line-height:16px}
+  .tabs button.on .n{background:var(--sel);color:var(--brand)}
+  .tabs .d{width:6px;height:6px;border-radius:50%;background:var(--warn)}
+
+  .pane{flex:1;overflow:hidden;display:none;flex-direction:column;min-height:0}
+  .pane.on{display:flex}
+
+  /* toolbar above every table - filter + add, so scale is handled */
+  .tb{padding:9px 20px;display:flex;align-items:center;gap:9px;flex:none;border-bottom:1px solid var(--line)}
+  .tb input.s{font:12px inherit;padding:4px 9px;border:1px solid var(--line);border-radius:4px;
+    width:250px;background:var(--bg);color:var(--fg)}
+  .tb input.s:focus{outline:none;border-color:var(--brand)}
+  .tb select{font:12px inherit;padding:4px 7px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg)}
+  .tb .c{font-size:12px;color:var(--fg3);margin-left:auto}
+
+  .tw{flex:1;overflow:auto;min-height:0}
+  table{width:100%;border-collapse:collapse}
+  thead th{position:sticky;top:0;z-index:2;background:var(--hd);text-align:left;font-size:11px;
+    font-weight:600;color:var(--fg3);padding:6px 20px;border-bottom:1px solid var(--line);white-space:nowrap;cursor:pointer}
+  thead th:hover{color:var(--fg)}
+  td{padding:5px 20px;border-bottom:1px solid var(--grid);white-space:nowrap}
+  tbody tr:nth-child(even){background:var(--zebra)}
+  tbody tr:hover{background:var(--sel)}
+  td.ck{width:1%;padding-right:0}
+  td.ck input,th.ck input{width:14px;height:14px;accent-color:var(--brand);margin:0}
+  th.ck{width:1%;padding-right:0}
+  td.dom{font-size:11px;font-weight:700;color:var(--fg2);width:88px}
+  td.dom.f{color:var(--fg2)}
+  td.grp{font-weight:500;width:270px}
+  td.sid{font:11px ui-monospace,Consolas,monospace;color:var(--fg3);width:100%}
+  td.num{color:var(--fg2);text-align:right;width:80px}
+  td.act{width:1%;text-align:right}
+  .rm{color:var(--fg3);cursor:pointer;font-size:12px;opacity:0;padding:1px 6px;border-radius:3px}
+  tr:hover .rm{opacity:1}
+  .rm:hover{background:#fde8e6;color:var(--danger)}
+  html.dark .rm:hover{background:#2b100d}
+  /* On OLED the nav is the darkest surface and content lifts slightly, so the
+     eye lands on the data rather than the chrome. */
+  html.dark nav{background:#000}
+  html.dark main{background:#050506}
+  html.dark .tabs{background:#000}
+  html.dark .tabs button.on{background:#050506}
+  html.dark thead th{background:#0a0b0d}
+  html.dark .bulk{background:#0d2b33}
+  .empty{padding:26px 20px;color:var(--fg3);font-size:13px}
+  .empty b{display:block;color:var(--fg2);font-weight:600;margin-bottom:3px}
+
+  /* bulk action strip appears when rows are selected - the answer to 20 groups */
+  .bulk{padding:7px 20px;background:var(--sel);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:12px;font-size:12px;flex:none}
+  .bulk b{font-weight:600}
+  .bulk a{color:var(--danger);cursor:pointer}
+
+  /* config pane: 2-col grouped, own scroll */
+  .cfgscroll{flex:1;overflow:auto;padding:14px 20px 24px;min-height:0}
+  .cg{margin-bottom:16px}
+  .cg > .t{font-size:11px;font-weight:700;color:var(--fg2);margin-bottom:3px;
+    padding-bottom:4px;border-bottom:1px solid var(--line)}
+  .cc{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
+  .f{display:grid;grid-template-columns:172px 1fr;gap:10px;align-items:center;padding:5px 0;border-bottom:1px solid var(--grid)}
+  .f label{font-size:12px}
+  .f label small{display:block;color:var(--fg3);font-size:10.5px;font-family:ui-monospace,Consolas,monospace;margin-top:1px}
+  .f input[type=text]{font:12px inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--fg);width:100%}
+  .f input:focus{outline:none;border-color:var(--brand)}
+  .f.wide{grid-column:1/-1}
+  .blank input{border-style:dashed;color:var(--fg3)}
+
+  .status{padding:16px 20px}
+  .status .row{display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid var(--grid);max-width:640px}
+  .sw{position:relative;width:34px;height:19px;flex:none}
+  .sw input{opacity:0;width:0;height:0}
+  .sl{position:absolute;inset:0;background:#c9ced4;border-radius:10px;transition:.13s;cursor:pointer}
+  html.dark .sl{background:#2a2e33}
+  .sl:before{content:"";position:absolute;width:15px;height:15px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.13s}
+  html.dark .sl:before{background:#d6dadf}
+  html.dark input:checked + .sl:before{background:#00181c}
+  input:checked + .sl{background:var(--on)}
+  input:checked + .sl:before{transform:translateX(15px)}
+  .stxt b{font-weight:600}
+  .stxt .m{color:var(--fg3);font-size:12px}
+
+  .foot{border-top:1px solid var(--line);padding:8px 20px;display:flex;align-items:center;gap:11px;flex:none;background:var(--bg)}
+  .w{font-size:12px;color:var(--warn);font-weight:600}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav>
+    <div class="brand">Exchange Admin</div>
+    <div class="ng">Exchange</div>
+    <a href="#">Mailbox Permissions</a><a href="#">Calendar</a><a href="#">Exchange Migration</a>
+    <a href="#">Message Analysis</a><a href="#">Recipient Lookup</a><a href="#">Blocked Senders</a>
+    <a href="#" class="on">Conference Rooms</a>
+    <div class="ng">Directory &amp; Groups</div>
+    <a href="#">AD Group Management</a><a href="#">Self-Service Groups</a><a href="#">AD Attribute Editor</a>
+    <div class="ng">Identity &amp; Access</div>
+    <a href="#">MFA Reset</a><a href="#">Named Locations</a><a href="#">Emergency Disable</a>
+    <a href="#">Account Lockout<span class="dis"></span></a>
+    <div class="ng">Infrastructure</div>
+    <a href="#">DHCP Authorization</a>
+    <div class="ng">Administration</div>
+    <a href="#">Admin Settings</a><a href="#">Event Log</a>
+  </nav>
+
+  <main>
+    <div class="bar">
+      <span class="crumb">Exchange /</span><h1>Conference Rooms</h1>
+      <span class="ver">v2.3.1</span><span class="pill">Enabled</span>
+      <span class="grow"></span>
+      <button class="btn">Open module</button>
+      <button class="tgl" onclick="document.documentElement.classList.toggle('dark')">◐</button>
+    </div>
+
+    <div class="tabs">
+      <button class="on" onclick="tab(this,'p-access')">Access <span class="n">2</span></button>
+      <button onclick="tab(this,'p-config')">Configuration <span class="n">15</span></button>
+      <button onclick="tab(this,'p-admins')">Module admins <span class="n">0</span></button>
+      <button onclick="tab(this,'p-status')">Status</button>
+    </div>
+
+    <!-- ACCESS -->
+    <div class="pane on" id="p-access">
+      <div class="tb">
+        <input class="s" type="text" placeholder="Filter groups&hellip;" />
+        <select><option>All domains</option><option>ANALOG</option><option>WINROOT</option></select>
+        <button class="btn p">+ Add group</button>
+        <span class="c">2 groups &middot; fail-closed</span>
+      </div>
+      <div class="bulk"><b>1 selected</b><a>Remove from module</a>
+        <span class="grow"></span><span style="color:var(--fg3)">Shift-click for a range</span></div>
+      <div class="tw">
+        <table>
+          <thead><tr><th class="ck"><input type="checkbox" /></th><th>Domain</th><th>Group</th>
+            <th>Security identifier</th><th style="text-align:right">Members</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="ck"><input type="checkbox" checked /></td><td class="dom">ANALOG</td>
+              <td class="grp">ExchangeWebAdmins</td>
+              <td class="sid">S-1-5-21-8915387-325452579-1788637320-677335</td>
+              <td class="num">24</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td>
+              <td class="grp">EXCH_CONF_PERMS_ADMINS</td>
+              <td class="sid">S-1-5-21-8915387-325452579-1788637320-651293</td>
+              <td class="num">8</td><td class="act"><span class="rm">Remove</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CONFIG -->
+    <div class="pane" id="p-config">
+      <div class="tb">
+        <input class="s" type="text" placeholder="Filter fields&hellip;" />
+        <span class="c">15 fields &middot; 13 set &middot; 2 using defaults</span>
+      </div>
+      <div class="cfgscroll">
+        <div class="cg"><div class="t">Credentials</div><div class="cc">
+          <div class="f"><label>AD Delinea Secret ID<small>DelineaSecretId</small></label><input type="text" value="31" /></div>
+          <div class="f"><label>On-prem Delinea Secret ID<small>OnPremDelineaSecretId</small></label><input type="text" value="31" /></div>
+        </div></div>
+        <div class="cg"><div class="t">Directory</div><div class="cc">
+          <div class="f wide"><label>Room list OU<small>RoomListOU</small></label>
+            <input type="text" value="ad.analog.com/Exchange/Analog/Recipients/Conference Rooms" /></div>
+        </div></div>
+        <div class="cg"><div class="t">Booking groups</div><div class="cc">
+          <div class="f"><label>Default arbiter<small>DefaultArbiterGroup</small></label><input type="text" value="ConfSiteAdmins@analog.com" /></div>
+          <div class="f"><label>Conf admins<small>ConfAdminsGroup</small></label><input type="text" value="ConfAdmins@analog.com" /></div>
+          <div class="f"><label>Exec coordinators<small>ExecConfCoordinatorsGroup</small></label><input type="text" value="ExecConfCoordinators@analog.com" /></div>
+          <div class="f"><label>Exec admins<small>ConfExecAdminsGroup</small></label><input type="text" value="ConfExecAdmins@analog.com" /></div>
+          <div class="f"><label>Exec VPs<small>ConfExecVPsGroup</small></label><input type="text" value="ConfExecVPs@analog.com" /></div>
+          <div class="f"><label>CEO room<small>ConfCEOGroup</small></label><input type="text" value="ConfCEO@analog.com" /></div>
+          <div class="f"><label>Exception room<small>ConfExceptionGroup</small></label><input type="text" value="ConfException@analog.com" /></div>
+          <div class="f"><label>ADGT room admins<small>ADGTAdminsGroup</small></label><input type="text" value="ADGTMeetingRoomAdmins@analog.com" /></div>
+        </div></div>
+        <div class="cg"><div class="t">Contact addresses</div><div class="cc">
+          <div class="f"><label>Restricted contact<small>RestrictedContactEmail</small></label><input type="text" value="confadmins@analog.com" /></div>
+          <div class="f"><label>Exec contact<small>ExecContactEmail</small></label><input type="text" value="confexecadmins@analog.com" /></div>
+          <div class="f"><label>ADGT contact<small>ADGTContactEmail</small></label><input type="text" value="adgtmeetingroomadmins@analog.com" /></div>
+        </div></div>
+        <div class="cg"><div class="t">Mail tips</div><div class="cc">
+          <div class="f blank"><label>Restricted room<small>RestrictedMailTip</small></label><input type="text" placeholder="built-in default" /></div>
+          <div class="f blank"><label>Executive room<small>ExecMailTip</small></label><input type="text" placeholder="built-in default" /></div>
+        </div></div>
+      </div>
+    </div>
+
+    <!-- MODULE ADMINS: shown at scale, 12 rows, to prove the pane holds up -->
+    <div class="pane" id="p-admins">
+      <div class="tb">
+        <input class="s" type="text" placeholder="Filter groups&hellip;" />
+        <select><option>All domains</option><option>ANALOG</option><option>WINROOT</option></select>
+        <button class="btn p">+ Add group</button>
+        <span class="c">example at scale &mdash; 12 groups</span>
+      </div>
+      <div class="tw">
+        <table>
+          <thead><tr><th class="ck"><input type="checkbox" /></th><th>Domain</th><th>Group</th>
+            <th>Security identifier</th><th style="text-align:right">Members</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">EXCH_CONF_PERMS_ADMINS</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-651293</td><td class="num">8</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ExchangeWebAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-677335</td><td class="num">24</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ConfSiteAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-612044</td><td class="num">17</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ADGTMeetingRoomAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-633910</td><td class="num">5</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ExecConfCoordinators</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-628815</td><td class="num">12</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ConfExecAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-644201</td><td class="num">6</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ConfExecVPs</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-644202</td><td class="num">9</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">ConfAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-651300</td><td class="num">14</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">TCS.WinAdmins</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-647333</td><td class="num">31</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">ANALOG</td><td class="grp">global_it_service</td><td class="sid">S-1-5-21-8915387-325452579-1788637320-255538</td><td class="num">203</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">WINROOT</td><td class="grp">Enterprise Admins</td><td class="sid">S-1-5-21-725345543-2052111302-839522115-519</td><td class="num">10</td><td class="act"><span class="rm">Remove</span></td></tr>
+            <tr><td class="ck"><input type="checkbox" /></td><td class="dom">WINROOT</td><td class="grp">Domain Admins</td><td class="sid">S-1-5-21-725345543-2052111302-839522115-512</td><td class="num">7</td><td class="act"><span class="rm">Remove</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- STATUS -->
+    <div class="pane" id="p-status">
+      <div class="status">
+        <div class="row">
+          <label class="sw"><input type="checkbox" checked /><span class="sl"></span></label>
+          <div class="stxt"><b>Module enabled</b><div class="m">Visible in the sidebar to anyone with access.</div></div>
+        </div>
+        <div class="row">
+          <div class="stxt"><b>Depends on Exchange Online</b><div class="m">Enabled &mdash; this module can run.</div></div>
+        </div>
+        <div class="row">
+          <div class="stxt"><b>Fail-closed</b><div class="m">Access denied unless explicitly granted.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <span class="w">● 1 unsaved change in Access</span>
+      <span class="grow"></span>
+      <button class="btn">Discard</button><button class="btn p">Save</button>
+    </div>
+  </main>
+</div>
+<script>
+function tab(btn,id){
+  document.querySelectorAll('.tabs button').forEach(function(b){b.classList.remove('on')});
+  document.querySelectorAll('.pane').forEach(function(p){p.classList.remove('on')});
+  btn.classList.add('on');
+  document.getElementById(id).classList.add('on');
+}
+</script>
+</body>
+</html>
+
+
+
