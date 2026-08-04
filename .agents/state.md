@@ -6,9 +6,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Export retention + admin bulk jobs view -- LANDED 2026-08-04. App stays `2.5.1`; new module
+- **Export retention + admin bulk jobs view -- LANDED 2026-08-04, app `2.5.2`, new module
   `AdminBulkJobs 1.0.0`. NOT DEPLOYED.** `docs/AdminBulkJobs-Plan.md` Status: Implemented;
   **9 manual checks unrun.**
+  **Version correction (owner caught it 2026-08-04).** These landed with NO base bump, leaving the
+  repo reading `2.5.1` while dev and prod were already running a *different* `2.5.1` -- verified
+  from both assemblies (`FileVersion 2.5.1.0`, dev written 19:13, prod 18:39). The new module
+  correctly bumps nothing (Constitution: a new module does not bump the base version), but moving
+  export retention in-process is shared app-wide startup behaviour and ships real behaviour change
+  -- the app now deletes files it never deleted before -- so it earns a base bump. Now `2.5.2`.
+  **Rule this cost: two builds carrying one version number is worse than a wrong number**, because
+  during an incident nothing distinguishes them. Check the deployed assembly before assuming the
+  repo is ahead.
   **DURABLE RULING, owner 2026-08-04: "there are and will be no scheduled tasks."** This supersedes
   `docs/MessageTraceDownloadLink-Plan.md` D1 and the fallback suggestion at
   `docs/FutureModules-Plan.md:308`; both are annotated in place. Unattended work in this app is a
@@ -42,9 +51,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   crossing modules is the page's purpose, and both audit.
   **No base app bump, per the Constitution** ("Adding a new module does not bump the base app
   version"). A `2.5.2` bump was made and reverted on reading that rule.
-  **NEXT: deploy `2.5.1` to dev.** Nothing to install -- the deploy restarts the app, which runs
+  **NEXT: deploy `2.5.2` to dev.** Nothing to install -- the deploy restarts the app, which runs
   the retention sweep. Manual check 3 (an audit log in the parent directory survives) is the
   load-bearing one, since that is the deletion the pattern exists to prevent.
+  **Prod is on `2.5.1` and therefore has NO export retention**: it carries the theme work and the
+  Conference Rooms bulk-jobs fixes, but predates `PruneExpired` and the admin page.
 
 - **Conference Rooms bulk jobs panel -- ALL 6 SLICES LANDED 2026-08-04, app `2.5.1`,
   ConferenceRooms `2.3.2`, NOT DEPLOYED.** `docs/ConferenceRoomsBulkJobPanel-Plan.md` Status:
@@ -556,8 +567,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.5.1`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.5.0`
-  for the Conference Rooms bulk jobs work (the repository/service reads are shared
+- **App version `2.5.2`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.5.1`
+  for in-process export retention (shared app-wide startup behaviour, and it deletes files the app
+  never deleted before). The `AdminBulkJobs` module landed in the same stretch and correctly bumps
+  nothing -- Constitution: adding a module does not bump the base version.
+  `2.5.1` was the Conference Rooms bulk jobs work (the repository/service reads are shared
   infrastructure); ConferenceRooms module `2.3.1 -> 2.3.2` with it. `2.5.0` was theme support --
   minor rather than patch, new user-visible capability app-wide. `2.4.1` was the two post-deploy
   UI corrections (`AdminSettings` module `1.1.0 -> 1.1.1` with it); `2.4.0` the app-wide admin UI
@@ -569,13 +583,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.4.0`, prod `2.3.34`.** Dev deployed by the owner 2026-08-04 (observed in the
-  running app's sidebar: `v2.4.0`); the repo is now three ahead at `2.5.1` -- the `2.4.1` UI
-  corrections, `2.5.0` theme support and `2.5.1` bulk jobs work are all undeployed. Prod was last verified from
-  the assembly at `2.3.34.0`. **Prod is therefore missing everything from `2.3.35` on:** section-
-  access SID storage, the `sidf-1` admin-lockout fix, and the entire UI redesign.
-  Deployed-version claims below this line predate the 2026-08-04 deploy; treat the specific
-  build numbers in them as history, not as current state.
+- **Deployed: dev `2.5.1`, prod `2.5.1`** -- both verified from the assembly 2026-08-04
+  (`FileVersion 2.5.1.0`; dev written 19:13, prod 18:39). The owner deployed both that evening,
+  including to PROD, which had been four months behind on `2.3.34`. Repo is one ahead at `2.5.2`.
+  **Both instances therefore now carry** everything through the Conference Rooms bulk-jobs work:
+  section-access SID storage, the `sidf-1` admin-lockout fix, the full UI redesign, ten themes, and
+  the module-scoped jobs panel. That clears the long backlog recorded below -- the four work
+  streams that sat undeployed for weeks are live on prod now, **and none of their manual checks
+  has been run.**
+  **Neither instance has:** in-process export retention or the `AdminBulkJobs` page (`2.5.2`).
+  Prod is consequently still accumulating Message Analysis exports with nothing deleting them.
+  **Caution: the two `2.5.1` builds are not identical** -- prod was published 34 minutes before
+  dev, straddling commits. Version numbers alone cannot distinguish them.
+  Deployed-version claims below this line predate 2026-08-04; treat the specific build numbers in
+  them as history, not as current state.
   **Dev now carries, none of it validated against a live directory yet:** the operator-email
   resolver + MessageTrace export redesign + MessageTrace NRE fix (`2.3.31`-`2.3.32`),
   Exchange-backed protected-principal resolution (`2.3.33`), protected-principal admin input
