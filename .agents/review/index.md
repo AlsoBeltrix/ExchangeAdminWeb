@@ -40,8 +40,16 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | ppv-4 | LOW | Live AD tests reported passed, not skipped, when the directory is unreachable | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — Assert.SkipWhen at 5 sites; simulating no-AD now yields "Skipped: 5" where it previously said "Passed: 5" |
 | sid-1 | HIGH | An unmigrated name row still authorizes, so the same-name ambiguity survives the whole work stream | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.146.0, generation pass, base b872861..0a50d01, capability_ok) — fixed `54e762d`; non-SID allowed values discarded in handler, checker and job snapshot; probe fails 7 |
 | sid-2 | MEDIUM | Legacy sectionaccess.json imports AFTER the migration, leaving names in the table for the process lifetime | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed `019b814`; SectionAccessService resolved before the migration; probe reproduces the bug, fails 1 |
+| tsr-1 | MEDIUM | Coverage ratchet set 0.7 points below the measured baseline, so tests could be deleted and CI still pass | `[x]` | | codex/default configured model (gpt-5.5-dzs @ xhigh)/std (codex-cli 0.146.0, generation pass, base 802ea74..2543fb9, capability_ok) — floor moved to a committed file at the measured value, comparison de-rounded, 11 Pester tests added for the gate itself; probe: 64.9% coverage passed the shipped gate (exit 0), fails after the fix (exit 1) |
 
 Notes:
+- **tsr-1 came from a generation-half dispatch over the test-remediation work**
+  (`802ea74..2543fb9`), on the owner's instruction to use codex with its DEFAULT configured model
+  (no `--model` flag). Verdict **findings** (1), `capability_ok`, both SHAs echoed. The prompt
+  asked the reviewer to scrutinise two specific claims: that the seam extractions were
+  behavior-neutral, and that the coverage gate could not pass vacuously. **It cleared the first
+  and found the defect in the second** -- the gate added to catch regressions was itself the
+  regression risk, shipped with 0.7 points of slack while the plan claimed it had none.
 - **sid-1..2 came from one generation-half dispatch** over the four SID-storage slices
   (`b872861..0a50d01`). Verdict **findings** (2), `capability_ok`, both SHAs echoed. Both were
   verified against the code before any fix; neither was declined. **sid-1 contradicted a claim

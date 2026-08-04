@@ -1,0 +1,14 @@
+# Minimum line coverage (percent) for the security-critical paths listed in
+# tools/Test-CoverageFloor.ps1. Read by that script; CI fails below it.
+#
+# This is a RATCHET. Raise it when coverage improves - a one-line diff that says so. Never lower
+# it to make a build pass: that converts the gate into decoration, which is the defect review
+# finding tsr-1 recorded (it had been set 0.7 points below the measured value, leaving exactly
+# enough slack to delete tests unnoticed).
+#
+# Set from the EXACT measured value (1004/1543 = 65.068%), rounded DOWN to two decimals - not from
+# the displayed one-decimal figure. The display rounds 65.068 up to "65.1", and a floor of 65.1
+# would then be unreachable by the very run it was taken from: a permanently red build, which
+# teaches people to ignore the gate. Rounding down by <0.01 costs nothing a real regression could
+# hide in.
+65.06

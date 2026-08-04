@@ -169,12 +169,18 @@ anything drops, restore it -- it was not redundant.
 
 ### Landed 2026-08-03
 
-- **Coverage is measured and gated (D1a).** `tools/Test-CoverageFloor.ps1` + a CI step. Scoped to
-  the security-critical paths; floor set at the measured **64.7%**, not at an aspiration. Verified
-  in both directions (exit 0 at the floor, exit 1 at 99%) rather than assumed to work.
+- **Coverage is measured and gated (D1a).** `tools/Test-CoverageFloor.ps1` + a CI step, scoped to
+  the security-critical paths. The floor is a committed number in
+  `.agents/review/coverage-floor.txt`, currently **65.1** -- the measured value.
   An empty scope is a hard error -- which fired during development, when the patterns were
   anchored to backslashes and the Cobertura paths turned out to be repo-relative. A gate that
   silently matches nothing is worse than no gate, because it reads as proof.
+  **Corrected after review finding tsr-1:** as first shipped the floor was 64.0 against a measured
+  64.7, so coverage could fall 0.7 points and CI still passed -- and this document claimed the two
+  matched. The gate added to catch regressions was itself the regression risk. It now has its own
+  Pester suite (`tests/ps/CoverageFloor.Tests.ps1`, 11 tests) exercising the real script against
+  synthetic reports, including the sub-rounding case: 65.06% displays as "65.1%" and must still
+  fail a 65.1 floor.
 - **`MailboxPermissionService`: 0% -> tested.** `MailboxPermissionOutcome` extracts the
   partial-success aggregation that was written out four times inside unreachable closures. 17
   tests. Found one real defect: an empty right set reported success ("has been granted  rights

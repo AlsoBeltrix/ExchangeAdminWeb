@@ -20,17 +20,46 @@
     Path to a Cobertura XML report. Defaults to the newest under TestResults.
 
 .PARAMETER Floor
-    Minimum acceptable line-coverage percentage for the scoped paths.
+    Minimum acceptable line-coverage percentage. Defaults to the committed value in
+    .agents/review/coverage-floor.txt; pass explicitly only to test the gate itself.
 #>
 [CmdletBinding()]
 param(
     [string] $CoverageFile,
-    # Measured 2026-08-03 at 64.7%. Set at the measured value, not at an aspiration: a floor above
-    # reality is a red build that teaches people to ignore the gate.
-    [double] $Floor = 64.0
+    [double] $Floor = -1,
+    [string] $FloorFile
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The floor lives in a committed file rather than a parameter default, so raising it is a visible
+# one-line diff instead of an edit buried in a signature - and so the script and the docs cannot
+# quietly disagree about it, which is what review finding tsr-1 caught (the default was 0.7 points
+# below the measured value, leaving exactly enough slack to delete tests unnoticed).
+if (-not $FloorFile) {
+    $FloorFile = Join-Path $PSScriptRoot '..' '.agents' 'review' 'coverage-floor.txt'
+}
+
+if ($Floor -lt 0) {
+    if (-not (Test-Path -LiteralPath $FloorFile)) {
+        # Fail rather than fall back to a built-in default: a gate that silently supplies its own
+        # threshold is the same failure class as one that silently matches no files.
+        Write-Error "Coverage floor file not found: $FloorFile"
+        exit 1
+    }
+
+    $floorText = (Get-Content -LiteralPath $FloorFile |
+        Where-Object { $_.Trim() -and -not $_.TrimStart().StartsWith('#') } |
+        Select-Object -First 1)
+
+    $parsed = 0.0
+    if (-not [double]::TryParse($floorText, [ref] $parsed)) {
+        Write-Error "Coverage floor file does not contain a number: '$floorText'"
+        exit 1
+    }
+
+    $Floor = $parsed
+}
 
 # Scope: the code whose failure is an outage or a security exposure. Extend deliberately.
 # Paths in the Cobertura report are repo-relative with no leading separator, and the separator
@@ -86,7 +115,10 @@ if ($total -eq 0) {
     exit 1
 }
 
-$percent = [math]::Round(100 * $covered / $total, 1)
+# Compare the UNROUNDED value; round only for display. Comparing a rounded percentage would
+# reintroduce sub-0.05 slack - a smaller version of the defect tsr-1 recorded.
+$exact = 100 * $covered / $total
+$percent = [math]::Round($exact, 1)
 
 Write-Host "Security-critical line coverage: $percent% ($covered / $total)"
 Write-Host ''
@@ -97,7 +129,7 @@ foreach ($entry in $perFile.GetEnumerator() | Sort-Object { $_.Value.Cov / [math
 }
 Write-Host ''
 
-if ($percent -lt $Floor) {
+if ($exact -lt $Floor) {
     Write-Error "Coverage $percent% is below the floor of $Floor%. Add tests for the change, or raise the floor deliberately in a commit that explains why."
     exit 1
 }
