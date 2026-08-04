@@ -28,17 +28,33 @@
     /* Accent + state */
     --ui-brand: #1a6ce8;
     --ui-brand-fg: #ffffff;
-    --ui-on: #12833c;
     --ui-off: #98a0a9;
+
+    /* Semantic tints: fg / background / border, one triple per state. Alerts
+       and coloured table rows read these, so a theme states 12 values and
+       never touches a rule. */
+    --ui-on: #12833c;
+    --ui-on-bg: #e6f6ec;
+    --ui-on-line: #a9dcbd;
+
     --ui-warn: #8a6400;
+    --ui-warn-bg: #fdf3d9;
+    --ui-warn-line: #e6cf8a;
+
     --ui-danger: #c02b21;
     --ui-danger-bg: #fde8e6;
+    --ui-danger-line: #f0b5b0;
+
+    --ui-info: #2c5282;
+    --ui-info-bg: #e8f0fc;
+    --ui-info-line: #c5d7f0;
 
     /* Nav */
     --ui-nav-bg: #f8fafb;
     --ui-nav-fg: #5a636e;
     --ui-nav-fg-hover: #16191d;
 
+    /* Non-colour tokens: shared by every theme, declared once. */
     --ui-radius: 4px;
     --ui-font: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
     --ui-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
@@ -48,7 +64,7 @@
    on borders. Text is silver, not white -- full white on pure black smears at
    13px. Accent is cyan, which stays legible at small sizes on black where the
    light-mode blue goes muddy. Owner-approved 2026-08-04. */
-html.dark {
+html[data-theme="oled"] {
     --ui-bg: #000000;
     --ui-surface: #050506;
     --ui-header: #0a0b0d;
@@ -64,21 +80,377 @@ html.dark {
 
     --ui-brand: #3fd8e8;
     --ui-brand-fg: #00181c;
-    --ui-on: #4bd67f;
     --ui-off: #5a6068;
+
+    --ui-on: #4bd67f;
+    --ui-on-bg: #0c2415;
+    --ui-on-line: #1e4d31;
+
     --ui-warn: #f0c05a;
+    --ui-warn-bg: #2a2109;
+    --ui-warn-line: #56451a;
+
     --ui-danger: #ff6b5e;
     --ui-danger-bg: #2b100d;
+    --ui-danger-line: #5c2620;
+
+    --ui-info: #6fb6ff;
+    --ui-info-bg: #0b1c2c;
+    --ui-info-line: #1e3b57;
 
     --ui-nav-bg: #000000;
     --ui-nav-fg: #9aa1a9;
     --ui-nav-fg-hover: #d6dadf;
 }
 
+/* ============================================================================
+   EDITOR THEMES. docs/ThemeSupport-Plan.md.
+
+   Each block is DATA: the same 28 tokens, nothing else. No block may contain a
+   rule, and no rule anywhere may name a theme -- that is the property that
+   makes adding the eleventh theme a copy-paste job. UiThemeCssTests fails the
+   build if a block is missing a token, because a missing token silently
+   inherits the Light value: a dark theme missing --ui-fg renders near-black
+   text on a near-black canvas, which is invisible rather than broken.
+
+   Surfaces follow the same shape everywhere: canvas -> surface -> header, each
+   step lifting slightly, with zebra between canvas and surface. Palettes are
+   the published ones; where a project defines no distinct value for one of our
+   roles (most define no "zebra"), it is mixed from the two it does define.
+   ============================================================================ */
+
+/* Solarized Light -- Ethan Schoonover. base3 canvas, base00 body text.
+   The famous property of Solarized is that both modes share one accent set,
+   so the blue/green/yellow/red below are identical to Solarized Dark's. */
+html[data-theme="solarized-light"] {
+    --ui-bg: #fdf6e3;
+    --ui-surface: #fdf6e3;
+    --ui-header: #f2ead3;
+    --ui-zebra: #f8f1de;
+    --ui-selected: #e6dfc4;
+
+    --ui-fg: #073642;
+    --ui-fg2: #586e75;
+    --ui-fg3: #93a1a1;
+
+    --ui-line: #ded7c0;
+    --ui-grid: #eee7d3;
+
+    --ui-brand: #268bd2;
+    --ui-brand-fg: #fdf6e3;
+    --ui-off: #93a1a1;
+
+    --ui-on: #4a6b00;
+    --ui-on-bg: #eaeed3;
+    --ui-on-line: #c3cf9c;
+
+    --ui-warn: #85632b;
+    --ui-warn-bg: #f5ead0;
+    --ui-warn-line: #d9c48c;
+
+    --ui-danger: #c2352b;
+    --ui-danger-bg: #f7e2dd;
+    --ui-danger-line: #e0b3ab;
+
+    --ui-info: #1f6f9e;
+    --ui-info-bg: #e3edf3;
+    --ui-info-line: #aeccdd;
+
+    --ui-nav-bg: #f2ead3;
+    --ui-nav-fg: #586e75;
+    --ui-nav-fg-hover: #073642;
+}
+
+/* Solarized Dark -- Ethan Schoonover. base03 canvas, base0 body text. */
+html[data-theme="solarized-dark"] {
+    --ui-bg: #002b36;
+    --ui-surface: #04313d;
+    --ui-header: #073642;
+    --ui-zebra: #032f3a;
+    --ui-selected: #0b4553;
+
+    --ui-fg: #93a1a1;
+    --ui-fg2: #839496;
+    --ui-fg3: #657b83;
+
+    --ui-line: #0e4b5a;
+    --ui-grid: #063845;
+
+    --ui-brand: #268bd2;
+    --ui-brand-fg: #002b36;
+    --ui-off: #586e75;
+
+    --ui-on: #859900;
+    --ui-on-bg: #10331f;
+    --ui-on-line: #2a5c33;
+
+    --ui-warn: #b58900;
+    --ui-warn-bg: #33290a;
+    --ui-warn-line: #5f4d15;
+
+    --ui-danger: #dc322f;
+    --ui-danger-bg: #3a1513;
+    --ui-danger-line: #6d2926;
+
+    --ui-info: #2aa198;
+    --ui-info-bg: #062f2e;
+    --ui-info-line: #14544f;
+
+    --ui-nav-bg: #002b36;
+    --ui-nav-fg: #839496;
+    --ui-nav-fg-hover: #93a1a1;
+}
+
+/* Dracula -- dracula-theme.com. Background #282a36, foreground #f8f8f2,
+   with the purple #bd93f9 as accent. */
+html[data-theme="dracula"] {
+    --ui-bg: #282a36;
+    --ui-surface: #2d2f3d;
+    --ui-header: #343746;
+    --ui-zebra: #2b2d3a;
+    --ui-selected: #44475a;
+
+    --ui-fg: #f8f8f2;
+    --ui-fg2: #b9bcd0;
+    --ui-fg3: #6272a4;
+
+    --ui-line: #44475a;
+    --ui-grid: #343746;
+
+    --ui-brand: #bd93f9;
+    --ui-brand-fg: #282a36;
+    --ui-off: #6272a4;
+
+    --ui-on: #50fa7b;
+    --ui-on-bg: #1e3a29;
+    --ui-on-line: #2f6944;
+
+    --ui-warn: #f1fa8c;
+    --ui-warn-bg: #3b3a22;
+    --ui-warn-line: #6b6a3a;
+
+    --ui-danger: #ff5555;
+    --ui-danger-bg: #3d2130;
+    --ui-danger-line: #6e3244;
+
+    --ui-info: #8be9fd;
+    --ui-info-bg: #1d3640;
+    --ui-info-line: #326070;
+
+    --ui-nav-bg: #282a36;
+    --ui-nav-fg: #b9bcd0;
+    --ui-nav-fg-hover: #f8f8f2;
+}
+
+/* Nord -- nordtheme.com. Polar Night nn0-nn3 for surfaces, Snow Storm for
+   text, Frost nn8 as accent, Aurora for the semantic states. */
+html[data-theme="nord"] {
+    --ui-bg: #2e3440;
+    --ui-surface: #333a47;
+    --ui-header: #3b4252;
+    --ui-zebra: #313846;
+    --ui-selected: #434c5e;
+
+    --ui-fg: #eceff4;
+    --ui-fg2: #d8dee9;
+    --ui-fg3: #8a94a6;
+
+    --ui-line: #434c5e;
+    --ui-grid: #3b4252;
+
+    --ui-brand: #88c0d0;
+    --ui-brand-fg: #2e3440;
+    --ui-off: #6b7689;
+
+    --ui-on: #a3be8c;
+    --ui-on-bg: #313f33;
+    --ui-on-line: #4f6b47;
+
+    --ui-warn: #ebcb8b;
+    --ui-warn-bg: #3f3a2c;
+    --ui-warn-line: #6d6244;
+
+    --ui-danger: #bf616a;
+    --ui-danger-bg: #3d2f34;
+    --ui-danger-line: #6b464d;
+
+    --ui-info: #81a1c1;
+    --ui-info-bg: #2f3a47;
+    --ui-info-line: #4a5b70;
+
+    --ui-nav-bg: #2e3440;
+    --ui-nav-fg: #d8dee9;
+    --ui-nav-fg-hover: #eceff4;
+}
+
+/* Gruvbox Dark (medium) -- morhetz. bg #282828, fg #ebdbb2, the warmest of
+   the ten. */
+html[data-theme="gruvbox-dark"] {
+    --ui-bg: #282828;
+    --ui-surface: #2f2c28;
+    --ui-header: #3c3836;
+    --ui-zebra: #2d2a26;
+    --ui-selected: #504945;
+
+    --ui-fg: #ebdbb2;
+    --ui-fg2: #bdae93;
+    --ui-fg3: #928374;
+
+    --ui-line: #504945;
+    --ui-grid: #3c3836;
+
+    --ui-brand: #83a598;
+    --ui-brand-fg: #282828;
+    --ui-off: #7c6f64;
+
+    --ui-on: #b8bb26;
+    --ui-on-bg: #333418;
+    --ui-on-line: #5c5f24;
+
+    --ui-warn: #fabd2f;
+    --ui-warn-bg: #3d3218;
+    --ui-warn-line: #6b5a26;
+
+    --ui-danger: #fb4934;
+    --ui-danger-bg: #3d211c;
+    --ui-danger-line: #6e392f;
+
+    --ui-info: #8ec07c;
+    --ui-info-bg: #2b3529;
+    --ui-info-line: #4a5c44;
+
+    --ui-nav-bg: #282828;
+    --ui-nav-fg: #bdae93;
+    --ui-nav-fg-hover: #ebdbb2;
+}
+
+/* Monokai -- the classic. bg #272822, fg #f8f8f2, cyan #66d9ef as accent.
+   Monokai's signature pink #f92672 is reserved for danger, where its
+   attention-grabbing quality is the point. */
+html[data-theme="monokai"] {
+    --ui-bg: #272822;
+    --ui-surface: #2d2e27;
+    --ui-header: #34352d;
+    --ui-zebra: #2a2b24;
+    --ui-selected: #49483e;
+
+    --ui-fg: #f8f8f2;
+    --ui-fg2: #c6c6c0;
+    --ui-fg3: #90918b;
+
+    --ui-line: #49483e;
+    --ui-grid: #34352d;
+
+    --ui-brand: #66d9ef;
+    --ui-brand-fg: #272822;
+    --ui-off: #75715e;
+
+    --ui-on: #a6e22e;
+    --ui-on-bg: #2e3a1c;
+    --ui-on-line: #55692f;
+
+    --ui-warn: #e6db74;
+    --ui-warn-bg: #3a3722;
+    --ui-warn-line: #67613a;
+
+    --ui-danger: #f92672;
+    --ui-danger-bg: #3d1c2b;
+    --ui-danger-line: #6e3049;
+
+    --ui-info: #ae81ff;
+    --ui-info-bg: #2f2740;
+    --ui-info-line: #52436e;
+
+    --ui-nav-bg: #272822;
+    --ui-nav-fg: #c6c6c0;
+    --ui-nav-fg-hover: #f8f8f2;
+}
+
+/* One Dark -- Atom. bg #282c34, fg #abb2bf, blue #61afef as accent. */
+html[data-theme="one-dark"] {
+    --ui-bg: #282c34;
+    --ui-surface: #2d323b;
+    --ui-header: #333842;
+    --ui-zebra: #2b2f38;
+    --ui-selected: #3e4451;
+
+    --ui-fg: #abb2bf;
+    --ui-fg2: #9099a8;
+    --ui-fg3: #6b7280;
+
+    --ui-line: #3e4451;
+    --ui-grid: #333842;
+
+    --ui-brand: #61afef;
+    --ui-brand-fg: #282c34;
+    --ui-off: #5c6370;
+
+    --ui-on: #98c379;
+    --ui-on-bg: #2b382b;
+    --ui-on-line: #47613f;
+
+    --ui-warn: #e5c07b;
+    --ui-warn-bg: #3a3427;
+    --ui-warn-line: #665a3e;
+
+    --ui-danger: #e06c75;
+    --ui-danger-bg: #3a2529;
+    --ui-danger-line: #673d43;
+
+    --ui-info: #56b6c2;
+    --ui-info-bg: #23363a;
+    --ui-info-line: #3c5f66;
+
+    --ui-nav-bg: #282c34;
+    --ui-nav-fg: #9099a8;
+    --ui-nav-fg-hover: #abb2bf;
+}
+
+/* Tokyo Night (storm) -- enkia. bg #24283b, fg #c0caf5, blue #7aa2f7. */
+html[data-theme="tokyo-night"] {
+    --ui-bg: #24283b;
+    --ui-surface: #292e42;
+    --ui-header: #2f344a;
+    --ui-zebra: #272b3f;
+    --ui-selected: #364a82;
+
+    --ui-fg: #c0caf5;
+    --ui-fg2: #a9b1d6;
+    --ui-fg3: #787c99;
+
+    --ui-line: #3b4261;
+    --ui-grid: #2f344a;
+
+    --ui-brand: #7aa2f7;
+    --ui-brand-fg: #1a1b26;
+    --ui-off: #565f89;
+
+    --ui-on: #9ece6a;
+    --ui-on-bg: #263328;
+    --ui-on-line: #435a3d;
+
+    --ui-warn: #e0af68;
+    --ui-warn-bg: #362f21;
+    --ui-warn-line: #5d5138;
+
+    --ui-danger: #f7768e;
+    --ui-danger-bg: #38222c;
+    --ui-danger-line: #613b49;
+
+    --ui-info: #7dcfff;
+    --ui-info-bg: #1f3340;
+    --ui-info-line: #37596e;
+
+    --ui-nav-bg: #24283b;
+    --ui-nav-fg: #a9b1d6;
+    --ui-nav-fg-hover: #c0caf5;
+}
+
 /* Bootstrap inherits the tokens. This is the load-bearing line for untouched
    pages: their .card / .table / .form-control keep working and simply follow
-   the new theme. */
-:root, html.dark {
+   the new theme. Unconditional -- it reads the tokens, so it holds for every
+   theme without being restated per theme. */
+:root {
     --bs-body-bg: var(--ui-bg);
     --bs-body-color: var(--ui-fg);
     --bs-border-color: var(--ui-line);
@@ -145,13 +517,13 @@ h1:focus {
     border-color: var(--ui-fg3);
 }
 
-.theme-toggle {
-    border: none;
-    background: transparent;
-    font-size: 1.2rem;
-    padding: 0.2rem 0.5rem;
+/* Sized to the widest theme name so the top row does not reflow on selection. */
+.theme-picker {
+    width: auto;
+    max-width: 11rem;
+    font-size: 0.78rem;
+    padding: 0.15rem 1.6rem 0.15rem 0.5rem;
     cursor: pointer;
-    line-height: 1;
 }
 
 
@@ -308,28 +680,47 @@ h1:focus {
     font-size: 0.75rem;
     line-height: 1.2rem;
 }
-/* Dark mode */
+/* The ONLY surviving use of the `dark` class, and it is not styling: it tells
+   the browser how to paint the UI we do not own -- scrollbars, native select
+   popups, date pickers, autofill. Themes declare their base via IsDark in
+   Services/UiTheme.cs, which is what adds this class. */
 html.dark {
     color-scheme: dark;
 }
 
-html.dark body {
+/* ============================================================================
+   BOOTSTRAP COMPONENTS ON THE TOKEN LAYER.
+
+   Every rule below is UNCONDITIONAL. Nothing here keys off which theme is
+   active -- that is what makes a theme pure data (docs/ThemeSupport-Plan.md).
+
+   Before this conversion these were 61 `html.dark` / `html:not(.dark)` rules,
+   which meant adding a third theme would have rendered light-mode cards, form
+   fields and tables on a dark canvas. It is also the defect class that
+   produced the greyed-out sidebar (e442df4): a rule that never moved onto the
+   tokens.
+   ============================================================================ */
+body {
     background-color: var(--ui-bg);
     color: var(--ui-fg);
 }
 
-html.dark .card {
+.content {
+    background-color: var(--ui-bg);
+}
+
+.card {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
     color: var(--ui-fg);
 }
 
-html.dark .card-header {
+.card-header {
     background-color: var(--ui-header);
     border-bottom-color: var(--ui-line);
 }
 
-html.dark .table {
+.table {
     --bs-table-bg: var(--ui-bg);
     --bs-table-color: var(--ui-fg);
     --bs-table-striped-bg: var(--ui-zebra);
@@ -341,40 +732,50 @@ html.dark .table {
     border-color: var(--ui-line);
 }
 
-html.dark .table th {
+.table th {
     color: var(--ui-fg);
 }
 
-html.dark .table-active {
-    --bs-table-active-bg: var(--ui-header);
-    --bs-table-active-color: var(--ui-fg);
-    color: #f8f9fa;
+.table > tbody > tr {
+    border-bottom-color: var(--ui-grid);
 }
 
+.table-sm > tbody > tr > td {
+    padding-top: 0.4rem;
+    padding-bottom: 0.4rem;
+}
 
-/* Dark mode Bootstrap light-state overrides. Prevent light table/panel utilities from producing unreadable text. */
-html.dark .bg-white,
-html.dark .bg-light {
+.table-active {
+    --bs-table-active-bg: var(--ui-header);
+    --bs-table-active-color: var(--ui-fg);
+    color: var(--ui-fg);
+}
+
+/* Bootstrap's light-state utilities assume a white page. Pointing them at the
+   header surface keeps them readable on every theme rather than only on the
+   two that happened to be defined. */
+.bg-white,
+.bg-light {
     background-color: var(--ui-header) !important;
     color: var(--ui-fg) !important;
     border-color: var(--ui-line) !important;
 }
 
-html.dark pre.bg-light {
+pre.bg-light {
     background-color: var(--ui-surface) !important;
     color: var(--ui-fg) !important;
     border: 1px solid var(--ui-line);
 }
 
-html.dark .bg-light.text-dark,
-html.dark .badge.bg-light.text-dark,
-html.dark .text-bg-light {
+.bg-light.text-dark,
+.badge.bg-light.text-dark,
+.text-bg-light {
     background-color: var(--ui-header) !important;
     border-color: var(--ui-line) !important;
     color: var(--ui-fg) !important;
 }
 
-html.dark .table-light {
+.table-light {
     --bs-table-bg: var(--ui-header);
     --bs-table-color: var(--ui-fg);
     --bs-table-border-color: var(--ui-line);
@@ -382,159 +783,162 @@ html.dark .table-light {
     border-color: var(--ui-line);
 }
 
-html.dark .table-success {
-    --bs-table-bg: #173523;
-    --bs-table-color: #d6f5e0;
-    --bs-table-border-color: #2f6845;
-    --bs-table-hover-bg: #1d432c;
-    --bs-table-hover-color: #e6fff0;
-    color: #d6f5e0;
+/* Semantic tints. Hover is derived with color-mix rather than declared, so a
+   theme states the three tint tokens and not nine values per state. */
+.table-success {
+    --bs-table-bg: var(--ui-on-bg);
+    --bs-table-color: var(--ui-on);
+    --bs-table-border-color: var(--ui-on-line);
+    --bs-table-hover-bg: color-mix(in srgb, var(--ui-on-bg) 80%, var(--ui-on));
+    --bs-table-hover-color: var(--ui-on);
+    color: var(--ui-on);
 }
 
-html.dark .table-danger {
-    --bs-table-bg: #3a1f23;
-    --bs-table-color: #ffd7dc;
-    --bs-table-border-color: #743840;
-    --bs-table-hover-bg: #48272c;
-    --bs-table-hover-color: #ffe6ea;
-    color: #ffd7dc;
+.table-danger {
+    --bs-table-bg: var(--ui-danger-bg);
+    --bs-table-color: var(--ui-danger);
+    --bs-table-border-color: var(--ui-danger-line);
+    --bs-table-hover-bg: color-mix(in srgb, var(--ui-danger-bg) 80%, var(--ui-danger));
+    --bs-table-hover-color: var(--ui-danger);
+    color: var(--ui-danger);
 }
 
-html.dark .table-warning {
-    --bs-table-bg: #3f3518;
-    --bs-table-color: #fff0bf;
-    --bs-table-border-color: #76642d;
-    --bs-table-hover-bg: #4b3f1d;
-    --bs-table-hover-color: #fff5d6;
-    color: #fff0bf;
+.table-warning {
+    --bs-table-bg: var(--ui-warn-bg);
+    --bs-table-color: var(--ui-warn);
+    --bs-table-border-color: var(--ui-warn-line);
+    --bs-table-hover-bg: color-mix(in srgb, var(--ui-warn-bg) 80%, var(--ui-warn));
+    --bs-table-hover-color: var(--ui-warn);
+    color: var(--ui-warn);
 }
 
-html.dark .table-info,
-html.dark .table-primary,
-html.dark .table-secondary {
-    --bs-table-bg: #24313d;
-    --bs-table-color: #d9ecff;
-    --bs-table-border-color: #3b5469;
-    --bs-table-hover-bg: #2b3b49;
-    --bs-table-hover-color: #edf7ff;
-    color: #d9ecff;
+.table-info,
+.table-primary,
+.table-secondary {
+    --bs-table-bg: var(--ui-info-bg);
+    --bs-table-color: var(--ui-info);
+    --bs-table-border-color: var(--ui-info-line);
+    --bs-table-hover-bg: color-mix(in srgb, var(--ui-info-bg) 80%, var(--ui-info));
+    --bs-table-hover-color: var(--ui-info);
+    color: var(--ui-info);
 }
-html.dark .form-control,
-html.dark .form-select {
+
+.form-control,
+.form-select {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
     color: var(--ui-fg);
 }
 
-html.dark .form-control:focus,
-html.dark .form-select:focus {
+.form-control:focus,
+.form-select:focus {
     background-color: var(--ui-header);
-    border-color: #258cfb;
+    border-color: var(--ui-brand);
     color: var(--ui-fg);
 }
 
-html.dark .form-control::placeholder {
-    color: #888;
-}
-
-html.dark .alert-danger {
-    background-color: #3d1c1c;
-    border-color: #5a2d2d;
-    color: #f5a5a5;
-}
-
-html.dark .alert-success {
-    background-color: #1c3d1c;
-    border-color: #2d5a2d;
-    color: #a5f5a5;
-}
-
-html.dark .alert-warning {
-    background-color: #3d3a1c;
-    border-color: #5a5528;
-    color: #f5eda5;
-}
-
-html.dark .bg-light {
-    background-color: var(--ui-header) !important;
-}
-
-html.dark .text-muted {
-    color: #adb5bd !important;
-}
-
-html.dark .nav-tabs .nav-link {
+.form-control::placeholder {
     color: var(--ui-fg3);
 }
 
-html.dark .nav-tabs .nav-link.active {
+.alert-danger {
+    background-color: var(--ui-danger-bg);
+    border-color: var(--ui-danger-line);
+    color: var(--ui-danger);
+}
+
+.alert-success {
+    background-color: var(--ui-on-bg);
+    border-color: var(--ui-on-line);
+    color: var(--ui-on);
+}
+
+.alert-warning {
+    background-color: var(--ui-warn-bg);
+    border-color: var(--ui-warn-line);
+    color: var(--ui-warn);
+}
+
+.alert-info {
+    background-color: var(--ui-info-bg);
+    border-color: var(--ui-info-line);
+    color: var(--ui-info);
+}
+
+.text-muted {
+    color: var(--ui-fg2) !important;
+}
+
+.nav-tabs .nav-link {
+    color: var(--ui-fg3);
+}
+
+.nav-tabs .nav-link.active {
     color: var(--ui-fg);
     background-color: transparent;
     border-color: transparent;
-    border-bottom: 2px solid var(--sidebar-accent);
+    border-bottom: 2px solid var(--ui-brand);
 }
 
-html.dark .list-group-item {
+.list-group-item {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
     color: var(--ui-fg);
 }
 
-html.dark .btn-primary {
-    background-color: #2563eb;
-    border-color: #1d4ed8;
+.btn-outline-secondary {
+    color: var(--ui-fg2);
+    border-color: var(--ui-line);
 }
 
-html.dark .btn-outline-secondary {
-    color: #adb5bd;
-    border-color: #6c757d;
+.btn-outline-secondary:hover {
+    color: var(--ui-fg);
+    background-color: var(--ui-header);
+    border-color: var(--ui-fg3);
 }
 
-html.dark .content {
-    background-color: var(--ui-bg);
+#blazor-error-ui {
+    background: var(--ui-warn-bg);
+    color: var(--ui-warn);
 }
 
-html.dark #blazor-error-ui {
-    background: #3d3a1c;
-    color: #f5eda5;
-}
-
-html.dark .sidebar {
+.sidebar {
     background-image: none !important;
 }
 
-html.dark .modal-content {
+.modal-content {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
     color: var(--ui-fg);
 }
 
-html.dark .popover {
+.popover {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
 }
 
-html.dark .popover-body {
+.popover-body {
     color: var(--ui-fg);
 }
 
-html.dark .toast {
+.toast {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
     color: var(--ui-fg);
 }
 
-html.dark .dropdown-menu {
+.dropdown-menu {
     background-color: var(--ui-surface);
     border-color: var(--ui-line);
 }
 
-html.dark .dropdown-item {
+.dropdown-item {
     color: var(--ui-fg);
 }
 
-html.dark .dropdown-item:hover {
+.dropdown-item:hover {
     background-color: var(--ui-header);
+    color: var(--ui-fg);
 }
 
 /* --- UI polish: sidebar, alerts, tables, inputs --- */
@@ -558,65 +962,6 @@ html.dark .dropdown-item:hover {
 .sidebar .navbar-brand {
     color: var(--toprow-color) !important;
     font-weight: 600;
-}
-
-html:not(.dark) .card {
-    background-color: var(--ui-surface);
-    border-color: var(--ui-line);
-}
-
-html:not(.dark) .form-control,
-html:not(.dark) .form-select {
-    background-color: var(--ui-surface);
-    border-color: var(--ui-line);
-}
-
-html:not(.dark) .table {
-    --bs-table-bg: transparent;
-}
-
-html:not(.dark) .alert-info {
-    background-color: #e8f0fc;
-    border-color: #c5d7f0;
-    color: #2c5282;
-}
-
-html:not(.dark) .nav-tabs .nav-link.active {
-    border-bottom: 2px solid var(--ui-brand);
-}
-
-/* Dark mode: tone down info alerts */
-html.dark .alert-info {
-    background-color: rgba(13, 110, 253, 0.08);
-    border-color: rgba(13, 110, 253, 0.15);
-    color: #8bb9f0;
-}
-
-/* Dark mode: better input borders */
-html.dark .form-control,
-html.dark .form-select {
-    border-color: #3a3f4a;
-}
-
-html.dark .form-control:focus,
-html.dark .form-select:focus {
-    border-color: #5b9cf5;
-    box-shadow: 0 0 0 0.15rem rgba(91, 156, 245, 0.2);
-}
-
-/* Table row separation */
-html.dark .table > tbody > tr {
-    border-bottom-color: rgba(255,255,255,0.06);
-}
-
-html.dark .table-sm > tbody > tr > td {
-    padding-top: 0.4rem;
-    padding-bottom: 0.4rem;
-}
-
-/* Card headers: subtle separator */
-html.dark .card-header {
-    border-bottom-color: rgba(255,255,255,0.08);
 }
 
 /* ============================================================================

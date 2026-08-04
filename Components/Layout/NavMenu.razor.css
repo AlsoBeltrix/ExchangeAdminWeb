@@ -1,29 +1,23 @@
+/* Masked, not painted. The stroke colour used to be hardcoded per theme --
+   white for dark, black for light -- which is exactly the pattern that cannot
+   survive a third theme. As a mask it takes --ui-nav-fg like every other icon
+   and needs no theme-conditional rule. */
 .navbar-toggler {
     appearance: none;
     cursor: pointer;
     width: 3.5rem;
     height: 2.5rem;
-    color: white;
     position: absolute;
     top: 0.5rem;
     right: 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%28255, 255, 255, 0.55%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.75rem rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--ui-line);
+    background-color: var(--ui-nav-fg);
+    -webkit-mask: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='black' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.75rem;
+    mask: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='black' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.75rem;
 }
 
 .navbar-toggler:checked {
-    background-color: rgba(255, 255, 255, 0.5);
-}
-
-/* Light mode: the brand strip is now light, so a white-stroke hamburger is
-   near-invisible. Use a dark stroke + faint dark background instead. */
-html:not(.dark) .navbar-toggler {
-    border-color: rgba(0, 0, 0, 0.15);
-    background: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba%280, 0, 0, 0.55%29' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e") no-repeat center/1.75rem rgba(0, 0, 0, 0.05);
-}
-
-html:not(.dark) .navbar-toggler:checked {
-    background-color: rgba(0, 0, 0, 0.12);
+    background-color: var(--ui-nav-fg-hover);
 }
 
 .sidebar-brand {
