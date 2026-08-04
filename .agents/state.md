@@ -6,6 +6,33 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Conference Rooms bulk jobs panel -- ALL 6 SLICES LANDED 2026-08-04, app `2.5.1`,
+  ConferenceRooms `2.3.2`, NOT DEPLOYED.** `docs/ConferenceRoomsBulkJobPanel-Plan.md` Status:
+  Implemented; **10 manual checks unrun** (the panel is markup, so they are the only evidence).
+  Reported as "an old test job with no way to do anything about it".
+  **The reported row was not a Conference Rooms job.** Identified against the live dev jobs
+  database, not inferred: it is a `MessageTrace_DetailExport` from 2026-07-29, the only row in
+  `bulk_job` on that instance. It appeared because of two defects that hid each other -- the
+  panel read `GetActiveJobs()`/`GetRecentJobs()`, both **unfiltered across every module**, and
+  `JobKindLabel` was a two-way ternary that rendered anything not-Finder as "Room Type (bulk)".
+  Had the label been honest the leak would have been obvious on sight.
+  **The severe half was never reported and was found by reading the code:** the panel renders a
+  Cancel button per active row and `CancelJob` takes only an id, so **a Conference Rooms operator
+  could cancel a running Message Analysis export.** Submitter and ticket of another module's work
+  also crossed a section-access boundary.
+  **Owner rulings.** Jobs moved to their own tab (`"move the jobs to another tab. out of the main
+  UI, because it's going to push the actual module down further and further"`) -- which withdrew
+  the plan's D1 retirement gate entirely, since the shared-dismiss objection that made it hard to
+  rule stops mattering once the panel is off the working surface. Plus a per-job Remove: hard
+  delete, terminal-only (enforced in SQL -- deleting an active job would leave the runner holding
+  a token for a missing row), module-scoped, and **audited**, which is what makes a hard delete
+  acceptable since the audit log is a separate store.
+  **Retention stayed at 30 days after a conflict was raised rather than implemented.** The owner
+  asked for 90; `PruneFinishedBefore` DELETES terminal rows at 30 and the store is shared with
+  Message Analysis, so a 90-day panel would show nothing between day 31 and 90. Owner ruled 30.
+  **NEXT: deploy `2.5.1` to dev and run the 10 manual checks.** Check 1 (the reported row is gone)
+  and check 6 (no Cancel offered for a running foreign job) are the load-bearing ones.
+
 - **Theme support -- ALL 5 SLICES LANDED 2026-08-04, app `2.5.0`, NOT DEPLOYED.**
   `docs/ThemeSupport-Plan.md` Status: Approved (owner directive: *"add theme support properly.
   include 8-10 most popular themes in a dropdown selector that replaces the dark/light icon"*).
@@ -489,8 +516,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.5.0`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Minor rather than
-  patch: theme support is new user-visible capability, app-wide. `2.4.1` was the two post-deploy
+- **App version `2.5.1`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.5.0`
+  for the Conference Rooms bulk jobs work (the repository/service reads are shared
+  infrastructure); ConferenceRooms module `2.3.1 -> 2.3.2` with it. `2.5.0` was theme support --
+  minor rather than patch, new user-visible capability app-wide. `2.4.1` was the two post-deploy
   UI corrections (`AdminSettings` module `1.1.0 -> 1.1.1` with it); `2.4.0` the app-wide admin UI
   redesign, bumped from `2.3.36`, which qualified group display names as `DOMAIN\Name`.
   Previously bumped from
@@ -501,8 +530,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.4.0`, prod `2.3.34`.** Dev deployed by the owner 2026-08-04 (observed in the
-  running app's sidebar: `v2.4.0`); the repo is now two ahead at `2.5.0` (the `2.4.1` UI
-  corrections and the `2.5.0` theme support are both undeployed). Prod was last verified from
+  running app's sidebar: `v2.4.0`); the repo is now three ahead at `2.5.1` -- the `2.4.1` UI
+  corrections, `2.5.0` theme support and `2.5.1` bulk jobs work are all undeployed. Prod was last verified from
   the assembly at `2.3.34.0`. **Prod is therefore missing everything from `2.3.35` on:** section-
   access SID storage, the `sidf-1` admin-lockout fix, and the entire UI redesign.
   Deployed-version claims below this line predate the 2026-08-04 deploy; treat the specific
