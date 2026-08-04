@@ -40,6 +40,11 @@
     return;
 }
 
+@* Five sections, five Save buttons, and until now nothing warned that another section was still
+   unsaved. B2 in docs/AdminUIRedesign-Plan.md. *@
+<UnsavedChangesGuard HasUnsavedChanges="@dirty.IsDirty"
+                     Message="@($"{dirty.Summary()}. Leave without saving?")" />
+
 <div class="container-fluid">
     <h1 class="mb-4">@module.DisplayName <small class="text-muted fs-6">v@(module.Version)</small></h1>
     <p class="text-muted mb-4">@module.Description</p>
@@ -73,7 +78,7 @@
                     <input class="form-check-input" type="checkbox" id="module-enabled"
                            checked="@moduleEnabled"
                            disabled="@(!isGlobalAdmin || saving)"
-                           @onchange="(e) => moduleEnabled = (bool)(e.Value ?? false)" />
+                           @onchange="(e) => { moduleEnabled = (bool)(e.Value ?? false); dirty.Set(SecStatus, true); }" />
                     <label class="form-check-label fw-semibold" for="module-enabled">
                         @(moduleEnabled ? "Enabled" : "Disabled")
                     </label>
@@ -483,6 +488,19 @@
     private Dictionary<string, List<string>> accessState = new();
     private Dictionary<string, string> accessInputs = new();
 
+    // Section names appear verbatim in the unsaved-changes prompt, so they read as this page's
+    // headings rather than as field names.
+    //
+    // Prefixed "Sec" rather than "Section" deliberately: "SectionAccess" collides with the
+    // injected SectionAccessService of the same name and fails to compile.
+    private const string SecStatus = "Module Status";
+    private const string SecAccess = "Section Access";
+    private const string SecConfig = "Configuration";
+    private const string SecAttrs = "Editable Attributes";
+    private const string SecAdmins = "Module Admins";
+
+    private readonly AdminPageDirtyState dirty = new();
+
     // SID -> friendly name, for display only. Seeded from the store and topped up as groups are
     // picked, so a group added in this session shows its name before any save/reload.
     private Dictionary<string, string> accessDisplayNames = new(StringComparer.OrdinalIgnoreCase);
@@ -581,8 +599,15 @@
     private string GetConfigValue(string key, string defaultValue) =>
         currentConfigState.TryGetValue(key, out var val) ? val : defaultValue;
 
-    private void SetConfigValue(string key, string value) =>
+    /// <summary>
+    /// Every config field edit funnels through here, so this is the one place the Configuration
+    /// section needs to be marked unsaved.
+    /// </summary>
+    private void SetConfigValue(string key, string value)
+    {
         currentConfigState[key] = value;
+        dirty.Set(SecConfig, true);
+    }
 
     private async Task SaveConfigAsync()
     {
@@ -629,6 +654,7 @@
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module config change"); }
             }
 
+            dirty.ClearSection(SecConfig);
             statusMessage = "Configuration saved.";
             statusIsError = false;
         }
@@ -683,6 +709,7 @@
                 catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module status change"); }
             }
 
+            dirty.ClearSection(SecStatus);
             statusMessage = "Module status saved. Refreshing...";
             statusIsError = false;
             await Task.Delay(500);
@@ -759,6 +786,7 @@
                 }
             }
 
+            dirty.ClearSection(SecAccess);
             statusMessage = "Section access saved.";
             statusIsError = false;
         }
@@ -798,6 +826,7 @@
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
+            dirty.ClearSection(SecAdmins);
             statusMessage = "Module admins saved.";
             statusIsError = false;
         }
@@ -841,7 +870,10 @@
 
         statusMessage = null;
         if (!accessState[alias].Contains(input, StringComparer.OrdinalIgnoreCase))
+        {
             accessState[alias].Add(input);
+            dirty.Set(SecAccess, true);
+        }
         accessInputs[alias] = string.Empty;
     }
 
@@ -932,7 +964,11 @@
             NetBiosDomainOf(groupValue), name);
     }
 
-    private void RemoveAccessGroup(string alias, string group) => accessState[alias].Remove(group);
+    private void RemoveAccessGroup(string alias, string group)
+    {
+        if (accessState[alias].Remove(group))
+            dirty.Set(SecAccess, true);
+    }
 
     private void HandleAccessKeyDown(KeyboardEventArgs e, string alias)
     {
@@ -944,11 +980,18 @@
         var input = newAdminGroup?.Trim();
         if (string.IsNullOrWhiteSpace(input)) return;
         if (!moduleAdminGroups.Contains(input, StringComparer.OrdinalIgnoreCase))
+        {
             moduleAdminGroups.Add(input);
+            dirty.Set(SecAdmins, true);
+        }
         newAdminGroup = string.Empty;
     }
 
-    private void RemoveModuleAdmin(string group) => moduleAdminGroups.Remove(group);
+    private void RemoveModuleAdmin(string group)
+    {
+        if (moduleAdminGroups.Remove(group))
+            dirty.Set(SecAdmins, true);
+    }
 
     private void HandleAdminKeyDown(KeyboardEventArgs e)
     {
@@ -986,6 +1029,7 @@
 
     private void AddAttribute()
     {
+        dirty.Set(SecAttrs, true);
         allowlistAttributes.Add(new AllowlistRow
         {
             Name = "", Label = "", Type = "String",
@@ -995,21 +1039,24 @@
 
     private void RemoveAttribute(int index)
     {
+        dirty.Set(SecAttrs, true);
         if (index >= 0 && index < allowlistAttributes.Count)
             allowlistAttributes.RemoveAt(index);
     }
 
-    private void UpdateAttrName(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Name = e.Value?.ToString() ?? "";
-    private void UpdateAttrLabel(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Label = e.Value?.ToString() ?? "";
-    private void UpdateAttrType(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Type = e.Value?.ToString() ?? "String";
-    private void UpdateAttrRequired(int idx, ChangeEventArgs e) => allowlistAttributes[idx].Required = bool.TryParse(e.Value?.ToString(), out var v) && v;
-    private void UpdateAttrAllowClear(int idx, ChangeEventArgs e) => allowlistAttributes[idx].AllowClear = bool.TryParse(e.Value?.ToString(), out var v) && v;
+    private void UpdateAttrName(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Name = e.Value?.ToString() ?? ""; dirty.Set(SecAttrs, true); }
+    private void UpdateAttrLabel(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Label = e.Value?.ToString() ?? ""; dirty.Set(SecAttrs, true); }
+    private void UpdateAttrType(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Type = e.Value?.ToString() ?? "String"; dirty.Set(SecAttrs, true); }
+    private void UpdateAttrRequired(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Required = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Set(SecAttrs, true); }
+    private void UpdateAttrAllowClear(int idx, ChangeEventArgs e) { allowlistAttributes[idx].AllowClear = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Set(SecAttrs, true); }
     private void UpdateAttrMaxLength(int idx, ChangeEventArgs e)
     {
+        dirty.Set(SecAttrs, true);
         allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
     }
     private void UpdateAttrChoices(int idx, ChangeEventArgs e)
     {
+        dirty.Set(SecAttrs, true);
         var raw = e.Value?.ToString() ?? "";
         var parsed = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         allowlistAttributes[idx].Choices = parsed.Length > 0 ? parsed : null;
@@ -1060,6 +1107,7 @@
             }
 
             AttrEditorService.SaveAllowlist(valid);
+            dirty.ClearSection(SecAttrs);
             allowlistSaved = true;
 
             try
@@ -1081,6 +1129,7 @@
 
     private void UpdateAttrLevel(int idx, ChangeEventArgs e)
     {
+        dirty.Set(SecAttrs, true);
         allowlistAttributes[idx].Level = int.TryParse(e.Value?.ToString(), out var v) && v >= 1 && v <= 3 ? v : 1;
     }
 
@@ -1197,6 +1246,7 @@
 
     private void ToggleOU(string dn, bool isChecked)
     {
+        dirty.Set(SecConfig, true);
         if (isChecked)
             ouSelectedDNs.Add(dn);
         else

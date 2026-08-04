@@ -1,0 +1,39 @@
+@using Microsoft.AspNetCore.Components.Routing
+
+@* Blocks in-app navigation while there are unsaved edits, and asks the browser to confirm on
+   tab close or reload.
+
+   The app had NO such guard on any page before this (verified: no beforeunload, NavigationLock
+   or OnLocationChanging anywhere). On the admin pages that meant changing a section, navigating
+   away, and losing it silently - on the pages that decide who can reach every module. B2 in
+   docs/AdminUIRedesign-Plan.md. *@
+
+<NavigationLock ConfirmExternalNavigation="@HasUnsavedChanges"
+                OnBeforeInternalNavigation="ConfirmInternalNavigation" />
+
+@code {
+    /// <summary>Whether there is anything worth warning about.</summary>
+    [Parameter] public bool HasUnsavedChanges { get; set; }
+
+    /// <summary>
+    /// Shown in the in-app confirmation. Name what is unsaved: "you have unsaved changes" makes
+    /// an operator hunt for them.
+    /// </summary>
+    [Parameter] public string Message { get; set; } = "You have unsaved changes. Leave without saving?";
+
+    [Inject] private IJSRuntime JS { get; set; } = default!;
+
+    private async Task ConfirmInternalNavigation(LocationChangingContext context)
+    {
+        if (!HasUnsavedChanges)
+            return;
+
+        // window.confirm, not a custom modal: it is synchronous from the user's point of view and
+        // cannot be missed. A styled dialog here would need its own render pass while navigation
+        // is already in flight.
+        var proceed = await JS.InvokeAsync<bool>("confirm", Message);
+
+        if (!proceed)
+            context.PreventNavigation();
+    }
+}

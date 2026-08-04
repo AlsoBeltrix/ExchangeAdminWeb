@@ -30,6 +30,12 @@
     return;
 }
 
+@* Warns before an edit is lost. Until this landed the app had no such guard anywhere, so
+   changing a section and navigating away discarded it silently - on the page that decides who
+   can reach every module. B2 in docs/AdminUIRedesign-Plan.md. *@
+<UnsavedChangesGuard HasUnsavedChanges="@dirty.IsDirty"
+                     Message="@($"{dirty.Summary()}. Leave without saving?")" />
+
 <div class="container-fluid">
     <h1 class="mb-4">Admin Settings<ModuleVersion /></h1>
 
@@ -75,7 +81,7 @@
                             <input class="form-check-input" type="checkbox" id="enable-@moduleId"
                                    checked="@moduleEnablement[moduleId]"
                                    disabled="@module.IsSystemModule"
-                                   @onchange="(e) => moduleEnablement[moduleId] = (bool)(e.Value ?? false)" />
+                                   @onchange="(e) => ToggleModule(moduleId, (bool)(e.Value ?? false))" />
                             <label class="form-check-label" for="enable-@moduleId">
                                 @module.DisplayName
                                 @if (module.IsSystemModule) { <span class="text-muted">(system)</span> }
@@ -118,7 +124,7 @@
                                 var captured = u;
                                 <div class="d-flex justify-content-between align-items-center py-1">
                                     <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppUsers.Remove(captured)">×</button>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppUsers, captured)">×</button>
                                 </div>
                             }
                         }
@@ -140,7 +146,7 @@
                                 var captured = g;
                                 <div class="d-flex justify-content-between align-items-center py-1">
                                     <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppGroups.Remove(captured)">×</button>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppGroups, captured)">×</button>
                                 </div>
                             }
                         }
@@ -162,7 +168,7 @@
                                 var captured = o;
                                 <div class="d-flex justify-content-between align-items-center py-1">
                                     <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppOus.Remove(captured)">×</button>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppOus, captured)">×</button>
                                 </div>
                             }
                         }
@@ -184,7 +190,7 @@
                                 var captured = p;
                                 <div class="d-flex justify-content-between align-items-center py-1">
                                     <small>@captured</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => ppPatterns.Remove(captured)">×</button>
+                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppPatterns, captured)">×</button>
                                 </div>
                             }
                         }
@@ -252,6 +258,35 @@
     private Dictionary<string, bool> moduleEnablement = new();
     private bool enablementStoreCorrupt;
     private string selectedLogLevel = "None";
+
+    // Section names are the strings an operator sees in the guard prompt, so they read as the
+    // headings on this page rather than as field names.
+    private const string SectionModules = "Module Enablement";
+    private const string SectionProtected = "Protected Principals";
+
+    private readonly AdminPageDirtyState dirty = new();
+
+    /// <summary>
+    /// Toggling a module marks the section unsaved rather than writing immediately. The write
+    /// still happens only in SaveEnablement, so this changes what the operator is TOLD, not when
+    /// anything is persisted.
+    /// </summary>
+    private void ToggleModule(string moduleId, bool enabled)
+    {
+        moduleEnablement[moduleId] = enabled;
+        dirty.Set(SectionModules, true);
+    }
+
+    /// <summary>
+    /// Removes a protected-principal entry and marks the section unsaved. Routed through here
+    /// rather than calling List.Remove inline so no removal can bypass the dirty flag - the
+    /// entry would then be gone from the page and still stored, with no warning on exit.
+    /// </summary>
+    private void RemovePp(List<string> list, string value)
+    {
+        if (list.Remove(value))
+            dirty.Set(SectionProtected, true);
+    }
 
     private List<string> ppUsers = new();
     private List<string> ppGroups = new();
@@ -350,6 +385,9 @@
                 }
             }
 
+            // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
+            // the operator to confirm leaving a page they just saved.
+            dirty.ClearSection(SectionModules);
             statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
             await Task.Delay(500);
@@ -560,6 +598,7 @@
             && !target.Contains(toAdd, StringComparer.OrdinalIgnoreCase))
         {
             target.Add(toAdd);
+            dirty.Set(SectionProtected, true);
         }
 
         ppAddError = decision.ErrorMessage;
@@ -611,6 +650,7 @@
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
+            dirty.ClearSection(SectionProtected);
             statusMessage = "Protected principals saved. Changes are effective immediately.";
             statusIsError = false;
             ppLoadError = null;
