@@ -89,15 +89,18 @@ group contains `mcoelho-2`. Cross-domain SIDs work: the token carries 10 WINROOT
 
 ### D1 -- Does the shell change apply app-wide immediately, or only to admin pages first?
 
-- **(a) Admin pages only.** New CSS is scoped; the other 20 pages keep today's look until they are
-  done. Two visual languages coexist for a while.
-- **(b) App-wide shell now** (nav, top bar, theme tokens), page internals converted over time.
-  One visual language immediately; every page is touched, so every page needs re-testing.
+**RULED: app-wide (owner, 2026-08-04).** The shell (nav, top bar, theme tokens) lands across
+every page at once; page internals convert over time.
 
-**Recommended: (b).** The nav and theme are what make it "look like a toy" on every screen, and
-(a) leaves the app visibly half-converted for an unknown period. The risk is bounded: the shell
-is layout and colour, and no page's logic changes. But it does mean a smoke pass over all 22
-pages before prod.
+Consequences that follow, binding on the slices below:
+
+- **All 22 pages are touched**, so all 22 need a smoke pass before prod (manual check 2). No page
+  ships unverified on the grounds that only its chrome changed.
+- **Bootstrap component classes cannot be deleted wholesale.** Untouched pages still render
+  `card`, `badge`, `btn-sm`; the token layer must override Bootstrap's variables rather than
+  remove its classes, or 20 pages break at once.
+- **Slice 1 and 2 must be independently revertible.** They are the two that can regress every
+  page simultaneously, so each lands as its own commit with nothing else in it.
 
 ### D2 -- Is the coverage gate extended to the new page logic?
 
@@ -150,6 +153,14 @@ where the 1,233-line file gets cut down -- most of it is markup the components n
 
 1. **Theme tokens + light/dark.** No layout change; the existing pages simply restyle. Smallest
    possible first step, and it proves the token set on real screens.
+   **DONE 2026-08-04.** Token block at the head of `wwwroot/app.css` driving both themes, with
+   Bootstrap's `--bs-*` variables pointed at it -- the mechanism that lets untouched pages follow
+   the theme without markup changes. 54 hardcoded dark-mode values collapsed into the token set;
+   the ~62 that remain are the semantic table tints (success/danger/warning/info), which keep
+   their own hues deliberately. One real fix landed with it: the focus ring was a two-ring style
+   painting a white halo -- near-invisible on white, a bright smear on black -- now a single
+   brand-tinted ring. **Not yet seen on a running instance:** dev is on `2.3.35` and this needs a
+   deploy to observe.
 2. **Shell** (nav + top bar). Every page inherits it. Smoke pass here, per D1.
 3. **`PrincipalTable` + `GroupPickerDialog`**, with the B1 global-catalog fix and its tests.
    Shipped behind the existing pages first -- the picker can be swapped in without the redesign.

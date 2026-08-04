@@ -1,19 +1,114 @@
+/* ============================================================================
+   DESIGN TOKENS -- single source of truth for both themes.
+   docs/AdminUIRedesign-Plan.md slice 1.
+
+   Everything below this block should reference a token, never a literal hex.
+   The tokens also drive Bootstrap's own --bs-* variables, which is what lets
+   the ~20 pages this redesign has not touched inherit the theme without their
+   markup changing. Deleting Bootstrap's classes instead would break all of
+   them at once (plan D1, ruled app-wide).
+   ============================================================================ */
+:root {
+    /* Surfaces: canvas -> raised -> header. Each step lifts by value. */
+    --ui-bg: #ffffff;
+    --ui-surface: #ffffff;
+    --ui-header: #f8fafb;
+    --ui-zebra: #fcfdfd;
+    --ui-selected: #e9f2fe;
+
+    /* Text: primary -> secondary -> tertiary. */
+    --ui-fg: #16191d;
+    --ui-fg2: #5a636e;
+    --ui-fg3: #98a0a9;
+
+    /* Structure */
+    --ui-line: #dfe3e8;
+    --ui-grid: #eef1f4;
+
+    /* Accent + state */
+    --ui-brand: #1a6ce8;
+    --ui-brand-fg: #ffffff;
+    --ui-on: #12833c;
+    --ui-off: #98a0a9;
+    --ui-warn: #8a6400;
+    --ui-danger: #c02b21;
+    --ui-danger-bg: #fde8e6;
+
+    /* Nav */
+    --ui-nav-bg: #f8fafb;
+    --ui-nav-fg: #5a636e;
+    --ui-nav-fg-hover: #16191d;
+
+    --ui-radius: 4px;
+    --ui-font: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    --ui-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+}
+
+/* OLED dark. True #000 canvas; surfaces lift a few points rather than relying
+   on borders. Text is silver, not white -- full white on pure black smears at
+   13px. Accent is cyan, which stays legible at small sizes on black where the
+   light-mode blue goes muddy. Owner-approved 2026-08-04. */
+html.dark {
+    --ui-bg: #000000;
+    --ui-surface: #050506;
+    --ui-header: #0a0b0d;
+    --ui-zebra: #08090a;
+    --ui-selected: #0d2b33;
+
+    --ui-fg: #d6dadf;
+    --ui-fg2: #9aa1a9;
+    --ui-fg3: #6b7278;
+
+    --ui-line: #23262a;
+    --ui-grid: #141619;
+
+    --ui-brand: #3fd8e8;
+    --ui-brand-fg: #00181c;
+    --ui-on: #4bd67f;
+    --ui-off: #5a6068;
+    --ui-warn: #f0c05a;
+    --ui-danger: #ff6b5e;
+    --ui-danger-bg: #2b100d;
+
+    --ui-nav-bg: #000000;
+    --ui-nav-fg: #9aa1a9;
+    --ui-nav-fg-hover: #d6dadf;
+}
+
+/* Bootstrap inherits the tokens. This is the load-bearing line for untouched
+   pages: their .card / .table / .form-control keep working and simply follow
+   the new theme. */
+:root, html.dark {
+    --bs-body-bg: var(--ui-bg);
+    --bs-body-color: var(--ui-fg);
+    --bs-border-color: var(--ui-line);
+    --bs-secondary-color: var(--ui-fg2);
+    --bs-tertiary-color: var(--ui-fg3);
+    --bs-emphasis-color: var(--ui-fg);
+    --bs-link-color: var(--ui-brand);
+    --bs-link-hover-color: var(--ui-brand);
+}
+
 html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: var(--ui-font);
 }
 
 a, .btn-link {
-    color: #006bb7;
+    color: var(--ui-brand);
 }
 
 .btn-primary {
-    color: #fff;
-    background-color: #1b6ec2;
-    border-color: #1861ac;
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-brand);
+    border-color: var(--ui-brand);
 }
 
+/* Single-ring focus. The old two-ring style painted a white halo, which is
+   near-invisible on a light canvas and a bright smear on an OLED one. */
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-brand) 30%, transparent);
+    border-color: var(--ui-brand);
+    outline: none;
 }
 
 .content {
@@ -25,15 +120,15 @@ h1:focus {
 }
 
 .valid.modified:not([type=checkbox]) {
-    outline: 1px solid #26b050;
+    outline: 1px solid var(--ui-on);
 }
 
 .invalid {
-    outline: 1px solid #e50000;
+    outline: 1px solid var(--ui-danger);
 }
 
 .validation-message {
-    color: #e50000;
+    color: var(--ui-danger);
 }
 
 .blazor-error-boundary {
@@ -47,7 +142,7 @@ h1:focus {
     }
 
 .darker-border-checkbox.form-check-input {
-    border-color: #929292;
+    border-color: var(--ui-fg3);
 }
 
 .theme-toggle {
@@ -123,7 +218,7 @@ h1:focus {
 }
 
 .nav-category {
-    color: #9ca3af;
+    color: var(--ui-fg3);
     font-size: 0.68rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -185,40 +280,40 @@ html.dark {
 }
 
 html.dark body {
-    background-color: #1a1d21;
-    color: #e0e0e0;
+    background-color: var(--ui-bg);
+    color: var(--ui-fg);
 }
 
 html.dark .card {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
-    color: #e0e0e0;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
+    color: var(--ui-fg);
 }
 
 html.dark .card-header {
-    background-color: #343a40;
-    border-bottom-color: #3a3f44;
+    background-color: var(--ui-header);
+    border-bottom-color: var(--ui-line);
 }
 
 html.dark .table {
-    --bs-table-bg: #1e2124;
-    --bs-table-color: #e0e0e0;
-    --bs-table-striped-bg: #262a2e;
-    --bs-table-striped-color: #e0e0e0;
-    --bs-table-hover-bg: #2c3136;
-    --bs-table-hover-color: #e0e0e0;
-    --bs-table-border-color: #3a3f44;
-    color: #e0e0e0;
-    border-color: #3a3f44;
+    --bs-table-bg: var(--ui-bg);
+    --bs-table-color: var(--ui-fg);
+    --bs-table-striped-bg: var(--ui-zebra);
+    --bs-table-striped-color: var(--ui-fg);
+    --bs-table-hover-bg: var(--ui-selected);
+    --bs-table-hover-color: var(--ui-fg);
+    --bs-table-border-color: var(--ui-line);
+    color: var(--ui-fg);
+    border-color: var(--ui-line);
 }
 
 html.dark .table th {
-    color: #e0e0e0;
+    color: var(--ui-fg);
 }
 
 html.dark .table-active {
-    --bs-table-active-bg: #343a40;
-    --bs-table-active-color: #f8f9fa;
+    --bs-table-active-bg: var(--ui-header);
+    --bs-table-active-color: var(--ui-fg);
     color: #f8f9fa;
 }
 
@@ -226,31 +321,31 @@ html.dark .table-active {
 /* Dark mode Bootstrap light-state overrides. Prevent light table/panel utilities from producing unreadable text. */
 html.dark .bg-white,
 html.dark .bg-light {
-    background-color: #252a2f !important;
-    color: #e0e0e0 !important;
-    border-color: #3a3f44 !important;
+    background-color: var(--ui-header) !important;
+    color: var(--ui-fg) !important;
+    border-color: var(--ui-line) !important;
 }
 
 html.dark pre.bg-light {
-    background-color: #111418 !important;
-    color: #e0e0e0 !important;
-    border: 1px solid #3a3f44;
+    background-color: var(--ui-surface) !important;
+    color: var(--ui-fg) !important;
+    border: 1px solid var(--ui-line);
 }
 
 html.dark .bg-light.text-dark,
 html.dark .badge.bg-light.text-dark,
 html.dark .text-bg-light {
-    background-color: #343a40 !important;
-    border-color: #5a6268 !important;
-    color: #e0e0e0 !important;
+    background-color: var(--ui-header) !important;
+    border-color: var(--ui-line) !important;
+    color: var(--ui-fg) !important;
 }
 
 html.dark .table-light {
-    --bs-table-bg: #343a40;
-    --bs-table-color: #e0e0e0;
-    --bs-table-border-color: #4b5563;
-    color: #e0e0e0;
-    border-color: #4b5563;
+    --bs-table-bg: var(--ui-header);
+    --bs-table-color: var(--ui-fg);
+    --bs-table-border-color: var(--ui-line);
+    color: var(--ui-fg);
+    border-color: var(--ui-line);
 }
 
 html.dark .table-success {
@@ -292,16 +387,16 @@ html.dark .table-secondary {
 }
 html.dark .form-control,
 html.dark .form-select {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
-    color: #e0e0e0;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
+    color: var(--ui-fg);
 }
 
 html.dark .form-control:focus,
 html.dark .form-select:focus {
-    background-color: #343a40;
+    background-color: var(--ui-header);
     border-color: #258cfb;
-    color: #e0e0e0;
+    color: var(--ui-fg);
 }
 
 html.dark .form-control::placeholder {
@@ -327,7 +422,7 @@ html.dark .alert-warning {
 }
 
 html.dark .bg-light {
-    background-color: #343a40 !important;
+    background-color: var(--ui-header) !important;
 }
 
 html.dark .text-muted {
@@ -335,20 +430,20 @@ html.dark .text-muted {
 }
 
 html.dark .nav-tabs .nav-link {
-    color: #9ca3af;
+    color: var(--ui-fg3);
 }
 
 html.dark .nav-tabs .nav-link.active {
-    color: #e0e0e0;
+    color: var(--ui-fg);
     background-color: transparent;
     border-color: transparent;
     border-bottom: 2px solid var(--sidebar-accent);
 }
 
 html.dark .list-group-item {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
-    color: #e0e0e0;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
+    color: var(--ui-fg);
 }
 
 html.dark .btn-primary {
@@ -362,7 +457,7 @@ html.dark .btn-outline-secondary {
 }
 
 html.dark .content {
-    background-color: #1a1d21;
+    background-color: var(--ui-bg);
 }
 
 html.dark #blazor-error-ui {
@@ -376,43 +471,43 @@ html.dark .sidebar {
 }
 
 html.dark {
-    --toprow-bg: #2b2f33;
-    --toprow-border: #3a3f44;
-    --toprow-color: #e0e0e0;
+    --toprow-bg: var(--ui-surface);
+    --toprow-border: var(--ui-line);
+    --toprow-color: var(--ui-fg);
 }
 
 html.dark .modal-content {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
-    color: #e0e0e0;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
+    color: var(--ui-fg);
 }
 
 html.dark .popover {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
 }
 
 html.dark .popover-body {
-    color: #e0e0e0;
+    color: var(--ui-fg);
 }
 
 html.dark .toast {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
-    color: #e0e0e0;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
+    color: var(--ui-fg);
 }
 
 html.dark .dropdown-menu {
-    background-color: #2b2f33;
-    border-color: #3a3f44;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
 }
 
 html.dark .dropdown-item {
-    color: #e0e0e0;
+    color: var(--ui-fg);
 }
 
 html.dark .dropdown-item:hover {
-    background-color: #343a40;
+    background-color: var(--ui-header);
 }
 
 /* --- UI polish: sidebar, alerts, tables, inputs --- */
