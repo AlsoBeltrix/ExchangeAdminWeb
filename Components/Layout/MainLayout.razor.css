@@ -9,16 +9,16 @@ main {
 }
 
 .sidebar {
-    background-color: var(--sidebar-bg, #1a1d2e);
-    border-right: 1px solid var(--sidebar-border, rgba(255,255,255,0.06));
+    background-color: var(--sidebar-bg);
+    border-right: 1px solid var(--sidebar-border);
 }
 
 .top-row {
-    background-color: var(--toprow-bg, #edeef1);
-    border-bottom: 1px solid var(--toprow-border, #d8dae0);
-    color: var(--toprow-color, #1e2028);
+    background-color: var(--toprow-bg);
+    border-bottom: 1px solid var(--toprow-border);
+    color: var(--toprow-color);
     justify-content: flex-end;
-    height: 3.5rem;
+    height: 2.9rem;
     display: flex;
     align-items: center;
 }

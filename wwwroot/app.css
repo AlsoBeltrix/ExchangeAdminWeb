@@ -156,16 +156,26 @@ h1:focus {
 
 
 /* Global sidebar icon rules. Kept outside CSS isolation so published IIS builds render icons reliably. */
+/* Mirrors the masked NavMenu isolation rule. The icon SVGs below are hardcoded
+   fill='white' and would be invisible now that the sidebar follows the theme;
+   masking makes each icon take its label's colour in both themes. */
 .bi {
     display: inline-block;
     position: relative;
-    flex: 0 0 1.25rem;
-    min-width: 1.25rem;
-    width: 1.25rem;
-    height: 1.25rem;
-    margin-right: 0.75rem;
+    flex: 0 0 1rem;
+    min-width: 1rem;
+    width: 1rem;
+    height: 1rem;
+    margin-right: 0.5rem;
     top: -1px;
-    background-size: cover;
+    background-color: currentColor;
+    background-image: none !important;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
 }
 
 .bi-house-door-fill-nav-menu {
@@ -243,11 +253,11 @@ h1:focus {
 
 .nav-category {
     color: var(--ui-fg3);
-    font-size: 0.68rem;
+    font-size: 0.63rem;
     font-weight: 700;
     letter-spacing: 0.08em;
-    margin-top: 0.9rem;
-    margin-bottom: 0.25rem;
+    margin-top: 0.7rem;
+    margin-bottom: 0.1rem;
     text-transform: uppercase;
 }
 
@@ -256,9 +266,9 @@ h1:focus {
 }
 
 .nav-section-children {
-    margin-left: 2.25rem;
-    padding-left: 0.75rem;
-    border-left: 1px solid rgba(255, 255, 255, 0.22);
+    margin-left: 0.85rem;
+    padding-left: 0.5rem;
+    border-left: 1px solid var(--ui-line);
     margin-bottom: 0.35rem;
 }
 
@@ -269,10 +279,10 @@ h1:focus {
 }
 
 .nav-section-child .nav-link {
-    min-height: 2.35rem;
+    min-height: 0;
     height: auto;
-    padding: 0.35rem 0.75rem;
-    line-height: 1.2rem;
+    padding: 0.28rem 0.6rem;
+    line-height: 1.3rem;
 }
 
 
@@ -282,9 +292,9 @@ h1:focus {
 }
 
 .nav-tree-children {
-    margin-left: 2.25rem;
-    padding-left: 0.75rem;
-    border-left: 1px solid rgba(255, 255, 255, 0.22);
+    margin-left: 0.85rem;
+    padding-left: 0.5rem;
+    border-left: 1px solid var(--ui-line);
 }
 
 .nav-tree-child {
@@ -292,10 +302,10 @@ h1:focus {
 }
 
 .nav-tree-child .nav-link {
-    min-height: 2.15rem;
+    min-height: 0;
     height: auto;
-    padding: 0.35rem 0.75rem;
-    font-size: 0.78rem;
+    padding: 0.22rem 0.6rem;
+    font-size: 0.75rem;
     line-height: 1.2rem;
 }
 /* Dark mode */
@@ -490,14 +500,7 @@ html.dark #blazor-error-ui {
 }
 
 html.dark .sidebar {
-    background-color: var(--sidebar-bg) !important;
     background-image: none !important;
-}
-
-html.dark {
-    --toprow-bg: var(--ui-surface);
-    --toprow-border: var(--ui-line);
-    --toprow-color: var(--ui-fg);
 }
 
 html.dark .modal-content {
@@ -536,33 +539,20 @@ html.dark .dropdown-item:hover {
 
 /* --- UI polish: sidebar, alerts, tables, inputs --- */
 
-/* Sidebar: flat, no gradient — ever */
+/* Sidebar: flat, no gradient, and no colour of its own. It was a hardcoded
+   dark slate-blue slab in both themes while the nav text came from the light
+   token set — which is why every module label read as greyed out. The nav is
+   chrome, not a feature: it follows the theme like everything else. */
 :root {
-    --sidebar-bg: #1a1d2e;
-    --sidebar-border: rgba(255,255,255,0.06);
-    --sidebar-accent: #4a7cc9;
-    --sidebar-active: rgba(255,255,255,0.1);
-    --sidebar-hover: rgba(255,255,255,0.05);
+    --sidebar-bg: var(--ui-nav-bg);
+    --sidebar-border: var(--ui-line);
+    --sidebar-accent: var(--ui-brand);
 
     /* Header bar (top-row + sidebar brand) — single source of truth so both
-       panes render an identical, continuous header. Light defaults here. */
-    --toprow-bg: #edeef1;
-    --toprow-border: #d8dae0;
-    --toprow-color: #1e2028;
-}
-
-/* Light mode: warm off-white body, medium slate sidebar */
-html:not(.dark) {
-    --sidebar-bg: #2c3345;
-    --sidebar-accent: #4a7cc9;
-    --bs-body-bg: #f4f5f7;
-    --bs-body-color: #1e2028;
-}
-
-html:not(.dark) main > .top-row a,
-html:not(.dark) main > .top-row .btn-link,
-html:not(.dark) main > .top-row .text-muted {
-    color: #4a5060 !important;
+       panes render an identical, continuous header. */
+    --toprow-bg: var(--ui-surface);
+    --toprow-border: var(--ui-line);
+    --toprow-color: var(--ui-fg);
 }
 
 .sidebar .navbar-brand {
@@ -571,20 +561,14 @@ html:not(.dark) main > .top-row .text-muted {
 }
 
 html:not(.dark) .card {
-    background-color: #fff;
-    border-color: #dfe1e6;
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
 }
 
 html:not(.dark) .form-control,
 html:not(.dark) .form-select {
-    background-color: #fff;
-    border-color: #ced2da;
-}
-
-html:not(.dark) .form-control:focus,
-html:not(.dark) .form-select:focus {
-    border-color: #4a7cc9;
-    box-shadow: 0 0 0 0.15rem rgba(74, 124, 201, 0.18);
+    background-color: var(--ui-surface);
+    border-color: var(--ui-line);
 }
 
 html:not(.dark) .table {
@@ -598,7 +582,7 @@ html:not(.dark) .alert-info {
 }
 
 html:not(.dark) .nav-tabs .nav-link.active {
-    border-bottom: 2px solid #4a7cc9;
+    border-bottom: 2px solid var(--ui-brand);
 }
 
 /* Dark mode: tone down info alerts */
@@ -839,6 +823,20 @@ html.dark .card-header {
     font-size: 0.78rem;
     font-style: italic;
     padding: 0.5rem 0.6rem;
+}
+
+/* Capped, scrolling table body. The sticky header in .adm-tbl needs the scroll
+   to happen on an ancestor, so the wrapper owns the height, not the table. */
+.adm-scroll {
+    max-height: 13.5rem;
+    overflow-y: auto;
+    border: 1px solid var(--ui-line);
+    border-radius: var(--ui-radius);
+}
+
+.adm-tbl .adm-val {
+    width: 100%;
+    word-break: break-all;
 }
 
 /* Config fields: two columns so 15 fields are not a 15-deep stack. */
