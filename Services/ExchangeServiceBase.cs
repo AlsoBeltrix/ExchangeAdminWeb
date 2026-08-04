@@ -576,11 +576,9 @@ public abstract class ExchangeServiceBase
         var rawFolderPath = folder.Properties["FolderPath"]?.Value?.ToString();
         _logger.LogInformation("Calendar folder lookup for {Mailbox}: raw FolderPath = '{RawPath}'", mailbox, rawFolderPath ?? "<null>");
 
-        var folderPath = rawFolderPath ?? @"\Calendar";
-        // Exchange Online may return forward slashes, but cmdlets require backslashes
-        folderPath = folderPath.Replace("/", @"\");
-
-        var fullPath = $"{mailbox}:{folderPath}";
+        // Composition lives in CalendarFolderIdentity so it is testable without Exchange: a wrong
+        // identity does not fail, it targets a different folder.
+        var fullPath = CalendarFolderIdentity.Build(mailbox, rawFolderPath);
         _logger.LogInformation("Constructed calendar identity: '{FullPath}'", fullPath);
         return fullPath;
     }
