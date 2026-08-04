@@ -6,7 +6,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Admin UI redesign — ALL 6 SLICES LANDED 2026-08-04, app `2.4.0`, NOT DEPLOYED.**
+- **Admin UI redesign — ALL 6 SLICES LANDED 2026-08-04; `2.4.0` DEPLOYED TO DEV by the owner and
+  SEEN. Two defects reported from that first look, both fixed in `2.4.1` (in repo, NOT deployed).**
   `docs/AdminUIRedesign-Plan.md` Status: In progress (manual checks unrun). Owner rejected the
   existing UI outright — "it does not look like a professional app, it looks like a vibe coded
   toy... the important security group entry system is half-baked" — after seven mockup rounds
@@ -41,8 +42,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   wrong causes first); and scripted line-range edits silently deleted two whole markup blocks
   while the project **still built clean**, because absent Razor markup is not a compile error —
   caught only by diffing against pre-edit backups.
-  **NEXT: deploy `2.4.0` to dev and run the plan's manual checks.** Checks 1-6 are runnable now;
-  7-8 exercise the rebuilt panes. Nothing about this UI has been seen on a running instance.
+  **Slice 7 — post-deploy corrections (`e442df4`, `31142d9`, `d360cfe`), app `2.4.1`.** Neither
+  defect was findable off-host; both needed a running instance.
+  **(a) Every module in the nav read as greyed out / disabled.** Slice 2 migrated only the
+  CSS-isolation copy in `NavMenu.razor.css`. **`wwwroot/app.css` carries a deliberate MIRROR of
+  the same nav rules** — present because isolation scoping has been unreliable on published IIS —
+  and it was never touched, so it still had the painted-white icons and the old rails. Worse,
+  `--sidebar-bg` was never a token at all: hardcoded `#2c3345` light / `#1a1d2e` dark. The pane
+  stayed a dark slate slab while its labels took the light token set's grey. Both copies now
+  resolve to `--ui-nav-bg`. **Rule: any nav/shell rule edited in `NavMenu.razor.css` must be
+  edited in the `app.css` mirror in the same change** — a green build proves nothing about which
+  copy the browser used.
+  **(b) The protected-principal lists had no row delineation.** The slice-5 note justified leaving
+  them alone because they were "already row-per-entry rather than chips" — which conflated
+  row-per-entry with row-*delineated*. They were borderless lines in one bordered box. Now the
+  same `.adm-tbl` as the Access grants table. **The lesson is the reasoning, not the CSS: "not the
+  thing the owner rejected" is not the same as "good."**
+  **NEXT: deploy `2.4.1` to dev (`.\tools\deploy-pipeline.ps1 -Dev`, ELEVATED) and run the plan's
+  manual checks.** Checks 1-6 runnable; 7-8 exercise the rebuilt panes. None has been run.
 
 - **Section-access groups stored as SIDs — ALL 4 SLICES LANDED + REVIEWED 2026-08-03, app
   `2.3.35`, NOT DEPLOYED (dev is `2.3.34`, prod `2.3.30`).**
@@ -435,18 +452,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.4.0`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.3.36`
-  for the app-wide admin UI redesign; `2.3.36` qualified group display names as `DOMAIN\Name`.
-  Previously bumped from
+- **App version `2.4.1`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.4.0`
+  for the two post-deploy UI corrections (shell CSS is app-wide chrome); `AdminSettings` module
+  `1.1.0 -> 1.1.1` with it. `2.4.0` was the app-wide admin UI redesign, bumped from `2.3.36`,
+  which qualified group display names as `DOMAIN\Name`. Previously bumped from
   `2.3.34` for section-access SID storage (shared authorization path); `2.3.34` was
   protected-principal admin input validation; `2.3.33` (`0eca01e`) was
   Exchange-backed protected-principal resolution, `2.3.32` (`14f4ef1`)
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.3.34`, prod `2.3.30`.** Dev deployed by the owner 2026-07-31 and verified
-  from the assembly (`D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll` FileVersion
-  `2.3.34.0`, written 2026-07-31); prod re-verified the same day at `2.3.30.0`.
+- **Deployed: dev `2.4.0`, prod `2.3.34`.** Dev deployed by the owner 2026-08-04 (observed in the
+  running app's sidebar: `v2.4.0`); the repo is one ahead at `2.4.1`. Prod was last verified from
+  the assembly at `2.3.34.0`. **Prod is therefore missing everything from `2.3.35` on:** section-
+  access SID storage, the `sidf-1` admin-lockout fix, and the entire UI redesign.
+  Deployed-version claims below this line predate the 2026-08-04 deploy; treat the specific
+  build numbers in them as history, not as current state.
   **Dev now carries, none of it validated against a live directory yet:** the operator-email
   resolver + MessageTrace export redesign + MessageTrace NRE fix (`2.3.31`-`2.3.32`),
   Exchange-backed protected-principal resolution (`2.3.33`), protected-principal admin input
