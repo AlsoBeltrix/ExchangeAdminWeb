@@ -181,6 +181,22 @@ public sealed class BulkJobService
         _repository.GetFinishedByType(moduleId, jobType, limit);
 
     /// <summary>
+    /// Non-terminal jobs for one module. What a module's own jobs panel must use:
+    /// <see cref="GetActiveJobs"/> spans every module, so a page built on it both discloses and
+    /// offers controls over another module's work.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetActiveJobsByModule(string moduleId) =>
+        _repository.GetActiveByModule(moduleId);
+
+    /// <summary>
+    /// Terminal jobs for one module, any job type, newest first. Uses the shared
+    /// BulkJobs:RecentJobLimit, which is correct here because the limit now applies AFTER the
+    /// module filter -- the window belongs to this module alone.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetRecentJobsByModule(string moduleId) =>
+        _repository.GetFinishedByModule(moduleId, _recentJobLimit);
+
+    /// <summary>
     /// Records a completion-step note on a job without changing its result. See
     /// <see cref="BulkJobRepository.AppendMessage"/> for why the terminal transition cannot carry it.
     /// </summary>

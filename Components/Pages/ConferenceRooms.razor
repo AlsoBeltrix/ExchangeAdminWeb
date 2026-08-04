@@ -600,8 +600,14 @@
 
     private void RefreshJobs()
     {
-        activeJobs = BulkJobs.GetActiveJobs();
-        recentJobs = BulkJobs.GetRecentJobs();
+        // Module-scoped, NOT GetActiveJobs()/GetRecentJobs(): those span every module, which put
+        // a Message Analysis export in this panel wearing a Conference Rooms label and offered a
+        // Cancel button for it (plan F1). The predicate belongs in SQL - filtering after an
+        // unfiltered read would still let another module's jobs consume the whole LIMIT window.
+        activeJobs = BulkJobs.GetActiveJobsByModule(
+            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName);
+        recentJobs = BulkJobs.GetRecentJobsByModule(
+            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName);
 
         finderJob = SelectedJobOfKind(ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType);
         typeJob = SelectedJobOfKind(ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.TypeJobType);

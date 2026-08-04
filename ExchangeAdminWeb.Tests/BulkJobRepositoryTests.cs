@@ -342,6 +342,96 @@ public class BulkJobRepositoryTests
     }
 
     // -------------------------------------------------------------------------
+    // Module-scoped reads. A module panel built on the unfiltered reads showed a
+    // Message Analysis export as a Conference Rooms job and offered a Cancel
+    // button for it (docs/ConferenceRoomsBulkJobPanel-Plan.md F1).
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void GetActiveByModule_ReturnsOnlyThatModulesNonTerminalJobs()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        repo.Insert(NewJob("mineQueued", BulkJobStatus.Queued));
+        repo.Insert(NewJob("mineRunning", BulkJobStatus.Running));
+        repo.Insert(Retyped(NewJob("foreignRunning", BulkJobStatus.Running), moduleId: "MessageTrace"));
+        repo.Insert(Finished(NewJob("mineDone", BulkJobStatus.Completed)));
+
+        var active = repo.GetActiveByModule("ConferenceRooms");
+
+        Assert.Equal(["mineQueued", "mineRunning"], active.Select(j => j.Id).OrderBy(id => id));
+    }
+
+    [Fact]
+    public void GetActiveByModule_ExcludesAForeignRunningJob_WhichIsTheCancelExposure()
+    {
+        // The severe half of F1: the panel renders a Cancel button per active row and
+        // BulkJobService.CancelJob takes only an id, so a foreign row here is a live control
+        // over another module's work.
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        repo.Insert(Retyped(NewJob("export", BulkJobStatus.Running), moduleId: "MessageTrace"));
+
+        Assert.Empty(repo.GetActiveByModule("ConferenceRooms"));
+    }
+
+    [Fact]
+    public void GetFinishedByModule_ReturnsEveryJobTypeOfThatModuleOnly()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        repo.Insert(Finished(NewJob("finder", BulkJobStatus.Completed)));
+        repo.Insert(Finished(Retyped(NewJob("type", BulkJobStatus.Completed), jobType: "SetType_Bulk")));
+        repo.Insert(Finished(Retyped(NewJob("foreign", BulkJobStatus.Completed), moduleId: "MessageTrace")));
+
+        var found = repo.GetFinishedByModule("ConferenceRooms", 50);
+
+        // Both of this module's kinds, neither of anyone else's. This is why the panel needs its
+        // own read rather than GetFinishedByType, which is per (module, type).
+        Assert.Equal(["finder", "type"], found.Select(j => j.Id).OrderBy(id => id));
+    }
+
+    [Fact]
+    public void GetFinishedByModule_ExcludesNonTerminalJobs()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        repo.Insert(NewJob("running", BulkJobStatus.Running));
+        repo.Insert(Finished(NewJob("done", BulkJobStatus.Completed)));
+
+        Assert.Equal(["done"], repo.GetFinishedByModule("ConferenceRooms", 50).Select(j => j.Id));
+    }
+
+    [Fact]
+    public void GetFinishedByModule_AppliesTheLimitAfterTheModuleFilter()
+    {
+        // The reason the predicate must be in SQL rather than applied by the caller: LIMIT is
+        // applied by the database. Filtering after an unfiltered read would let these foreign
+        // jobs consume the whole window and show this module an empty panel.
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        for (var i = 0; i < 10; i++)
+        {
+            var foreign = Retyped(NewJob($"foreign{i}", BulkJobStatus.Completed), moduleId: "MessageTrace");
+            foreign.FinishedAtUtc = new DateTime(2026, 6, 1, 0, 0, 0, DateTimeKind.Utc).AddMinutes(i);
+            repo.Insert(foreign);
+        }
+
+        var mine = NewJob("mine", BulkJobStatus.Completed);
+        mine.FinishedAtUtc = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc); // OLDEST of the lot
+        repo.Insert(mine);
+
+        var found = repo.GetFinishedByModule("ConferenceRooms", 5);
+
+        Assert.Equal(["mine"], found.Select(j => j.Id));
+    }
+
+    // -------------------------------------------------------------------------
     // AppendMessage - the completion-step note the terminal transition cannot carry
     // -------------------------------------------------------------------------
 

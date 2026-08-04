@@ -353,6 +353,53 @@ public sealed class BulkJobRepository
         return ReadAll(command);
     }
 
+    /// <summary>
+    /// Terminal jobs for one module, any job type, newest first, capped at
+    /// <paramref name="limit"/>.
+    ///
+    /// Separate from <see cref="GetFinishedByType"/> rather than a widening of it: that method's
+    /// narrow (module, type) contract is documented and relied on by the Message Analysis reports
+    /// page. A module panel spanning several of its own job kinds needs this shape instead.
+    ///
+    /// The module predicate is in SQL, not applied by the caller afterwards. LIMIT is applied by
+    /// the database, so post-filtering would let another module's jobs consume the whole window
+    /// and leave a page showing nothing.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetFinishedByModule(string moduleId, int limit)
+    {
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns +
+            " WHERE module_id = $module" +
+            " AND status IN ($completed, $cancelled, $interrupted)" +
+            " ORDER BY finished_at DESC LIMIT $limit;";
+        command.Parameters.AddWithValue("$module", moduleId);
+        command.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+        command.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+        command.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+        command.Parameters.AddWithValue("$limit", limit);
+        return ReadAll(command);
+    }
+
+    /// <summary>
+    /// Non-terminal jobs (Queued + Running) for one module, oldest submission first.
+    ///
+    /// <see cref="GetActive"/> is unfiltered across every module. A module page built on it shows
+    /// other modules' work and, worse, offers controls over it.
+    /// </summary>
+    public IReadOnlyList<BulkJob> GetActiveByModule(string moduleId)
+    {
+        using var connection = _factory.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = SelectColumns +
+            " WHERE module_id = $module AND status IN ($queued, $running)" +
+            " ORDER BY submitted_at ASC;";
+        command.Parameters.AddWithValue("$module", moduleId);
+        command.Parameters.AddWithValue("$queued", BulkJobStatus.Queued.ToString());
+        command.Parameters.AddWithValue("$running", BulkJobStatus.Running.ToString());
+        return ReadAll(command);
+    }
+
     public IReadOnlyList<BulkJobRow> GetRows(string jobId)
     {
         using var connection = _factory.Open();
