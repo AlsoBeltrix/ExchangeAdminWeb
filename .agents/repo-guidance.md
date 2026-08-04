@@ -51,7 +51,10 @@ which should win. Do not silently choose whichever source is convenient.
   (this is what CI enforces; targeting the `.slnx` matches the gate)
 - PowerShell lint: `Invoke-ScriptAnalyzer -Path . -Recurse`
 - PowerShell tests: `Invoke-Pester tests/ps`
-- Dev deploy: `./deploy.ps1` (ADI-specific). Generic install:
+- Dev deploy: `./tools/deploy-pipeline.ps1 -Dev` from an ELEVATED shell (it stops/creates IIS
+  app pools). The pipeline is the entry point, not `deploy.ps1` directly: it takes the verified
+  SQLite backup, enforces a clean tree unless `-AllowDirty`, and supports `-PlanOnly`. Prod is the
+  same script with `-Prod`. Generic install:
   `tools/Install-ExchangeAdminWeb.ps1`.
 - Deploy-host dependency: `sqlite3.exe` must be on PATH (`winget install SQLite.SQLite`).
   The deploy/promote scripts use it to make a verified online backup of
