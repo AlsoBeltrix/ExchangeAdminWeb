@@ -100,31 +100,70 @@ untestable. The catalog is the testable seam.
 
 ## Slices
 
-1. **Token contract completion.** Add the 8 tint tokens to Light and OLED. Convert all 61
-   theme-conditional rules to unconditional token-reading rules. No behaviour change, no new
-   theme, both existing themes must look identical before and after. This is the bulk of the work
-   and is independently shippable.
-2. **`UiThemeCatalog` + tests.** The catalog, resolution, legacy migration, and the CSS-contract
-   test below.
-3. **The eight new theme blocks.** Pure data once slice 1 lands.
-4. **`ThemePicker.razor`** replacing `ThemeToggle.razor`; `setTheme`/`getTheme` JS; the pre-paint
-   script updated to set `data-theme` and the failsafe class.
-5. **Version bump + docs.**
+1. **Token contract completion. DONE 2026-08-04.** The 61 theme-conditional rules are now 0. Every
+   Bootstrap component rule -- card, table, form control, alert, dropdown, toast, modal, popover,
+   list group, nav tab, badge, the `bg-light`/`bg-white` utilities -- reads tokens and is
+   unconditional. 12 tint tokens added (three each for on/warn/danger/info) so the coloured table
+   rows and alerts stop being the hardcoded exception; hover states are derived with `color-mix`
+   rather than declared, which is what keeps a theme at 28 values instead of 45.
+   **One extra fix landed here, same defect class as the greyed-out sidebar:** the mobile hamburger
+   toggler hardcoded its stroke colour per theme (white for dark, black for light) and would have
+   been invisible on eight of the ten. It is a mask taking `--ui-nav-fg` now, like every other icon.
+2. **`UiThemeCatalog` + tests. DONE.** `Services/UiTheme.cs`, `Services/UiThemeJs.cs`, 25 tests.
+3. **The eight new theme blocks. DONE.** Pure data, as intended -- no rule was touched to add them.
+4. **`ThemePicker.razor` replacing `ThemeToggle.razor`. DONE.** Grouped `<select>`; `setTheme`
+   /`getTheme` JS; the pre-paint script now sets `data-theme` and the failsafe class.
+5. **Version bump + docs. DONE** -- app `2.4.1 -> 2.5.0` (minor, not patch: user-visible new
+   capability app-wide).
 
 ## Verification
 
 Per `.agents/repo-guidance.md`: build, `dotnet test`, format check, ASCII lint,
 `git diff --check HEAD`, `tools/Test-CoverageFloor.ps1`.
 
+**Result 2026-08-04:** build clean, **1255 tests pass / 3 skipped / 0 fail**, format, ASCII
+(`tools/Test-AsciiOnly.ps1`, exit 0) and whitespace all clean.
+
+**The coverage ratchet FAILS at 64.7% against its 65.06 floor -- and it was already failing
+before this work.** Measured both ways to establish that rather than assume it: a scratch worktree
+at `6f89f1c` (this plan's doc commit, no theme code) reports `1015 / 1569`, byte-identical to the
+working tree. Nothing here touches the gated scope -- that scope is authorization and permission
+code, and this work is CSS, a catalog record and a picker.
+
+Cause, traced rather than guessed: commit `0e35e7b` ("show section-access groups as DOMAIN\Name")
+added 49 lines to `Services/SectionAccessGroupDirectory.cs`, which is **0% covered**, after the
+floor was set at `9a66cf4`. Growing an uncovered file lowers the ratio; the gate is working
+exactly as designed and is reporting a real regression that predates this plan.
+
+**The floor was NOT lowered.** `.agents/review/coverage-floor.txt` says in terms that lowering it
+to make a build pass converts the gate into decoration -- that is finding tsr-1, already made once
+in this repo. Recorded here and in `.agents/state.md` as an open item needing its own fix (tests
+for `SectionAccessGroupDirectory`, which is a live AD dependency and so needs a seam first). It
+is not this plan's scope to fix, and it is not this plan's place to silence.
+
 **The load-bearing automated test is a CSS-contract test**, because the failure mode here is not a
 compile error and not a wrong-looking pixel -- it is a *missing* token, which silently inherits
 Light's value. A dark theme missing `--ui-fg` renders near-black text on a near-black canvas: the
-page is not broken, it is invisible. The test parses `wwwroot/app.css`, and for every theme in the
-catalog asserts a selector block exists and defines **every** token in the contract. It fails on
-the theme that is wrong and names the missing token.
+page is not broken, it is invisible. `UiThemeCssTests` parses `wwwroot/app.css` and asserts, for
+every theme in the catalog, that a selector block exists and defines **every** token in the
+contract. It fails naming the theme and the token.
 
-This is also the guard against the `app.css` / `NavMenu.razor.css` mirror trap recorded in
-`docs/AdminUIRedesign-Plan.md` slice 2: a nav rule fixed in one copy and not the other.
+Two further assertions in the same file are what keep themes data rather than code: no rule may be
+conditional on a specific theme, and no rule may key off the `dark` class -- the one permitted use
+being the `color-scheme` declaration, which is checked structurally rather than by comment. That
+second one scans the isolation stylesheets too, so it is also the guard against the `app.css` /
+`NavMenu.razor.css` mirror trap recorded in `docs/AdminUIRedesign-Plan.md` slice 2.
+
+**Non-vacuity proven 2026-08-04** by breaking each guard and confirming the failure names the
+right thing:
+
+| Probe | Result |
+|---|---|
+| Remove `--ui-fg` from the Dracula block | fails, reporting `dracula: --ui-fg` |
+| Append `html.dark .card { ... }` | fails, quoting that exact rule |
+| Delete the whole Nord block | fails, reporting `nord` |
+
+All 25 pass again on restore.
 
 ### Manual checks
 

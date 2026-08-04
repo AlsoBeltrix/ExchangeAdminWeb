@@ -6,6 +6,43 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Theme support -- ALL 5 SLICES LANDED 2026-08-04, app `2.5.0`, NOT DEPLOYED.**
+  `docs/ThemeSupport-Plan.md` Status: Approved (owner directive: *"add theme support properly.
+  include 8-10 most popular themes in a dropdown selector that replaces the dark/light icon"*).
+  Ten themes -- Light, OLED Black, Solarized Light/Dark, Dracula, Nord, Gruvbox Dark, Monokai,
+  One Dark, Tokyo Night -- in a grouped `<select>` replacing the sun/moon toggle.
+  **The bulk of the work was not the themes.** 61 rules in `app.css` keyed off the `dark` class
+  rather than reading a token, so a third theme would have rendered light-mode cards, form fields
+  and tables on a dark canvas. Slice 1 converted all of them; a theme is now pure data and the
+  eleventh is a copy-paste. 12 tint tokens added so the coloured alerts and table rows stop being
+  the hardcoded exception. **The `dark` class survives for exactly one rule, `color-scheme`,**
+  which is not styling -- it is how the browser is told to paint scrollbars, native select popups
+  and date pickers, which no stylesheet can reach.
+  **`UiThemeCssTests` is the load-bearing guard and the reason this is safe to extend:** a theme
+  block missing a token silently inherits Light's value, so a dark theme missing `--ui-fg` renders
+  near-black on near-black -- an invisible page, not a crash and not a compile error. It also
+  forbids any rule naming a theme or keying off `dark`, scanning the isolation stylesheets too, so
+  it doubles as the guard against the `app.css`/`NavMenu.razor.css` mirror trap.
+  **A real bug was caught by re-reading the rendered script, not by a test:** the JS lookup tested
+  its map value for truthiness, but the value IS the isDark flag -- so every LIGHT theme read as
+  unknown and fell back to the default. Solarized Light would have been unselectable with nothing
+  failing. Fixed to a membership test; a regression test pins the C# twin to the same rule.
+  Legacy `localStorage` value `dark` migrates to OLED, so an existing user sees no change.
+  **NEXT: deploy `2.5.0` to dev and run the plan's 6 manual checks.** Check 2 (scrollbars and
+  native selects follow the theme) is the one automation cannot reach at all.
+
+- **OPEN, PRE-EXISTING -- the coverage ratchet is FAILING and no one noticed.** 64.7% against a
+  65.06 floor. **Not caused by the theme work:** measured in a scratch worktree at `6f89f1c` with
+  no theme code and got `1015 / 1569`, identical. Cause traced to `0e35e7b` ("show section-access
+  groups as DOMAIN\Name"), which added 49 lines to `Services/SectionAccessGroupDirectory.cs` --
+  a **0%-covered** file -- after the floor was set at `9a66cf4`. Growing an uncovered file lowers
+  the ratio; the gate is correct and is reporting a real regression.
+  **The floor was NOT lowered** -- `.agents/review/coverage-floor.txt` says in terms that doing so
+  converts the gate into decoration, which is finding tsr-1, already made once here.
+  **Fix needs a seam:** `SectionAccessGroupDirectory` talks to live AD, so it cannot be tested as
+  it stands -- same shape as the `MailboxPermissionOutcome` / `CalendarFolderIdentity` extractions
+  in `docs/TestSuiteRemediation-Plan.md`. **CI on `master` is red until this is fixed.**
+
 - **Admin UI redesign — ALL 6 SLICES LANDED 2026-08-04; `2.4.0` DEPLOYED TO DEV by the owner and
   SEEN. Two defects reported from that first look, both fixed in `2.4.1` (in repo, NOT deployed).**
   `docs/AdminUIRedesign-Plan.md` Status: In progress (manual checks unrun). Owner rejected the
@@ -452,10 +489,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.4.1`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.4.0`
-  for the two post-deploy UI corrections (shell CSS is app-wide chrome); `AdminSettings` module
-  `1.1.0 -> 1.1.1` with it. `2.4.0` was the app-wide admin UI redesign, bumped from `2.3.36`,
-  which qualified group display names as `DOMAIN\Name`. Previously bumped from
+- **App version `2.5.0`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Minor rather than
+  patch: theme support is new user-visible capability, app-wide. `2.4.1` was the two post-deploy
+  UI corrections (`AdminSettings` module `1.1.0 -> 1.1.1` with it); `2.4.0` the app-wide admin UI
+  redesign, bumped from `2.3.36`, which qualified group display names as `DOMAIN\Name`.
+  Previously bumped from
   `2.3.34` for section-access SID storage (shared authorization path); `2.3.34` was
   protected-principal admin input validation; `2.3.33` (`0eca01e`) was
   Exchange-backed protected-principal resolution, `2.3.32` (`14f4ef1`)
@@ -463,7 +501,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.4.0`, prod `2.3.34`.** Dev deployed by the owner 2026-08-04 (observed in the
-  running app's sidebar: `v2.4.0`); the repo is one ahead at `2.4.1`. Prod was last verified from
+  running app's sidebar: `v2.4.0`); the repo is now two ahead at `2.5.0` (the `2.4.1` UI
+  corrections and the `2.5.0` theme support are both undeployed). Prod was last verified from
   the assembly at `2.3.34.0`. **Prod is therefore missing everything from `2.3.35` on:** section-
   access SID storage, the `sidf-1` admin-lockout fix, and the entire UI redesign.
   Deployed-version claims below this line predate the 2026-08-04 deploy; treat the specific
