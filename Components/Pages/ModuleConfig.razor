@@ -45,9 +45,53 @@
 <UnsavedChangesGuard HasUnsavedChanges="@dirty.IsDirty"
                      Message="@($"{dirty.Summary()}. Leave without saving?")" />
 
-<div class="container-fluid">
-    <h1 class="mb-4">@module.DisplayName <small class="text-muted fs-6">v@(module.Version)</small></h1>
-    <p class="text-muted mb-4">@module.Description</p>
+<div class="container-fluid adm">
+    <div class="adm-hd">
+        <h1>@module.DisplayName</h1>
+        <span class="adm-ver">v@(module.Version)</span>
+        <span class="adm-sub">@module.Description</span>
+    </div>
+
+    @* Tabs, not stacked cards. Each pane scrolls independently so the page never grows with the
+       number of groups - the failure the owner reported at 10-20 groups per module. Counts sit on
+       the tab so an operator knows what is behind it without opening it, and a dot marks a
+       background tab holding unsaved edits. *@
+    <div class="adm-tabs">
+        @if (!module.IsSystemModule)
+        {
+            <button class="@TabClass(SecStatus)" @onclick="() => tab = SecStatus">
+                Status @if (dirty.IsSectionDirty(SecStatus)) { <span class="adm-dot"></span> }
+            </button>
+        }
+        @if (isGlobalAdmin)
+        {
+            <button class="@TabClass(SecAccess)" @onclick="() => tab = SecAccess">
+                Access <span class="adm-n">@AccessGroupCount()</span>
+                @if (dirty.IsSectionDirty(SecAccess)) { <span class="adm-dot"></span> }
+            </button>
+        }
+        @if (module.ConfigFields.Count > 0)
+        {
+            <button class="@TabClass(SecConfig)" @onclick="() => tab = SecConfig">
+                Configuration <span class="adm-n">@module.ConfigFields.Count</span>
+                @if (dirty.IsSectionDirty(SecConfig)) { <span class="adm-dot"></span> }
+            </button>
+        }
+        @if (module.Id == "ADAttributeEditor")
+        {
+            <button class="@TabClass(SecAttrs)" @onclick="() => tab = SecAttrs">
+                Attributes <span class="adm-n">@allowlistAttributes.Count</span>
+                @if (dirty.IsSectionDirty(SecAttrs)) { <span class="adm-dot"></span> }
+            </button>
+        }
+        @if (isGlobalAdmin)
+        {
+            <button class="@TabClass(SecAdmins)" @onclick="() => tab = SecAdmins">
+                Module admins <span class="adm-n">@moduleAdminGroups.Count</span>
+                @if (dirty.IsSectionDirty(SecAdmins)) { <span class="adm-dot"></span> }
+            </button>
+        }
+    </div>
 
     @if (!string.IsNullOrEmpty(statusMessage))
     {
@@ -59,15 +103,7 @@
 
     @if (!module.IsSystemModule)
     {
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>Module Status</strong>
-                @if (isGlobalAdmin)
-                {
-                    <button class="btn btn-primary btn-sm" @onclick="SaveModuleEnablementAsync" disabled="@(saving || enablementStoreCorrupt)">Save Status</button>
-                }
-            </div>
-            <div class="card-body">
+        <div class="adm-pane @PaneClass(SecStatus)">
                 @if (enablementStoreCorrupt)
                 {
                     <div class="alert alert-danger py-2 mb-2">
@@ -101,18 +137,12 @@
                     }
                 </small>
             </div>
-        </div>
     }
 
     @* Section Access *@
     @if (isGlobalAdmin)
     {
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>Section Access</strong>
-                <button class="btn btn-primary btn-sm" @onclick="SaveSectionAccessAsync" disabled="@(saving || sectionAccessCorrupt)">Save Access</button>
-            </div>
-            <div class="card-body">
+        <div class="adm-pane @PaneClass(SecAccess)">
                 @if (sectionAccessCorrupt)
                 {
                     <div class="alert alert-danger mb-0">
@@ -131,65 +161,72 @@
                         <small>Section access has never been configured on this server (no config\sectionaccess.json and no legacy appsettings block). Saving here creates the fragment and starts enforcing these lists for all fail-closed modules.</small>
                     </div>
                 }
-                <p class="text-muted mb-3"><small>AD groups allowed to use this module. If empty, access is denied for fail-closed modules or inherits base groups.</small></p>
-                <table class="table table-sm align-middle mb-0">
-                    <thead>
-                        <tr>
-                            <th style="width: 200px;">Permission</th>
-                            <th>Allowed Groups</th>
-                            <th style="width: 280px;">Add Group</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var alias in policyAliases)
-                        {
-                            var capturedAlias = alias;
-                            <tr>
-                                <td><strong>@capturedAlias</strong></td>
-                                <td>
-                                    @if (accessState.TryGetValue(capturedAlias, out var groups) && groups.Count > 0)
-                                    {
-                                        @foreach (var group in groups.ToList())
-                                        {
-                                            var cg = group;
-                                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.8em;" title="@cg">
-                                                @DisplayNameFor(cg)
-                                                <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
-                                                      @onclick="() => RemoveAccessGroup(capturedAlias, cg)">&times;</span>
-                                            </span>
-                                        }
-                                    }
-                                    else
-                                    {
-                                        <span class="text-muted fst-italic">No groups configured</span>
-                                    }
-                                </td>
-                                <td>
-                                    <div class="input-group input-group-sm">
-                                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="accessInputs[capturedAlias]"
-                                                                OnResultSelected="RememberGroupDisplayName" Placeholder="Search AD groups..." />
-                                        <button class="btn btn-outline-success" type="button"
-                                                @onclick="() => AddAccessGroup(capturedAlias)">Add</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+
+                <p class="text-muted mb-2"><small>Groups allowed to use this module, stored as SIDs. Search covers every domain in the forest.</small></p>
+
+                @* One row per grant, not chips. Chips wrap, so the block changed height per module
+                   and nothing lined up; a row shows the domain, the group and the SID it actually
+                   stores, aligned. Domain is its OWN column rather than a DOMAIN\ prefix, because
+                   a prefix pushes every group name to a different x-position. Owner rejected every
+                   chip variant (2026-08-04). *@
+                @foreach (var alias in policyAliases)
+                {
+                    var capturedAlias = alias;
+                    var aliasGroups = accessState.TryGetValue(capturedAlias, out var ag) ? ag : new List<string>();
+
+                    <div class="mb-3">
+                        <div class="d-flex align-items-baseline gap-2 mb-1">
+                            <strong style="font-size: 0.8rem;">@capturedAlias</strong>
+                            <span class="text-muted" style="font-size: 0.72rem;">@aliasGroups.Count group(s)</span>
+                        </div>
+                        <table class="adm-tbl">
+                            <thead>
+                                <tr>
+                                    <th style="width: 5.5rem;">Domain</th>
+                                    <th style="width: 16rem;">Group</th>
+                                    <th>Security identifier</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (aliasGroups.Count == 0)
+                                {
+                                    <tr><td colspan="4" class="adm-empty">No groups - access is denied for this permission.</td></tr>
+                                }
+                                @foreach (var group in aliasGroups.ToList())
+                                {
+                                    var cg = group;
+                                    <tr>
+                                        <td class="adm-dom">@DomainOf(cg)</td>
+                                        <td class="adm-grp">@BareNameOf(cg)</td>
+                                        <td class="adm-sid">@cg</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemoveAccessGroup(capturedAlias, cg)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                                <tr>
+                                    <td colspan="4">
+                                        <div class="input-group input-group-sm" style="max-width: 30rem;">
+                                            <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SID" @bind-Value="accessInputs[capturedAlias]"
+                                                                    OnResultSelected="RememberGroupDisplayName" Placeholder="Search groups in any domain..." />
+                                            <button class="btn btn-outline-secondary" type="button" @onclick="() => AddAccessGroup(capturedAlias)">Add</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                }
                 }
             </div>
-        </div>
     }
 
     @* Module Configuration *@
     @if (module.ConfigFields.Count > 0)
     {
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>Configuration</strong>
-                <button class="btn btn-primary btn-sm" @onclick="SaveConfigAsync" disabled="@(saving || moduleConfigCorrupt)">Save Configuration</button>
-            </div>
-            <div class="card-body">
+        <div class="adm-pane @PaneClass(SecConfig)">
+
                 @if (moduleConfigCorrupt)
                 {
                     <div class="alert alert-danger mb-0">
@@ -326,21 +363,15 @@
                 </div>
                 }
             </div>
-        </div>
     }
 
     @* AD Attribute Editor — Editable Attributes *@
     @if (module.Id == "ADAttributeEditor")
     {
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>Editable Attributes</strong>
-                <div>
-                    <button class="btn btn-outline-primary btn-sm me-1" @onclick="AddAttribute" disabled="@(saving || allowlistCorrupt)">Add Attribute</button>
-                    <button class="btn btn-primary btn-sm" @onclick="SaveAllowlistAsync" disabled="@(saving || allowlistCorrupt || allowlistAttributes.Count == 0)">Save Allowlist</button>
-                </div>
+        <div class="adm-pane @PaneClass(SecAttrs)">
+            <div class="mb-2">
+                <button class="btn btn-outline-secondary btn-sm" @onclick="AddAttribute" disabled="@(saving || allowlistCorrupt)">Add attribute</button>
             </div>
-            <div class="card-body">
                 <p class="text-muted mb-3"><small>Configure which AD attributes users can edit. Attributes on the hard denylist (security-sensitive attributes like userAccountControl, memberOf, etc.) are automatically blocked.</small></p>
 
                 @if (allowlistCorrupt)
@@ -427,46 +458,63 @@
                     </div>
                 }
             </div>
-        </div>
     }
 
     @* Module Admins (global admin only) *@
     @if (isGlobalAdmin)
     {
-        <div class="card mb-4">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <strong>Module Admins</strong>
-                <button class="btn btn-primary btn-sm" @onclick="SaveModuleAdminsAsync" disabled="@saving">Save Admins</button>
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-3"><small>AD groups that can manage this module's configuration without global admin access.</small></p>
+        <div class="adm-pane @PaneClass(SecAdmins)">
 
-                @if (moduleAdminGroups.Count > 0)
-                {
-                    <div class="mb-3">
+                <p class="text-muted mb-2"><small>Groups that can manage this module's configuration without global admin access.</small></p>
+
+                @* Rows, not chips - same reasoning as the Access pane, and this is a list the
+                   owner expects to reach 10-20 entries. *@
+                <table class="adm-tbl">
+                    <thead><tr><th>Group</th><th></th></tr></thead>
+                    <tbody>
+                        @if (moduleAdminGroups.Count == 0)
+                        {
+                            <tr><td colspan="2" class="adm-empty">None - only global admins can change this module.</td></tr>
+                        }
                         @foreach (var group in moduleAdminGroups.ToList())
                         {
                             var capturedGroup = group;
-                            <span class="badge bg-secondary me-1 mb-1" style="font-size: 0.85em;">
-                                @capturedGroup
-                                <span role="button" class="ms-1 text-danger" style="cursor:pointer; font-weight:bold;"
-                                      @onclick="() => RemoveModuleAdmin(capturedGroup)">&times;</span>
-                            </span>
+                            <tr>
+                                <td class="adm-grp">@capturedGroup</td>
+                                <td class="adm-act">
+                                    <button class="adm-rm" type="button" @onclick="() => RemoveModuleAdmin(capturedGroup)">Remove</button>
+                                </td>
+                            </tr>
                         }
-                    </div>
-                }
-                else
-                {
-                    <p class="text-muted fst-italic mb-3">No module admins assigned.</p>
-                }
-
-                <div class="input-group" style="max-width: 400px;">
-                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="newAdminGroup" Placeholder="Search AD groups..." />
-                    <button class="btn btn-outline-success" type="button" @onclick="AddModuleAdmin">Add</button>
-                </div>
-            </div>
+                        <tr>
+                            <td colspan="2">
+                                <div class="input-group input-group-sm" style="max-width: 30rem;">
+                                    <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="SAM" @bind-Value="newAdminGroup" Placeholder="Search groups in any domain..." />
+                                    <button class="btn btn-outline-secondary" type="button" @onclick="AddModuleAdmin">Add</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
         </div>
     }
+
+    @* One save bar for all five panes, replacing five separate buttons that gave no sign another
+       section was still unsaved. It names the dirty section: "1 unsaved change" alone tells an
+       operator something is wrong but not where. *@
+    <div class="adm-bar">
+        @if (dirty.IsDirty)
+        {
+            <span class="adm-dirty">&#9679; @dirty.Summary()</span>
+        }
+        else
+        {
+            <span class="adm-clean">No unsaved changes</span>
+        }
+        <span class="adm-grow"></span>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="ReloadAsync" disabled="@(saving || !dirty.IsDirty)">Discard</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@saving">Save</button>
+    </div>
 </div>
 
 @code {
@@ -500,6 +548,76 @@
     private const string SecAdmins = "Module Admins";
 
     private readonly AdminPageDirtyState dirty = new();
+
+    /// <summary>Which tab is showing. Set in OnParametersSetAsync to the first one available.</summary>
+    private string tab = SecStatus;
+
+    private string TabClass(string section) => tab == section ? "on" : "";
+
+    private string PaneClass(string section) => tab == section ? "on" : "";
+
+    /// <summary>Total groups granted across every permission of this module, for the tab count.</summary>
+    private int AccessGroupCount() => accessState.Values.Sum(v => v.Count);
+
+    /// <summary>
+    /// The NetBIOS domain column for a stored group value, or "-" when unknown.
+    /// </summary>
+    /// <remarks>
+    /// Split into its own column rather than prefixed onto the name so the rows align: with
+    /// DOMAIN\Name in one cell, a long domain pushes every name to a different x-position.
+    /// </remarks>
+    private string DomainOf(string groupValue)
+    {
+        var shown = DisplayNameFor(groupValue);
+        var slash = shown.IndexOf('\\');
+        return slash > 0 ? shown[..slash] : "-";
+    }
+
+    /// <summary>The group name without its domain prefix, for the Group column.</summary>
+    private string BareNameOf(string groupValue)
+    {
+        var shown = DisplayNameFor(groupValue);
+        var slash = shown.IndexOf('\\');
+        return slash >= 0 && slash < shown.Length - 1 ? shown[(slash + 1)..] : shown;
+    }
+
+    /// <summary>
+    /// Saves whatever the visible tab owns. One button replaces five, but it must not save
+    /// sections the operator is not looking at: each save has its own authorization re-check and
+    /// its own corrupt-store refusal, and firing all five would turn one refusal into a confusing
+    /// partial result.
+    /// </summary>
+    private async Task SaveCurrentTabAsync()
+    {
+        switch (tab)
+        {
+            case SecStatus: await SaveModuleEnablementAsync(); break;
+            case SecAccess: await SaveSectionAccessAsync(); break;
+            case SecConfig: await SaveConfigAsync(); break;
+            case SecAttrs: await SaveAllowlistAsync(); break;
+            case SecAdmins: await SaveModuleAdminsAsync(); break;
+        }
+    }
+
+    /// <summary>
+    /// Discards edits by reloading the page from the store. Clears dirty state FIRST, or the
+    /// unsaved-changes guard blocks the very navigation the operator asked for.
+    /// </summary>
+    private void ReloadAsync()
+    {
+        dirty.Clear();
+        Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+    }
+
+    /// <summary>The first tab this operator can actually see, so the page never opens on a hidden one.</summary>
+    private string FirstVisibleTab()
+    {
+        if (module is null) return SecStatus;
+        if (!module.IsSystemModule) return SecStatus;
+        if (isGlobalAdmin) return SecAccess;
+        if (module.ConfigFields.Count > 0) return SecConfig;
+        return SecStatus;
+    }
 
     // SID -> friendly name, for display only. Seeded from the store and topped up as groups are
     // picked, so a group added in this session shows its name before any save/reload.
@@ -549,6 +667,11 @@
         }
 
         LoadState();
+
+        // After LoadState, because the visible tabs depend on isGlobalAdmin and the loaded module.
+        // Opening on a tab this operator cannot see would render an empty page.
+        tab = FirstVisibleTab();
+
         authChecked = true;
     }
 

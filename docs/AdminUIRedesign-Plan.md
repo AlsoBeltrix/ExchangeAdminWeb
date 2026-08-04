@@ -207,8 +207,33 @@ where the 1,233-line file gets cut down -- most of it is markup the components n
      recording that I attributed this flake to two wrong causes before finding the real one --
      the lesson is that a flaky live test deserves the same evidence standard as a failing one.
 4. **`ModuleConfig.razor` rebuild** (q1) -- tabs, panes, save bar, guard.
-5. **`AdminSettings.razor` rebuild** (q2) -- modules table, protected principals, diagnostics.
-6. **Version bumps + docs.**
+   **DONE 2026-08-04.** Five stacked cards became five tabs, each pane owning its own scroll, so
+   the page no longer grows with the group count -- the failure reported at 10-20 groups. Tabs
+   carry a count (so an operator knows what is behind one without opening it) and a dot when that
+   tab holds unsaved edits, which is the only way a BACKGROUND tab's state is visible. Five Save
+   buttons became one bar naming the dirty section. **Access grants are table rows now** --
+   domain / group / SID / remove, aligned -- replacing the wrapping chips rejected repeatedly;
+   domain is its own column rather than a `DOMAIN\` prefix, because a prefix pushes every name to
+   a different x-position. Module admins converted the same way. The page opens on the first tab
+   the operator can actually see, since a global-admin-only tab would render blank for a module
+   admin.
+5. **`AdminSettings.razor` rebuild** (q2) -- modules, protected principals, logging.
+   **DONE 2026-08-04.** Same structure: three tabs, one save bar, counts and dirty dots. The four
+   protected-principal lists were left as fixed-height scroll boxes -- they were already
+   row-per-entry rather than chips, so converting them would have been churn.
+   **Not built: the diagnostics tab** from mockup q2. It shows facts (schema version, domain
+   mappings, RSAT availability, "59 of 59 grants stored as SIDs") that nothing in the app
+   currently exposes, so it is new capability rather than a redesign of existing capability, and
+   OQ-2 (live probes vs cached status) is undecided. Recorded rather than silently dropped.
+6. **Version bumps + docs.** **DONE** -- app `2.4.0`, AdminSettings module `1.1.0`.
+
+**Method note, recorded because it nearly shipped a broken page.** The two rebuilds were done by
+scripted line-range edits against 1,200-line files. Two of those edits silently deleted the block
+they were meant to replace -- the entire Access grants table and the Module Admins table -- and
+the project still BUILT clean, because Razor markup that is simply absent is not a compile error.
+Caught only by diffing the finished files against pre-edit backups for a list of expected
+symbols. Anyone doing this again: keep the backup, diff against it, and do not treat a green
+build as evidence that markup survived.
 
 Slices 1-3 are independently shippable and reversible. Slice 3 fixes a live bug on its own.
 

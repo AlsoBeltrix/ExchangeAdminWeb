@@ -36,12 +36,23 @@
 <UnsavedChangesGuard HasUnsavedChanges="@dirty.IsDirty"
                      Message="@($"{dirty.Summary()}. Leave without saving?")" />
 
-<div class="container-fluid">
-    <h1 class="mb-4">Admin Settings<ModuleVersion /></h1>
+<div class="container-fluid adm">
+    <div class="adm-hd">
+        <h1>Admin Settings</h1>
+        <span class="adm-ver"><ModuleVersion /></span>
+        <span class="adm-sub">Per-module access and configuration live on each module's own page.</span>
+    </div>
 
-    <div class="alert alert-info mb-4">
-        <strong>Enable or disable modules.</strong>
-        Per-module section access and configuration are managed on each module's config page (see sidebar links).
+    <div class="adm-tabs">
+        <button class="@TabClass(SecModules)" @onclick="() => tab = SecModules">
+            Modules <span class="adm-n">@moduleEnablement.Count</span>
+            @if (dirty.IsSectionDirty(SecModules)) { <span class="adm-dot"></span> }
+        </button>
+        <button class="@TabClass(SecProtected)" @onclick="() => tab = SecProtected">
+            Protected principals <span class="adm-n">@ProtectedCount()</span>
+            @if (dirty.IsSectionDirty(SecProtected)) { <span class="adm-dot"></span> }
+        </button>
+        <button class="@TabClass(SecLogging)" @onclick="() => tab = SecLogging">Logging</button>
     </div>
 
     @if (!string.IsNullOrEmpty(statusMessage))
@@ -52,12 +63,8 @@
         </div>
     }
 
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Module Enablement</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveEnablement" disabled="@(saving || enablementStoreCorrupt)">Save Enablement</button>
-        </div>
-        <div class="card-body">
+    <div class="adm-pane @PaneClass(SecModules)">
+
             @if (enablementStoreCorrupt)
             {
                 <div class="alert alert-danger mb-0">
@@ -96,15 +103,10 @@
             </div>
             }
         </div>
-    </div>
 
     <!-- Protected Principals -->
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Protected Principals</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveProtectedPrincipals" disabled="@(saving || ppValidating)">Save Protected Principals</button>
-        </div>
-        <div class="card-body">
+    <div class="adm-pane @PaneClass(SecProtected)">
+
             <p class="text-muted mb-3"><small>Users, groups, OUs, and patterns listed here are blocked from modification across all modules. Changes take effect immediately.</small></p>
 
             @if (ppLoadError != null)
@@ -116,7 +118,7 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Users</label>
                     <small class="text-muted d-block mb-1">UPN, email, sAMAccountName, or DOMAIN\username</small>
-                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
                         @if (ppUsers.Count > 0)
                         {
                             @foreach (var u in ppUsers.ToList())
@@ -138,7 +140,7 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Groups</label>
                     <small class="text-muted d-block mb-1">DN, DOMAIN\GroupName, or CN — transitive membership</small>
-                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
                         @if (ppGroups.Count > 0)
                         {
                             @foreach (var g in ppGroups.ToList())
@@ -160,7 +162,7 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected OUs</label>
                     <small class="text-muted d-block mb-1">Search by OU name — all objects beneath are protected</small>
-                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
                         @if (ppOus.Count > 0)
                         {
                             @foreach (var o in ppOus.ToList())
@@ -182,7 +184,7 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">sAMAccountName Patterns</label>
                     <small class="text-muted d-block mb-1">Wildcard patterns (e.g. adm-*, svc-*)</small>
-                    <div style="max-height: 150px; overflow-y: auto;" class="border rounded p-2 mb-2">
+                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
                         @if (ppPatterns.Count > 0)
                         {
                             @foreach (var p in ppPatterns.ToList())
@@ -218,14 +220,9 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <div class="card mb-4">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <strong>Extended Logging</strong>
-            <button class="btn btn-primary btn-sm" @onclick="SaveLogLevel" disabled="@saving">Save</button>
-        </div>
-        <div class="card-body">
+    <div class="adm-pane @PaneClass(SecLogging)">
+
             <p class="text-muted mb-3"><small>Controls the detail level of extended diagnostic logs. Admin audit logging (event log) is always active regardless of this setting. Extended logs are written to a separate file and viewable from the Event Log page.</small></p>
             <div class="row align-items-center">
                 <div class="col-auto">
@@ -245,6 +242,22 @@
                 </div>
             </div>
         </div>
+
+    @* One save bar for all three panes, replacing three separate buttons that gave no sign
+       another section was still unsaved. It names the dirty section: "1 unsaved change" alone
+       tells an operator something is wrong but not where. *@
+    <div class="adm-bar">
+        @if (dirty.IsDirty)
+        {
+            <span class="adm-dirty">&#9679; @dirty.Summary()</span>
+        }
+        else
+        {
+            <span class="adm-clean">No unsaved changes</span>
+        }
+        <span class="adm-grow"></span>
+        <button class="btn btn-outline-secondary btn-sm" @onclick="DiscardChanges" disabled="@(saving || !dirty.IsDirty)">Discard</button>
+        <button class="btn btn-primary btn-sm" @onclick="SaveCurrentTabAsync" disabled="@(saving || ppValidating)">Save</button>
     </div>
 </div>
 
@@ -264,7 +277,47 @@
     private const string SectionModules = "Module Enablement";
     private const string SectionProtected = "Protected Principals";
 
+    // Tab identity, kept separate from the dirty-state section names so the tab labels can be
+    // short while the unsaved-changes prompt still reads as this page's headings.
+    private const string SecModules = SectionModules;
+    private const string SecProtected = SectionProtected;
+    private const string SecLogging = "Logging";
+
     private readonly AdminPageDirtyState dirty = new();
+
+    private string tab = SecModules;
+
+    private string TabClass(string section) => tab == section ? "on" : "";
+
+    private string PaneClass(string section) => tab == section ? "on" : "";
+
+    /// <summary>Total protected entries across all four kinds, for the tab count.</summary>
+    private int ProtectedCount() => ppUsers.Count + ppGroups.Count + ppOus.Count + ppPatterns.Count;
+
+    /// <summary>
+    /// Saves what the visible tab owns. Deliberately not "save everything": each save has its own
+    /// authorization re-check and corrupt-store refusal, so firing all three would turn one
+    /// refusal into a confusing partial result.
+    /// </summary>
+    private async Task SaveCurrentTabAsync()
+    {
+        switch (tab)
+        {
+            case SecModules: await SaveEnablement(); break;
+            case SecProtected: await SaveProtectedPrincipals(); break;
+            case SecLogging: await SaveLogLevel(); break;
+        }
+    }
+
+    /// <summary>
+    /// Discards by reloading from the store. Clears dirty state FIRST or the guard blocks the
+    /// navigation the operator just asked for.
+    /// </summary>
+    private void DiscardChanges()
+    {
+        dirty.Clear();
+        Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+    }
 
     /// <summary>
     /// Toggling a module marks the section unsaved rather than writing immediately. The write

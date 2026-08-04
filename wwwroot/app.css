@@ -634,3 +634,234 @@ html.dark .table-sm > tbody > tr > td {
 html.dark .card-header {
     border-bottom-color: rgba(255,255,255,0.08);
 }
+
+/* ============================================================================
+   ADMIN PAGE SHELL -- tabs, panes, save bar.
+   docs/AdminUIRedesign-Plan.md slices 4-5, mockups q1/q2.
+
+   The problem this replaces: five sections stacked in one scrolling column,
+   each with its own easy-to-miss Save button, and no indication that another
+   section was still unsaved. With 10-20 groups on a module the page became
+   unusable (owner, 2026-08-04).
+
+   Each pane owns its own scroll, so the PAGE never grows: 2 groups or 200, the
+   viewport is the same height.
+   ============================================================================ */
+.adm {
+    display: flex;
+    flex-direction: column;
+    /* Fill the viewport below the 2.9rem top row, minus the article padding. */
+    height: calc(100vh - 2.9rem - 1.1rem);
+    min-height: 0;
+}
+
+.adm-hd {
+    display: flex;
+    align-items: baseline;
+    gap: 0.65rem;
+    padding-bottom: 0.55rem;
+    flex: none;
+}
+
+.adm-hd h1 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
+}
+
+.adm-hd .adm-sub {
+    color: var(--ui-fg3);
+    font-size: 0.78rem;
+}
+
+.adm-hd .adm-ver {
+    font-family: var(--ui-mono);
+    font-size: 0.7rem;
+    color: var(--ui-fg3);
+}
+
+.adm-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--ui-line);
+    flex: none;
+    overflow-x: auto;
+}
+
+.adm-tabs button {
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 0.42rem 0.8rem;
+    border: 0;
+    background: none;
+    color: var(--ui-fg2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.adm-tabs button:hover { color: var(--ui-fg); }
+
+.adm-tabs button.on {
+    color: var(--ui-fg);
+    font-weight: 600;
+    border-bottom-color: var(--ui-brand);
+}
+
+/* Count of rows in that tab, so an operator knows what is behind it unopened. */
+.adm-tabs .adm-n {
+    font-size: 0.68rem;
+    color: var(--ui-fg3);
+    background: var(--ui-grid);
+    border-radius: 9px;
+    padding: 0 0.36rem;
+    line-height: 1rem;
+}
+
+.adm-tabs button.on .adm-n {
+    background: var(--ui-selected);
+    color: var(--ui-brand);
+}
+
+/* Unsaved marker on the tab itself: the section is named in the save bar, but
+   the dot is what makes a BACKGROUND tab's state visible. */
+.adm-tabs .adm-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ui-warn);
+    flex: none;
+}
+
+.adm-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0.75rem 0 1rem;
+}
+
+.adm-pane.on { display: block; }
+
+.adm-bar {
+    border-top: 1px solid var(--ui-line);
+    padding: 0.5rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex: none;
+    background: var(--ui-bg);
+}
+
+.adm-bar .adm-dirty {
+    font-size: 0.78rem;
+    color: var(--ui-warn);
+    font-weight: 600;
+}
+
+.adm-bar .adm-clean {
+    font-size: 0.78rem;
+    color: var(--ui-fg3);
+}
+
+.adm-grow { flex: 1; }
+
+/* Group/principal rows: aligned columns, never wrapping chips. */
+.adm-tbl { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+.adm-tbl thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--ui-header);
+    text-align: left;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ui-fg3);
+    padding: 0.3rem 0.6rem;
+    border-bottom: 1px solid var(--ui-line);
+    white-space: nowrap;
+}
+
+.adm-tbl td {
+    padding: 0.28rem 0.6rem;
+    border-bottom: 1px solid var(--ui-grid);
+    vertical-align: middle;
+}
+
+.adm-tbl tbody tr:nth-child(even) { background: var(--ui-zebra); }
+.adm-tbl tbody tr:hover { background: var(--ui-selected); }
+
+.adm-tbl .adm-dom {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--ui-fg2);
+    width: 5.5rem;
+    white-space: nowrap;
+}
+
+.adm-tbl .adm-grp { font-weight: 500; }
+
+.adm-tbl .adm-sid {
+    font-family: var(--ui-mono);
+    font-size: 0.68rem;
+    color: var(--ui-fg3);
+    width: 100%;
+    white-space: nowrap;
+}
+
+.adm-tbl .adm-act { width: 1%; text-align: right; white-space: nowrap; }
+
+.adm-tbl .adm-rm {
+    color: var(--ui-fg3);
+    cursor: pointer;
+    font-size: 0.72rem;
+    padding: 0.05rem 0.35rem;
+    border-radius: 3px;
+    border: 0;
+    background: none;
+}
+
+.adm-tbl tr:hover .adm-rm { color: var(--ui-fg2); }
+
+.adm-tbl .adm-rm:hover {
+    background: var(--ui-danger-bg);
+    color: var(--ui-danger);
+}
+
+.adm-empty {
+    color: var(--ui-fg3);
+    font-size: 0.78rem;
+    font-style: italic;
+    padding: 0.5rem 0.6rem;
+}
+
+/* Config fields: two columns so 15 fields are not a 15-deep stack. */
+.adm-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(23rem, 1fr));
+    gap: 0 1.6rem;
+}
+
+.adm-f {
+    display: grid;
+    grid-template-columns: 11rem 1fr;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--ui-grid);
+}
+
+.adm-f > label { font-size: 0.78rem; }
+
+.adm-f > label small {
+    display: block;
+    color: var(--ui-fg3);
+    font-family: var(--ui-mono);
+    font-size: 0.65rem;
+}
