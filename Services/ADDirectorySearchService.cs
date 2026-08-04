@@ -474,6 +474,88 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
         return runspace;
     }
 
+    // Cached forest global-catalog endpoint, "host:3268". Null until probed; the sentinel below
+    // distinguishes "not yet probed" from "probed and unavailable".
+    private string? _globalCatalog;
+    private bool _globalCatalogProbed;
+    private const string NoGlobalCatalog = "";
+
+    /// <summary>
+    /// The forest global catalog to search, or null to search only the local domain.
+    /// </summary>
+    /// <remarks>
+    /// GROUP search must span the forest. Without this, <c>Get-ADGroup</c> defaults to the local
+    /// domain and WINROOT groups are simply unreachable from the picker -- verified: the same
+    /// filter returns 0 matches locally and 1 against winroot.analog.com, which is why
+    /// <c>WINROOT\Enterprise Admins</c> could be granted access by migration but never chosen in
+    /// the UI. A global-catalog query on port 3268 returns both domains in one search (measured:
+    /// 18 ANALOG + 7 WINROOT for one term, with objectSid populated on all 25).
+    ///
+    /// Probed once and cached, including the failure. Fail-soft by design: if the forest cannot
+    /// be reached, the caller falls back to a local-domain query, which is the pre-existing
+    /// behavior -- a degraded picker beats a broken one.
+    /// </remarks>
+    private string? ResolveGlobalCatalog(Runspace runspace)
+    {
+        if (_globalCatalogProbed)
+            return _globalCatalog == NoGlobalCatalog ? null : _globalCatalog;
+
+        _globalCatalogProbed = true;
+        _globalCatalog = NoGlobalCatalog;
+
+        try
+        {
+            using var ps = PowerShell.Create();
+            ps.Runspace = runspace;
+
+            // AddScript, not AddCommand + property access. Reading
+            // forest.Properties["GlobalCatalogs"] out of the returned PSObject yields an empty
+            // value in this runspace -- measured, and it silently produced a ":3268" server that
+            // Get-ADGroup accepted while quietly falling back to the local domain. Projecting to
+            // a string inside PowerShell returns the host correctly.
+            ps.AddScript("(Get-ADForest -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1");
+
+            var host = ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            ps.Commands.Clear();
+
+            if (!string.IsNullOrWhiteSpace(host))
+                _globalCatalog = $"{host}:3268";
+            else
+                _logger.LogWarning("Forest returned no global catalog; group search will cover only the local domain");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve a global catalog; group search will cover only the local domain");
+        }
+
+        return _globalCatalog == NoGlobalCatalog ? null : _globalCatalog;
+    }
+
+    /// <summary>
+    /// The DNS domain a distinguished name belongs to, from its DC= components:
+    /// <c>CN=x,OU=y,DC=winroot,DC=analog,DC=com</c> -> <c>winroot.analog.com</c>.
+    /// </summary>
+    /// <remarks>
+    /// Pure and internal so the parsing is testable without a directory. Returns null rather than
+    /// guessing when there are no DC components - the caller shows no domain instead of a wrong
+    /// one.
+    /// </remarks>
+    internal static string? DnsDomainFromDn(string? distinguishedName)
+    {
+        if (string.IsNullOrWhiteSpace(distinguishedName))
+            return null;
+
+        var parts = new List<string>();
+        foreach (var raw in distinguishedName.Split(','))
+        {
+            var seg = raw.Trim();
+            if (seg.StartsWith("DC=", StringComparison.OrdinalIgnoreCase) && seg.Length > 3)
+                parts.Add(seg[3..]);
+        }
+
+        return parts.Count == 0 ? null : string.Join('.', parts);
+    }
+
     private List<ADSearchResult> ExecuteSearch(string term, string objectKind, int maxResults)
     {
         var escaped = ProtectedPrincipalService.EscapeLdapFilter(term);
@@ -525,6 +607,18 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
               .AddParameter("ResultSetSize", maxResults)
               .AddParameter("ErrorAction", "Stop");
 
+            // Search the whole forest, not just this domain - otherwise WINROOT groups cannot be
+            // picked at all. Null when no catalog could be resolved, which leaves the previous
+            // local-domain behavior intact rather than failing the search.
+            //
+            // The StartsWith guard is not defensive padding: a failed host lookup produced the
+            // string ":3268", which Get-ADGroup ACCEPTS and then quietly serves from the local
+            // domain - the exact bug being fixed, reintroduced silently. Never pass a
+            // server string that is only a port.
+            var catalog = ResolveGlobalCatalog(runspace);
+            if (catalog is not null && !catalog.StartsWith(':'))
+                ps.AddParameter("Server", catalog);
+
             var groups = ps.Invoke();
             ps.Commands.Clear();
 
@@ -539,7 +633,11 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
                     ObjectType: "Group",
                     // SecurityIdentifier.ToString() yields the canonical "S-1-5-21-..." form, which
                     // is what section access stores and what IsInRole resolves.
-                    ObjectSid: obj.Properties["objectSid"]?.Value?.ToString()));
+                    ObjectSid: obj.Properties["objectSid"]?.Value?.ToString(),
+                    // A forest-wide search returns groups from several domains, so a bare name is
+                    // ambiguous in the picker exactly as it was on the admin page. Derived from the
+                    // DN because it is already present - no extra round-trip per row.
+                    DnsDomain: DnsDomainFromDn(obj.Properties["DistinguishedName"]?.Value?.ToString())));
             }
 
             if (ps.HadErrors)
@@ -680,6 +778,11 @@ public sealed record DirectoryValidationResult(
 /// the many existing construction sites are unaffected; a caller needing an identity must treat
 /// null as "no SID available" rather than falling back to a name.
 /// </param>
+/// <param name="DnsDomain">
+/// The DNS domain the object came from (e.g. <c>winroot.analog.com</c>), for group results from a
+/// forest-wide search. Null when unknown - a picker showing several domains must then omit the
+/// label rather than assume the local one.
+/// </param>
 public sealed record ADSearchResult(
     string DisplayName,
     string DistinguishedName,
@@ -687,4 +790,22 @@ public sealed record ADSearchResult(
     string? UserPrincipalName,
     string? Email,
     string ObjectType,
-    string? ObjectSid = null);
+    string? ObjectSid = null,
+    string? DnsDomain = null)
+{
+    /// <summary>
+    /// The NetBIOS-style label to show beside a name (<c>ANALOG</c>, <c>WINROOT</c>), or null.
+    /// </summary>
+    /// <remarks>
+    /// Derived from <see cref="DnsDomain"/>'s first label, uppercased. That matches this forest,
+    /// where ANALOG is ad.analog.com and WINROOT is winroot.analog.com, and it matches what
+    /// Windows returns from a SID translation - the form used everywhere else in the app.
+    ///
+    /// It is a display convention, not an authority: NetBIOS names can in principle differ from
+    /// the first DNS label. Nothing authorization-related reads this; the SID is the identity.
+    /// Resolving the true NetBIOS name would need a CN=Partitions lookup per row, which is not
+    /// worth a directory round-trip for a label in a dropdown.
+    /// </remarks>
+    public string? NetBiosDomain =>
+        string.IsNullOrWhiteSpace(DnsDomain) ? null : DnsDomain.Split('.')[0].ToUpperInvariant();
+}

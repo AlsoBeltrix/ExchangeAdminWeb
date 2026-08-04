@@ -26,7 +26,13 @@
                     @onmousedown="() => SelectResult(result)"
                     @onmousedown:preventDefault>
                     <div class="d-flex justify-content-between align-items-center">
-                        <div>
+                        <div class="text-truncate">
+                            @if (!string.IsNullOrEmpty(result.NetBiosDomain))
+                            {
+                                @* A forest-wide search returns several domains, so a bare group
+                                   name does not identify which one grants access. *@
+                                <span class="text-muted">@result.NetBiosDomain\</span>
+                            }
                             <span class="fw-semibold">@result.DisplayName</span>
                             <span class="text-muted ms-1" style="font-size: 0.8rem;">
                                 @GetSecondaryText(result)
