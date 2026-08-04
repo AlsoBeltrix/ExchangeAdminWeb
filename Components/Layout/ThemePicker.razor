@@ -1,0 +1,54 @@
+@rendermode InteractiveServer
+@using ExchangeAdminWeb.Services
+@inject IJSRuntime JS
+
+@* Replaces the two-state sun/moon toggle, which could not express ten themes.
+   The list comes from UiThemeCatalog -- see there for why it is not inline. *@
+<select class="form-select form-select-sm theme-picker me-3"
+        title="Theme"
+        aria-label="Theme"
+        value="@currentId"
+        @onchange="OnChanged">
+    @foreach (var group in UiThemeCatalog.Grouped())
+    {
+        <optgroup label="@group.Key">
+            @foreach (var theme in group)
+            {
+                <option value="@theme.Id" selected="@(theme.Id == currentId)">@theme.Name</option>
+            }
+        </optgroup>
+    }
+</select>
+
+@code {
+    // Starts at the default rather than empty so the control never renders with
+    // nothing selected during prerender.
+    private string currentId = UiThemeCatalog.DefaultId;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // localStorage is unreachable during prerender, so the real value can
+        // only be read once there is a browser to ask.
+        var stored = await JS.InvokeAsync<string>("getTheme");
+        var resolved = UiThemeCatalog.Resolve(stored).Id;
+
+        if (resolved != currentId)
+        {
+            currentId = resolved;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnChanged(ChangeEventArgs e)
+    {
+        // Resolve rather than trust the posted value: it decides an attribute
+        // written into the DOM, and an unknown id would leave the page unstyled.
+        currentId = UiThemeCatalog.Resolve(e.Value?.ToString()).Id;
+        await JS.InvokeVoidAsync("setTheme", currentId);
+    }
+}
