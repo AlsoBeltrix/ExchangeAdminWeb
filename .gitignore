@@ -81,3 +81,7 @@ GroupMembershipDelegation-*.csv
  .serena/
 .claude/.headroom_wrap_marker.json
 .serena/**
+
+# Coverage/test output (written by dotnet test --collect)
+TestResults/
+testResults.xml

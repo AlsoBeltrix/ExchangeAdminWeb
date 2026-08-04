@@ -22,6 +22,7 @@ namespace ExchangeAdminWeb.Tests;
 /// The directory call itself needs a live AD, so these cover the decision helpers it defers to
 /// plus the outcome the service returns when AD is absent (the CI condition).
 /// </summary>
+[Collection(LiveDirectoryCollection.Name)]
 public class ADDirectoryValidateExistsTests
 {
     private static ADDirectorySearchService CreateService()

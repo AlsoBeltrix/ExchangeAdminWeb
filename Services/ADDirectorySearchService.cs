@@ -474,8 +474,10 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
         return runspace;
     }
 
-    // Cached forest global-catalog endpoint, "host:3268". Null until probed; the sentinel below
-    // distinguishes "not yet probed" from "probed and unavailable".
+    // Forest global-catalog endpoint, "host:3268". Written only on a SUCCESSFUL probe, and only
+    // ever while _runspaceLock is held (every caller resolves it inside the locked region), so no
+    // separate synchronisation is needed. A failed probe leaves both fields untouched so the next
+    // search retries -- see ResolveGlobalCatalog.
     private string? _globalCatalog;
     private bool _globalCatalogProbed;
     private const string NoGlobalCatalog = "";
@@ -491,17 +493,23 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
     /// the UI. A global-catalog query on port 3268 returns both domains in one search (measured:
     /// 18 ANALOG + 7 WINROOT for one term, with objectSid populated on all 25).
     ///
-    /// Probed once and cached, including the failure. Fail-soft by design: if the forest cannot
-    /// be reached, the caller falls back to a local-domain query, which is the pre-existing
-    /// behavior -- a degraded picker beats a broken one.
+    /// A SUCCESS is cached for the life of the service; a FAILURE is not. That asymmetry is the
+    /// point. An earlier version set the "probed" flag before running the probe, so a single
+    /// transient <c>Get-ADForest</c> failure - which does happen under load - permanently pinned
+    /// the service to local-domain-only searching, silently restoring the very bug this fixes.
+    /// It surfaced as a test that passed alone and failed in the full suite; the message was
+    /// "Forest has 2 domains but group search returned only: ad.analog.com".
+    ///
+    /// Retrying a failure costs one extra directory call per search until it succeeds, which is
+    /// the correct trade against silently degrading forever.
+    ///
+    /// Fail-soft: when the forest cannot be reached the caller falls back to a local-domain
+    /// query, the pre-existing behavior -- a degraded picker beats a broken one.
     /// </remarks>
     private string? ResolveGlobalCatalog(Runspace runspace)
     {
         if (_globalCatalogProbed)
             return _globalCatalog == NoGlobalCatalog ? null : _globalCatalog;
-
-        _globalCatalogProbed = true;
-        _globalCatalog = NoGlobalCatalog;
 
         try
         {
@@ -519,16 +527,23 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
             ps.Commands.Clear();
 
             if (!string.IsNullOrWhiteSpace(host))
+            {
+                // Cache the SUCCESS only. See the remarks: caching a failure permanently
+                // degrades the picker to local-domain-only.
                 _globalCatalog = $"{host}:3268";
-            else
-                _logger.LogWarning("Forest returned no global catalog; group search will cover only the local domain");
+                _globalCatalogProbed = true;
+                return _globalCatalog;
+            }
+
+            _logger.LogWarning("Forest returned no global catalog; this search covers only the local domain");
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Could not resolve a global catalog; group search will cover only the local domain");
+            _logger.LogWarning(ex, "Could not resolve a global catalog; this search covers only the local domain");
         }
 
-        return _globalCatalog == NoGlobalCatalog ? null : _globalCatalog;
+        // Unresolved: return null WITHOUT marking probed, so the next search tries again.
+        return null;
     }
 
     /// <summary>

@@ -2,6 +2,7 @@ using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
 
+[Collection(LiveDirectoryCollection.Name)]
 public class ADDirectorySearchServiceTests
 {
     // ---------------------------------------------------------------

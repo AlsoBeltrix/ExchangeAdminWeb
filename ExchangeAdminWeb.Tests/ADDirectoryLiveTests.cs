@@ -21,6 +21,7 @@ namespace ExchangeAdminWeb.Tests;
 /// 2. Never let a conditional live test be the only coverage of a rule. On CI it does not run at
 ///    all. These complement the pure tests; they never replace them.
 /// </summary>
+[Collection(LiveDirectoryCollection.Name)]
 public class ADDirectoryLiveTests
 {
     private static ADDirectorySearchService CreateService()
