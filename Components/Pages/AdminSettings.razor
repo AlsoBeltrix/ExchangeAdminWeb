@@ -118,19 +118,27 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Users</label>
                     <small class="text-muted d-block mb-1">UPN, email, sAMAccountName, or DOMAIN\username</small>
-                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
-                        @if (ppUsers.Count > 0)
-                        {
-                            @foreach (var u in ppUsers.ToList())
-                            {
-                                var captured = u;
-                                <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppUsers, captured)">×</button>
-                                </div>
-                            }
-                        }
-                        else { <small class="text-muted fst-italic">None</small> }
+                    @* Rows, not a stack of borderless lines: at 4+ entries the old list
+                       gave the eye nothing to separate one principal from the next. *@
+                    <div class="adm-scroll mb-2">
+                        <table class="adm-tbl">
+                            <tbody>
+                                @if (ppUsers.Count == 0)
+                                {
+                                    <tr><td colspan="2" class="adm-empty">None</td></tr>
+                                }
+                                @foreach (var u in ppUsers.ToList())
+                                {
+                                    var captured = u;
+                                    <tr>
+                                        <td class="adm-val">@captured @StaleBadge(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePp(ppUsers, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                     <div class="input-group input-group-sm">
                         <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN" @bind-Value="ppNewUser" Placeholder="user@contoso.com" Disabled="@ppValidating" />
@@ -140,19 +148,25 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected Groups</label>
                     <small class="text-muted d-block mb-1">DN, DOMAIN\GroupName, or CN — transitive membership</small>
-                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
-                        @if (ppGroups.Count > 0)
-                        {
-                            @foreach (var g in ppGroups.ToList())
-                            {
-                                var captured = g;
-                                <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppGroups, captured)">×</button>
-                                </div>
-                            }
-                        }
-                        else { <small class="text-muted fst-italic">None</small> }
+                    <div class="adm-scroll mb-2">
+                        <table class="adm-tbl">
+                            <tbody>
+                                @if (ppGroups.Count == 0)
+                                {
+                                    <tr><td colspan="2" class="adm-empty">None</td></tr>
+                                }
+                                @foreach (var g in ppGroups.ToList())
+                                {
+                                    var captured = g;
+                                    <tr>
+                                        <td class="adm-val">@captured @StaleBadge(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePp(ppGroups, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                     <div class="input-group input-group-sm">
                         <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="DN" @bind-Value="ppNewGroup" Placeholder="Search AD groups..." Disabled="@ppValidating" />
@@ -162,19 +176,25 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">Protected OUs</label>
                     <small class="text-muted d-block mb-1">Search by OU name — all objects beneath are protected</small>
-                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
-                        @if (ppOus.Count > 0)
-                        {
-                            @foreach (var o in ppOus.ToList())
-                            {
-                                var captured = o;
-                                <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured @StaleBadge(captured)</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppOus, captured)">×</button>
-                                </div>
-                            }
-                        }
-                        else { <small class="text-muted fst-italic">None</small> }
+                    <div class="adm-scroll mb-2">
+                        <table class="adm-tbl">
+                            <tbody>
+                                @if (ppOus.Count == 0)
+                                {
+                                    <tr><td colspan="2" class="adm-empty">None</td></tr>
+                                }
+                                @foreach (var o in ppOus.ToList())
+                                {
+                                    var captured = o;
+                                    <tr>
+                                        <td class="adm-val">@captured @StaleBadge(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePp(ppOus, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                     <div class="input-group input-group-sm">
                         <ADIdentityAutocomplete ObjectKind="OU" ReturnValueKind="DN" @bind-Value="ppNewOu" Placeholder="Search AD OUs..." Disabled="@ppValidating" />
@@ -184,19 +204,25 @@
                 <div class="col-md-6">
                     <label class="form-label fw-semibold">sAMAccountName Patterns</label>
                     <small class="text-muted d-block mb-1">Wildcard patterns (e.g. adm-*, svc-*)</small>
-                    <div style="max-height: 220px; overflow-y: auto;" class="border rounded p-2 mb-2">
-                        @if (ppPatterns.Count > 0)
-                        {
-                            @foreach (var p in ppPatterns.ToList())
-                            {
-                                var captured = p;
-                                <div class="d-flex justify-content-between align-items-center py-1">
-                                    <small>@captured</small>
-                                    <button class="btn btn-outline-danger btn-sm py-0 px-1" @onclick="() => RemovePp(ppPatterns, captured)">×</button>
-                                </div>
-                            }
-                        }
-                        else { <small class="text-muted fst-italic">None</small> }
+                    <div class="adm-scroll mb-2">
+                        <table class="adm-tbl">
+                            <tbody>
+                                @if (ppPatterns.Count == 0)
+                                {
+                                    <tr><td colspan="2" class="adm-empty">None</td></tr>
+                                }
+                                @foreach (var p in ppPatterns.ToList())
+                                {
+                                    var captured = p;
+                                    <tr>
+                                        <td class="adm-val">@captured</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePp(ppPatterns, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
                     </div>
                     <div class="input-group input-group-sm">
                         <input type="text" class="form-control" @bind="ppNewPattern" @bind:event="oninput" @onkeydown="OnPpPatternKey" placeholder="adm-*" />
