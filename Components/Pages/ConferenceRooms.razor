@@ -644,9 +644,7 @@
         => BulkJobs.DisplayStatus(job, DateTime.UtcNow);
 
     private static string JobKindLabel(ExchangeAdminWeb.Services.Jobs.BulkJob job)
-        => job.JobType == ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.FinderJobType
-            ? "Room Finder (bulk)"
-            : "Room Type (bulk)";
+        => ExchangeAdminWeb.Services.Jobs.ConferenceRoomJobPayload.KindLabel(job.JobType);
 
     // The most relevant job of a given kind to show detailed rows for: the active one if any,
     // otherwise the most recent finished one.

@@ -21,4 +21,25 @@ public sealed class ConferenceRoomJobPayload
 
     /// <summary>Room Type rows (Kind == <see cref="TypeJobType"/>).</summary>
     public List<TypeCsvRow>? TypeRows { get; init; }
+
+    /// <summary>
+    /// Operator-facing label for a job type. An unrecognised type returns the RAW type rather than
+    /// being folded into a known kind.
+    ///
+    /// The page previously used a two-way ternary over an open string ("is it Finder? no? then it
+    /// is Room Type"), which rendered a Message Analysis export as "Room Type (bulk)" and so
+    /// disguised the cross-module leak that put it there. Had it shown MessageTrace_DetailExport,
+    /// the defect would have been obvious on sight. Scoping the reads makes foreign types
+    /// unreachable here, but a future Conference Rooms job type would inherit the same silent
+    /// mislabel, so the fallback must be honest regardless.
+    ///
+    /// Lives here rather than in the .razor file because there is no bUnit harness in this repo -
+    /// same reason as MessageTraceExportListing and AdminPageDirtyState.
+    /// </summary>
+    public static string KindLabel(string jobType) => jobType switch
+    {
+        FinderJobType => "Room Finder (bulk)",
+        TypeJobType => "Room Type (bulk)",
+        _ => jobType
+    };
 }
