@@ -544,6 +544,24 @@ public sealed class ModuleCatalog
             Version = "1.0.3",
             MainPermission = new("Access", "EventLog", FailClosed: true),
             GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
+        },
+        new()
+        {
+            Id = "AdminBulkJobs",
+            DisplayName = "Bulk Jobs",
+            Description = "View, cancel and remove background bulk jobs across every module.",
+            Route = "admin-bulk-jobs",
+            IconCss = "bi bi-list-nested-nav-menu",
+            Category = "Administration",
+            SortOrder = 920,
+            EnabledByDefault = true,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            // FailClosed: this page aggregates EVERY module's jobs - submitters, tickets, targets
+            // and per-row outcomes across section-access boundaries. That aggregation is exactly
+            // what those boundaries exist to prevent leaking, so a failure to evaluate the policy
+            // must deny. Same reasoning as AdminEventLog.
+            MainPermission = new("Access", "AdminBulkJobs", FailClosed: true)
         }
     ];
 

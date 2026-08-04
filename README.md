@@ -42,6 +42,7 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
 - Exports are kept for 30 days by a host scheduled task; the app never deletes them. A row whose export could not be saved shows as Failed, distinct from an expired one
+- **That task is not automatic — install it once per host** with `tools/Install-MessageTraceExportRetention.ps1 -LogRoot <Audit:LogRoot>` from an elevated shell (`-PlanOnly` to preview). Without it, exports accumulate forever and the "Available Until" date the app shows becomes a claim nothing enforces. It is deliberately not part of `deploy.ps1`: a deploy must not register privileged host objects, and the task is per-host, not per-deploy
 - Section access key: `MessageTrace`
 ### On-Premises Permission Operations
 

@@ -167,6 +167,14 @@ public sealed class BulkJobService
     // Read API (wraps the repository; adds Stalled display classification)
     // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// How long finished jobs are kept before the startup prune deletes them
+    /// (BulkJobs:RetentionDays, default 30). Exposed so a page can STATE the retention rather than
+    /// hardcoding a number beside it - a second copy is free to drift from the value actually
+    /// enforced, which is the defect openreview F4 recorded against Export:RetentionDays.
+    /// </summary>
+    public int RetentionDays => (int)_pruneRetention.TotalDays;
+
     public BulkJob? GetJob(string id) => _repository.Get(id);
     public IReadOnlyList<BulkJob> GetActiveJobs() => _repository.GetActive();
     public IReadOnlyList<BulkJob> GetRecentJobs() => _repository.GetRecentFinished(_recentJobLimit);

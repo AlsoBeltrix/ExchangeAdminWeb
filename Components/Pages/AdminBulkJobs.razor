@@ -1,0 +1,336 @@
+@page "/admin-bulk-jobs"
+@using Microsoft.AspNetCore.Authorization
+@using ExchangeAdminWeb.Services.Jobs
+@attribute [Authorize(Policy = "AdminBulkJobs")]
+@rendermode InteractiveServer
+@inject BulkJobService BulkJobs
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject ClientInfoService ClientInfo
+@inject ILogger<AdminBulkJobs> Logger
+@implements IDisposable
+
+<PageTitle>Bulk Jobs</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <h1 class="mb-1">Bulk Jobs<ModuleVersion /></h1>
+    <p class="text-muted mb-3">
+        <small>
+            Background jobs across every module. Module pages show only their own jobs, so this is
+            the only place a running job is visible regardless of which module submitted it.
+            Finished jobs are kept for @RetentionSummary and every action here is audited.
+        </small>
+    </p>
+
+    @if (!string.IsNullOrEmpty(actionMessage))
+    {
+        <div class="alert alert-info py-2"><small>@actionMessage</small></div>
+    }
+
+    <div class="mb-3">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshJobs">Refresh</button>
+    </div>
+
+    <div class="card">
+        <div class="card-body p-0" style="overflow-x:auto">
+            @if (activeJobs.Count == 0 && recentJobs.Count == 0)
+            {
+                <p class="text-muted fst-italic p-3 mb-0"><small>No bulk jobs in any module.</small></p>
+            }
+            else
+            {
+                <table class="table table-sm mb-0 align-middle">
+                    <thead>
+                        <tr>
+                            @* Module is the column the per-module panels cannot have, and whose
+                               absence let a MessageTrace export pass as a Conference Rooms job. *@
+                            <th>Module</th><th>Kind</th><th>Submitted by</th><th>Ticket</th><th>Status</th>
+                            <th>Submitted</th><th>Finished</th>
+                            <th>Progress</th><th>Success</th><th>Partial</th><th>Failed</th><th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var job in activeJobs)
+                        {
+                            var status = BulkJobs.DisplayStatus(job, DateTime.UtcNow);
+                            <tr class="@(status == "Stalled" ? "table-warning" : status == "Running" ? "table-info" : "")">
+                                <td><small><strong>@job.ModuleId</strong></small></td>
+                                @* Raw JobType: this page spans modules, so no single module's
+                                   label map applies to every row. *@
+                                <td><small>@job.JobType</small></td>
+                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                <td><small>@job.Ticket</small></td>
+                                <td><span class="badge @(status == "Running" ? "bg-info" : status == "Stalled" ? "bg-warning text-dark" : "bg-secondary")">@status</span></td>
+                                <td class="text-nowrap"><small>@LocalTime(job.SubmittedAtUtc)</small></td>
+                                <td class="text-nowrap"><small class="text-muted">@HeartbeatAge(job)</small></td>
+                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                <td><small class="text-success">@job.SuccessCount</small></td>
+                                <td><small class="text-warning">@job.PartialCount</small></td>
+                                <td><small class="text-danger">@job.FailedCount</small></td>
+                                <td class="text-nowrap">
+                                    <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleDetails(job.Id)">
+                                        @(detailsJobId == job.Id ? "Hide" : "Details")
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm" @onclick="() => CancelJob(job)">
+                                        @(job.Status == BulkJobStatus.Queued ? "Remove" : "Cancel")
+                                    </button>
+                                </td>
+                            </tr>
+                            @if (detailsJobId == job.Id)
+                            {
+                                <tr class="table-light">
+                                    <td colspan="12">@DetailsBody(job)</td>
+                                </tr>
+                            }
+                        }
+                        @foreach (var job in recentJobs)
+                        {
+                            <tr>
+                                <td><small><strong>@job.ModuleId</strong></small></td>
+                                <td><small>@job.JobType</small></td>
+                                <td><small>@(job.SubmittedByDisplay ?? job.SubmittedBy)</small></td>
+                                <td><small>@job.Ticket</small></td>
+                                <td><span class="badge @(job.Status == BulkJobStatus.Completed && job.FailedCount == 0 && job.PartialCount == 0 ? "bg-success" : job.Status == BulkJobStatus.Completed ? "bg-warning text-dark" : "bg-secondary")">@job.Status</span></td>
+                                <td class="text-nowrap"><small>@LocalTime(job.SubmittedAtUtc)</small></td>
+                                <td class="text-nowrap"><small>@LocalTime(job.FinishedAtUtc)</small></td>
+                                <td><small>@job.ProcessedRows / @job.TotalRows</small></td>
+                                <td><small class="text-success">@job.SuccessCount</small></td>
+                                <td><small class="text-warning">@job.PartialCount</small></td>
+                                <td><small class="text-danger">@job.FailedCount</small></td>
+                                <td class="text-nowrap">
+                                    <button class="btn btn-outline-secondary btn-sm me-1" @onclick="() => ToggleDetails(job.Id)">
+                                        @(detailsJobId == job.Id ? "Hide" : "Details")
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job)"
+                                            title="Remove this job from the list for everyone. The audit record is kept.">
+                                        Remove
+                                    </button>
+                                </td>
+                            </tr>
+                            @if (detailsJobId == job.Id)
+                            {
+                                <tr class="table-light">
+                                    <td colspan="12">@DetailsBody(job)</td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool authChecked;
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private string? actionMessage;
+
+    private IReadOnlyList<BulkJob> activeJobs = Array.Empty<BulkJob>();
+    private IReadOnlyList<BulkJob> recentJobs = Array.Empty<BulkJob>();
+
+    private string? detailsJobId;
+    private IReadOnlyList<BulkJobRow> detailsRows = Array.Empty<BulkJobRow>();
+
+    // Read from the service, never hardcoded: a literal here would be a second retention truth
+    // free to drift from BulkJobs:RetentionDays, which is the defect openreview F4 recorded.
+    private string RetentionSummary => $"{BulkJobs.RetentionDays} days";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+        clientIpAddress = ClientInfo.IpAddress ?? "Unknown";
+
+        // Re-checked here as well as by the [Authorize] attribute, matching the pattern the other
+        // admin pages use: this page deliberately aggregates every module's jobs, so it must not
+        // render at all for someone who cannot hold that.
+        var pageAuth = await AuthorizationService.AuthorizeAsync(user, "AdminBulkJobs");
+        if (!pageAuth.Succeeded)
+        {
+            authChecked = true;
+            return;
+        }
+
+        BulkJobs.JobChanged += OnJobChanged;
+        RefreshJobs();
+        authChecked = true;
+    }
+
+    // The honest cross-module reads. Every module page uses the scoped variants; this is the one
+    // surface entitled to the unfiltered view, which is why the policy is fail-closed.
+    private void RefreshJobs()
+    {
+        activeJobs = BulkJobs.GetActiveJobs();
+        recentJobs = BulkJobs.GetRecentJobs();
+
+        if (detailsJobId is not null)
+            detailsRows = BulkJobs.GetRows(detailsJobId);
+    }
+
+    private bool _disposed;
+
+    // Fired from the runner's thread; marshal onto the render thread. async void is the sanctioned
+    // form for an event handler, so the body is fully guarded and skips work after dispose.
+    private async void OnJobChanged(string jobId)
+    {
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed)
+                    return;
+                RefreshJobs();
+                StateHasChanged();
+            });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to refresh the admin bulk job view on job change");
+        }
+    }
+
+    private void ToggleDetails(string jobId)
+    {
+        if (detailsJobId == jobId)
+        {
+            detailsJobId = null;
+            detailsRows = Array.Empty<BulkJobRow>();
+            return;
+        }
+
+        detailsJobId = jobId;
+        detailsRows = BulkJobs.GetRows(jobId);
+    }
+
+    // Cancel and Remove here are deliberately NOT module-scoped: crossing modules is this page's
+    // purpose, and it is gated behind a fail-closed admin policy for exactly that reason. Both
+    // audit, naming the module the job belonged to.
+    private void CancelJob(BulkJob job)
+    {
+        BulkJobs.CancelJob(job.Id);
+        WriteAudit("AdminBulkJobs_CancelJob", job, success: true);
+        actionMessage = $"Cancellation requested for {job.ModuleId} job {job.JobType}.";
+        RefreshJobs();
+    }
+
+    private void RemoveJob(BulkJob job)
+    {
+        // DeleteJob keeps its module argument; this page passes the job's own module, which it
+        // knows. No id-only overload exists, so the guard cannot be skipped by a future caller.
+        var removed = BulkJobs.DeleteJob(job.ModuleId, job.Id);
+        WriteAudit("AdminBulkJobs_RemoveJob", job, removed);
+
+        actionMessage = removed
+            ? $"Removed {job.ModuleId} job {job.JobType}."
+            : $"Could not remove {job.ModuleId} job {job.JobType} - it may still be running.";
+
+        if (detailsJobId == job.Id)
+        {
+            detailsJobId = null;
+            detailsRows = Array.Empty<BulkJobRow>();
+        }
+
+        RefreshJobs();
+    }
+
+    // Audit failure must never make a completed action look failed (Constitution, Auditing And
+    // Tracing), hence catch-and-log rather than surfacing.
+    private void WriteAudit(string action, BulkJob job, bool success)
+    {
+        try
+        {
+            Audit.LogConferenceRoomAction(
+                currentUser, clientIpAddress, action,
+                target: $"{job.ModuleId}/{job.Id}", success: success, ticketNumber: job.Ticket ?? "",
+                oldValues: new Dictionary<string, object?>
+                {
+                    ["ModuleId"] = job.ModuleId,
+                    ["JobType"] = job.JobType,
+                    ["Status"] = job.Status.ToString(),
+                    ["SubmittedBy"] = job.SubmittedBy,
+                    ["SubmittedAtUtc"] = job.SubmittedAtUtc,
+                    ["TotalRows"] = job.TotalRows
+                });
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Audit failed for {Action}", action); }
+    }
+
+    private static string LocalTime(DateTime? utc)
+        => utc is null ? "" : utc.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+
+    private static string HeartbeatAge(BulkJob job)
+    {
+        if (job.HeartbeatAtUtc is not { } hb)
+            return "";
+
+        var age = DateTime.UtcNow - hb;
+        return age.TotalMinutes < 1
+            ? "just now"
+            : age.TotalHours < 1
+                ? $"{(int)age.TotalMinutes}m ago"
+                : $"{(int)age.TotalHours}h ago";
+    }
+
+    private static string RowStatusCss(BulkJobRowStatus s)
+        => s == BulkJobRowStatus.Success ? ""
+           : s == BulkJobRowStatus.Partial ? "table-warning" : "table-danger";
+
+    public void Dispose()
+    {
+        _disposed = true;
+        BulkJobs.JobChanged -= OnJobChanged;
+    }
+
+    private RenderFragment DetailsBody(BulkJob job) =>
+        @<div>
+            @if (!string.IsNullOrWhiteSpace(job.Message))
+            {
+                @* Where the cancel and interrupt reasons live. Nothing surfaced this before. *@
+                <div class="mb-2"><small><strong>Note:</strong> @job.Message</small></div>
+            }
+            <div class="mb-2">
+                <small class="text-muted">
+                    Submitted @LocalTime(job.SubmittedAtUtc)
+                    by @(job.SubmittedByDisplay ?? job.SubmittedBy)
+                    from @job.SubmittedIp
+                    @if (!string.IsNullOrWhiteSpace(job.Ticket)) { <text>&mdash; ticket @job.Ticket</text> }
+                </small>
+            </div>
+            @if (detailsRows.Count == 0)
+            {
+                <small class="text-muted fst-italic">No rows recorded.</small>
+            }
+            else
+            {
+                <table class="table table-sm mb-0">
+                    <thead><tr><th>Target</th><th>Status</th><th>Message</th></tr></thead>
+                    <tbody>
+                        @foreach (var row in detailsRows)
+                        {
+                            <tr class="@RowStatusCss(row.Status)">
+                                <td><small>@row.Target</small></td>
+                                <td><small>@row.Status</small></td>
+                                <td><small>@row.Message</small></td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>;
+}

@@ -1,7 +1,21 @@
 # Admin Bulk Jobs + Export Retention Plan
 
-Status: **Approved 2026-08-04** by owner directive: *"fix scheduled jobs, add the admin bulk jobs
-management."* That wording sets the scope; no owner gate is open.
+Status: **Implemented 2026-08-04** (all four slices). No owner gate is open. Approved by owner
+directive: *"fix scheduled jobs, add the admin bulk jobs management."*
+**The 9 manual checks have NOT been run** -- they need a dev deploy, and installing the scheduled
+task is a privileged host action nobody has performed yet.
+
+## Progress
+
+| Slice | Commit | Note |
+|---|---|---|
+| 1 Retention sweep + Pester | `fe0fcdd` | 20 tests; 2 fail if the anchored pattern becomes `*.csv` |
+| 2 Task installer | `fe0fcdd` | PSSA: Write-Host warnings only, the dominant existing category; 0 Errors repo-wide |
+| 3 `AdminBulkJobs` page + catalog | this commit | `FailClosed: true`; policy is generated from the descriptor, no `Program.cs` change |
+| 4 Docs + versions | this commit | README, repo-guidance, state. **No app bump** -- Constitution: a new module does not bump the base version |
+
+**Not yet done by anyone: the task is still not registered on this host.** Slice 1-2 supply the
+scripts; installing them is a privileged action, listed as manual check 2.
 
 Two things, related by a common cause: work that runs outside a page has nowhere to be seen and
 nothing to tend it.
@@ -99,6 +113,11 @@ is exactly what the section-access boundary exists to prevent leaking, so the pa
 deliberately crosses it must deny on any failure to evaluate, matching `AdminEventLog`
 (`MainPermission = new("Access", "EventLog", FailClosed: true)`).
 
+The page states its retention from `BulkJobService.RetentionDays` (added for this), never a
+literal. A hardcoded "30 days" beside the table would be a second retention truth free to drift
+from `BulkJobs:RetentionDays` -- the same defect openreview F4 recorded against
+`Export:RetentionDays`, and one this plan very nearly reintroduced while arguing against it.
+
 Content: one table over `GetActiveJobs()` + `GetRecentJobs()`, with a **Module** column (the column
 the Conference Rooms panel could not have, and whose absence let a MessageTrace row pass as a
 Conference Rooms job). Kind renders the raw `JobType` -- this page spans modules, so no module's
@@ -129,7 +148,11 @@ across every caller, unchanged by this work and still recorded.
    Pester-testable (registers a host object); the remover holds the logic.
 3. **`AdminBulkJobs` page + catalog entry.** `FailClosed: true`.
 4. **Docs + versions.** README retention section corrected to say the task must be installed and
-   how; `.agents/state.md`; app version bump.
+   how; `.agents/repo-guidance.md` per-host setup; `.agents/state.md`.
+   **No base app version bump.** The Constitution is explicit: *"Adding a new module does not bump
+   the base app version; only the new module's own version is set. A new module is not a
+   shared-infrastructure change."* `AdminBulkJobs` ships at `1.0.0`; the app stays `2.5.1`. The
+   retention scripts are ops tooling and ship no app behaviour, so they bump nothing either.
 
 ## Verification
 

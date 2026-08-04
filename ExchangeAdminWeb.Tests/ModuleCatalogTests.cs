@@ -13,7 +13,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(23, _catalog.GetAll().Count); // 23 modules (22 operational + 1 config-only)
+        Assert.Equal(24, _catalog.GetAll().Count); // 24 modules (23 operational + 1 config-only)
     }
 
     [Fact]
@@ -102,7 +102,10 @@ public class ModuleCatalogTests
         Assert.Contains("BlockedSenders", aliases);
         Assert.Contains("BlockedSendersUnblock", aliases);
         Assert.Contains("SelfServiceGroups", aliases);
-        Assert.Equal(32, aliases.Count);
+        // Cross-module job administration. Configurable so the groups entitled to see every
+        // module's jobs at once are set deliberately, not inherited from another module's grant.
+        Assert.Contains("AdminBulkJobs", aliases);
+        Assert.Equal(33, aliases.Count);
     }
 
     [Fact]

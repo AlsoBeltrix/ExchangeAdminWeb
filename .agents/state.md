@@ -6,6 +6,38 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Export retention task + admin bulk jobs view -- ALL 4 SLICES LANDED 2026-08-04. App stays
+  `2.5.1`; new module `AdminBulkJobs 1.0.0`. NOT DEPLOYED; the scheduled task is NOT INSTALLED.**
+  `docs/AdminBulkJobs-Plan.md` Status: Implemented; **9 manual checks unrun.**
+  **The retention scheduled task never existed.** Measured, not inferred: `schtasks /query` on this
+  host returns **266 tasks, none belonging to this app.** Yet
+  `Services/MessageTraceExportStore.cs:13-24` states as fact that one removes exports older than
+  30 days, `README.md` repeats it to operators, download-link plan D1 records it as an owner
+  ruling, and **openreview F4 rejected a configurable retention key specifically to avoid
+  disagreeing with it.** The single source of truth was never created. Consequence: exports
+  accumulate forever, and past day 30 the reports page shows **Expired for a file still on disk** --
+  wrong in the direction that matters, claiming data is gone when it is not. Exposure is currently
+  small by luck: 2 files, 0.6 KB each, 6 days old.
+  `tools/Remove-MessageTraceExports.ps1` + `tools/Install-MessageTraceExportRetention.ps1` supply
+  it. **The narrow scope is load-bearing: the export directory sits INSIDE the audit log root**, so
+  deletion matches an anchored filename pattern, never `*.csv`; most of the 20 Pester tests assert
+  what SURVIVES. The 30-day constant stays a constant -- this makes the existing promise true
+  rather than configurable, reinstating F4's reasoning.
+  **`AdminBulkJobs` closes the gap the Conference Rooms scoping fix opened.** After that fix a
+  *running* Message Analysis export was visible nowhere (`/message-analysis/reports` lists only
+  terminal exports) and `GetActiveJobs()`/`GetRecentJobs()` had no caller. The new page at
+  `/admin-bulk-jobs` is the legitimate home for both, with a **Module column** -- the column whose
+  absence let a MessageTrace row pass as a Conference Rooms job. **`FailClosed: true`**, because
+  aggregating every module's submitters, tickets and targets is exactly what the section-access
+  boundary exists to prevent leaking. Cancel and Remove here are deliberately NOT module-scoped:
+  crossing modules is the page's purpose, and both audit.
+  **No base app bump, per the Constitution** ("Adding a new module does not bump the base app
+  version"). A `2.5.2` bump was made and reverted on reading that rule.
+  **NEXT, two separate things:** deploy `2.5.1` to dev for the page, and **separately install the
+  scheduled task** (`tools/Install-MessageTraceExportRetention.ps1 -LogRoot E:\WWWOutput`,
+  ELEVATED, `-PlanOnly` first). The task is per-host and deliberately not part of deploy, so a
+  deploy alone leaves retention still unenforced.
+
 - **Conference Rooms bulk jobs panel -- ALL 6 SLICES LANDED 2026-08-04, app `2.5.1`,
   ConferenceRooms `2.3.2`, NOT DEPLOYED.** `docs/ConferenceRoomsBulkJobPanel-Plan.md` Status:
   Implemented; **10 manual checks unrun** (the panel is markup, so they are the only evidence).
