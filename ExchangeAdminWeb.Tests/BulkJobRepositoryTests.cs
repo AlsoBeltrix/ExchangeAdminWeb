@@ -432,6 +432,63 @@ public class BulkJobRepositoryTests
     }
 
     // -------------------------------------------------------------------------
+    // Delete - operator "Remove" on a finished job
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void Delete_RemovesATerminalJobAndCascadesItsRows()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        repo.Insert(Finished(NewJob("done", BulkJobStatus.Completed)));
+        repo.RecordRow(new BulkJobRow { JobId = "done", RowIndex = 0, Target = "r", Status = BulkJobRowStatus.Success, RecordedAtUtc = DateTime.UtcNow }, DateTime.UtcNow);
+
+        Assert.True(repo.Delete("done"));
+
+        Assert.Null(repo.Get("done"));
+        Assert.Empty(repo.GetRows("done"));
+    }
+
+    [Theory]
+    [InlineData(BulkJobStatus.Queued)]
+    [InlineData(BulkJobStatus.Running)]
+    public void Delete_RefusesANonTerminalJob(BulkJobStatus status)
+    {
+        // Deleting an active job would leave the runner holding a cancellation token for a row
+        // that no longer exists, and its next heartbeat write would target a missing row. The
+        // guard is in SQL so no caller can skip it.
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        repo.Insert(NewJob("active", status));
+
+        Assert.False(repo.Delete("active"));
+        Assert.NotNull(repo.Get("active"));
+    }
+
+    [Fact]
+    public void Delete_ReturnsFalseForAnUnknownId()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+
+        Assert.False(repo.Delete("nope"));
+    }
+
+    [Fact]
+    public void Delete_RemovesOnlyTheNamedJob()
+    {
+        using var temp = new TempDir();
+        var repo = CreateRepo(temp);
+        repo.Insert(Finished(NewJob("target", BulkJobStatus.Completed)));
+        repo.Insert(Finished(NewJob("bystander", BulkJobStatus.Completed)));
+
+        repo.Delete("target");
+
+        Assert.Null(repo.Get("target"));
+        Assert.NotNull(repo.Get("bystander"));
+    }
+
+    // -------------------------------------------------------------------------
     // AppendMessage - the completion-step note the terminal transition cannot carry
     // -------------------------------------------------------------------------
 

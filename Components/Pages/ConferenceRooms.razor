@@ -86,7 +86,12 @@
                                 <td><small class="text-success">@job.SuccessCount</small></td>
                                 <td><small class="text-warning">@job.PartialCount</small></td>
                                 <td><small class="text-danger">@job.FailedCount</small></td>
-                                <td></td>
+                                <td>
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => RemoveJob(job.Id)"
+                                            title="Remove this job from the list for everyone. The audit record is kept.">
+                                        Remove
+                                    </button>
+                                </td>
                             </tr>
                         }
                     </tbody>
@@ -639,6 +644,35 @@
     }
 
     private void CancelJob(string jobId) => BulkJobs.CancelJob(jobId);
+
+    // Removal destroys a durable record, so it audits. The audit log is a separate store from the
+    // jobs database, which is what makes a hard delete acceptable: who cleared what survives the
+    // row. Audit failure must not make a completed removal look failed, hence the same
+    // catch-and-log shape as the other audit helpers on this page.
+    private void RemoveJob(string jobId)
+    {
+        var job = recentJobs.FirstOrDefault(j => j.Id == jobId);
+        var removed = BulkJobs.DeleteJob(
+            ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor.ModuleName, jobId);
+
+        try
+        {
+            Audit.LogConferenceRoomAction(
+                currentUser, clientIpAddress, "ConferenceRooms_RemoveBulkJob",
+                target: jobId, success: removed, ticketNumber: job?.Ticket ?? "",
+                oldValues: job is null ? null : new Dictionary<string, object?>
+                {
+                    ["JobType"] = job.JobType,
+                    ["Status"] = job.Status.ToString(),
+                    ["SubmittedBy"] = job.SubmittedBy,
+                    ["SubmittedAtUtc"] = job.SubmittedAtUtc,
+                    ["TotalRows"] = job.TotalRows
+                });
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
+
+        RefreshJobs();
+    }
 
     private string JobDisplayStatus(ExchangeAdminWeb.Services.Jobs.BulkJob job)
         => BulkJobs.DisplayStatus(job, DateTime.UtcNow);

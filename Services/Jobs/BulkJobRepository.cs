@@ -289,6 +289,40 @@ public sealed class BulkJobRepository
         return affected;
     }
 
+    /// <summary>
+    /// Permanently deletes ONE terminal job and its rows. Returns false if the job does not exist
+    /// or is still Queued or Running.
+    ///
+    /// The terminal check is in the SQL, not left to the caller: deleting an active job would
+    /// leave the runner holding a cancellation token for a row that no longer exists, and its next
+    /// heartbeat write would target a missing row. Enforcing it here means no future caller can
+    /// bypass it by forgetting.
+    ///
+    /// This is a hard delete, not a hidden flag. Callers must audit it - the jobs database is a
+    /// separate store from the audit log, so the record of who removed what survives the deletion
+    /// (docs/ProjectConstitution.md, Auditing And Tracing).
+    /// </summary>
+    public bool Delete(string jobId)
+    {
+        using var connection = _factory.Open();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText =
+            """
+            DELETE FROM bulk_job
+            WHERE id = $id
+              AND status IN ($completed, $cancelled, $interrupted);
+            """;
+        command.Parameters.AddWithValue("$id", jobId);
+        command.Parameters.AddWithValue("$completed", BulkJobStatus.Completed.ToString());
+        command.Parameters.AddWithValue("$cancelled", BulkJobStatus.Cancelled.ToString());
+        command.Parameters.AddWithValue("$interrupted", BulkJobStatus.Interrupted.ToString());
+        var affected = command.ExecuteNonQuery();
+        transaction.Commit();
+        return affected == 1;
+    }
+
     // -------------------------------------------------------------------------
     // Reads
     // -------------------------------------------------------------------------

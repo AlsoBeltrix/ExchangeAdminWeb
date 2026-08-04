@@ -181,6 +181,31 @@ public sealed class BulkJobService
         _repository.GetFinishedByType(moduleId, jobType, limit);
 
     /// <summary>
+    /// Permanently removes one finished job and its rows from the panel, on operator request.
+    /// Returns false when the job does not exist, is still active, or belongs to another module.
+    ///
+    /// The module argument is not decoration: without it a page would be handing an arbitrary id
+    /// to a delete, which is the same cross-module hole as the unscoped Cancel (plan F1) in a more
+    /// destructive form. Verified here rather than in SQL so the caller cannot pass a module it
+    /// does not own by omitting the check.
+    ///
+    /// Callers MUST write an audit event - this destroys a durable record, and the audit log is a
+    /// separate store, so it is what preserves who removed what.
+    /// </summary>
+    public bool DeleteJob(string moduleId, string jobId)
+    {
+        var job = _repository.Get(jobId);
+        if (job is null || !string.Equals(job.ModuleId, moduleId, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var deleted = _repository.Delete(jobId);
+        if (deleted)
+            RaiseChanged(jobId);
+
+        return deleted;
+    }
+
+    /// <summary>
     /// Non-terminal jobs for one module. What a module's own jobs panel must use:
     /// <see cref="GetActiveJobs"/> spans every module, so a page built on it both discloses and
     /// offers controls over another module's work.

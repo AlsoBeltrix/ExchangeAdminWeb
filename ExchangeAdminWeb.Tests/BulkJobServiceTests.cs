@@ -98,10 +98,10 @@ public class BulkJobServiceTests
                 Repository, registry, config, NullLogger<BulkJobService>.Instance);
         }
 
-        public BulkJob NewJob(string id, string payload, string status = "Queued") => new()
+        public BulkJob NewJob(string id, string payload, string status = "Queued", string moduleId = "Test") => new()
         {
             Id = id,
-            ModuleId = "Test",
+            ModuleId = moduleId,
             JobType = "T",
             Status = Enum.Parse<BulkJobStatus>(status),
             SubmittedBy = "u",
@@ -115,6 +115,86 @@ public class BulkJobServiceTests
             Provider.Dispose();
             Temp.Dispose();
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Module-scoped reads and removal
+    // (docs/ConferenceRoomsBulkJobPanel-Plan.md F1, D2)
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public async Task GetActiveJobsByModule_ExcludesAnotherModulesRunningJob()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("foreign", "S", "Running", moduleId: "MessageTrace"));
+        h.Repository.Insert(h.NewJob("mine", "S"));
+
+        await Task.CompletedTask;
+
+        Assert.Equal(["mine"], h.Service.GetActiveJobsByModule("Test").Select(j => j.Id));
+    }
+
+    [Fact]
+    public async Task GetRecentJobsByModule_ExcludesAnotherModulesFinishedJob()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("mine", "S"));
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        var foreign = h.NewJob("foreign", "S", "Completed", moduleId: "MessageTrace");
+        foreign.FinishedAtUtc = DateTime.UtcNow;
+        h.Repository.Insert(foreign);
+
+        Assert.Equal(["mine"], h.Service.GetRecentJobsByModule("Test").Select(j => j.Id));
+    }
+
+    [Fact]
+    public async Task DeleteJob_RemovesAFinishedJobOfThatModule()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("j1", "S"));
+        await h.Service.DrainQueueAsync(CancellationToken.None);
+
+        Assert.True(h.Service.DeleteJob("Test", "j1"));
+        Assert.Null(h.Repository.Get("j1"));
+    }
+
+    [Fact]
+    public async Task DeleteJob_RefusesAJobBelongingToAnotherModule()
+    {
+        // Without the module check the page would hand an arbitrary id to a delete - the same
+        // cross-module hole as the unscoped Cancel button, in a more destructive form.
+        using var h = new Harness();
+        var foreign = h.NewJob("foreign", "S", "Completed", moduleId: "MessageTrace");
+        foreign.FinishedAtUtc = DateTime.UtcNow;
+        h.Repository.Insert(foreign);
+
+        await Task.CompletedTask;
+
+        Assert.False(h.Service.DeleteJob("Test", "foreign"));
+        Assert.NotNull(h.Repository.Get("foreign"));
+    }
+
+    [Fact]
+    public async Task DeleteJob_RefusesAStillActiveJob()
+    {
+        using var h = new Harness();
+        h.Repository.Insert(h.NewJob("queued", "S"));
+
+        await Task.CompletedTask;
+
+        Assert.False(h.Service.DeleteJob("Test", "queued"));
+        Assert.NotNull(h.Repository.Get("queued"));
+    }
+
+    [Fact]
+    public async Task DeleteJob_ReturnsFalseForAnUnknownId()
+    {
+        using var h = new Harness();
+
+        await Task.CompletedTask;
+
+        Assert.False(h.Service.DeleteJob("Test", "nope"));
     }
 
     [Fact]
