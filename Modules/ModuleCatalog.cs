@@ -213,6 +213,8 @@ public sealed class ModuleCatalog
         {
             Id = "MessageTrace",
             DisplayName = "Message Analysis",
+            // 1.4.0: the 10-day realtime/historical split retired - Get-MessageTraceV2 serves the
+            // full 90-day window in-app, so no search is deferred to an emailed Microsoft report.
             Description = "Analyze message headers and trace delivery through Exchange Online and on-premises transport logs.",
             Route = "message-analysis",
             IconCss = "bi bi-envelope-fill-nav-menu",
@@ -220,7 +222,7 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.1",
+            Version = "1.4.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MessageTrace", FailClosed: true),
             ConfigFields = [

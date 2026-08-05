@@ -26,8 +26,54 @@ public class MessageTraceDateValidationTests
     public void ExceedsNinetyDays_ReturnsError()
     {
         var result = MessageTrace.ValidateDateRange(
-            DateTime.Today.AddDays(-90), DateTime.Today);
+            DateTime.Today.AddDays(-91), DateTime.Today);
         Assert.Contains("90 days", result);
+    }
+
+    // --- Retention boundary ---
+    //
+    // These pin the rule against what Exchange Online actually enforces, measured on this tenant
+    // 2026-08-05: Get-MessageTraceV2 returned rows at 90 days back and refused at 91 with
+    // "Invalid StartDate value. The StartDate can't be older than 90 days from today."
+    // A fixed "today" is passed so the boundary is exact rather than clock-dependent.
+
+    private static readonly DateTime Today = new(2026, 8, 5);
+
+    [Fact]
+    public void NinetyDaysBack_IsTheLastAcceptedStart()
+    {
+        Assert.Null(MessageTrace.ValidateDateRange(Today.AddDays(-90), Today, Today));
+    }
+
+    [Fact]
+    public void NinetyOneDaysBack_IsRefused()
+    {
+        var result = MessageTrace.ValidateDateRange(Today.AddDays(-91), Today, Today);
+
+        // Named as a retention limit, not as a width problem: the operator's fix is to move the
+        // start date forward, and a "range too wide" message would send them to shrink the window
+        // instead - which does not help when the whole window is too old.
+        Assert.Contains("90 days of message trace data", result);
+    }
+
+    [Fact]
+    public void AnOldNarrowWindowIsRefusedForBeingOld_NotForBeingWide()
+    {
+        // The gap this check closed: a ONE-DAY search 180 days ago passed the old width-only rule
+        // and failed at Exchange with a raw cmdlet error. Width alone cannot catch it.
+        var result = MessageTrace.ValidateDateRange(Today.AddDays(-180), Today.AddDays(-179), Today);
+
+        Assert.Contains("90 days of message trace data", result);
+        Assert.DoesNotContain("cannot exceed", result);
+    }
+
+    [Fact]
+    public void AWindowWiderThanNinetyDaysIsStillRefused()
+    {
+        // Reachable only with a future end date barred elsewhere, so this asserts the width rule
+        // still exists rather than having been replaced by the age rule.
+        var result = MessageTrace.ValidateDateRange(Today.AddDays(-89), Today.AddDays(2), Today);
+        Assert.NotNull(result);
     }
 
     [Fact]

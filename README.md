@@ -33,11 +33,11 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 
 - Realtime trace queries both Exchange Online message trace and on-premises message tracking logs
 - Optional ticket number is recorded in audit logs only; it does not call ServiceNow
-- Historical-search reports are delivered only to the authenticated user's email address
+- Trace searches run in-app across the full Exchange Online retention window (90 days); results are shown on the page, never deferred to an emailed report
 - Header Analysis is the primary workflow and supports pasted headers plus `.eml` and `.msg` uploads
 - Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
-- Historical Exchange Online searches are still submitted as background jobs for ranges beyond the realtime window
+- A start date older than 90 days is refused with the retention limit named, rather than failing at Exchange with a raw cmdlet error. Data older than 90 days is not retained by Exchange Online and cannot be traced
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit
