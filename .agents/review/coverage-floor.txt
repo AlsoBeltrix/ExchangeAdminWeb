@@ -6,9 +6,17 @@
 # finding tsr-1 recorded (it had been set 0.7 points below the measured value, leaving exactly
 # enough slack to delete tests unnoticed).
 #
-# Set from the EXACT measured value (1004/1543 = 65.068%), rounded DOWN to two decimals - not from
-# the displayed one-decimal figure. The display rounds 65.068 up to "65.1", and a floor of 65.1
-# would then be unreachable by the very run it was taken from: a permanently red build, which
-# teaches people to ignore the gate. Rounding down by <0.01 costs nothing a real regression could
-# hide in.
-65.06
+# Set from the EXACT measured value, rounded DOWN to two decimals - not from the displayed
+# one-decimal figure. The display rounds up, and a floor taken from it would be unreachable by the
+# very run it was measured from: a permanently red build, which teaches people to ignore the gate.
+# Rounding down by <0.01 costs nothing a real regression could hide in.
+#
+# Take the number from a GREEN CI RUN, never from a local one. CI's denominator is smaller than a
+# dev box's, because live-directory tests skip on a standalone runner so their code is never loaded
+# or instrumented (CI 1296 lines vs ~1569 locally, measured 2026-08-05). A floor set from a local
+# figure can be unreachable on CI, which is the failure this file exists to prevent.
+#
+# 2026-08-05: raised 65.06 -> 65.12 after docs/CoverageRatchetRepair-Plan.md extracted the
+# directory-reading decisions from SectionAccessGroupDirectory. Measured on CI run 31021097853:
+# 844/1296 = 65.1234...%, floor 65.12. Previous value was 65.068% (1004/1543).
+65.12
