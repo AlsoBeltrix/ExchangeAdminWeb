@@ -216,6 +216,20 @@ public class PermissionValidatorTests
     {
         public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.Resolved;
 
+        /// <summary>
+        /// Forces the central-config branch on. Without this the fixture's repository reports
+        /// "not configured", ValidateTargetMailboxAsync skips the entire protection block, and
+        /// tests of that block pass no matter what it contains - which is exactly what a
+        /// non-vacuity probe caught here.
+        /// </summary>
+        public override bool HasCentralConfig => true;
+
+        /// <summary>Set to script the fail-closed config-load error branch.</summary>
+        public string? LoadError;
+
+        /// <summary>Set to script the outcome of the protection check itself.</summary>
+        public ProtectedPrincipalResult? CheckResult;
+
         public ScriptedPpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
             ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository repo, DelineaService delinea)
             : base(env, config, moduleConfig, repo, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>())
@@ -228,6 +242,16 @@ public class PermissionValidatorTests
                 : null;
             return Task.FromResult((p, Status));
         }
+
+        public override (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
+            => LoadError is not null
+                ? (null, Array.Empty<string>(), LoadError)
+                : base.LoadEffectiveConfig();
+
+        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
+            => CheckResult is not null
+                ? Task.FromResult(CheckResult)
+                : base.CheckAsync(target);
     }
 
     /// <summary>
@@ -345,5 +369,71 @@ public class PermissionValidatorTests
         Assert.NotNull(result);
         Assert.DoesNotContain("was not found", result);
         Assert.DoesNotContain("ambiguous", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // --- Fail-closed denials after resolution succeeds ---
+    //
+    // These are the branches that decide whether a protected mailbox can be modified. They were
+    // unreachable in a test until HasCentralConfig / LoadEffectiveConfig / CheckAsync became
+    // virtual seams, so the whole deny path sat uncovered on the code that enforces it.
+
+    [Fact]
+    public async Task ValidateTargetMailbox_ConfigLoadFails_DeniesRatherThanAllowing()
+    {
+        // Known Failure Class #3, fail-closed authorization. A protection config that cannot be
+        // READ says nothing about whether the target is protected - so the only safe answer is to
+        // refuse. Allowing here would silently un-protect every principal the moment the config
+        // store hiccups, which is the worst possible failure for this gate.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.LoadError = "protected-principals.json is corrupt";
+
+        var result = await validator.ValidateTargetMailboxAsync("vip@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("Access denied", result);
+        Assert.Contains("corrupt", result);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_ProtectionCheckFails_DeniesRatherThanAllowing()
+    {
+        // The other half of the same rule: the check RAN but could not reach the directory to
+        // evaluate a Group or OU rule. An unevaluated rule is not a passed rule.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.CheckResult = ProtectedPrincipalResult.Failed("directory unreachable");
+
+        var result = await validator.ValidateTargetMailboxAsync("vip@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("Access denied", result);
+        Assert.Contains("directory unreachable", result);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_ProtectedPrincipal_IsRefused()
+    {
+        // The gate doing its actual job.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("Target is a protected principal.", "Group:VIPs");
+
+        var result = await validator.ValidateTargetMailboxAsync("ceo@company.com");
+
+        Assert.NotNull(result);
+        Assert.Contains("Access denied", result);
+        Assert.Contains("ceo@company.com", result);
+        Assert.Contains("protected", result, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ValidateTargetMailbox_NotProtected_IsAllowed()
+    {
+        // The permissive path, asserted so the deny tests above are not passing merely because
+        // this gate denies everything.
+        var (validator, pp) = CreateValidatorWithScriptedResolution();
+        pp.CheckResult = ProtectedPrincipalResult.NotProtected();
+
+        var result = await validator.ValidateTargetMailboxAsync("ordinary@company.com");
+
+        Assert.Null(result);
     }
 }

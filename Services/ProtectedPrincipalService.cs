@@ -100,7 +100,9 @@ public class ProtectedPrincipalService
     // (fail-closed) load path rather than skipping protection entirely. A DB-integrity failure
     // ALSO counts as "has config" (true) so the caller routes into LoadEffectiveConfig, which
     // returns the controlled fail-closed error - never let this probe throw through to a 500.
-    public bool HasCentralConfig
+    // virtual for the same reason as CheckAsync below: PermissionValidator branches on this, and
+    // its deny paths are unreachable in a test without a seam here. No behavior change.
+    public virtual bool HasCentralConfig
     {
         get
         {
@@ -161,7 +163,9 @@ public class ProtectedPrincipalService
         return ProtectedPrincipalResult.NotProtected();
     }
 
-    public (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
+    // virtual: same test seam as HasCentralConfig / CheckAsync. PermissionValidator's fail-closed
+    // deny on a config load error cannot be reached in a test otherwise. No behavior change.
+    public virtual (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
     {
         // The legacy ExcludedUsers protection list lives in the MailboxPermissions
         // module config. If that file exists but is corrupt, silently reading it as
