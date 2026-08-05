@@ -34,6 +34,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `PermissionValidator` at 46%, which will dilute it again) is open and blocks nothing.**
   **NEXT: owner approval, then slices 1-3.**
 
+- **CI test failure FIXED and CONFIRMED ON CI 2026-08-05** (`506c2d4`, pushed in `0f67e62`).
+  Run 31016572894: Test passes -- **1288 passed, 0 failed, 9 skipped** (the 9th skip is the new
+  domain-only case, skipping loudly on the standalone runner exactly as designed). The `powershell`
+  job passes.
+  **`master` is still red, now solely on the coverage gate** -- `64.1% (817 / 1275)` vs the 65.06
+  floor -- which is what the prediction below said would surface once Test stopped exiting first.
+  **New fact the plan now carries: CI and the dev box do not measure the same denominator.** CI is
+  1275 lines to the dev box's 1569, because live-directory tests skip there so their code is never
+  instrumented. The shortfall is **13 lines on CI, 6 locally**; a local `Test-CoverageFloor.ps1`
+  pass is therefore NOT evidence the gate will pass on CI.
+
 - **CI test failure FIXED 2026-08-05.** `master` had been red since `ba9fe4f` (2026-08-04) on
   `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`, and the record said the
   coverage gate was the cause. **It was not** -- the failing step is Test; the coverage gate never

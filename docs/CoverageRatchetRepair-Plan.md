@@ -16,12 +16,19 @@ scope it gates (`Authorization/`, `Services/ProtectedPrincipal*`, `PermissionVal
 Exact arithmetic from the current Cobertura report, because the size of the gap decides the shape
 of the fix:
 
-    in scope        1015 / 1569 lines = 64.69%
-    floor 65.06 needs                  1021 lines
-    SHORTFALL                          6 lines
+    local (domain-joined, dev box)   1015 / 1569 lines = 64.69%   shortfall 6 lines
+    CI (standalone runner, run 31016572894)  817 / 1275 = 64.10%   shortfall 13 lines
 
-**Six lines.** This is not a "write a large test suite" problem, and treating it as one would be
-the wrong response to the measurement.
+**Six lines locally, thirteen on CI. CI is the number that matters** -- it is what the gate blocks
+on. Neither is a "write a large test suite" problem, and treating it as one would be the wrong
+response to the measurement.
+
+**The two hosts do not measure the same thing, and an implementer must not be surprised by that.**
+CI's denominator is 294 lines smaller because live-directory tests skip there (9 skipped on CI
+versus 3 locally), so code only those tests reach is never loaded and never instrumented. A local
+`Test-CoverageFloor.ps1` pass is therefore **not** proof the gate will pass on CI. Verify the fix
+against CI's arithmetic, not the dev box's: the extraction must add roughly 13 covered lines to a
+1275-line denominator, not 6 to a 1569-line one.
 
 ### Why it is failing
 
@@ -31,13 +38,17 @@ section-access groups as `DOMAIN\Name`") added 49 lines to
 lowers the ratio while the numerator stays still. The gate is behaving exactly as designed and is
 reporting a real dilution.
 
-### Why it is not what reddens CI
+### It is now the sole CI failure -- confirmed
 
-Recorded because the previous state entry got this wrong. The `build-test` job fails at the
-**Test** step, on `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")` (fixed
-2026-08-05, `506c2d4`). The coverage step runs *after* Test and never executes. **This gate becomes
-the visible CI failure once that fix lands** -- it did not cause the current red, and fixing it
-would not have turned CI green on its own.
+Recorded because an earlier state entry got this wrong. Until `506c2d4` the `build-test` job failed
+at the **Test** step, on `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`, and the
+coverage step never ran at all.
+
+**Confirmed on run 31016572894 (`0f67e62`):** Test now passes -- `1288 passed, 0 failed, 9
+skipped` -- and the single failing step is `Coverage floor (security-critical paths)`, reporting
+`64.1% (817 / 1275)` against the 65.06 floor. The `powershell` job passes.
+
+So this plan is now the only thing standing between `master` and a green build.
 
 ## Why `SectionAccessGroupDirectory` has 0% coverage
 
@@ -116,6 +127,12 @@ coverable lines, so the arithmetic is not a simple 15-for-15 swap.
 value does not clear 65.06 the plan is not done: the answer is more extraction from the same file
 -- `ResolveDomainServer`'s error-message construction is the next candidate -- and never a lower
 floor.
+
+**Measure against CI's arithmetic, not the dev box's.** 15 extracted lines comfortably covers a
+6-line local shortfall and only just covers CI's 13, before accounting for the declaration lines
+extraction adds. **The local run passing is not sufficient evidence** -- slice 2 is not complete
+until a CI run is green, and a local pass followed by a CI failure means more extraction, not a
+floor adjustment.
 
 ### What must not happen
 
