@@ -2,7 +2,17 @@
 
 Status: **Implemented 2026-08-04** (all three slices). No owner gate is open. Approved by owner
 directive: *"fix scheduled jobs, add the admin bulk jobs management."*
-**The 9 manual checks have NOT been run** -- they need a dev deploy.
+**On dev as of `2.5.3` (22:24). Checks 2 and 3 PASS on real data; 1 and 4-9 remain unrun.**
+
+Observed after the dev restart, which is what triggers the sweep:
+
+- **Check 2 PASS** -- both real exports (6 days old, inside the 30-day window) survive. This is the
+  case that matters most day to day: the sweep must do nothing far more often than it deletes.
+- **Check 3 PASS** -- all 87 `.jsonl` audit logs in the parent directory are intact. That is the
+  deletion the anchored filename pattern exists to prevent, now confirmed against a real audit
+  tree rather than a temp fixture.
+- **Check 1 not yet exercised** -- no export on either instance has reached 30 days, so the
+  deleting path has not run in production conditions. Only the guards have been proven live.
 
 ## Progress
 

@@ -6,9 +6,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Theme palettes reworked 2026-08-04, app `2.5.3`, NOT DEPLOYED.** Owner rejected the themes on
-  sight after `2.5.1` reached dev: *"the themes aren't implemented optimally. I see really only two
-  main colors."* `docs/ThemeSupport-Plan.md` slice 6.
+- **Theme palettes reworked 2026-08-04, app `2.5.3`, ON DEV.** Deployed by the owner 22:24 and
+  verified: dev assembly `FileVersion 2.5.3.0`, and dev `wwwroot/app.css` is **byte-identical to
+  the repo** (SHA256 match), so the reworked palettes are genuinely live rather than a stale copy
+  surviving the mirror. Owner rejected the first cut on sight after `2.5.1` reached dev: *"the
+  themes aren't implemented optimally. I see really only two main colors."*
+  `docs/ThemeSupport-Plan.md` slice 6.
   **The mechanism was fine; the VALUES were wrong** -- so this was a data-only fix with no rule
   touched, which is the token layer working as intended.
   Measured cause, three parts: (a) canvas/surface/header sat within ~12 luminance points, below the
@@ -72,11 +75,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   crossing modules is the page's purpose, and both audit.
   **No base app bump, per the Constitution** ("Adding a new module does not bump the base app
   version"). A `2.5.2` bump was made and reverted on reading that rule.
-  **NEXT: deploy `2.5.2` to dev.** Nothing to install -- the deploy restarts the app, which runs
-  the retention sweep. Manual check 3 (an audit log in the parent directory survives) is the
-  load-bearing one, since that is the deletion the pattern exists to prevent.
-  **Prod is on `2.5.1` and therefore has NO export retention**: it carries the theme work and the
-  Conference Rooms bulk-jobs fixes, but predates `PruneExpired` and the admin page.
+  **ON DEV as of `2.5.3`. Checks 2 and 3 PASS on real data**, observed after the 22:24 restart:
+  both real exports (6 days old, inside the window) survive, and all 87 `.jsonl` audit logs in the
+  parent directory are intact -- that second one is the deletion the anchored pattern exists to
+  prevent, now proven against a real audit tree rather than a temp fixture.
+  **The deleting path has NOT run in production conditions:** no export on either instance has
+  reached 30 days yet, so only the guards are proven live. Checks 4-9 (the admin page) unrun.
 
 - **Conference Rooms bulk jobs panel -- ALL 6 SLICES LANDED 2026-08-04, app `2.5.1`,
   ConferenceRooms `2.3.2`, NOT DEPLOYED.** `docs/ConferenceRoomsBulkJobPanel-Plan.md` Status:
@@ -604,18 +608,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.5.1`, prod `2.5.1`** -- both verified from the assembly 2026-08-04
-  (`FileVersion 2.5.1.0`; dev written 19:13, prod 18:39). The owner deployed both that evening,
-  including to PROD, which had been four months behind on `2.3.34`. Repo is one ahead at `2.5.2`.
-  **Both instances therefore now carry** everything through the Conference Rooms bulk-jobs work:
-  section-access SID storage, the `sidf-1` admin-lockout fix, the full UI redesign, ten themes, and
-  the module-scoped jobs panel. That clears the long backlog recorded below -- the four work
-  streams that sat undeployed for weeks are live on prod now, **and none of their manual checks
-  has been run.**
-  **Neither instance has:** in-process export retention or the `AdminBulkJobs` page (`2.5.2`).
-  Prod is consequently still accumulating Message Analysis exports with nothing deleting them.
-  **Caution: the two `2.5.1` builds are not identical** -- prod was published 34 minutes before
-  dev, straddling commits. Version numbers alone cannot distinguish them.
+- **Deployed: dev `2.5.3`, prod `2.5.2`** -- both verified from the assembly 2026-08-04
+  (dev `2.5.3.0` written 22:24; prod `2.5.2.0` written 19:54). Repo is level with dev at `2.5.3`.
+  Dev's `wwwroot/app.css` hashes identical to the repo's, so the reworked palettes are confirmed
+  live rather than a stale file surviving the robocopy mirror; **prod's app.css differs and still
+  carries the flat first-cut palettes.**
+  Both instances had been four months behind on `2.3.34` until 2026-08-04 and now carry
+  section-access SID storage, the `sidf-1` admin-lockout fix, the full UI redesign, ten themes, the
+  module-scoped jobs panel, in-process export retention and the `AdminBulkJobs` page. That clears
+  the long backlog recorded below -- **and none of those work streams' manual checks has been run
+  on either instance.**
+  **Prod is one behind dev:** it lacks only the palette rework (`2.5.3`).
+  **Caution: version numbers alone cannot identify a build here.** Two different `2.5.1` builds
+  shipped 34 minutes apart earlier the same evening, straddling commits. Hash the deployed file
+  against the repo when it matters, as was done for `app.css` above.
   Deployed-version claims below this line predate 2026-08-04; treat the specific build numbers in
   them as history, not as current state.
   **Dev now carries, none of it validated against a live directory yet:** the operator-email
