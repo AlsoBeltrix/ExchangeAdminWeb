@@ -50,15 +50,64 @@ public class SectionAccessGroupIdentityTests
 
     [Theory]
     [InlineData("BA")]   // -> S-1-5-32-544, BUILTIN\Administrators
-    [InlineData("DA")]   // -> the local domain's Domain Admins
     [InlineData("WD")]   // -> S-1-1-0, Everyone
     public void RefusesSddlAliases(string alias)
     {
         // new SecurityIdentifier("BA") SUCCEEDS. Parse-success alone would let a two-letter string
-        // authorize BUILTIN\Administrators; "DA" is worse still, because it IS an account SID and
-        // so passes every check except the round-trip.
+        // authorize BUILTIN\Administrators.
+        //
+        // "DA" belongs to this set logically but NOT here: it resolves only against a joined
+        // domain, so it is covered separately below.
         Assert.False(SectionAccessGroupIdentity.IsUsableGroupSid(alias));
         Assert.Contains("canonical", SectionAccessGroupIdentity.SidRejectionReason(alias));
+    }
+
+    [Fact]
+    public void RefusesTheDomainAdminsSddlAlias()
+    {
+        // "DA" is the worst of the aliases - it resolves to a real account SID and so passes every
+        // check except the round-trip - but it is also the only one that needs a DOMAIN to resolve
+        // at all. On a standalone machine `new SecurityIdentifier("DA")` throws, which the code
+        // reports as "not a valid SID" rather than "not canonical": still a refusal, still correct,
+        // different words.
+        //
+        // It sat in the Theory above and turned CI red from 2026-08-04 (ba9fe4f) onward, passing on
+        // this domain-joined box and failing on GitHub's standalone runner. The test was asserting
+        // the environment, not the behaviour. Skipping loudly beats both a silent early return and
+        // a wrong-environment assertion (the repo rule that produced Assert.SkipWhen elsewhere).
+        Assert.SkipUnless(IsDomainJoined(), "\"DA\" only resolves on a domain-joined machine.");
+
+        Assert.False(SectionAccessGroupIdentity.IsUsableGroupSid("DA"));
+        Assert.Contains("canonical", SectionAccessGroupIdentity.SidRejectionReason("DA"));
+    }
+
+    [Fact]
+    public void RefusesTheDomainAdminsAliasOnAnyHost()
+    {
+        // The part that holds EVERYWHERE, and the part that actually matters for authorization:
+        // "DA" is never usable as a stored group value. Whether it is refused for being
+        // non-canonical (domain-joined) or unparseable (standalone) is an implementation detail of
+        // the platform, not a security property.
+        //
+        // This is the test that would have caught the original defect on either host, which is why
+        // it exists alongside the skip rather than the skip standing alone.
+        Assert.False(SectionAccessGroupIdentity.IsUsableGroupSid("DA"));
+        Assert.NotNull(SectionAccessGroupIdentity.SidRejectionReason("DA"));
+    }
+
+    private static bool IsDomainJoined()
+    {
+        // Resolving "DA" IS the capability under test, so probe it directly rather than asking the
+        // OS about domain membership - a machine can be joined while the alias still fails.
+        try
+        {
+            _ = new System.Security.Principal.SecurityIdentifier("DA");
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     [Fact]

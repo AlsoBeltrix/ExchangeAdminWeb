@@ -6,6 +6,33 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **CI test failure FIXED 2026-08-05.** `master` had been red since `ba9fe4f` (2026-08-04) on
+  `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`, and the record said the
+  coverage gate was the cause. **It was not** -- the failing step is Test; the coverage gate never
+  runs because Test exits first.
+  **The test asserted an environment, not a behaviour.** `"DA"` is the only SDDL alias needing a
+  joined DOMAIN to resolve: here it resolves and is refused as *"not canonical"*; on GitHub's
+  standalone runner it throws and is refused as *"not a valid SID"*. Both are correct refusals, so
+  the security property held the whole time -- only the wording assertion was environment-specific.
+  Measured both branches before touching anything (`ZZ`/`QQ` throw here too, confirming the
+  unresolvable path).
+  Split into: the two aliases that resolve anywhere (`BA`, `WD`) in the original theory; a
+  domain-only case using `Assert.SkipUnless`, which skips LOUDLY per the repo rule that a silent
+  early return is indistinguishable from a pass; and a host-agnostic case asserting the part that
+  actually matters for authorization -- `"DA"` is never a usable stored group value, whatever the
+  reason string says. The skip probes by *resolving the alias*, not by asking the OS about domain
+  membership: a joined machine can still fail to resolve it.
+  **This file's own header already required these tests to be directory-free so they hold on CI.**
+  The invariant was written down and the test still violated it -- the header was not enough on its
+  own, which is why the host-agnostic assertion exists rather than only the skip.
+  Verified the way the defect demanded -- by reproducing CI's condition, not by trusting a green
+  run on a domain-joined box: pointing the probe at an alias that never resolves anywhere gives
+  **54 passed, 1 skipped, 0 failed**, so the domain-only case skips and the host-agnostic case
+  still holds. Non-vacuity separately proven by deleting the canonical-SID check, which fails all
+  four alias tests including the new one.
+  **NEXT once this lands: the coverage ratchet becomes the new CI failure** (64.7% vs 65.06). It
+  was always failing; the Test step was simply reaching the exit first.
+
 - **HANDOFF 2026-08-05, as of `b106dce`. Tree clean, nothing in flight, nothing blocked.**
   **Repo `2.5.5`; dev `2.5.4`; prod `2.5.2`.** Dev and prod versions were verified from the
   assemblies during the session, not assumed -- do the same before trusting them again, and note
@@ -716,12 +743,23 @@ Live backlog only. Items need an approved plan before code unless noted.
 **-1. Deploy `2.5.5` to dev and eyeball a disabled submit button** (accent, not blue). No plan
    needed -- it is the verification step for work already landed.
 
-**-0.5. The coverage ratchet is FAILING and CI on `master` is red.** 64.7% against a 65.06 floor,
-   pre-existing and traced to `0e35e7b` growing the 0%-covered
-   `Services/SectionAccessGroupDirectory.cs`. **Do not lower the floor**
-   (`.agents/review/coverage-floor.txt` says why; finding tsr-1). The fix needs a testable seam
-   first, because that service talks to live AD -- same shape as the `MailboxPermissionOutcome` /
+**-0.5. CI on `master` is red -- and NOT for the reason recorded until 2026-08-05.** Checked the
+   run rather than assuming: the failing step is **Test**, not the coverage gate. One test fails,
+   `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`. The `powershell` job passes.
+   Red since `ba9fe4f` (2026-08-04); last green `f3b402a` (2026-07-30). **Fixed 2026-08-05** -- see
+   `## Now`.
+   Cause: `"DA"` is the only SDDL alias that needs a joined DOMAIN to resolve. On this box it
+   resolves and is refused as *"not canonical"*; on GitHub's standalone runner
+   `new SecurityIdentifier("DA")` throws and it is refused as *"not a valid SID"*. Same refusal,
+   different words -- the test asserted the environment, not the behaviour. Measured both branches
+   before changing anything.
+   **The coverage ratchet is ALSO failing** (64.7% vs a 65.06 floor) but it is NOT what reddens CI
+   -- the Test step exits first, so the gate never runs. Pre-existing, traced to `0e35e7b` growing
+   the 0%-covered `Services/SectionAccessGroupDirectory.cs`. **Do not lower the floor**
+   (`.agents/review/coverage-floor.txt` says why; finding tsr-1). Needs a testable seam first,
+   because that service talks to live AD -- same shape as the `MailboxPermissionOutcome` /
    `CalendarFolderIdentity` extractions in `docs/TestSuiteRemediation-Plan.md`. Needs a plan.
+   **It will surface as the next CI failure once the test fix lands.**
 
 **-0.4. PROD carries four months of unvalidated work as of 2026-08-04** and its manual checks have
    never been run. Highest-consequence single check: `ANALOG\ExchangeWebAdmins` can still open
