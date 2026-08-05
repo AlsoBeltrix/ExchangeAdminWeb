@@ -341,7 +341,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   were rejected for keeping the same materials. What was finally approved is **structural, not
   cosmetic**: tabbed panes each with their own scroll, so the page never grows with the group
   count; grants as aligned table rows, never chips; one save bar per page naming the dirty
-  section. Approved mockups kept at `docs/mockups/q1..q3`; 15 rejected drafts deleted so there is
+  section. The three approved mockups are kept in `docs/mockups/` (`q1-tabbed.html`,
+  `q2-adminsettings.html`, `q3-picker.html`); 15 rejected drafts deleted so there is
   no ambiguity about which is current.
   **Owner ruling D1: app-wide**, so all 22 pages' chrome changed and all 22 need a smoke pass.
   **Slices 1-2** (`01a5efc`, `a934e07`): token layer driving both themes with Bootstrap's `--bs-*`
