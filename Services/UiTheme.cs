@@ -62,7 +62,11 @@ public static class UiThemeCatalog
         "--ui-warn", "--ui-warn-bg", "--ui-warn-line",
         "--ui-danger", "--ui-danger-bg", "--ui-danger-line",
         "--ui-info", "--ui-info-bg", "--ui-info-line",
-        "--ui-nav-bg", "--ui-nav-fg", "--ui-nav-fg-hover"
+        "--ui-nav-bg", "--ui-nav-fg", "--ui-nav-fg-hover",
+        // Raw triplets for Bootstrap's --bs-*-rgb alpha blends. Required, not optional:
+        // an absent one leaves Bootstrap's own blue in every translucent overlay while the
+        // solid colours look correct, which is close to invisible.
+        "--ui-brand-rgb", "--ui-on-rgb", "--ui-warn-rgb", "--ui-danger-rgb", "--ui-info-rgb"
     ];
 
     /// <summary>

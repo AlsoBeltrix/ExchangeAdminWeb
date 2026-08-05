@@ -147,6 +147,39 @@ untestable. The catalog is the testable seam.
    formality. Non-vacuity proven by restoring the rejected Dracula values: both fail, naming the
    exact spreads.
 
+7. **Bootstrap's own palette + Dracula fidelity (owner, 2026-08-04). DONE** -- app `2.5.3 -> 2.5.4`.
+
+   Owner, after slice 6 reached dev: *"buttons and checkboxes are still blue on every theme.
+   dracula isn't using green or yellow and doesn't match the dracula theme. that one I know well,
+   and this is a bad implementation."* Both correct.
+
+   **Why the blue survived a theme rework.** Counted across the markup: this app uses **24
+   colour-bearing Bootstrap classes** and the theme layer restyled **3** of them
+   (`btn-primary`, `btn-outline-secondary`, `form-check-input` border). Everything else --
+   checkboxes, switches, radios, spinners (159 uses), badges (43), `.text-*`/`.bg-*` utilities,
+   and the success/danger/warning button variants -- is painted by Bootstrap from
+   `--bs-primary: #0d6efd` and friends, which nothing overrode. Slice 1 mapped 8 `--bs-*`
+   variables and stopped short of the semantic palette, so the tokens never reached those
+   controls no matter what a theme declared.
+
+   Fixed at the variable layer rather than rule by rule: `--bs-primary/success/danger/warning/info`
+   and their `-rgb` companions now read the tokens, which repairs the other 21 classes at the
+   source. Explicit rules remain only where Bootstrap uses a shorthand that ignores the variable,
+   or bakes the colour into an SVG data URI (the switch knob).
+
+   **The `-rgb` companions are a second copy of each accent**, needed because Bootstrap blends
+   them for translucent overlays. Two copies drift, and this one already did during development --
+   Dracula's warn moved yellow -> orange and its triplet did not follow, which is invisible
+   because the solid colour stays right and only overlays go wrong.
+   `EveryRgbTripletMatchesItsHexToken` now derives the expected triplet from the hex and fails
+   naming both. They are also in `RequiredTokens`, so a theme cannot omit them.
+
+   **Dracula.** The accent VALUES were already spec-correct, but two things were not: the canvas
+   `#1e1f29` was invented rather than taken from the palette (now `#21222c`, Dracula's own ANSI
+   black), and the state tints were off-hue -- danger was tinted toward pink while its foreground
+   was red, and warn used Yellow `#f1fa8c` where Orange `#ffb86c` is the palette's warning colour.
+   Every value in that block is now from the published spec.
+
 ## Verification
 
 Per `.agents/repo-guidance.md`: build, `dotnet test`, format check, ASCII lint,

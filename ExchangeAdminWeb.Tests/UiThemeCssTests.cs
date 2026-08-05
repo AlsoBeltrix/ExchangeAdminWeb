@@ -230,6 +230,67 @@ public class UiThemeCssTests
     }
 
     [Fact]
+    public void EveryRgbTripletMatchesItsHexToken()
+    {
+        // Bootstrap needs raw "r, g, b" for its alpha blends, so each accent is declared twice:
+        // once as hex and once as a triplet. Two copies of one value drift -- this was caught by
+        // hand when Dracula's warn moved from yellow to orange and its triplet did not follow.
+        // A stale triplet is invisible: the solid colour is right and only translucent overlays
+        // are wrong.
+        var css = ReadAppCss();
+        var offenders = new List<string>();
+
+        var pairs = new[]
+        {
+            ("--ui-brand", "--ui-brand-rgb"),
+            ("--ui-on", "--ui-on-rgb"),
+            ("--ui-warn", "--ui-warn-rgb"),
+            ("--ui-danger", "--ui-danger-rgb"),
+            ("--ui-info", "--ui-info-rgb")
+        };
+
+        foreach (var theme in UiThemeCatalog.All)
+        {
+            var block = FindBlock(css, theme);
+            if (block is null)
+            {
+                continue;
+            }
+
+            foreach (var (hexToken, rgbToken) in pairs)
+            {
+                var hex = TokenValue(block, hexToken);
+                var rgb = RgbTokenValue(block, rgbToken);
+
+                if (hex is null || rgb is null)
+                {
+                    offenders.Add($"{theme.Id}: {hexToken} or {rgbToken} is missing");
+                    continue;
+                }
+
+                var expected = $"{Convert.ToInt32(hex.Substring(1, 2), 16)}, " +
+                               $"{Convert.ToInt32(hex.Substring(3, 2), 16)}, " +
+                               $"{Convert.ToInt32(hex.Substring(5, 2), 16)}";
+
+                if (rgb != expected)
+                {
+                    offenders.Add($"{theme.Id}: {rgbToken} is '{rgb}' but {hexToken} {hex} is '{expected}'");
+                }
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "RGB triplets that disagree with their hex token:\n" + string.Join("\n", offenders));
+    }
+
+    /// <summary>The "r, g, b" value a block assigns to an -rgb token, or null.</summary>
+    private static string? RgbTokenValue(string block, string token)
+    {
+        var match = Regex.Match(block, Regex.Escape(token) + @":\s*(\d+,\s*\d+,\s*\d+)\s*;");
+        return match.Success ? Regex.Replace(match.Groups[1].Value, @"\s+", " ") : null;
+    }
+
+    [Fact]
     public void DarkThemesOutnumberedByNothingSilly()
     {
         // Not an aesthetic assertion -- it pins that at least one light option

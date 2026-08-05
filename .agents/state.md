@@ -6,6 +6,31 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Bootstrap palette bridged + Dracula corrected 2026-08-04, app `2.5.4`, NOT DEPLOYED.**
+  Owner after `2.5.3` reached dev: *"buttons and checkboxes are still blue on every theme. dracula
+  isn't using green or yellow and doesn't match the dracula theme. that one I know well, and this
+  is a bad implementation."* Both correct. `docs/ThemeSupport-Plan.md` slice 7.
+  **Why blue survived a full theme rework -- the number is the finding:** this app uses **24
+  colour-bearing Bootstrap classes and the theme layer restyled 3.** Checkboxes, switches, radios,
+  spinners (159 uses), badges (43), `.text-*`/`.bg-*` utilities and the success/danger/warning
+  buttons are all painted by Bootstrap from `--bs-primary: #0d6efd`, which nothing overrode --
+  slice 1 mapped 8 `--bs-*` variables and stopped short of the semantic palette. Fixed at the
+  variable layer, which repairs the other 21 classes at the source; explicit rules remain only
+  where Bootstrap uses a shorthand that ignores the variable or bakes the colour into an SVG data
+  URI (the switch knob).
+  **Lesson worth keeping: a token layer only reaches what consumes it.** The tokens were correct
+  and the themes were correct; the framework simply was not reading them. Verifying "the theme
+  system works" on the pages we restyled proved nothing about the 21 classes we had not.
+  **`-rgb` companions are a deliberate second copy** of each accent (Bootstrap needs raw triplets
+  for alpha blends) and they already drifted during development -- Dracula's warn moved yellow ->
+  orange and the triplet did not follow, which is near-invisible since only translucent overlays
+  go wrong. `EveryRgbTripletMatchesItsHexToken` derives the expected value from the hex; they are
+  also in `RequiredTokens` so a theme cannot omit them.
+  **Dracula specifically:** the accent values were spec-correct, but the canvas `#1e1f29` was
+  invented rather than the palette's own ANSI black `#21222c`, and the state tints were off-hue --
+  danger tinted toward pink while its foreground was red, and warn used Yellow where Orange
+  `#ffb86c` is the palette's warning colour.
+
 - **Theme palettes reworked 2026-08-04, app `2.5.3`, ON DEV.** Deployed by the owner 22:24 and
   verified: dev assembly `FileVersion 2.5.3.0`, and dev `wwwroot/app.css` is **byte-identical to
   the repo** (SHA256 match), so the reworked palettes are genuinely live rather than a stale copy

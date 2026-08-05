@@ -56,6 +56,14 @@
     --ui-info: #2c5282;
     --ui-info-bg: #e8f0fc;
     --ui-info-line: #c5d7f0;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 26, 108, 232;
+    --ui-on-rgb: 18, 131, 60;
+    --ui-warn-rgb: 138, 100, 0;
+    --ui-danger-rgb: 192, 43, 33;
+    --ui-info-rgb: 44, 82, 130;
 
     /* Nav: its own surface, distinct from the canvas. A sidebar that shares
        the page background is not a pane, it is empty margin. */
@@ -107,6 +115,14 @@ html[data-theme="oled"] {
     --ui-info: #6fb6ff;
     --ui-info-bg: #0b1c2c;
     --ui-info-line: #1e3b57;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 63, 216, 232;
+    --ui-on-rgb: 75, 214, 127;
+    --ui-warn-rgb: 240, 192, 90;
+    --ui-danger-rgb: 255, 107, 94;
+    --ui-info-rgb: 111, 182, 255;
 
     --ui-nav-bg: #000000;
     --ui-nav-fg: #9aa1a9;
@@ -177,6 +193,14 @@ html[data-theme="solarized-light"] {
     --ui-info: #1f6f9e;
     --ui-info-bg: #e3edf3;
     --ui-info-line: #aeccdd;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 38, 139, 210;
+    --ui-on-rgb: 74, 107, 0;
+    --ui-warn-rgb: 133, 99, 43;
+    --ui-danger-rgb: 194, 53, 43;
+    --ui-info-rgb: 31, 111, 158;
 
     --ui-nav-bg: #e3d9bd;
     --ui-nav-fg: #586e75;
@@ -222,21 +246,35 @@ html[data-theme="solarized-dark"] {
     --ui-info: #268bd2;
     --ui-info-bg: #062f3f;
     --ui-info-line: #14546e;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 42, 161, 152;
+    --ui-on-rgb: 133, 153, 0;
+    --ui-warn-rgb: 181, 137, 0;
+    --ui-danger-rgb: 220, 50, 47;
+    --ui-info-rgb: 38, 139, 210;
 
     --ui-nav-bg: #00212a;
     --ui-nav-fg: #839496;
     --ui-nav-fg-hover: #93a1a1;
 }
 
-/* Dracula -- dracula-theme.com. #282a36 is the project's background, used here
-   as the raised SURFACE with its darker #1e1f29 as the canvas beneath, so
-   panels sit on the page instead of merging with it. Purple #bd93f9 accent,
-   Current Line #44475a for selection. */
+/* Dracula -- dracula-theme.com. Every value below is from the published spec,
+   not derived: Background #282a36 as the raised surface, the palette's own
+   darker #21222c (its ANSI black) as the canvas beneath so panels sit on the
+   page, Current Line #44475a for selection and borders, Comment #6272a4 as
+   tertiary text.
+   The accents are the spec's own: Purple #bd93f9, Green #50fa7b, Yellow
+   #f1fa8c, Red #ff5555, Cyan #8be9fd, Orange #ffb86c.
+   The state TINT backgrounds are mixed toward each accent's own hue -- an
+   earlier cut tinted danger toward pink while its foreground was red, which is
+   the kind of mismatch anyone who knows this palette spots immediately. */
 html[data-theme="dracula"] {
-    --ui-bg: #1e1f29;
+    --ui-bg: #21222c;
     --ui-surface: #282a36;
     --ui-header: #343746;
-    --ui-zebra: #232430;
+    --ui-zebra: #24252f;
     --ui-selected: #44475a;
 
     --ui-fg: #f8f8f2;
@@ -247,24 +285,32 @@ html[data-theme="dracula"] {
     --ui-grid: #2f3140;
 
     --ui-brand: #bd93f9;
-    --ui-brand-fg: #1e1f29;
+    --ui-brand-fg: #21222c;
     --ui-off: #6272a4;
 
     --ui-on: #50fa7b;
-    --ui-on-bg: #1b3a28;
-    --ui-on-line: #2f6944;
+    --ui-on-bg: #1d3527;
+    --ui-on-line: #35664a;
 
-    --ui-warn: #f1fa8c;
-    --ui-warn-bg: #383a20;
-    --ui-warn-line: #6b6a3a;
+    --ui-warn: #ffb86c;
+    --ui-warn-bg: #3b2f20;
+    --ui-warn-line: #6d5637;
 
     --ui-danger: #ff5555;
-    --ui-danger-bg: #3d2130;
-    --ui-danger-line: #6e3244;
+    --ui-danger-bg: #3b2222;
+    --ui-danger-line: #6b3636;
 
     --ui-info: #8be9fd;
-    --ui-info-bg: #1a3540;
-    --ui-info-line: #326070;
+    --ui-info-bg: #1e3740;
+    --ui-info-line: #3a6470;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 189, 147, 249;
+    --ui-on-rgb: 80, 250, 123;
+    --ui-warn-rgb: 255, 184, 108;
+    --ui-danger-rgb: 255, 85, 85;
+    --ui-info-rgb: 139, 233, 253;
 
     --ui-nav-bg: #191a21;
     --ui-nav-fg: #b9bcd0;
@@ -306,6 +352,14 @@ html[data-theme="nord"] {
     --ui-info: #81a1c1;
     --ui-info-bg: #2f3a47;
     --ui-info-line: #4a5b70;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 136, 192, 208;
+    --ui-on-rgb: 163, 190, 140;
+    --ui-warn-rgb: 235, 203, 139;
+    --ui-danger-rgb: 191, 97, 106;
+    --ui-info-rgb: 129, 161, 193;
 
     --ui-nav-bg: #272c36;
     --ui-nav-fg: #d8dee9;
@@ -348,6 +402,14 @@ html[data-theme="gruvbox-dark"] {
     --ui-info: #83a598;
     --ui-info-bg: #23332f;
     --ui-info-line: #445c54;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 250, 189, 47;
+    --ui-on-rgb: 184, 187, 38;
+    --ui-warn-rgb: 254, 128, 25;
+    --ui-danger-rgb: 251, 73, 52;
+    --ui-info-rgb: 131, 165, 152;
 
     --ui-nav-bg: #171819;
     --ui-nav-fg: #bdae93;
@@ -391,6 +453,14 @@ html[data-theme="monokai"] {
     --ui-info: #ae81ff;
     --ui-info-bg: #2f2740;
     --ui-info-line: #52436e;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 102, 217, 239;
+    --ui-on-rgb: 166, 226, 46;
+    --ui-warn-rgb: 253, 151, 31;
+    --ui-danger-rgb: 249, 38, 114;
+    --ui-info-rgb: 174, 129, 255;
 
     --ui-nav-bg: #191a16;
     --ui-nav-fg: #c6c6c0;
@@ -432,6 +502,14 @@ html[data-theme="one-dark"] {
     --ui-info: #c678dd;
     --ui-info-bg: #322a3d;
     --ui-info-line: #574566;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 97, 175, 239;
+    --ui-on-rgb: 152, 195, 121;
+    --ui-warn-rgb: 229, 192, 123;
+    --ui-danger-rgb: 224, 108, 117;
+    --ui-info-rgb: 198, 120, 221;
 
     --ui-nav-bg: #1b1f24;
     --ui-nav-fg: #9099a8;
@@ -478,6 +556,14 @@ html[data-theme="tokyo-night"] {
     --ui-info: #7dcfff;
     --ui-info-bg: #1f3340;
     --ui-info-line: #37596e;
+    /* Raw triplets for Bootstrap's --bs-*-rgb, which it uses for alpha blends
+       (table striping, focus rings, .bg-*-subtle). Derived from the five above;
+       keep them in step. */
+    --ui-brand-rgb: 122, 162, 247;
+    --ui-on-rgb: 158, 206, 106;
+    --ui-warn-rgb: 255, 158, 100;
+    --ui-danger-rgb: 247, 118, 142;
+    --ui-info-rgb: 125, 207, 255;
 
     --ui-nav-bg: #16171f;
     --ui-nav-fg: #a9b1d6;
@@ -497,6 +583,152 @@ html[data-theme="tokyo-night"] {
     --bs-emphasis-color: var(--ui-fg);
     --bs-link-color: var(--ui-brand);
     --bs-link-hover-color: var(--ui-brand);
+
+    /* Bootstrap's SEMANTIC palette. Without these, --bs-primary stays #0d6efd and
+       every control Bootstrap paints from it -- checkboxes, switches, radios,
+       spinners, badges, progress bars, .text-* and .bg-* utilities, and the
+       success/danger/warning button variants -- renders Bootstrap blue, green and
+       red on all ten themes regardless of the palette (owner, 2026-08-04:
+       "buttons and checkboxes are still blue on every theme").
+       Only 3 of the 24 colour-bearing Bootstrap classes this app uses were being
+       restyled; overriding the variables fixes the other 21 at the source rather
+       than one rule at a time. */
+    --bs-primary: var(--ui-brand);
+    --bs-primary-rgb: var(--ui-brand-rgb);
+    --bs-primary-text-emphasis: var(--ui-brand);
+    --bs-secondary: var(--ui-fg2);
+    --bs-success: var(--ui-on);
+    --bs-success-rgb: var(--ui-on-rgb);
+    --bs-success-text-emphasis: var(--ui-on);
+    --bs-danger: var(--ui-danger);
+    --bs-danger-rgb: var(--ui-danger-rgb);
+    --bs-danger-text-emphasis: var(--ui-danger);
+    --bs-warning: var(--ui-warn);
+    --bs-warning-rgb: var(--ui-warn-rgb);
+    --bs-warning-text-emphasis: var(--ui-warn);
+    --bs-info: var(--ui-info);
+    --bs-info-rgb: var(--ui-info-rgb);
+    --bs-info-text-emphasis: var(--ui-info);
+
+    /* The checkbox/radio/switch tick. Bootstrap builds these from --bs-primary
+       but the switch knob is an SVG data URI with the colour baked in, so it
+       needs its own override below. */
+    --bs-form-check-bg: var(--ui-surface);
+}
+
+/* Controls Bootstrap paints from --bs-primary. Set explicitly because several
+   are shorthand properties that do not read the variable. */
+.form-check-input:checked {
+    background-color: var(--ui-brand);
+    border-color: var(--ui-brand);
+}
+
+.form-check-input {
+    background-color: var(--ui-surface);
+    border-color: var(--ui-fg3);
+}
+
+/* The switch knob is an SVG data URI with a hardcoded fill, so the unchecked
+   state cannot follow a variable. currentColor makes it track the text colour
+   of whatever it sits in. */
+.form-switch .form-check-input {
+    --bs-form-switch-bg: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='-4 -4 8 8'%3e%3ccircle r='3' fill='%23888'/%3e%3c/svg%3e");
+}
+
+.btn-success {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-on);
+    border-color: var(--ui-on);
+}
+
+.btn-danger {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-danger);
+    border-color: var(--ui-danger);
+}
+
+.btn-warning {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-warn);
+    border-color: var(--ui-warn);
+}
+
+.btn-info {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-info);
+    border-color: var(--ui-info);
+}
+
+.btn-secondary {
+    color: var(--ui-fg);
+    background-color: var(--ui-header);
+    border-color: var(--ui-line);
+}
+
+.btn-outline-primary {
+    color: var(--ui-brand);
+    border-color: var(--ui-brand);
+}
+
+.btn-outline-primary:hover {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-brand);
+    border-color: var(--ui-brand);
+}
+
+.btn-outline-success {
+    color: var(--ui-on);
+    border-color: var(--ui-on);
+}
+
+.btn-outline-success:hover {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-on);
+    border-color: var(--ui-on);
+}
+
+.btn-outline-danger {
+    color: var(--ui-danger);
+    border-color: var(--ui-danger);
+}
+
+.btn-outline-danger:hover {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-danger);
+    border-color: var(--ui-danger);
+}
+
+.btn-outline-warning {
+    color: var(--ui-warn);
+    border-color: var(--ui-warn);
+}
+
+.btn-outline-warning:hover {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-warn);
+    border-color: var(--ui-warn);
+}
+
+/* Utility classes. .text-muted is handled with the component rules below. */
+.text-primary { color: var(--ui-brand) !important; }
+.text-success { color: var(--ui-on) !important; }
+.text-danger { color: var(--ui-danger) !important; }
+.text-warning { color: var(--ui-warn) !important; }
+.text-info { color: var(--ui-info) !important; }
+
+.bg-primary { background-color: var(--ui-brand) !important; color: var(--ui-brand-fg) !important; }
+.bg-success { background-color: var(--ui-on) !important; color: var(--ui-brand-fg) !important; }
+.bg-danger { background-color: var(--ui-danger) !important; color: var(--ui-brand-fg) !important; }
+.bg-warning { background-color: var(--ui-warn) !important; color: var(--ui-brand-fg) !important; }
+.bg-info { background-color: var(--ui-info) !important; color: var(--ui-brand-fg) !important; }
+.bg-secondary { background-color: var(--ui-off) !important; color: var(--ui-brand-fg) !important; }
+
+.spinner-border, .spinner-grow {
+    color: var(--ui-brand);
+}
+
+.progress-bar {
+    background-color: var(--ui-brand);
 }
 
 html, body {
