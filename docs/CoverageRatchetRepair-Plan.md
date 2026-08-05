@@ -1,7 +1,11 @@
 # Coverage Ratchet Repair Plan
 
-Status: **Draft -- ONE OPEN OWNER GATE (D1, scope-pattern question).** Slices 1-2 are the fix and
-need no ruling. D1 decides whether a follow-up is wanted; nothing in slices 1-2 depends on it.
+Status: **Draft -- NOT APPROVED. No implementation until the owner approves.**
+`.agents/repo-guidance.md` (Authority Order, item 9): only `Approved` or `In progress` plans
+represent current intent, so nothing here authorizes code.
+D1 below is a follow-up scope question; it does not block approval of slices 1-3.
+
+Reviewed 2026-08-05 -- see `## Review` at the end.
 
 ## The problem, measured
 
@@ -87,18 +91,31 @@ it currently cannot be reached without AD and each carrying a real failure mode:
 **Deliberately NOT extracted:** `DrainErrors`, and the `matches.Count != 1` and missing-`objectSid`
 throws. They read a live `PowerShell` object or sit inline in a runspace method; faking them would
 mean inventing an abstraction over PowerShell itself, which is a larger and riskier change than the
-6-line problem justifies. They are covered by the live tests where a host allows.
+6-line problem justifies.
+
+**Those paths remain wholly untested after this repair, and nothing else covers them.** Verified
+2026-08-05: no test anywhere constructs the real `SectionAccessGroupDirectory` -- every test uses a
+fake `ISectionAccessGroupDirectory`, and the three live-AD test files
+(`ADDirectoryLiveTests`, `AdDirectoryForestSearchLiveTests`, `LiveDirectoryCollection`) never
+mention it. An earlier draft of this plan claimed they were "covered by the live tests where a host
+allows"; that was false and is corrected here rather than quietly deleted, because the claim would
+have told a future reader those fail-closed guards were exercised when they are not. They are
+fail-closed AD result handling -- the paths that stop an outage being read as "no such group" --
+so leaving them untested is a real, accepted gap, not a non-issue. Covering them needs a
+result-shaping seam over the PowerShell output, which is its own work stream.
 
 ### Expected effect on the ratio
 
-The three members are roughly 20-25 statement lines once extracted, and every one is reachable from
-a plain unit test. That converts ~20 uncovered lines to covered **and** removes them from the
-uncovered side of `SectionAccessGroupDirectory`. Against a 6-line shortfall this clears the floor
-with margin.
+Counted, not estimated: the three regions are **15 statement lines** today (8 + 5 + 2, excluding
+blanks and comments), all currently uncovered. Extracted, every one is reachable from a plain unit
+test. Against a 6-line shortfall that clears the floor, but the margin is thinner than a casual
+reading suggests -- extraction adds a class declaration and method signatures, which are themselves
+coverable lines, so the arithmetic is not a simple 15-for-15 swap.
 
-**It must be measured, not assumed.** Slice 2 re-runs the gate and records the actual number; if
-the extraction does not clear 65.06, the plan is not done and the answer is more extraction from
-the same file, never a lower floor.
+**Hence slice 2 measures rather than assumes**, and records the actual number. If the measured
+value does not clear 65.06 the plan is not done: the answer is more extraction from the same file
+-- `ResolveDomainServer`'s error-message construction is the next candidate -- and never a lower
+floor.
 
 ### What must not happen
 
@@ -124,22 +141,54 @@ number -- which is the ratchet's own documented usage.
    the four-level name precedence including all-blank; and `DOMAIN\Name`, bare name, leading
    backslash, empty, null.
 
-2. **Measure, then raise the floor.** Re-run `dotnet test --collect:"XPlat Code Coverage"` and
-   `tools/Test-CoverageFloor.ps1`. Record the new exact value in the plan. Raise
-   `.agents/review/coverage-floor.txt` to the measured figure **rounded DOWN to two decimals** --
-   the file explains why: the display rounds up, and a floor taken from the displayed figure is
-   unreachable by the very run that produced it (a permanently red build teaches people to ignore
-   the gate).
+2. **Measure deterministically, then raise the floor.** The measurement must not be able to read a
+   stale report. `Test-CoverageFloor.ps1:79-86` takes the NEWEST `coverage.cobertura.xml` under
+   `TestResults`, and `dotnet test` writes a new GUID-named directory per run without cleaning up,
+   so "newest" is only correct if nothing interrupted the sequence. **This is not hypothetical: it
+   bit this session**, when a floor check silently scored an earlier run's report.
 
-No version bump: tests and an internal extraction ship no behaviour
-(`docs/ProjectConstitution.md`, Deployment And Versioning -- "Small bug fixes, UI polish, docs
-updates, tests" need no plan and no bump; this plan exists because the owner asked for one).
+   Run exactly:
+
+       Remove-Item -Recurse -Force TestResults, ExchangeAdminWeb.Tests/TestResults -EA SilentlyContinue
+       dotnet test ExchangeAdminWeb.slnx -c Release --collect:"XPlat Code Coverage" --results-directory TestResults
+       $report = (Get-ChildItem TestResults -Recurse -Filter coverage.cobertura.xml |
+                  Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+       pwsh tools/Test-CoverageFloor.ps1 -CoverageFile $report
+
+   `--results-directory TestResults` mirrors `.github/workflows/ci.yml:20-21`, so the local number
+   is measured the same way CI measures it. Passing `-CoverageFile` explicitly removes the
+   newest-wins guess entirely.
+
+   Then raise `.agents/review/coverage-floor.txt` to the measured figure **rounded DOWN to two
+   decimals** -- the file explains why: the display rounds up, and a floor taken from the displayed
+   figure is unreachable by the very run that produced it (a permanently red build teaches people
+   to ignore the gate).
+
+3. **Add the freshness guard to the gate itself.** Was OQ-1; promoted into the plan because the
+   hazard is now demonstrated rather than theoretical, and a procedure that depends on the
+   implementer remembering step 2's incantation is weaker than a check in the tool. Fail when the
+   chosen report is older than the newest test assembly, with a message naming both timestamps.
+   Same reasoning as the empty-scope check the script already carries: a gate that silently scores
+   the wrong input is worse than no gate, because it reads as proof.
+
+No version bump: tests, an internal extraction, and a change to a CI-only ops script ship no app
+behaviour (`docs/ProjectConstitution.md`, Deployment And Versioning).
+
+**Slice 3 touches a `.ps1`, so it inherits the PowerShell verification rules**
+(`.agents/repo-guidance.md`, Verification): `Invoke-ScriptAnalyzer -Path . -Recurse` and a Pester
+case in `tests/ps/CoverageFloor.Tests.ps1`, which already exists and tests this same script. The
+new case feeds it a deliberately stale report and asserts a non-zero exit -- the gate that tests
+the gate, which is what that file is for.
 
 ## Verification
 
 Per `.agents/repo-guidance.md`: `dotnet build ExchangeAdminWeb.slnx -c Release`,
 `dotnet test ExchangeAdminWeb.slnx`, `dotnet format ExchangeAdminWeb.slnx --verify-no-changes
---no-restore`, `pwsh tools/Test-AsciiOnly.ps1`, `git diff --check HEAD`.
+--no-restore`, `pwsh tools/Test-AsciiOnly.ps1`, `git diff --check HEAD`. Slice 3 adds
+`Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps`.
+
+**Pester runs under `pwsh`, not Windows PowerShell** -- the bundled 3.4.0 cannot parse this repo's
+Pester 5 syntax and reports a parse error rather than a test failure, which reads as broken tests.
 
 Plus the two that are the point of the work:
 
@@ -169,14 +218,16 @@ migration path is unchanged and does not need re-running.
   refactors with real blast radius on the protection path. Not something to attempt in a repair
   whose measured shortfall is 6 lines.
 - Widening or narrowing the gated scope. See D1.
-- Any change to `Test-CoverageFloor.ps1` itself. The gate is working; the code under it is not.
+- Any change to `Test-CoverageFloor.ps1`'s scope patterns, floor semantics, or comparison
+  arithmetic. The gate's logic is working; the code under it is not. Slice 3 adds a freshness
+  guard, which is an input check, not a change to what the gate measures or how strictly.
 - Making `SectionAccessGroupDirectory` fully testable. Its remaining lines are genuinely
   AD-dependent, and pretending otherwise means mocking PowerShell.
 
 ## Owner gates
 
-**D1 -- should the gated scope include the files this plan does not fix?** Blocks nothing here;
-slices 1-2 proceed regardless.
+**D1 -- should the gated scope include the files this plan does not fix?** A follow-up question
+only: slices 1-3 are complete without it, and it does not block approval of them.
 
 The scope patterns in `tools/Test-CoverageFloor.ps1` were chosen when the gate was written. They
 already include `ProtectedPrincipalService` and `PermissionValidator`, which sit at 62% and 46% and
@@ -195,7 +246,42 @@ green by measuring less.
 
 ## Open questions
 
-- **OQ-1.** The gate reads the newest `coverage.cobertura.xml` under `TestResults`, and
-  `dotnet test` writes one per run without cleaning up. A stale report from an earlier run can
-  therefore be picked up. Not observed to have caused a wrong result, and not this plan's scope,
-  but worth a guard (fail when the newest report is older than the newest test assembly).
+- **OQ-1. CLOSED 2026-08-05** -- promoted to slice 3. It was filed as "not observed to have caused
+  a wrong result"; that was wrong, it had already happened in the session that wrote this plan. A
+  hazard with a live instance is a slice, not an open question.
+
+## Review
+
+**openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade `fallback`) over
+`506c2d4..62d84d9`: `acceptable_with_changes`.** Envelope validated: both SHAs match the dispatched
+pins, `capability_ok: true`. Grade is `fallback`, so this is the same class as standard at more
+effort, not a strictly stronger adjudicator -- recorded because it bounds how much the verdict is
+worth. Reviewer confirms the core approach matches the repo's established seam-extraction pattern
+and should be kept.
+
+Three findings, each verified against the repo before acting rather than taken on the reviewer's
+word:
+
+| # | Severity | Verdict | Outcome |
+|---|---|---|---|
+| 1 | MEDIUM | **ADMITTED** | Slice 2 rewritten deterministic; guard promoted to slice 3 |
+| 2 | MEDIUM | **ADMITTED** | False coverage claim removed and corrected in place |
+| 3 | LOW | **ADMITTED** | Status line rewritten; no implementation until approved |
+
+**Finding 1 -- stale coverage report.** Verified: `Test-CoverageFloor.ps1:79-86` picks the newest
+report and `dotnet test` never cleans up. Admitted with more weight than the reviewer gave it: it
+is not a latent hazard, it **already misfired during this session**, so the fix is both a
+deterministic procedure and a guard in the tool.
+
+**Finding 2 -- false claim of live-test coverage.** Verified by search: no test constructs the real
+`SectionAccessGroupDirectory`, and no live-AD test file mentions it. My claim was unfounded. The
+correction states the gap plainly instead of deleting the sentence, so the record shows the guards
+are untested.
+
+**Finding 3 -- Draft read as approval.** Verified against `.agents/repo-guidance.md` item 9.
+Admitted: "Draft" plus "needs no ruling" is genuinely ambiguous to a cold agent, which is exactly
+the reader this plan is written for.
+
+Nothing was declined. That is worth noting rather than glossing: a pass where the coder accepts
+every finding is the shape the playbook warns about, so each was checked against the code
+independently, and each was independently reproducible.
