@@ -1,13 +1,10 @@
-using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using ExchangeAdminWeb.Authorization;
 
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
 /// Resolves section-access group names to SIDs against on-prem Active Directory, for the one-time
-/// SID migration. Runs under the app pool's ambient identity - a read-only group lookup does not
-/// need the protected-principal directory-read secret (.agents/decisions.md 2026-07-31).
+/// SID migration.
 /// </summary>
 /// <remarks>
 /// A separate service from <see cref="ADDirectorySearchService"/> rather than another method on it,
@@ -16,14 +13,34 @@ namespace ExchangeAdminWeb.Services;
 /// migration that reads an outage as "no such group" deletes live access grants. Bolting a
 /// throwing method onto a fail-soft service invites a later refactor to "make it consistent".
 ///
-/// Its own runspace, for the same reason: sharing the autocomplete service's would put a
-/// startup-time migration behind a 30-second lock held by interactive keystrokes.
+/// The directory calls go through <see cref="ISectionAccessDirectoryCommands"/> rather than a
+/// runspace this class owns. That seam is what makes the orchestration here reachable from a test:
+/// which errors are fatal, which absences are answers, and what a partial result means are
+/// authorization decisions, and they previously could not be exercised without a domain-joined host
+/// with RSAT. <see cref="SectionAccessDirectoryReading"/> covers the pure value-shaping decisions
+/// beside them; production wiring is <see cref="PowerShellDirectoryCommands"/>, which owns the
+/// runspace and its lifetime.
 /// </remarks>
 public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
 {
+    private readonly Func<ISectionAccessDirectoryCommands> _commandsFactory;
     private readonly ILogger<SectionAccessGroupDirectory> _logger;
 
-    public SectionAccessGroupDirectory(ILogger<SectionAccessGroupDirectory> logger) => _logger = logger;
+    public SectionAccessGroupDirectory(ILogger<SectionAccessGroupDirectory> logger)
+        : this(() => new PowerShellDirectoryCommands(), logger)
+    {
+    }
+
+    // A factory rather than an injected instance: each lookup gets a fresh directory session and
+    // disposes it, which is what the runspace-per-call lifetime was before the seam existed. An
+    // injected singleton would quietly turn a startup-time migration into shared mutable state.
+    internal SectionAccessGroupDirectory(
+        Func<ISectionAccessDirectoryCommands> commandsFactory,
+        ILogger<SectionAccessGroupDirectory> logger)
+    {
+        _commandsFactory = commandsFactory;
+        _logger = logger;
+    }
 
     /// <inheritdoc />
     public IReadOnlyList<DirectoryGroupMatch> FindGroupsByName(string name, string? netBiosDomain)
@@ -33,9 +50,9 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
 
         try
         {
-            using var runspace = CreateRunspace();
-            var server = netBiosDomain is null ? null : ResolveDomainServer(runspace, netBiosDomain);
-            return QueryGroups(runspace, name, server, netBiosDomain);
+            using var commands = _commandsFactory();
+            var server = netBiosDomain is null ? null : ResolveDomainServer(commands, netBiosDomain);
+            return QueryGroups(commands, name, server, netBiosDomain);
         }
         catch (DirectoryUnavailableException)
         {
@@ -48,17 +65,6 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
             throw new DirectoryUnavailableException(
                 $"Active Directory lookup failed for group '{name}': {ex.Message}", ex);
         }
-    }
-
-    private static Runspace CreateRunspace()
-    {
-        var iss = InitialSessionState.CreateDefault();
-        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
-        iss.ImportPSModule("ActiveDirectory");
-
-        var runspace = RunspaceFactory.CreateRunspace(iss);
-        runspace.Open();
-        return runspace;
     }
 
     /// <summary>
@@ -75,33 +81,33 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
     /// returns zero matches, because it lives in <c>winroot.analog.com</c> - so dropping the
     /// domain half would turn a real cross-domain grant into an unresolvable row.
     /// </remarks>
-    private string ResolveDomainServer(Runspace runspace, string netBiosDomain)
+    private static string ResolveDomainServer(ISectionAccessDirectoryCommands commands, string netBiosDomain)
     {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
+        var rootDseResult = commands.Invoke("Get-ADRootDSE", new Dictionary<string, object?>
+        {
+            ["ErrorAction"] = "Stop"
+        });
 
-        ps.AddCommand("Get-ADRootDSE").AddParameter("ErrorAction", "Stop");
-        var rootDse = ps.Invoke().FirstOrDefault(o => o is not null);
-        ps.Commands.Clear();
+        var rootDse = rootDseResult.Rows.FirstOrDefault(o => o is not null);
 
-        var configNc = rootDse?.Properties["configurationNamingContext"]?.Value?.ToString();
+        var configNc = rootDse?.Text("configurationNamingContext");
         if (string.IsNullOrWhiteSpace(configNc))
             throw new DirectoryUnavailableException("Could not read the directory's configuration naming context.");
 
         var escaped = ProtectedPrincipalService.EscapeLdapFilter(netBiosDomain);
 
-        ps.AddCommand("Get-ADObject")
-          .AddParameter("SearchBase", $"CN=Partitions,{configNc}")
-          .AddParameter("LDAPFilter", $"(&(objectClass=crossRef)(netBIOSName={escaped}))")
-          .AddParameter("Properties", new[] { "netBIOSName", "dnsRoot" })
-          .AddParameter("ErrorAction", "Stop");
+        var partitions = commands.Invoke("Get-ADObject", new Dictionary<string, object?>
+        {
+            ["SearchBase"] = $"CN=Partitions,{configNc}",
+            ["LDAPFilter"] = $"(&(objectClass=crossRef)(netBIOSName={escaped}))",
+            ["Properties"] = new[] { "netBIOSName", "dnsRoot" },
+            ["ErrorAction"] = "Stop"
+        });
 
-        var matches = ps.Invoke().Where(o => o is not null).ToList();
-        var errors = DrainErrors(ps);
-        ps.Commands.Clear();
+        if (partitions.Error is not null)
+            throw new DirectoryUnavailableException($"Looking up domain '{netBiosDomain}' failed: {partitions.Error}");
 
-        if (errors is not null)
-            throw new DirectoryUnavailableException($"Looking up domain '{netBiosDomain}' failed: {errors}");
+        var matches = partitions.Rows.Where(o => o is not null).ToList();
 
         // Exactly one partition must match; SectionAccessDirectoryReading owns the distinction
         // between "no such domain" and "ambiguous", which point an administrator at different
@@ -111,8 +117,8 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
             throw new DirectoryUnavailableException(partitionProblem);
 
         // dnsRoot is multi-valued in the schema; the first entry is the domain's DNS name. The
-        // unwrapping lives in SectionAccessDirectoryReading because it is untestable here.
-        var dnsRoot = SectionAccessDirectoryReading.UnwrapDnsRoot(matches[0].Properties["dnsRoot"]?.Value);
+        // unwrapping lives in SectionAccessDirectoryReading.
+        var dnsRoot = SectionAccessDirectoryReading.UnwrapDnsRoot(matches[0]!.Value("dnsRoot"));
 
         if (dnsRoot is null)
             throw new DirectoryUnavailableException($"Domain '{netBiosDomain}' has no usable dnsRoot.");
@@ -120,32 +126,30 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
         return dnsRoot;
     }
 
-    private List<DirectoryGroupMatch> QueryGroups(Runspace runspace, string name, string? server, string? netBiosDomain)
+    private List<DirectoryGroupMatch> QueryGroups(
+        ISectionAccessDirectoryCommands commands, string name, string? server, string? netBiosDomain)
     {
-        using var ps = PowerShell.Create();
-        ps.Runspace = runspace;
-
         // -LDAPFilter, never -Filter: -Filter expands '$' as a PowerShell variable, and this store
         // holds a group whose name begins with one ($KOO300-S3AMUVVBVMI1).
-        ps.AddCommand("Get-ADGroup")
-          .AddParameter("LDAPFilter", SectionAccessGroupIdentity.BuildGroupLookupFilter(name))
-          .AddParameter("Properties", new[] { "objectSid", "DisplayName", "Name", "SamAccountName" })
-          .AddParameter("ErrorAction", "Stop");
+        var parameters = new Dictionary<string, object?>
+        {
+            ["LDAPFilter"] = SectionAccessGroupIdentity.BuildGroupLookupFilter(name),
+            ["Properties"] = new[] { "objectSid", "DisplayName", "Name", "SamAccountName" },
+            ["ErrorAction"] = "Stop"
+        };
 
         if (server is not null)
-            ps.AddParameter("Server", server);
+            parameters["Server"] = server;
 
-        var found = ps.Invoke();
-        var errors = DrainErrors(ps);
-        ps.Commands.Clear();
+        var result = commands.Invoke("Get-ADGroup", parameters);
 
         // The cmdlet complained, so this run proved nothing about how many groups exist. Reporting
         // the count anyway would let a partial failure read as NotFound or as a resolved single.
-        if (errors is not null)
-            throw new DirectoryUnavailableException($"Group lookup for '{name}' failed: {errors}");
+        if (result.Error is not null)
+            throw new DirectoryUnavailableException($"Group lookup for '{name}' failed: {result.Error}");
 
         var matches = new List<DirectoryGroupMatch>();
-        foreach (var obj in found)
+        foreach (var obj in result.Rows)
         {
             // Null-element guard: a pipeline can yield a null row (docs/MessageTraceNullRow-Plan.md).
             if (obj is null)
@@ -154,7 +158,7 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
             // A group with no readable SID cannot become an authorization subject, and dropping it
             // silently would understate the match count - see SectionAccessDirectoryReading for
             // why that is worse than failing.
-            var sid = obj.Properties["objectSid"]?.Value?.ToString();
+            var sid = obj.Text("objectSid");
             var sidProblem = SectionAccessDirectoryReading.GroupSidProblem(sid, name);
             if (sidProblem is not null)
                 throw new DirectoryUnavailableException(sidProblem);
@@ -166,15 +170,15 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
             // name carries no domain, and that is precisely the row whose display most needs one.
             // Falls back to the queried domain, then to the bare name.
             var bare = SectionAccessDirectoryReading.ChooseBareName(
-                obj.Properties["SamAccountName"]?.Value?.ToString(),
-                obj.Properties["Name"]?.Value?.ToString(),
-                obj.Properties["DisplayName"]?.Value?.ToString(),
+                obj.Text("SamAccountName"),
+                obj.Text("Name"),
+                obj.Text("DisplayName"),
                 name);
 
             matches.Add(new DirectoryGroupMatch(
-                sid,
+                sid!,
                 SectionAccessGroupIdentity.QualifiedDisplayName(
-                    ResolveNetBiosDomain(sid) ?? netBiosDomain, bare)));
+                    ResolveNetBiosDomain(commands, sid!) ?? netBiosDomain, bare)));
         }
 
         _logger.LogDebug("Section-access group lookup for {Name} on {Server} returned {Count} match(es)",
@@ -195,32 +199,26 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
     /// domain, deleted principal) must leave the operator with a bare name, never fail a lookup
     /// whose real product is the SID.
     /// </remarks>
-    private string? ResolveNetBiosDomain(string sid)
+    private string? ResolveNetBiosDomain(ISectionAccessDirectoryCommands commands, string sid)
     {
         try
         {
-            var account = new System.Security.Principal.SecurityIdentifier(sid)
-                .Translate(typeof(System.Security.Principal.NTAccount))
-                .Value;
-
             // Only the translation needs the directory; the split is in
             // SectionAccessDirectoryReading, which documents why index 0 is not a match.
-            return SectionAccessDirectoryReading.NetBiosFromNTAccount(account);
+            var domain = SectionAccessDirectoryReading.NetBiosFromNTAccount(commands.TranslateSidToNTAccount(sid));
+
+            // Logged, not silent: the translator returning nothing is the ordinary fail-soft path
+            // (unreachable domain, deleted principal), and an operator seeing a bare name where a
+            // qualified one was expected needs somewhere to look.
+            if (domain is null)
+                _logger.LogDebug("Could not resolve a NetBIOS domain for a group SID; showing the bare name");
+
+            return domain;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Could not resolve a NetBIOS domain for a group SID; showing the bare name");
             return null;
         }
-    }
-
-    private static string? DrainErrors(PowerShell ps)
-    {
-        if (!ps.HadErrors)
-            return null;
-
-        var message = ps.Streams.Error.FirstOrDefault()?.Exception?.Message ?? "the directory reported an error";
-        ps.Streams.Error.Clear();
-        return message;
     }
 }
