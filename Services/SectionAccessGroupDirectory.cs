@@ -103,21 +103,18 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
         if (errors is not null)
             throw new DirectoryUnavailableException($"Looking up domain '{netBiosDomain}' failed: {errors}");
 
-        if (matches.Count != 1)
-        {
-            throw new DirectoryUnavailableException(
-                $"NetBIOS domain '{netBiosDomain}' matched {matches.Count} forest partitions; expected exactly one.");
-        }
+        // Exactly one partition must match; SectionAccessDirectoryReading owns the distinction
+        // between "no such domain" and "ambiguous", which point an administrator at different
+        // places.
+        var partitionProblem = SectionAccessDirectoryReading.PartitionMatchProblem(netBiosDomain, matches.Count);
+        if (partitionProblem is not null)
+            throw new DirectoryUnavailableException(partitionProblem);
 
-        // dnsRoot is multi-valued in the schema; the first entry is the domain's DNS name.
-        var dnsRoot = matches[0].Properties["dnsRoot"]?.Value switch
-        {
-            string s => s,
-            System.Collections.IEnumerable e => e.Cast<object?>().FirstOrDefault()?.ToString(),
-            var v => v?.ToString()
-        };
+        // dnsRoot is multi-valued in the schema; the first entry is the domain's DNS name. The
+        // unwrapping lives in SectionAccessDirectoryReading because it is untestable here.
+        var dnsRoot = SectionAccessDirectoryReading.UnwrapDnsRoot(matches[0].Properties["dnsRoot"]?.Value);
 
-        if (string.IsNullOrWhiteSpace(dnsRoot))
+        if (dnsRoot is null)
             throw new DirectoryUnavailableException($"Domain '{netBiosDomain}' has no usable dnsRoot.");
 
         return dnsRoot;
@@ -154,33 +151,30 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
             if (obj is null)
                 continue;
 
+            // A group with no readable SID cannot become an authorization subject, and dropping it
+            // silently would understate the match count - see SectionAccessDirectoryReading for
+            // why that is worse than failing.
             var sid = obj.Properties["objectSid"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(sid))
-            {
-                // A group with no readable SID cannot become an authorization subject, and
-                // dropping it silently would understate the match count - turning a genuine
-                // ambiguity into a confident single answer.
-                throw new DirectoryUnavailableException(
-                    $"A group matching '{name}' returned no readable objectSid.");
-            }
+            var sidProblem = SectionAccessDirectoryReading.GroupSidProblem(sid, name);
+            if (sidProblem is not null)
+                throw new DirectoryUnavailableException(sidProblem);
 
-            var bare = obj.Properties["SamAccountName"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(bare))
-                bare = obj.Properties["Name"]?.Value?.ToString();
-            if (string.IsNullOrWhiteSpace(bare))
-                bare = obj.Properties["DisplayName"]?.Value?.ToString();
-
-            // sAMAccountName first, unlike elsewhere: it is the half of DOMAIN\Name that Windows
-            // itself uses, so the rendered value matches what an admin sees in AD tooling.
-            // DisplayName is a last resort - it is not unique and need not match the logon name.
+            // Name precedence lives in SectionAccessDirectoryReading, which documents why
+            // sAMAccountName leads and DisplayName is a last resort.
             //
             // The domain comes from translating the SID, not from netBiosDomain: a bare stored
             // name carries no domain, and that is precisely the row whose display most needs one.
             // Falls back to the queried domain, then to the bare name.
+            var bare = SectionAccessDirectoryReading.ChooseBareName(
+                obj.Properties["SamAccountName"]?.Value?.ToString(),
+                obj.Properties["Name"]?.Value?.ToString(),
+                obj.Properties["DisplayName"]?.Value?.ToString(),
+                name);
+
             matches.Add(new DirectoryGroupMatch(
                 sid,
                 SectionAccessGroupIdentity.QualifiedDisplayName(
-                    ResolveNetBiosDomain(sid) ?? netBiosDomain, bare ?? name)));
+                    ResolveNetBiosDomain(sid) ?? netBiosDomain, bare)));
         }
 
         _logger.LogDebug("Section-access group lookup for {Name} on {Server} returned {Count} match(es)",
@@ -209,8 +203,9 @@ public sealed class SectionAccessGroupDirectory : ISectionAccessGroupDirectory
                 .Translate(typeof(System.Security.Principal.NTAccount))
                 .Value;
 
-            var slash = account.IndexOf('\\');
-            return slash > 0 ? account[..slash] : null;
+            // Only the translation needs the directory; the split is in
+            // SectionAccessDirectoryReading, which documents why index 0 is not a match.
+            return SectionAccessDirectoryReading.NetBiosFromNTAccount(account);
         }
         catch (Exception ex)
         {
