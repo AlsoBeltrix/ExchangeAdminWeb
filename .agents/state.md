@@ -6,6 +6,34 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Coverage ratchet repair PLANNED and REVIEWED 2026-08-05 -- `docs/CoverageRatchetRepair-Plan.md`
+  is DRAFT, NOT APPROVED. No implementation until the owner approves.**
+  **The shortfall is SIX LINES** (1015/1569 = 64.69% against a 65.06 floor), measured before
+  choosing a shape -- which ruled out treating it as a "write a big test suite" problem. Cause is
+  dilution, not regression: `0e35e7b` added 49 lines to `Services/SectionAccessGroupDirectory.cs`,
+  a file at **0/115**, so the ratio fell while the numerator stood still.
+  That file is untested **by construction** -- every path opens a PowerShell runspace and imports
+  `ActiveDirectory`. The plan applies the extraction the repo already used twice for this exact
+  shape (`MailboxPermissionOutcome`, `CalendarFolderIdentity`): move the three pure decision points
+  where a wrong answer is a silent authorization defect, leave the runspace calls alone.
+  **openreview codex (gpt-5.5-dzs @ xhigh, grade `fallback`) over `506c2d4..62d84d9`:
+  `acceptable_with_changes`; 3 findings, all ADMITTED after independent verification. Repair
+  re-review over `62d84d9..e9ed249`: `best_approach`, no findings.**
+  Two of those findings are worth carrying forward as habits, not just fixes:
+  **(a) I claimed the unextracted fail-closed paths were "covered by the live tests where a host
+  allows". They are not** -- no test constructs the real service, and no live-AD file mentions it.
+  A plan asserting coverage that does not exist is worse than one admitting a gap, because it
+  stops anyone looking. Corrected in place so the record shows the gap is accepted, not absent.
+  **(b) The stale-coverage-report hazard was filed as "not observed"** -- it had already misfired
+  earlier in the same session. It is now slice 3, a guard in the tool, because a procedure that
+  relies on remembering an incantation is weaker than a check.
+  Also self-caught: the plan estimated "20-25 lines" for the extraction; counting gives **15**, and
+  extraction adds coverable declaration lines, so the margin over 6 is thinner than it read. Slice
+  2 measures rather than assumes and names the next candidate if it falls short.
+  **D1 (whether the gated scope should keep `ProtectedPrincipalService` at 62% and
+  `PermissionValidator` at 46%, which will dilute it again) is open and blocks nothing.**
+  **NEXT: owner approval, then slices 1-3.**
+
 - **CI test failure FIXED 2026-08-05.** `master` had been red since `ba9fe4f` (2026-08-04) on
   `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`, and the record said the
   coverage gate was the cause. **It was not** -- the failing step is Test; the coverage gate never

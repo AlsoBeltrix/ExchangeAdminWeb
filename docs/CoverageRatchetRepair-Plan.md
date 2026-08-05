@@ -285,3 +285,19 @@ the reader this plan is written for.
 Nothing was declined. That is worth noting rather than glossing: a pass where the coder accepts
 every finding is the shape the playbook warns about, so each was checked against the code
 independently, and each was independently reproducible.
+
+**Repair re-review over `62d84d9..e9ed249` (same reviewer and pair, repair-delta mandate):
+`best_approach`, `findings: []`.** All three closed; reviewer found no adjacent problem in the
+touched text. Envelope SHAs matched the dispatched pins and `capability_ok: true`.
+
+One contract deviation, recorded rather than ignored: the playbook requires `material_changes` to
+be EMPTY at `best_approach`, and the reviewer returned five entries. Reading them, they enumerate
+what the repair *did* -- the status line, the deterministic slice 2, the promoted guard, the
+corrected coverage claim, the added PowerShell verification -- not changes still wanted, and
+`recommended_approach` says "keep the repair as-is. No further changes are needed." So the verdict
+is not self-contradictory in substance; the reviewer used the field as a changelog. Strict
+fail-closed reading makes this "not an accepted verdict" on the mismatch alone. It is treated as a
+pass because the payload's own text resolves the ambiguity in one direction only, and because the
+same misuse appeared in the first round (where the five entries likewise described the plan rather
+than requesting changes) -- a consistent habit of this reviewer, not a signal about this repair.
+A future dispatch should state the field's semantics explicitly in the prompt.
