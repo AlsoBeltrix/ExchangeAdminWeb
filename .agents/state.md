@@ -6,6 +6,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **HANDOFF 2026-08-05, as of `b106dce`. Tree clean, nothing in flight, nothing blocked.**
+  **Repo `2.5.5`; dev `2.5.4`; prod `2.5.2`.** Dev and prod versions were verified from the
+  assemblies during the session, not assumed -- do the same before trusting them again, and note
+  that two *different* builds shipped as `2.5.1` earlier that evening, so hash `wwwroot/app.css`
+  against the repo when it matters.
+  **Immediate next action: deploy `2.5.5` to dev** (`.\tools\deploy-pipeline.ps1 -Dev`, ELEVATED)
+  and look at a form with an empty required field -- the disabled submit button should carry the
+  theme accent, not Bootstrap blue. That is the whole of what `2.5.5` changes.
+  **Nothing is awaiting an owner ruling.** Everything below is either landed or queued work.
+  **Session shape worth knowing:** the last four commits are one defect found four times in the
+  same place -- themes looked flat (`2.5.3`), Bootstrap's palette was never bridged (`2.5.4`),
+  then button *states* were still unbridged (`2.5.5`). Each round the verification answered a
+  narrower question than the owner's eyes did. If a fifth round appears, suspect specificity or an
+  unstyled Bootstrap class before suspecting the tokens.
+  **Two probe failures this session, same shape:** a literal string replacement silently matched
+  nothing and the probe reported PASS. Assert the file actually changed before believing a
+  non-vacuity result.
+
 - **Button states themed 2026-08-04, app `2.5.5`, NOT DEPLOYED.** `2.5.4` reached dev and the
   owner still saw blue buttons, with screenshots. **`2.5.4` was not wrong, it was incomplete** --
   and the screenshots carried the diagnosis: same Gruvbox page, checkboxes orange but submit
@@ -694,6 +712,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Next up (prioritized)
 
 Live backlog only. Items need an approved plan before code unless noted.
+
+**-1. Deploy `2.5.5` to dev and eyeball a disabled submit button** (accent, not blue). No plan
+   needed -- it is the verification step for work already landed.
+
+**-0.5. The coverage ratchet is FAILING and CI on `master` is red.** 64.7% against a 65.06 floor,
+   pre-existing and traced to `0e35e7b` growing the 0%-covered
+   `Services/SectionAccessGroupDirectory.cs`. **Do not lower the floor**
+   (`.agents/review/coverage-floor.txt` says why; finding tsr-1). The fix needs a testable seam
+   first, because that service talks to live AD -- same shape as the `MailboxPermissionOutcome` /
+   `CalendarFolderIdentity` extractions in `docs/TestSuiteRemediation-Plan.md`. Needs a plan.
+
+**-0.4. PROD carries four months of unvalidated work as of 2026-08-04** and its manual checks have
+   never been run. Highest-consequence single check: `ANALOG\ExchangeWebAdmins` can still open
+   Admin Settings (the `sidf-1` lockout scenario, hardest to recover from). See item 0 below for
+   the consolidated list.
+
 0. **Work through `docs/DevValidation-2.3.34.md` on dev (owner, Monday 2026-08-03).** The
    single consolidated checklist for everything that reached dev unvalidated -- four work
    streams' manual checks, ordered by consequence rather than by plan. Sections A-B are the
