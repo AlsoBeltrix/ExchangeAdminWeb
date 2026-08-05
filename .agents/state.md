@@ -6,8 +6,23 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Coverage ratchet repair PLANNED and REVIEWED 2026-08-05 -- `docs/CoverageRatchetRepair-Plan.md`
-  is DRAFT, NOT APPROVED. No implementation until the owner approves.**
+- **Coverage ratchet repair IMPLEMENTED 2026-08-05** (owner approved; `8d614b4` slice 1,
+  `4daf5d9` slice 3). **Gate satisfied locally: 65.1% (844/1296), exit 0.** 1327 tests, 78 Pester.
+  **AWAITING CI CONFIRMATION -- the local pass is not proof**, because CI measures a smaller
+  denominator (live-directory tests skip there).
+  **The plan's "measure, do not assume" clause earned itself:** the three planned extractions
+  landed at 64.9% -- better, still 3 lines short -- so two more were pulled from the same file
+  rather than touching the floor. `SectionAccessDirectoryReading` is at 100%.
+  **Slice 2 (raise the floor) is DELIBERATELY NOT DONE.** Local margin is 0.06 points (65.12 vs
+  65.06) and CI's arithmetic differs, so raising it from a local number would be guessing -- which
+  is how a floor becomes unreachable. Raise only after a green CI run reports a real value, in its
+  own one-line commit.
+  **Measurement error worth keeping:** an intermediate run was reported as "gate exit: 0" when the
+  gate had failed -- `$LASTEXITCODE` read after a `Select-Object` pipeline carries the pipeline's
+  code, not the script's. Caught only because the reported figure was arithmetically below the
+  floor it claimed to clear. **Read a gate's verdict line, not an exit code taken through a pipe.**
+
+- **Coverage ratchet repair PLANNED and REVIEWED 2026-08-05 -- plan now In progress.**
   **The shortfall is SIX LINES** (1015/1569 = 64.69% against a 65.06 floor), measured before
   choosing a shape -- which ruled out treating it as a "write a big test suite" problem. Cause is
   dilution, not regression: `0e35e7b` added 49 lines to `Services/SectionAccessGroupDirectory.cs`,

@@ -1,9 +1,7 @@
 # Coverage Ratchet Repair Plan
 
-Status: **Draft -- NOT APPROVED. No implementation until the owner approves.**
-`.agents/repo-guidance.md` (Authority Order, item 9): only `Approved` or `In progress` plans
-represent current intent, so nothing here authorizes code.
-D1 below is a follow-up scope question; it does not block approval of slices 1-3.
+Status: **In progress.** Owner approved slices 1-3 on 2026-08-05 ("approved").
+D1 remains open and unruled; it is a follow-up scope question and blocks nothing here.
 
 Reviewed 2026-08-05 -- see `## Review` at the end.
 
@@ -260,6 +258,38 @@ two files dilutes the ratio the same way `0e35e7b` did, so this repair will recu
 Recommendation: **(b)**, as a separate plan, not folded into this one. (c) is the tempting option
 and is the same failure as lowering the floor wearing a different hat -- it makes the number
 green by measuring less.
+
+## Outcome (implementation, 2026-08-05)
+
+**Gate satisfied locally: 65.1% (844 / 1296), exit 0**, from a clean deterministic run. 1327 tests
+pass, 3 skipped. Pester 78 pass.
+
+**The plan's "measure, do not assume" clause earned itself.** The three planned members were not
+enough: the first measurement came back **64.9% (835/1287)** -- an improvement, still 3 lines under
+the floor. Per the plan the answer was more extraction, never a lower floor. Two further members
+were pulled from the same file, both genuine decisions rather than filler:
+
+- `PartitionMatchProblem` -- the candidate the plan named. It fixed a real gap while there: the
+  original threw one message for both zero and many matches, but those send an administrator to
+  different places ("check the stored value" vs "check the forest"). Now distinct.
+- `GroupSidProblem` -- the missing-`objectSid` refusal. Worth extracting because the property is
+  subtle: rejecting rather than skipping is what stops a two-match ambiguity, where one row lost
+  its SID, from reading as a confident single answer.
+
+`SectionAccessDirectoryReading` is at **100%**; `SectionAccessGroupDirectory` stays at 0%, which is
+correct -- what remains there is the runspace work the plan deliberately left alone.
+
+**A measurement error worth recording.** An intermediate run was reported as "gate exit: 0" when
+the gate had failed: `$LASTEXITCODE` was read after a `Select-Object` pipeline, so it carried the
+pipeline's code, not the script's. Caught by noticing the reported figure (65.0425) was
+arithmetically below the floor it supposedly cleared. **Read a gate's own verdict line, never an
+exit code captured through a pipe.**
+
+**The floor is NOT raised in this work.** Local is 65.12 unrounded against a 65.06 floor -- 0.06
+points of margin -- and CI measures a smaller denominator, so a safe local figure is not
+necessarily safe on CI. Raising it from a local number would be guessing at CI's arithmetic, which
+is exactly how a floor becomes unreachable. **Raise it only after a green CI run reports a real
+value**, in its own one-line commit.
 
 ## Open questions
 
