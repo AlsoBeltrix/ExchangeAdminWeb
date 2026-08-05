@@ -6,6 +6,43 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **HANDOFF 2026-08-05, as of `e9ad05d`. Tree clean, pushed, CI green.**
+  **Coverage 64.7% -> 66.0%** over the gated security-critical scope; floor raised 65.06 -> 65.12
+  (`b5df487`). CI went green at `fd8fa69` -- first success since 2026-07-30 -- after two unrelated
+  defects were fixed: the host-dependent `"DA"` test (`506c2d4`) and the coverage dilution
+  (`8d614b4`, `4daf5d9`).
+
+- **IN FLIGHT, NOT STARTED IN CODE: make the remaining 441 uncovered lines testable.**
+  Owner ruling 2026-08-05, verbatim: *"I don't care what's left. I do not want to have to deal with
+  this in the future. make it work."* That is a standing instruction to finish the job, not to
+  report on it again.
+  **Remaining uncovered, measured at `e9ad05d`:**
+
+  | lines | % | file |
+  |---|---|---|
+  | 171 | 63% | `Services/ProtectedPrincipalService.cs` |
+  | 148 | 46% | `Services/PermissionValidator.cs` |
+  | 91 | 0% | `Services/SectionAccessGroupDirectory.cs` |
+  | 31 | -- | four files at 80-98%, small remainders |
+
+  **Nearly all of it is one shape: code that calls PowerShell to reach AD or EXO.** Biggest single
+  blocks: `PermissionValidator.TryExpandGroupAsync` (70), `EnsureInitializedAsync` (27),
+  `ValidateSelfGrantAsync` (21); `ProtectedPrincipalService.CheckTransitiveGroupMembership` (53),
+  `ResolveViaActiveDirectory` (35), `ResolveProtectedGroupDn` (29). Tests cannot reach any of it
+  without a domain-joined host with RSAT.
+  **The fix is a seam over the PowerShell calls**, then tests against a fake. Same move already
+  used three times here (`MailboxPermissionOutcome`, `CalendarFolderIdentity`,
+  `SectionAccessDirectoryReading`) -- but those extracted PURE logic beside the I/O, which is
+  cheap. This is the harder version: abstracting the I/O itself.
+  **RISK, and why this is not routine test work:** these are the live authorization paths that
+  decide who may modify protected mailboxes. They reached PROD on 2026-08-04 and their manual
+  checks have never been run. `sidf-1` was exactly this failure mode -- a change near this code
+  locked every admin out of the page needed to repair it, caught only by review.
+  **Constraints agreed before stopping:** pure extraction with no behaviour change; the existing
+  authorization suites must pass UNMODIFIED as the proof (editing them signals a behaviour change
+  and is a stop); one commit per piece so any single step is revertible; nothing considered done
+  until CI is green.
+
 - **CI IS GREEN as of 2026-08-05 (`fd8fa69`, run 31021097853) -- first success since 2026-07-30.**
   Both jobs pass. CI's own figures: `1321 passed, 0 failed, 9 skipped`, coverage
   `65.1% (844 / 1296)`, floor satisfied. Two separate defects had to be fixed to get here: the
@@ -799,26 +836,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 Live backlog only. Items need an approved plan before code unless noted.
 
-**-1. Deploy `2.5.5` to dev and eyeball a disabled submit button** (accent, not blue). No plan
+**-1. Make the remaining 441 uncovered lines testable** (owner: *"make it work"*, 2026-08-05).
+   Details, the per-file split and the risk constraints are in `## Now`. No plan needed -- the
+   owner ruled it directly. This is the next code task.
+
+**-0.9. Deploy `2.5.5` to dev and eyeball a disabled submit button** (accent, not blue). No plan
    needed -- it is the verification step for work already landed.
 
-**-0.5. CI on `master` is red -- and NOT for the reason recorded until 2026-08-05.** Checked the
-   run rather than assuming: the failing step is **Test**, not the coverage gate. One test fails,
-   `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`. The `powershell` job passes.
-   Red since `ba9fe4f` (2026-08-04); last green `f3b402a` (2026-07-30). **Fixed 2026-08-05** -- see
-   `## Now`.
-   Cause: `"DA"` is the only SDDL alias that needs a joined DOMAIN to resolve. On this box it
-   resolves and is refused as *"not canonical"*; on GitHub's standalone runner
-   `new SecurityIdentifier("DA")` throws and it is refused as *"not a valid SID"*. Same refusal,
-   different words -- the test asserted the environment, not the behaviour. Measured both branches
-   before changing anything.
-   **The coverage ratchet is ALSO failing** (64.7% vs a 65.06 floor) but it is NOT what reddens CI
-   -- the Test step exits first, so the gate never runs. Pre-existing, traced to `0e35e7b` growing
-   the 0%-covered `Services/SectionAccessGroupDirectory.cs`. **Do not lower the floor**
-   (`.agents/review/coverage-floor.txt` says why; finding tsr-1). Needs a testable seam first,
-   because that service talks to live AD -- same shape as the `MailboxPermissionOutcome` /
-   `CalendarFolderIdentity` extractions in `docs/TestSuiteRemediation-Plan.md`. Needs a plan.
-   **It will surface as the next CI failure once the test fix lands.**
+**-0.5. RESOLVED 2026-08-05. CI is green** (`fd8fa69`); both the `"DA"` host-dependency and the
+   coverage dilution are fixed, floor raised to 65.12. Kept only as the pointer to the standing
+   follow-up: **make the remaining 441 uncovered lines testable** -- see `## Now`, owner ruling
+   *"make it work"*. That is the next code task and it needs no further approval.
 
 **-0.4. PROD carries four months of unvalidated work as of 2026-08-04** and its manual checks have
    never been run. Highest-consequence single check: `ANALOG\ExchangeWebAdmins` can still open
