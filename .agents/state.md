@@ -18,17 +18,19 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   defects were fixed: the host-dependent `"DA"` test (`506c2d4`) and the coverage dilution
   (`8d614b4`, `4daf5d9`).
 
-- **IN FLIGHT, NOT STARTED IN CODE: make the remaining 441 uncovered lines testable.**
+- **IN FLIGHT: make the remaining uncovered lines testable. ONE OF THREE FILES DONE.**
   Owner ruling 2026-08-05, verbatim: *"I don't care what's left. I do not want to have to deal with
   this in the future. make it work."* That is a standing instruction to finish the job, not to
   report on it again.
-  **Remaining uncovered, measured at `e9ad05d`:**
+  **`SectionAccessGroupDirectory` DONE 2026-08-05 (`6642587`): 0% -> 98%**, security-critical
+  coverage **66.0% -> 72.9%** locally (943/1294). Not yet confirmed on CI, and the floor is
+  deliberately NOT raised until a green CI run reports a real figure.
+  **Remaining uncovered, measured at `6642587`:**
 
   | lines | % | file |
   |---|---|---|
   | 171 | 63% | `Services/ProtectedPrincipalService.cs` |
   | 148 | 46% | `Services/PermissionValidator.cs` |
-  | 91 | 0% | `Services/SectionAccessGroupDirectory.cs` |
   | 31 | -- | four files at 80-98%, small remainders |
 
   **Nearly all of it is one shape: code that calls PowerShell to reach AD or EXO.** Biggest single
@@ -40,6 +42,15 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   used three times here (`MailboxPermissionOutcome`, `CalendarFolderIdentity`,
   `SectionAccessDirectoryReading`) -- but those extracted PURE logic beside the I/O, which is
   cheap. This is the harder version: abstracting the I/O itself.
+  **`ISectionAccessDirectoryCommands` (`6642587`) is the worked example to copy for the other two.**
+  Its load-bearing shape: the command result carries rows and error as INDEPENDENT values, because
+  a cmdlet that emits rows AND reports an error proved nothing about how many objects exist --
+  collapsing them lets a partial failure read as a confident single answer. Rows stay nullable so
+  the null-pipeline-row guard remains reachable. The service keeps its public constructor (DI
+  unchanged) and takes a FACTORY on an internal one, preserving the session-per-lookup lifetime.
+  **The remaining two are harder than this one was:** both sit on live request paths and both need
+  a `PSCredential` (the Delinea directory-read secret) rather than the app-pool identity, so the
+  seam has to carry credentials without widening who can see them.
   **RISK, and why this is not routine test work:** these are the live authorization paths that
   decide who may modify protected mailboxes. They reached PROD on 2026-08-04 and their manual
   checks have never been run. `sidf-1` was exactly this failure mode -- a change near this code
@@ -645,9 +656,12 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
 
 Live backlog only. Items need an approved plan before code unless noted.
 
-**-1. Make the remaining 441 uncovered lines testable** (owner: *"make it work"*, 2026-08-05).
+**-1. Make the remaining uncovered lines testable** (owner: *"make it work"*, 2026-08-05).
    Details, the per-file split and the risk constraints are in `## Now`. No plan needed -- the
    owner ruled it directly. This is the next code task.
+   **`SectionAccessGroupDirectory` is DONE (`6642587`).** Next: `PermissionValidator` (46%), then
+   `ProtectedPrincipalService` (63%) -- both on live request paths, both credential-carrying, so
+   they are the harder half. Copy the `ISectionAccessDirectoryCommands` shape.
 
 **-0.9. Eyeball a disabled submit button on dev** (accent, not blue). No plan needed -- it is the
    verification step for work already landed. **The deploy half is done:** dev and prod both run
