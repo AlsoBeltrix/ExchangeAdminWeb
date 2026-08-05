@@ -180,6 +180,31 @@ untestable. The catalog is the testable seam.
    was red, and warn used Yellow `#f1fa8c` where Orange `#ffb86c` is the palette's warning colour.
    Every value in that block is now from the published spec.
 
+8. **Button STATES (owner, 2026-08-04). DONE** -- app `2.5.4 -> 2.5.5`.
+
+   Slice 7 shipped and the owner still saw blue buttons, with screenshots. **Slice 7 was not
+   wrong, it was incomplete**, and the screenshots contained the diagnosis: on the same Gruvbox
+   page the checkboxes were orange while the submit button was blue, and on M365 Group Management
+   an *enabled* `btn-primary` ("New Group") rendered orange while *disabled* ones rendered blue.
+   Every blue button in every screenshot was **disabled** -- they were empty forms.
+
+   Cause: Bootstrap 5.0 hardcodes `.btn-primary{background-color:#0d6efd}` rather than reading
+   `--bs-primary`, and states its variants on **two-class selectors**
+   (`.btn-primary.disabled, .btn-primary:disabled`, `.btn-primary:hover`, `:focus`, `:active`).
+   A single-class override loses to those on specificity. So slice 7's `.btn-primary` rule won for
+   a resting button and lost for every other state. Its focus shadow is likewise a literal
+   `rgba(49,132,253,.5)`.
+
+   Fixed by stating disabled/hover/focus/active per variant, matching Bootstrap's own selector
+   shape so ours win on equal specificity -- `!important` is deliberately not used.
+
+   **Why the earlier verification missed it:** the check was "does the rule exist and read a
+   token", which it did. Specificity is invisible to that question. The new
+   `EveryBootstrapColourVariantOverridesItsDisabledState` asserts the disabled state is stated for
+   all 11 variants, and `NoBootstrapBrandColourIsHardcodedInOurStylesheet` fails on any of
+   Bootstrap's literal brand hexes appearing in our CSS. Both proven non-vacuous by reintroducing
+   the exact defect.
+
 ## Verification
 
 Per `.agents/repo-guidance.md`: build, `dotnet test`, format check, ASCII lint,

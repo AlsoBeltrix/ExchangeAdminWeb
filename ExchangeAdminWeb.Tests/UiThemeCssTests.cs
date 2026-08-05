@@ -291,6 +291,74 @@ public class UiThemeCssTests
     }
 
     [Fact]
+    public void EveryBootstrapColourVariantOverridesItsDisabledState()
+    {
+        // Bootstrap 5.0 hardcodes its button colours instead of reading --bs-primary, and states
+        // it on TWO-class selectors: `.btn-primary.disabled, .btn-primary:disabled`. A
+        // single-class override loses to those, so a resting button themed correctly while every
+        // DISABLED one stayed Bootstrap blue.
+        //
+        // That is precisely what shipped in 2.5.4 and what the owner saw: screenshots of empty
+        // forms, where every submit button is disabled. Enabled buttons on the same pages were
+        // already correct, which made it look inconsistent rather than unfixed.
+        //
+        // Specificity is invisible to every other check here -- the rule EXISTS, reads a token,
+        // and still loses. This asserts the disabled state is stated for each variant.
+        var css = StripComments(ReadAppCss());
+        var missing = new List<string>();
+
+        var variants = new[]
+        {
+            "btn-primary", "btn-secondary", "btn-success", "btn-danger", "btn-warning", "btn-info",
+            "btn-outline-primary", "btn-outline-secondary", "btn-outline-success",
+            "btn-outline-danger", "btn-outline-warning"
+        };
+
+        foreach (var variant in variants)
+        {
+            if (!Regex.IsMatch(css, Regex.Escape($".{variant}:disabled")))
+            {
+                missing.Add($".{variant}: no :disabled override, so Bootstrap's hardcoded colour wins");
+            }
+        }
+
+        Assert.True(missing.Count == 0,
+            "Button variants whose disabled state is left to Bootstrap:\n" + string.Join("\n", missing));
+    }
+
+    [Fact]
+    public void NoBootstrapBrandColourIsHardcodedInOurStylesheet()
+    {
+        // The literal values Bootstrap 5.0 ships for primary/success/danger/warning and their
+        // hover shades. Any of these appearing in our own CSS means a rule was written against
+        // Bootstrap's palette rather than the theme's, which cannot follow a theme.
+        var css = StripComments(ReadAppCss());
+        var offenders = new List<string>();
+
+        var bootstrapLiterals = new[]
+        {
+            "#0d6efd", "#0b5ed7", "#0a58ca", "#0a53be", // primary + its states
+            "#198754", "#157347",                       // success
+            "#dc3545", "#bb2d3b",                       // danger
+            "#ffc107", "#ffca2c",                       // warning
+            "#0dcaf0"                                   // info
+        };
+
+        foreach (var literal in bootstrapLiterals)
+        {
+            foreach (Match match in Regex.Matches(css, Regex.Escape(literal), RegexOptions.IgnoreCase))
+            {
+                var line = css[..match.Index].Count(c => c == '\n') + 1;
+                offenders.Add($"line {line}: {literal}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Bootstrap's own brand colours hardcoded in app.css (use a --ui-* token):\n" +
+            string.Join("\n", offenders));
+    }
+
+    [Fact]
     public void DarkThemesOutnumberedByNothingSilly()
     {
         // Not an aesthetic assertion -- it pins that at least one light option

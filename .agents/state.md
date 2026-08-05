@@ -6,7 +6,28 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Bootstrap palette bridged + Dracula corrected 2026-08-04, app `2.5.4`, NOT DEPLOYED.**
+- **Button states themed 2026-08-04, app `2.5.5`, NOT DEPLOYED.** `2.5.4` reached dev and the
+  owner still saw blue buttons, with screenshots. **`2.5.4` was not wrong, it was incomplete** --
+  and the screenshots carried the diagnosis: same Gruvbox page, checkboxes orange but submit
+  button blue; and on M365 Group Management an *enabled* `btn-primary` rendered orange while
+  *disabled* ones rendered blue. **Every blue button in every screenshot was DISABLED** (empty
+  forms).
+  Cause: Bootstrap 5.0 hardcodes `.btn-primary{background-color:#0d6efd}` instead of reading
+  `--bs-primary`, and states its variants on **two-class selectors**
+  (`.btn-primary.disabled, .btn-primary:disabled`, `:hover`, `:focus`, `:active`), which outrank a
+  single-class override. So `2.5.4`'s rule won for a resting button and lost for every other
+  state. Fixed by stating each state per variant at matching specificity; `!important` deliberately
+  avoided.
+  **Rule this earns: "the rule exists and reads a token" is not the same question as "the rule
+  wins."** Specificity is invisible to every check that only greps for token usage -- which is
+  what let this ship twice. `EveryBootstrapColourVariantOverridesItsDisabledState` and
+  `NoBootstrapBrandColourIsHardcodedInOurStylesheet` now cover it.
+  **Also worth keeping: a screenshot of a DISABLED control is not evidence about the enabled one,
+  and vice versa.** The inconsistency in those images was the clue, not noise.
+
+- **Bootstrap palette bridged + Dracula corrected 2026-08-04, app `2.5.4`, ON DEV** (verified
+  `FileVersion 2.5.4.0`, deployed 22:38; dev `app.css` hashed identical to the repo at that
+  point). Superseded same day by `2.5.5` above.
   Owner after `2.5.3` reached dev: *"buttons and checkboxes are still blue on every theme. dracula
   isn't using green or yellow and doesn't match the dracula theme. that one I know well, and this
   is a bad implementation."* Both correct. `docs/ThemeSupport-Plan.md` slice 7.

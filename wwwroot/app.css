@@ -739,17 +739,146 @@ a, .btn-link {
     color: var(--ui-brand);
 }
 
+/* ----------------------------------------------------------------------------
+   Button STATES. Bootstrap 5.0 hardcodes .btn-primary rather than reading
+   --bs-primary, and its state selectors carry two classes
+   (`.btn-primary.disabled, .btn-primary:disabled`), which outrank a
+   single-class override. So the base rule below was winning for a resting
+   button while every DISABLED, hovered, focused and active button kept
+   Bootstrap blue.
+
+   That is why the owner still saw blue buttons after the palette bridge landed
+   (2026-08-04): the screenshots were all of empty forms, where every submit
+   button is disabled. Enabled buttons on the same pages were already themed --
+   which is exactly what made it look inconsistent rather than simply unfixed.
+
+   Each variant therefore needs its resting, disabled, hover and active states
+   stated. Matching Bootstrap's own selector shape is what makes these win;
+   !important is not needed and is deliberately avoided.
+   ---------------------------------------------------------------------------- */
 .btn-primary {
     color: var(--ui-brand-fg);
     background-color: var(--ui-brand);
     border-color: var(--ui-brand);
 }
 
-/* Single-ring focus. The old two-ring style painted a white halo, which is
-   near-invisible on a light canvas and a bright smear on an OLED one. */
-.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-brand) 30%, transparent);
+.btn-primary.disabled, .btn-primary:disabled {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-brand);
     border-color: var(--ui-brand);
+}
+
+.btn-primary:hover, .btn-primary:focus,
+.btn-primary:active, .btn-primary.active,
+.btn-check:focus + .btn-primary, .btn-check:active + .btn-primary, .btn-check:checked + .btn-primary {
+    color: var(--ui-brand-fg);
+    background-color: color-mix(in srgb, var(--ui-brand) 85%, black);
+    border-color: color-mix(in srgb, var(--ui-brand) 85%, black);
+}
+
+.btn-success.disabled, .btn-success:disabled,
+.btn-success:hover, .btn-success:focus, .btn-success:active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-on);
+    border-color: var(--ui-on);
+}
+
+.btn-danger.disabled, .btn-danger:disabled,
+.btn-danger:hover, .btn-danger:focus, .btn-danger:active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-danger);
+    border-color: var(--ui-danger);
+}
+
+.btn-warning.disabled, .btn-warning:disabled,
+.btn-warning:hover, .btn-warning:focus, .btn-warning:active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-warn);
+    border-color: var(--ui-warn);
+}
+
+.btn-info.disabled, .btn-info:disabled,
+.btn-info:hover, .btn-info:focus, .btn-info:active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-info);
+    border-color: var(--ui-info);
+}
+
+.btn-secondary.disabled, .btn-secondary:disabled,
+.btn-secondary:hover, .btn-secondary:focus, .btn-secondary:active {
+    color: var(--ui-fg);
+    background-color: var(--ui-header);
+    border-color: var(--ui-line);
+}
+
+/* Outline variants: the disabled state keeps the accent as TEXT on transparent,
+   which is Bootstrap's shape, just in the theme's colour. */
+.btn-outline-primary.disabled, .btn-outline-primary:disabled {
+    color: var(--ui-brand);
+    background-color: transparent;
+    border-color: var(--ui-brand);
+}
+
+.btn-outline-primary:active, .btn-outline-primary.active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-brand);
+    border-color: var(--ui-brand);
+}
+
+.btn-outline-secondary.disabled, .btn-outline-secondary:disabled {
+    color: var(--ui-fg2);
+    background-color: transparent;
+    border-color: var(--ui-line);
+}
+
+.btn-outline-success.disabled, .btn-outline-success:disabled {
+    color: var(--ui-on);
+    background-color: transparent;
+    border-color: var(--ui-on);
+}
+
+.btn-outline-success:active, .btn-outline-success.active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-on);
+    border-color: var(--ui-on);
+}
+
+.btn-outline-danger.disabled, .btn-outline-danger:disabled {
+    color: var(--ui-danger);
+    background-color: transparent;
+    border-color: var(--ui-danger);
+}
+
+.btn-outline-danger:active, .btn-outline-danger.active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-danger);
+    border-color: var(--ui-danger);
+}
+
+.btn-outline-warning.disabled, .btn-outline-warning:disabled {
+    color: var(--ui-warn);
+    background-color: transparent;
+    border-color: var(--ui-warn);
+}
+
+.btn-outline-warning:active, .btn-outline-warning.active {
+    color: var(--ui-brand-fg);
+    background-color: var(--ui-warn);
+    border-color: var(--ui-warn);
+}
+
+/* Single-ring focus. The old two-ring style painted a white halo, which is
+   near-invisible on a light canvas and a bright smear on an OLED one.
+   The per-variant selectors are here because Bootstrap ships its own focus
+   shadow as `rgba(49,132,253,.5)` -- literal blue -- on two-class selectors
+   that outrank a bare `.btn:focus`. */
+.btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus,
+.btn-primary:focus, .btn-secondary:focus, .btn-success:focus, .btn-danger:focus,
+.btn-warning:focus, .btn-info:focus,
+.btn-outline-primary:focus, .btn-outline-secondary:focus, .btn-outline-success:focus,
+.btn-outline-danger:focus, .btn-outline-warning:focus,
+.btn-primary:active:focus, .btn-outline-primary:active:focus {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-brand) 30%, transparent);
     outline: none;
 }
 
