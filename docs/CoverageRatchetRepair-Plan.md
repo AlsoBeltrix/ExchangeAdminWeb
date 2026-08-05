@@ -1,7 +1,8 @@
 # Coverage Ratchet Repair Plan
 
-Status: **In progress.** Owner approved slices 1-3 on 2026-08-05 ("approved").
-D1 remains open and unruled; it is a follow-up scope question and blocks nothing here.
+Status: **Implemented 2026-08-05.** Owner approved slices 1-3 ("approved"); all three landed and
+**CI is green** (run 31021097853, `fd8fa69`) -- the first success since 2026-07-30.
+D1 remains open and unruled; it is a follow-up scope question and blocks nothing.
 
 Reviewed 2026-08-05 -- see `## Review` at the end.
 
@@ -285,11 +286,19 @@ pipeline's code, not the script's. Caught by noticing the reported figure (65.04
 arithmetically below the floor it supposedly cleared. **Read a gate's own verdict line, never an
 exit code captured through a pipe.**
 
-**The floor is NOT raised in this work.** Local is 65.12 unrounded against a 65.06 floor -- 0.06
-points of margin -- and CI measures a smaller denominator, so a safe local figure is not
-necessarily safe on CI. Raising it from a local number would be guessing at CI's arithmetic, which
-is exactly how a floor becomes unreachable. **Raise it only after a green CI run reports a real
-value**, in its own one-line commit.
+**CI confirmed green** -- run 31021097853 on `fd8fa69`, both jobs passing, the first success since
+2026-07-30. CI's own figures: `1321 passed, 0 failed, 9 skipped` and
+`Security-critical line coverage: 65.1% (844 / 1296)`, `Coverage floor of 65.06% satisfied`.
+
+CI and the dev box happened to agree exactly here (844/1296 both), which is luck rather than a
+rule -- the denominators differed by 294 lines before this work. The guidance stands: measure on
+CI.
+
+**Floor raised 65.06 -> 65.12 afterwards** (`b5df487`), from the CI figure and not the local one,
+in its own commit. Deliberately sequenced: raising it in the same commit as the improvement would
+have meant setting a floor from a number no CI run had yet produced. The reasoning is now recorded
+in `.agents/review/coverage-floor.txt` itself, so the next person raising it does not rediscover
+that a local measurement is the wrong input.
 
 ## Open questions
 

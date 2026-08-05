@@ -6,10 +6,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **CI IS GREEN as of 2026-08-05 (`fd8fa69`, run 31021097853) -- first success since 2026-07-30.**
+  Both jobs pass. CI's own figures: `1321 passed, 0 failed, 9 skipped`, coverage
+  `65.1% (844 / 1296)`, floor satisfied. Two separate defects had to be fixed to get here: the
+  host-dependent `"DA"` test (`506c2d4`) and the coverage dilution below.
+
 - **Coverage ratchet repair IMPLEMENTED 2026-08-05** (owner approved; `8d614b4` slice 1,
-  `4daf5d9` slice 3). **Gate satisfied locally: 65.1% (844/1296), exit 0.** 1327 tests, 78 Pester.
-  **AWAITING CI CONFIRMATION -- the local pass is not proof**, because CI measures a smaller
-  denominator (live-directory tests skip there).
+  `4daf5d9` slice 3, `b5df487` slice 2). **CONFIRMED ON CI**, not just locally.
+  Floor raised **65.06 -> 65.12**, taken from the CI figure in its own commit -- raising it in the
+  same commit as the improvement would have set a floor from a number no CI run had produced.
   **The plan's "measure, do not assume" clause earned itself:** the three planned extractions
   landed at 64.9% -- better, still 3 lines short -- so two more were pulled from the same file
   rather than touching the floor. `SectionAccessDirectoryReading` is at 100%.
