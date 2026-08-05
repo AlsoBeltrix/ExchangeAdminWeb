@@ -65,8 +65,8 @@ which should win. Do not silently choose whichever source is convenient.
 ## Reading Order
 
 `AGENTS.md` → this file → `docs/ProjectConstitution.md` (highest engineering
-authority) → `.agents/state.md` (current work) → `.agents/decisions.md` →
-`.agents/repo-map.json`. Then the module contract docs (`docs/AdminModuleSpec.md`,
+authority) → `.agents/state.md` (current work) → `.agents/decisions.md`. Then the
+module contract docs (`docs/AdminModuleSpec.md`,
 `docs/AdminModuleDeveloperGuide.md`) and any `Approved`/`In progress`
 `docs/*-Plan.md` relevant to the task.
 

@@ -9,12 +9,12 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
-- **codex** (`codex-cli 0.144.6`, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
+- **codex** (`codex-cli 0.146.0` as of 2026-08-05, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
   `@azure-openai-eus2-global/gpt-5.5-dzs`; the **full prefixed slug must be passed to `--model`**
   (stripping the `@.../` prefix causes an `Either x-portkey-config or x-portkey-provider` failure).
   The `refresh_token_reused` OAuth errors it prints are harmless noise on the API-key path.
-- **codex-commercial** (same `codex-cli 0.144.6` engine via wrapper
+- **codex-commercial** (same `codex-cli` engine via wrapper
   `C:\Users\mcoelho\.local\bin\codex-commercial.ps1`) — OpenAI direct, ChatGPT-subscription auth.
   `CODEX_HOME=C:\Users\mcoelho\.codex-commercial`; the wrapper strips `OPENAI_*`/`PORTKEY_*` env
   vars so it uses subscription auth, and syncs the ptk MCP block. Default model `gpt-5.6-sol`,

@@ -944,6 +944,14 @@ This repo now uses `AGENTS.md` as the canonical agent guidance, with current sta
 maps in `.agents/repo-map.json` and `.agents/artifact-manifest.json`. `CLAUDE.md` is a
 thin pointer shim that includes `AGENTS.md` so the Claude Code harness keeps working.
 
+Note (2026-08-05, drift sweep):
+The two machine-readable maps named above no longer exist. `.agents/repo-map.json` and
+`.agents/artifact-manifest.json` were removed by the governance refresh at `9d26b5f`
+(2026-07-20) as artifacts matching no shipped version. The rest of the decision stands;
+the layout is `AGENTS.md` + `.agents/state.md` + `.agents/decisions.md` +
+`.agents/repo-guidance.md`. Dangling pointers to the removed maps were cleared from
+`.agents/state.md` and `.agents/repo-guidance.md` in the same sweep.
+
 Reason:
 Establishes one canonical guidance location and one discoverable current-state entry
 point, reducing drift between harness-specific files and durable repo memory.

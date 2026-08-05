@@ -6,9 +6,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **HANDOFF 2026-08-05, as of `e9ad05d`. Tree clean, pushed, CI green.**
-  **Coverage 64.7% -> 66.0%** over the gated security-critical scope; floor raised 65.06 -> 65.12
-  (`b5df487`). CI went green at `fd8fa69` -- first success since 2026-07-30 -- after two unrelated
+**Deployed versions are owned by the single `Deployed:` entry below** -- as of 2026-08-05, dev and
+prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on prod` notes inside
+the older entries below record where that stream stood *when it landed*; they are history, not
+current state, and are not maintained. Read the `Deployed:` entry, never them.
+
+- **HANDOFF 2026-08-05, as of `e9ad05d`. Tree clean, CI green.**
+  **Coverage 64.7% -> 66.0%** over the gated security-critical scope; the floor was raised with it
+  (`b5df487`) -- the value itself lives in `.agents/review/coverage-floor.txt`, which owns it.
+  CI went green at `fd8fa69` -- first success since 2026-07-30 -- after two unrelated
   defects were fixed: the host-dependent `"DA"` test (`506c2d4`) and the coverage dilution
   (`8d614b4`, `4daf5d9`).
 
@@ -43,109 +49,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   and is a stop); one commit per piece so any single step is revertible; nothing considered done
   until CI is green.
 
-- **CI IS GREEN as of 2026-08-05 (`fd8fa69`, run 31021097853) -- first success since 2026-07-30.**
-  Both jobs pass. CI's own figures: `1321 passed, 0 failed, 9 skipped`, coverage
-  `65.1% (844 / 1296)`, floor satisfied. Two separate defects had to be fixed to get here: the
-  host-dependent `"DA"` test (`506c2d4`) and the coverage dilution below.
-
-- **Coverage ratchet repair IMPLEMENTED 2026-08-05** (owner approved; `8d614b4` slice 1,
-  `4daf5d9` slice 3, `b5df487` slice 2). **CONFIRMED ON CI**, not just locally.
-  Floor raised **65.06 -> 65.12**, taken from the CI figure in its own commit -- raising it in the
-  same commit as the improvement would have set a floor from a number no CI run had produced.
-  **The plan's "measure, do not assume" clause earned itself:** the three planned extractions
-  landed at 64.9% -- better, still 3 lines short -- so two more were pulled from the same file
-  rather than touching the floor. `SectionAccessDirectoryReading` is at 100%.
-  **Slice 2 (raise the floor) is DELIBERATELY NOT DONE.** Local margin is 0.06 points (65.12 vs
-  65.06) and CI's arithmetic differs, so raising it from a local number would be guessing -- which
-  is how a floor becomes unreachable. Raise only after a green CI run reports a real value, in its
-  own one-line commit.
-  **Measurement error worth keeping:** an intermediate run was reported as "gate exit: 0" when the
-  gate had failed -- `$LASTEXITCODE` read after a `Select-Object` pipeline carries the pipeline's
-  code, not the script's. Caught only because the reported figure was arithmetically below the
-  floor it claimed to clear. **Read a gate's verdict line, not an exit code taken through a pipe.**
-
-- **Coverage ratchet repair PLANNED and REVIEWED 2026-08-05 -- plan now In progress.**
-  **The shortfall is SIX LINES** (1015/1569 = 64.69% against a 65.06 floor), measured before
-  choosing a shape -- which ruled out treating it as a "write a big test suite" problem. Cause is
-  dilution, not regression: `0e35e7b` added 49 lines to `Services/SectionAccessGroupDirectory.cs`,
-  a file at **0/115**, so the ratio fell while the numerator stood still.
-  That file is untested **by construction** -- every path opens a PowerShell runspace and imports
-  `ActiveDirectory`. The plan applies the extraction the repo already used twice for this exact
-  shape (`MailboxPermissionOutcome`, `CalendarFolderIdentity`): move the three pure decision points
-  where a wrong answer is a silent authorization defect, leave the runspace calls alone.
-  **openreview codex (gpt-5.5-dzs @ xhigh, grade `fallback`) over `506c2d4..62d84d9`:
-  `acceptable_with_changes`; 3 findings, all ADMITTED after independent verification. Repair
-  re-review over `62d84d9..e9ed249`: `best_approach`, no findings.**
-  Two of those findings are worth carrying forward as habits, not just fixes:
-  **(a) I claimed the unextracted fail-closed paths were "covered by the live tests where a host
-  allows". They are not** -- no test constructs the real service, and no live-AD file mentions it.
-  A plan asserting coverage that does not exist is worse than one admitting a gap, because it
-  stops anyone looking. Corrected in place so the record shows the gap is accepted, not absent.
-  **(b) The stale-coverage-report hazard was filed as "not observed"** -- it had already misfired
-  earlier in the same session. It is now slice 3, a guard in the tool, because a procedure that
-  relies on remembering an incantation is weaker than a check.
-  Also self-caught: the plan estimated "20-25 lines" for the extraction; counting gives **15**, and
-  extraction adds coverable declaration lines, so the margin over 6 is thinner than it read. Slice
-  2 measures rather than assumes and names the next candidate if it falls short.
-  **D1 (whether the gated scope should keep `ProtectedPrincipalService` at 62% and
-  `PermissionValidator` at 46%, which will dilute it again) is open and blocks nothing.**
-  **NEXT: owner approval, then slices 1-3.**
-
-- **CI test failure FIXED and CONFIRMED ON CI 2026-08-05** (`506c2d4`, pushed in `0f67e62`).
-  Run 31016572894: Test passes -- **1288 passed, 0 failed, 9 skipped** (the 9th skip is the new
-  domain-only case, skipping loudly on the standalone runner exactly as designed). The `powershell`
-  job passes.
-  **`master` is still red, now solely on the coverage gate** -- `64.1% (817 / 1275)` vs the 65.06
-  floor -- which is what the prediction below said would surface once Test stopped exiting first.
-  **New fact the plan now carries: CI and the dev box do not measure the same denominator.** CI is
-  1275 lines to the dev box's 1569, because live-directory tests skip there so their code is never
-  instrumented. The shortfall is **13 lines on CI, 6 locally**; a local `Test-CoverageFloor.ps1`
-  pass is therefore NOT evidence the gate will pass on CI.
-
-- **CI test failure FIXED 2026-08-05.** `master` had been red since `ba9fe4f` (2026-08-04) on
-  `SectionAccessGroupIdentityTests.RefusesSddlAliases(alias: "DA")`, and the record said the
-  coverage gate was the cause. **It was not** -- the failing step is Test; the coverage gate never
-  runs because Test exits first.
-  **The test asserted an environment, not a behaviour.** `"DA"` is the only SDDL alias needing a
-  joined DOMAIN to resolve: here it resolves and is refused as *"not canonical"*; on GitHub's
-  standalone runner it throws and is refused as *"not a valid SID"*. Both are correct refusals, so
-  the security property held the whole time -- only the wording assertion was environment-specific.
-  Measured both branches before touching anything (`ZZ`/`QQ` throw here too, confirming the
-  unresolvable path).
-  Split into: the two aliases that resolve anywhere (`BA`, `WD`) in the original theory; a
-  domain-only case using `Assert.SkipUnless`, which skips LOUDLY per the repo rule that a silent
-  early return is indistinguishable from a pass; and a host-agnostic case asserting the part that
-  actually matters for authorization -- `"DA"` is never a usable stored group value, whatever the
-  reason string says. The skip probes by *resolving the alias*, not by asking the OS about domain
-  membership: a joined machine can still fail to resolve it.
-  **This file's own header already required these tests to be directory-free so they hold on CI.**
-  The invariant was written down and the test still violated it -- the header was not enough on its
-  own, which is why the host-agnostic assertion exists rather than only the skip.
-  Verified the way the defect demanded -- by reproducing CI's condition, not by trusting a green
-  run on a domain-joined box: pointing the probe at an alias that never resolves anywhere gives
-  **54 passed, 1 skipped, 0 failed**, so the domain-only case skips and the host-agnostic case
-  still holds. Non-vacuity separately proven by deleting the canonical-SID check, which fails all
-  four alias tests including the new one.
-  **NEXT once this lands: the coverage ratchet becomes the new CI failure** (64.7% vs 65.06). It
-  was always failing; the Test step was simply reaching the exit first.
-
-- **HANDOFF 2026-08-05, as of `b106dce`. Tree clean, nothing in flight, nothing blocked.**
-  **Repo `2.5.5`; dev `2.5.4`; prod `2.5.2`.** Dev and prod versions were verified from the
-  assemblies during the session, not assumed -- do the same before trusting them again, and note
-  that two *different* builds shipped as `2.5.1` earlier that evening, so hash `wwwroot/app.css`
-  against the repo when it matters.
-  **Immediate next action: deploy `2.5.5` to dev** (`.\tools\deploy-pipeline.ps1 -Dev`, ELEVATED)
-  and look at a form with an empty required field -- the disabled submit button should carry the
-  theme accent, not Bootstrap blue. That is the whole of what `2.5.5` changes.
-  **Nothing is awaiting an owner ruling.** Everything below is either landed or queued work.
-  **Session shape worth knowing:** the last four commits are one defect found four times in the
-  same place -- themes looked flat (`2.5.3`), Bootstrap's palette was never bridged (`2.5.4`),
-  then button *states* were still unbridged (`2.5.5`). Each round the verification answered a
-  narrower question than the owner's eyes did. If a fifth round appears, suspect specificity or an
-  unstyled Bootstrap class before suspecting the tokens.
-  **Two probe failures this session, same shape:** a literal string replacement silently matched
-  nothing and the probe reported PASS. Assert the file actually changed before believing a
-  non-vacuity result.
+- **CI WAS GREEN as of `fd8fa69`** (2026-08-05, run 31021097853) -- first success since
+  2026-07-30. Both jobs passed. CI's own figures at that commit: `1321 passed, 0 failed,
+  9 skipped`, coverage `65.1% (844 / 1296)`, floor satisfied. Two separate defects had to be fixed
+  to get there: the host-dependent `"DA"` test (`506c2d4`) and the coverage dilution.
+  **Volatile -- three commits have landed since (`a224c9a`, `03f7e31`, `be7c02a`, all docs and
+  governance). Check the current run rather than trusting this line.**
 
 - **Button states themed 2026-08-04, app `2.5.5`, NOT DEPLOYED.** `2.5.4` reached dev and the
   owner still saw blue buttons, with screenshots. **`2.5.4` was not wrong, it was incomplete** --
@@ -165,57 +74,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `NoBootstrapBrandColourIsHardcodedInOurStylesheet` now cover it.
   **Also worth keeping: a screenshot of a DISABLED control is not evidence about the enabled one,
   and vice versa.** The inconsistency in those images was the clue, not noise.
-
-- **Bootstrap palette bridged + Dracula corrected 2026-08-04, app `2.5.4`, ON DEV** (verified
-  `FileVersion 2.5.4.0`, deployed 22:38; dev `app.css` hashed identical to the repo at that
-  point). Superseded same day by `2.5.5` above.
-  Owner after `2.5.3` reached dev: *"buttons and checkboxes are still blue on every theme. dracula
-  isn't using green or yellow and doesn't match the dracula theme. that one I know well, and this
-  is a bad implementation."* Both correct. `docs/ThemeSupport-Plan.md` slice 7.
-  **Why blue survived a full theme rework -- the number is the finding:** this app uses **24
-  colour-bearing Bootstrap classes and the theme layer restyled 3.** Checkboxes, switches, radios,
-  spinners (159 uses), badges (43), `.text-*`/`.bg-*` utilities and the success/danger/warning
-  buttons are all painted by Bootstrap from `--bs-primary: #0d6efd`, which nothing overrode --
-  slice 1 mapped 8 `--bs-*` variables and stopped short of the semantic palette. Fixed at the
-  variable layer, which repairs the other 21 classes at the source; explicit rules remain only
-  where Bootstrap uses a shorthand that ignores the variable or bakes the colour into an SVG data
-  URI (the switch knob).
-  **Lesson worth keeping: a token layer only reaches what consumes it.** The tokens were correct
-  and the themes were correct; the framework simply was not reading them. Verifying "the theme
-  system works" on the pages we restyled proved nothing about the 21 classes we had not.
-  **`-rgb` companions are a deliberate second copy** of each accent (Bootstrap needs raw triplets
-  for alpha blends) and they already drifted during development -- Dracula's warn moved yellow ->
-  orange and the triplet did not follow, which is near-invisible since only translucent overlays
-  go wrong. `EveryRgbTripletMatchesItsHexToken` derives the expected value from the hex; they are
-  also in `RequiredTokens` so a theme cannot omit them.
-  **Dracula specifically:** the accent values were spec-correct, but the canvas `#1e1f29` was
-  invented rather than the palette's own ANSI black `#21222c`, and the state tints were off-hue --
-  danger tinted toward pink while its foreground was red, and warn used Yellow where Orange
-  `#ffb86c` is the palette's warning colour.
-
-- **Theme palettes reworked 2026-08-04, app `2.5.3`, ON DEV.** Deployed by the owner 22:24 and
-  verified: dev assembly `FileVersion 2.5.3.0`, and dev `wwwroot/app.css` is **byte-identical to
-  the repo** (SHA256 match), so the reworked palettes are genuinely live rather than a stale copy
-  surviving the mirror. Owner rejected the first cut on sight after `2.5.1` reached dev: *"the
-  themes aren't implemented optimally. I see really only two main colors."*
-  `docs/ThemeSupport-Plan.md` slice 6.
-  **The mechanism was fine; the VALUES were wrong** -- so this was a data-only fix with no rule
-  touched, which is the token layer working as intended.
-  Measured cause, three parts: (a) canvas/surface/header sat within ~12 luminance points, below the
-  ~20 a step needs to read as a step, so cards did not sit on the page and table headers did not
-  separate from rows -- every palette collapsed to background-plus-text; (b) the accent reached
-  only links, the primary button, the focus ring and a tab underline, so the colour that makes a
-  theme recognisable never appeared on a working page; (c) the sidebar shared the page background
-  and read as empty margin. Spread is now 16-33, canvases use each project's own darker variant
-  rather than one hue at four brightnesses, card headers carry a 2px accent rule, and the nav has
-  its own tone.
-  **Two new tests pin what was broken:** surface-separation guards, because the existing contract
-  tests only checked tokens EXIST -- which says nothing about them being distinguishable. The
-  canvas->surface guard caught Tokyo Night at 5.1 during development and forced a deeper canvas.
-  **A false-passing probe is worth remembering:** the first non-vacuity attempt used a literal
-  string replace that silently did not match, and reported PASS. Only the null-reference noise
-  beside it gave it away. A probe that does not visibly change the file proves nothing -- assert
-  the edit applied before trusting the result.
 
 - **Export retention + admin bulk jobs view -- LANDED 2026-08-04, app `2.5.2`, new module
   `AdminBulkJobs 1.0.0`. NOT DEPLOYED.** `docs/AdminBulkJobs-Plan.md` Status: Implemented;
@@ -321,18 +179,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **NEXT: deploy `2.5.0` to dev and run the plan's 6 manual checks.** Check 2 (scrollbars and
   native selects follow the theme) is the one automation cannot reach at all.
 
-- **OPEN, PRE-EXISTING -- the coverage ratchet is FAILING and no one noticed.** 64.7% against a
-  65.06 floor. **Not caused by the theme work:** measured in a scratch worktree at `6f89f1c` with
-  no theme code and got `1015 / 1569`, identical. Cause traced to `0e35e7b` ("show section-access
-  groups as DOMAIN\Name"), which added 49 lines to `Services/SectionAccessGroupDirectory.cs` --
-  a **0%-covered** file -- after the floor was set at `9a66cf4`. Growing an uncovered file lowers
-  the ratio; the gate is correct and is reporting a real regression.
-  **The floor was NOT lowered** -- `.agents/review/coverage-floor.txt` says in terms that doing so
-  converts the gate into decoration, which is finding tsr-1, already made once here.
-  **Fix needs a seam:** `SectionAccessGroupDirectory` talks to live AD, so it cannot be tested as
-  it stands -- same shape as the `MailboxPermissionOutcome` / `CalendarFolderIdentity` extractions
-  in `docs/TestSuiteRemediation-Plan.md`. **CI on `master` is red until this is fixed.**
-
 - **Admin UI redesign — ALL 6 SLICES LANDED 2026-08-04; `2.4.0` DEPLOYED TO DEV by the owner and
   SEEN. Two defects reported from that first look, both fixed in `2.4.1` (in repo, NOT deployed).**
   `docs/AdminUIRedesign-Plan.md` Status: In progress (manual checks unrun). Owner rejected the
@@ -421,49 +267,6 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   proven off-host and a mistake locks people out of every module, so dev first. Check 6 (app
   boots and authorizes from stored SIDs with AD unreachable) and check 3 (`winroot\Enterprise
   Admins` still reaches DhcpAuthorization) are the load-bearing ones.
-
-- **Section-access SIDs — slice detail (all landed 2026-08-03).**
-  `docs/SectionAccessSidStorage-Plan.md` Status: Approved, no open owner gates. The defect: a
-  bare group name does not identify a group, and both comparison sites
-  (`GroupAuthorizationHandler:97-101`, `GroupMembershipChecker:38-45`) strip any `DOMAIN\`
-  prefix and accept either form, so a foreign-domain same-named group is indistinguishable.
-  Exposure measured, not assumed: of 10 trusts only **2 are BiDirectional**
-  (`winroot.analog.com`, `maxim-ic.internal`), so the collision surface is 3 domains, not 10 —
-  narrow, not zero, and it sits in the field deciding entry to privileged modules.
-  **Two measurements constrain the whole work stream.** (a) The Windows token already carries
-  **333 group SIDs**, never names — the app converts SIDs to names in order to compare names, so
-  storing SIDs REMOVES a translation. `WindowsPrincipal.IsInRole` accepts a SID string directly.
-  (b) Prod log 2026-08-03: **1687 authorizations via `user.IsInRole`, 0 via the claims path** —
-  `ClaimTypes.Role` is never populated under Negotiate. `GroupMembershipChecker` is therefore
-  dead in the live path but NOT dead code (the bulk job runner's off-circuit re-check needs it),
-  so changing only the handler would leave the job runner comparing names against SIDs.
-  **Slice 1 DONE**: `Authorization/SectionAccessGroupIdentity.cs` — pure, directory-free, so the
-  decisions the migration depends on hold on CI too. Refuses SDDL aliases (`new
-  SecurityIdentifier("BA")` SUCCEEDS and yields BUILTIN\Administrators; `"DA"` is an account SID
-  passing every check but the round-trip), well-known SIDs via `IsAccountSid()` so no blocklist
-  needs maintaining, and the bare domain SID (parses, round-trips, `IsAccountSid()` true, yet
-  names a domain). 43 tests; non-vacuity proven per guard (6/3/1/1/1/2/3 failures on revert).
-  **Two data facts pinned in code, both verified against live AD 2026-08-03:** the NetBIOS domain
-  half is load-bearing — `Enterprise Admins` without `-Server` returns **0** matches, so the
-  current normalization's stripping would turn a live cross-domain grant into an unresolvable
-  row; and the lookup must query `sAMAccountName`, `cn` AND `name`, because
-  `$KOO300-S3AMUVVBVMI1` is a sAMAccountName whose `cn` is `Employees-All`.
-  **All 18 distinct prod values resolve to exactly one group** (58 rows: 46 `ANALOG\`, 1
-  `winroot\`, 11 bare). There is no unresolved-row class in this data — the plan's D2 was
-  withdrawn on owner challenge after the apparent exception turned out to be a probe bug
-  (`Get-ADGroup -Filter` expands `$` as a PowerShell variable).
-  **Slice 2 DONE** (`16ef8c0`): schema v6 (`group_display_name`), pure
-  `SectionAccessSidMigrationPlanner`, `SectionAccessGroupDirectory` (AD + the NetBIOS->DNS
-  crossRef mapping), `SectionAccessSidMigration` runner. Never blocks boot, never half-writes:
-  one unconvertible row stops the whole write, and a directory failure propagates rather than
-  becoming "no such group" — an outage must not send an admin to fix correct data. The AD
-  lookup is a **separate service** from `ADDirectorySearchService` because that one is fail-soft
-  by design and this one must throw.
-  **Slice 3 DONE** (`f361281`): app `2.3.34 -> 2.3.35`. Reads `ClaimTypes.GroupSid` (which
-  Negotiate populates) instead of `ClaimTypes.Role` (which it does not); normalization deleted.
-  **Slice 4 DONE** (`0a50d01`): picker returns a SID with no name fallback, badges show names,
-  free-typed text refused. `SaveAll` carries display names across its delete-and-reinsert —
-  without that every admin save would blank names the idempotent migration would never restore.
 
 - **BOTH protected-principal work streams — CODE COMPLETE + REVIEWED 2026-07-31, ON DEV as
   `2.3.34` (deployed by the owner 2026-07-31, verified from the assembly). Manual checks NOT
@@ -780,10 +583,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   page flow. Owner will deploy + test the DACL fix; a proper plan+review is the fallback if it
   does not resolve the "no groups" symptom.
 
-- **App version `2.5.2`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`). Bumped from `2.5.1`
-  for in-process export retention (shared app-wide startup behaviour, and it deletes files the app
-  never deleted before). The `AdminBulkJobs` module landed in the same stretch and correctly bumps
-  nothing -- Constitution: adding a module does not bump the base version.
+- **App version `2.5.5`** (`<VersionPrefix>` in `ExchangeAdminWeb.csproj`, read there -- that file
+  owns the number). `2.5.5` was the Bootstrap button-state fix, `2.5.4` the Bootstrap palette
+  bridge + Dracula correction, `2.5.3` the theme palette rework.
+  `2.5.2` was in-process export retention (shared app-wide startup behaviour, and it deletes files
+  the app never deleted before). The `AdminBulkJobs` module landed in the same stretch and
+  correctly bumps nothing -- Constitution: adding a module does not bump the base version.
   `2.5.1` was the Conference Rooms bulk jobs work (the repository/service reads are shared
   infrastructure); ConferenceRooms module `2.3.1 -> 2.3.2` with it. `2.5.0` was theme support --
   minor rather than patch, new user-visible capability app-wide. `2.4.1` was the two post-deploy
@@ -796,17 +601,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.5.3`, prod `2.5.2`** -- both verified from the assembly 2026-08-04
-  (dev `2.5.3.0` written 22:24; prod `2.5.2.0` written 19:54). Repo is level with dev at `2.5.3`.
-  Dev's `wwwroot/app.css` hashes identical to the repo's, so the reworked palettes are confirmed
-  live rather than a stale file surviving the robocopy mirror; **prod's app.css differs and still
-  carries the flat first-cut palettes.**
+- **Deployed: dev `2.5.5`, prod `2.5.5`** -- both re-verified from the assembly 2026-08-05
+  (`FileVersion 2.5.5.0`, both DLLs written 2026-08-04 23:52 and byte-identical to each other).
+  Repo is level with both. `wwwroot/app.css` hashes identical across dev, prod and the repo, so
+  the button-state fix and the reworked palettes are confirmed live on both instances rather than
+  a stale file surviving the robocopy mirror.
+  **This supersedes the earlier "dev `2.5.3`, prod `2.5.2`, prod carries the flat first-cut
+  palettes" record, and it falsifies backlog item -0.9 (deploy `2.5.5` to dev): the deploy
+  happened. The eyeball check of a disabled submit button is still unrun.**
   Both instances had been four months behind on `2.3.34` until 2026-08-04 and now carry
   section-access SID storage, the `sidf-1` admin-lockout fix, the full UI redesign, ten themes, the
   module-scoped jobs panel, in-process export retention and the `AdminBulkJobs` page. That clears
   the long backlog recorded below -- **and none of those work streams' manual checks has been run
   on either instance.**
-  **Prod is one behind dev:** it lacks only the palette rework (`2.5.3`).
+  **Prod is level with dev** (re-verified 2026-08-05; the earlier "one behind" note is stale).
   **Caution: version numbers alone cannot identify a build here.** Two different `2.5.1` builds
   shipped 34 minutes apart earlier the same evening, straddling commits. Hash the deployed file
   against the repo when it matters, as was done for `app.css` above.
@@ -841,18 +649,14 @@ Live backlog only. Items need an approved plan before code unless noted.
    Details, the per-file split and the risk constraints are in `## Now`. No plan needed -- the
    owner ruled it directly. This is the next code task.
 
-**-0.9. Deploy `2.5.5` to dev and eyeball a disabled submit button** (accent, not blue). No plan
-   needed -- it is the verification step for work already landed.
+**-0.9. Eyeball a disabled submit button on dev** (accent, not blue). No plan needed -- it is the
+   verification step for work already landed. **The deploy half is done:** dev and prod both run
+   `2.5.5` as of 2026-08-05 (re-verified from the assembly), so only the look is outstanding.
 
-**-0.5. RESOLVED 2026-08-05. CI is green** (`fd8fa69`); both the `"DA"` host-dependency and the
-   coverage dilution are fixed, floor raised to 65.12. Kept only as the pointer to the standing
-   follow-up: **make the remaining 441 uncovered lines testable** -- see `## Now`, owner ruling
-   *"make it work"*. That is the next code task and it needs no further approval.
-
-**-0.4. PROD carries four months of unvalidated work as of 2026-08-04** and its manual checks have
-   never been run. Highest-consequence single check: `ANALOG\ExchangeWebAdmins` can still open
-   Admin Settings (the `sidf-1` lockout scenario, hardest to recover from). See item 0 below for
-   the consolidated list.
+**-0.4. PROD carries four months of unvalidated work** -- now through `2.5.5`, deployed
+   2026-08-04, and its manual checks have never been run. Highest-consequence single check:
+   `ANALOG\ExchangeWebAdmins` can still open Admin Settings (the `sidf-1` lockout scenario,
+   hardest to recover from). See item 0 below for the consolidated list.
 
 0. **Work through `docs/DevValidation-2.3.34.md` on dev (owner, Monday 2026-08-03).** The
    single consolidated checklist for everything that reached dev unvalidated -- four work
@@ -898,8 +702,11 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   into `ConferenceRoomProtectionGate`). Every mutating module routes through the gate. Governing
   rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals. This closes
   *which callers are gated*; GAP 4 below is a defect in *what the gate resolves*.
-- **GAP 4 — FIXED IN REPO 2026-07-30, NOT YET DEPLOYED (dev `2.3.32`, prod `2.3.30`; the fix is
-  `2.3.33`). Still live on both instances until promoted.** Protected principals are reachable by
+- **GAP 4 — FIXED IN REPO 2026-07-30 (`2.3.33`) and NOW DEPLOYED to both instances** (dev and
+  prod both at `2.5.5`, re-verified from the assembly 2026-08-05; the earlier "dev `2.3.32`, prod
+  `2.3.30`, still live on both" basis is falsified). **The fix is unproven in the field: its
+  regression check has never been run on either instance** -- see the bottom of this entry.
+  The defect: protected principals were reachable by
   secondary SMTP alias (found 2026-07-30, verified against live AD).
   `ProtectedPrincipalService.ResolveViaActiveDirectory`
   (`Services/ProtectedPrincipalService.cs:290-291`) queries only
@@ -927,7 +734,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
   - **Regression check, not yet run:** an alias as target must be denied citing the CEO user
     rule. Required on dev, then again on prod after promotion.
 - **MailboxPermissions denies cloud-only mailboxes and mail-enabled groups — FIXED IN REPO
-  2026-07-30, NOT YET DEPLOYED; still live on prod (`2.3.30`).** Reported by the owner
+  2026-07-30 and DEPLOYED to both instances** as of 2026-08-04 (`2.5.5`, re-verified 2026-08-05;
+  the earlier "still live on prod (`2.3.30`)" basis is falsified). **Unverified in the field --
+  the L1/L2 friction has not been re-tested since the deploy.** Reported by the owner
   2026-07-30 as L1/L2 support friction. 16 prod denials 2026-06-30..2026-07-30 over 7 targets; 4
   were permanent under the AD-only filter (`Jabil.support@analog.com`,
   `sporting.tickets@analog.com` cloud-only; `adspstaff@analog.com`, `globalevents@analog.com`
@@ -944,7 +753,9 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 - Commands are owned by `.agents/repo-guidance.md` (Verification) — read them there, not here.
   Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
 - **Non-vacuous rule:** a change shipping with a new test must be proven — revert the fix, see the
-  test fail, restore. Full policy + manual-check list: `.agents/repo-map.json`, `AGENTS.md`.
+  test fail, restore. Full policy: `AGENTS.md` (Verification) and `.agents/repo-guidance.md`.
+  Per-work-stream manual-check lists live in each `docs/*-Plan.md`, consolidated for the
+  outstanding ones in `docs/DevValidation-2.3.34.md`.
 
 ## Findings (environment / CI — still live)
 
@@ -989,20 +800,23 @@ Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in t
 
 - `AGENTS.md` — process/behavioral contract (Prime Invariants first).
 - `docs/ProjectConstitution.md` — highest engineering authority.
-- `.agents/decisions.md` — durable decisions (most recent: 2026-07-28, ExcludedUsers retirement
-  and the GM-3 member-picker Option A ruling).
-- `.agents/repo-map.json` — automated verification map.
+- `.agents/decisions.md` — durable decisions (most recent: 2026-07-31, protected-principal admin
+  input validated under the app-pool identity rather than the Delinea directory-read secret).
 - Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
   `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
   live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
   all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
-  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`, **on dev**,
-  not on prod; 8 manual post-deploy checks not run; implementation openreview not obtained);
-  `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`,
-  **deployed nowhere**; 6 manual post-deploy checks not run; no independent review);
-  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Approved 2026-07-31**, not started);
-  `docs/SectionAccessSidStorage-Plan.md` (**Approved 2026-08-03**, slice 1 of 4 landed,
-  no open owner gates).
+  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`; now on both
+  instances via `2.5.5`; 8 manual post-deploy checks not run; implementation openreview not
+  obtained);
+  `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`; now on
+  both instances via `2.5.5`; 6 manual post-deploy checks not run; no independent review);
+  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Implemented 2026-07-31**, all four slices
+  landed -- the plan file says so; the "Approved, not started" reading here was stale);
+  `docs/SectionAccessSidStorage-Plan.md` (**Implemented 2026-08-03**, all 4 slices landed -- the
+  plan file says so; the "slice 1 of 4" reading here was stale. No open owner gates);
+  `docs/CoverageRatchetRepair-Plan.md` (**Implemented 2026-08-05**, all three slices);
+  `docs/AdminUIRedesign-Plan.md` (**In progress** -- manual checks unrun).
 - **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
   carry a pre-landing `Status:` although code evidence says they shipped —
   `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at
