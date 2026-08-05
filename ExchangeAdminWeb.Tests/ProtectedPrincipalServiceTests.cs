@@ -665,6 +665,84 @@ public class ProtectedPrincipalServiceTests : IDisposable
         Assert.Contains("corrupt", result.Reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    // --- Directory-read credential selection ---
+    //
+    // This decides WHICH account reads the directory for Group and OU rules. A wrong answer is
+    // silent: the check runs under the wrong credential (or none) and the failure surfaces as a
+    // fail-closed denial that looks like an outage.
+
+    [Fact]
+    public void GetDirectoryReadSecretId_NothingConfigured_ReturnsNull()
+    {
+        Assert.Null(CreateService().GetDirectoryReadSecretId());
+    }
+
+    [Fact]
+    public void GetDirectoryReadSecretId_ReadsAppSettingsFallback()
+    {
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Security:ProtectedPrincipalDirectoryReadSecretId"] = "77"
+        });
+
+        Assert.Equal(77, service.GetDirectoryReadSecretId());
+    }
+
+    [Fact]
+    public void GetDirectoryReadSecretId_ModuleConfigWinsOverAppSettings()
+    {
+        // Precedence is the point: the admin UI writes module config, so a value set there must
+        // beat a stale appsettings entry. The reverse would make the UI look broken - an operator
+        // changes the secret, nothing happens, and nothing says why.
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Security:ProtectedPrincipalDirectoryReadSecretId"] = "77"
+        });
+        service.SaveDirectoryReadSecretId("42");
+
+        Assert.Equal(42, service.GetDirectoryReadSecretId());
+    }
+
+    [Fact]
+    public void SaveDirectoryReadSecretId_RoundTrips()
+    {
+        var service = CreateService();
+        service.SaveDirectoryReadSecretId("31");
+
+        Assert.Equal(31, service.GetDirectoryReadSecretId());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-number")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void GetDirectoryReadSecretId_RejectsUnusableValues(string stored)
+    {
+        // Zero and negatives are rejected as well as junk: Delinea secret ids are positive, and
+        // treating 0 as "configured" would send a lookup at a secret that cannot exist rather
+        // than reporting no credential at all.
+        var service = CreateService();
+        service.SaveDirectoryReadSecretId(stored);
+
+        Assert.Null(service.GetDirectoryReadSecretId());
+    }
+
+    [Fact]
+    public void GetDirectoryReadSecretId_FallsBackWhenModuleValueIsUnusable()
+    {
+        // A junk module value must not mask a working appsettings one - otherwise a typo in the
+        // UI silently disables the credential the app was previously using.
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Security:ProtectedPrincipalDirectoryReadSecretId"] = "77"
+        });
+        service.SaveDirectoryReadSecretId("oops");
+
+        Assert.Equal(77, service.GetDirectoryReadSecretId());
+    }
+
     private sealed class ThrowingConfigStore : ExchangeAdminWeb.Services.Storage.IConfigStore
     {
         public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
