@@ -9,12 +9,20 @@
    them at once (plan D1, ruled app-wide).
    ============================================================================ */
 :root {
-    /* Surfaces: canvas -> raised -> header. Each step lifts by value. */
-    --ui-bg: #ffffff;
+    /* Surfaces: canvas -> zebra -> surface -> header. Each step is a VISIBLE
+       lift, not a hint. The first cut of these themes kept all four within ~12
+       points of luminance, which is below the ~25 a step needs to read as a
+       step - so cards did not sit on the page, table headers did not separate
+       from their rows, and every theme collapsed into two flat colours
+       (owner, 2026-08-04: "I see really only two main colors"). */
+    /* A light theme has no headroom above white, so the separation is taken
+       DOWNWARD: the raised surface stays #fff and the canvas and header sink
+       away from it. */
+    --ui-bg: #e8ecf1;
     --ui-surface: #ffffff;
-    --ui-header: #f8fafb;
-    --ui-zebra: #fcfdfd;
-    --ui-selected: #e9f2fe;
+    --ui-header: #d5dce5;
+    --ui-zebra: #f5f7fa;
+    --ui-selected: #d3e4fa;
 
     /* Text: primary -> secondary -> tertiary. */
     --ui-fg: #16191d;
@@ -22,8 +30,8 @@
     --ui-fg3: #98a0a9;
 
     /* Structure */
-    --ui-line: #dfe3e8;
-    --ui-grid: #eef1f4;
+    --ui-line: #cfd6de;
+    --ui-grid: #e5eaf0;
 
     /* Accent + state */
     --ui-brand: #1a6ce8;
@@ -49,8 +57,9 @@
     --ui-info-bg: #e8f0fc;
     --ui-info-line: #c5d7f0;
 
-    /* Nav */
-    --ui-nav-bg: #f8fafb;
+    /* Nav: its own surface, distinct from the canvas. A sidebar that shares
+       the page background is not a pane, it is empty margin. */
+    --ui-nav-bg: #dfe5ec;
     --ui-nav-fg: #5a636e;
     --ui-nav-fg-hover: #16191d;
 
@@ -60,23 +69,24 @@
     --ui-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
 }
 
-/* OLED dark. True #000 canvas; surfaces lift a few points rather than relying
-   on borders. Text is silver, not white -- full white on pure black smears at
-   13px. Accent is cyan, which stays legible at small sizes on black where the
-   light-mode blue goes muddy. Owner-approved 2026-08-04. */
+/* OLED dark. The canvas stays TRUE #000 (owner-approved 2026-08-04) - that is
+   the point of the theme - but the surfaces above it now lift far enough to be
+   seen. Text is silver, not white: full white on pure black smears at 13px.
+   Accent is cyan, which stays legible at small sizes on black where the
+   light-mode blue goes muddy. */
 html[data-theme="oled"] {
     --ui-bg: #000000;
-    --ui-surface: #050506;
-    --ui-header: #0a0b0d;
-    --ui-zebra: #08090a;
-    --ui-selected: #0d2b33;
+    --ui-surface: #101114;
+    --ui-header: #1a1c20;
+    --ui-zebra: #08090b;
+    --ui-selected: #12313a;
 
     --ui-fg: #d6dadf;
     --ui-fg2: #9aa1a9;
     --ui-fg3: #6b7278;
 
-    --ui-line: #23262a;
-    --ui-grid: #141619;
+    --ui-line: #2a2e33;
+    --ui-grid: #17191d;
 
     --ui-brand: #3fd8e8;
     --ui-brand-fg: #00181c;
@@ -113,28 +123,40 @@ html[data-theme="oled"] {
    inherits the Light value: a dark theme missing --ui-fg renders near-black
    text on a near-black canvas, which is invisible rather than broken.
 
-   Surfaces follow the same shape everywhere: canvas -> surface -> header, each
-   step lifting slightly, with zebra between canvas and surface. Palettes are
-   the published ones; where a project defines no distinct value for one of our
-   roles (most define no "zebra"), it is mixed from the two it does define.
+   Two rules learned from the first cut, which the owner rejected as reading
+   like "only two main colors":
+
+   1. SURFACES MUST SEPARATE. Canvas -> surface -> header spans ~25 luminance
+      points, not ~12. Below that a card does not read as raised and a table
+      header does not read as a header.
+   2. HUE MUST VARY. These palettes are not one hue at four brightnesses. Each
+      project's own darker/lighter variants are used (Dracula's #21222c under
+      its #282a36, Gruvbox's bg0_h under bg0, Tokyo Night's bg_dark under bg),
+      so the theme keeps the tint that makes it recognisable.
+
+   --ui-selected is accent-tinted per theme rather than a neutral grey, so
+   hovering a table row shows the palette rather than hiding it.
    ============================================================================ */
 
-/* Solarized Light -- Ethan Schoonover. base3 canvas, base00 body text.
-   The famous property of Solarized is that both modes share one accent set,
-   so the blue/green/yellow/red below are identical to Solarized Dark's. */
+/* Solarized Light -- Ethan Schoonover. base3 canvas with base2 as the raised
+   surface. The famous property of Solarized is that both modes share one
+   accent set, so the blue/green/yellow/red below are identical to Solarized
+   Dark's. */
 html[data-theme="solarized-light"] {
-    --ui-bg: #fdf6e3;
+    /* base2 canvas, base3 surface, and a deepened base2 for headers - taken
+       downward for the same reason as Light. */
+    --ui-bg: #eee6d0;
     --ui-surface: #fdf6e3;
-    --ui-header: #f2ead3;
-    --ui-zebra: #f8f1de;
-    --ui-selected: #e6dfc4;
+    --ui-header: #dcd0ab;
+    --ui-zebra: #f7f0dc;
+    --ui-selected: #cadde6;
 
     --ui-fg: #073642;
-    --ui-fg2: #586e75;
-    --ui-fg3: #93a1a1;
+    --ui-fg2: #4e6268;
+    --ui-fg3: #7d8e8e;
 
-    --ui-line: #ded7c0;
-    --ui-grid: #eee7d3;
+    --ui-line: #d6cbaa;
+    --ui-grid: #e9e0c6;
 
     --ui-brand: #268bd2;
     --ui-brand-fg: #fdf6e3;
@@ -156,27 +178,32 @@ html[data-theme="solarized-light"] {
     --ui-info-bg: #e3edf3;
     --ui-info-line: #aeccdd;
 
-    --ui-nav-bg: #f2ead3;
+    --ui-nav-bg: #e3d9bd;
     --ui-nav-fg: #586e75;
     --ui-nav-fg-hover: #073642;
 }
 
-/* Solarized Dark -- Ethan Schoonover. base03 canvas, base0 body text. */
+/* Solarized Dark -- Ethan Schoonover. base03 canvas, base02 surface, and a
+   lifted base02 variant for headers. */
 html[data-theme="solarized-dark"] {
     --ui-bg: #002b36;
-    --ui-surface: #04313d;
-    --ui-header: #073642;
-    --ui-zebra: #032f3a;
-    --ui-selected: #0b4553;
+    --ui-surface: #073642;
+    --ui-header: #10505f;
+    --ui-zebra: #01313d;
+    --ui-selected: #0f5163;
 
-    --ui-fg: #93a1a1;
-    --ui-fg2: #839496;
-    --ui-fg3: #657b83;
+    /* Solarized Dark's own base1/base0/base01 ramp. base01 as tertiary is the
+       palette's intent, but it lands at 2.6:1 on base02 here, so tertiary text
+       is lifted to base00 - Solarized's contrast assumes a code editor, not
+       13px UI labels. */
+    --ui-fg: #a9b8b8;
+    --ui-fg2: #93a1a1;
+    --ui-fg3: #7d8f8f;
 
-    --ui-line: #0e4b5a;
-    --ui-grid: #063845;
+    --ui-line: #14606f;
+    --ui-grid: #073e4a;
 
-    --ui-brand: #268bd2;
+    --ui-brand: #2aa198;
     --ui-brand-fg: #002b36;
     --ui-off: #586e75;
 
@@ -192,22 +219,24 @@ html[data-theme="solarized-dark"] {
     --ui-danger-bg: #3a1513;
     --ui-danger-line: #6d2926;
 
-    --ui-info: #2aa198;
-    --ui-info-bg: #062f2e;
-    --ui-info-line: #14544f;
+    --ui-info: #268bd2;
+    --ui-info-bg: #062f3f;
+    --ui-info-line: #14546e;
 
-    --ui-nav-bg: #002b36;
+    --ui-nav-bg: #00212a;
     --ui-nav-fg: #839496;
     --ui-nav-fg-hover: #93a1a1;
 }
 
-/* Dracula -- dracula-theme.com. Background #282a36, foreground #f8f8f2,
-   with the purple #bd93f9 as accent. */
+/* Dracula -- dracula-theme.com. #282a36 is the project's background, used here
+   as the raised SURFACE with its darker #1e1f29 as the canvas beneath, so
+   panels sit on the page instead of merging with it. Purple #bd93f9 accent,
+   Current Line #44475a for selection. */
 html[data-theme="dracula"] {
-    --ui-bg: #282a36;
-    --ui-surface: #2d2f3d;
+    --ui-bg: #1e1f29;
+    --ui-surface: #282a36;
     --ui-header: #343746;
-    --ui-zebra: #2b2d3a;
+    --ui-zebra: #232430;
     --ui-selected: #44475a;
 
     --ui-fg: #f8f8f2;
@@ -215,18 +244,18 @@ html[data-theme="dracula"] {
     --ui-fg3: #6272a4;
 
     --ui-line: #44475a;
-    --ui-grid: #343746;
+    --ui-grid: #2f3140;
 
     --ui-brand: #bd93f9;
-    --ui-brand-fg: #282a36;
+    --ui-brand-fg: #1e1f29;
     --ui-off: #6272a4;
 
     --ui-on: #50fa7b;
-    --ui-on-bg: #1e3a29;
+    --ui-on-bg: #1b3a28;
     --ui-on-line: #2f6944;
 
     --ui-warn: #f1fa8c;
-    --ui-warn-bg: #3b3a22;
+    --ui-warn-bg: #383a20;
     --ui-warn-line: #6b6a3a;
 
     --ui-danger: #ff5555;
@@ -234,29 +263,29 @@ html[data-theme="dracula"] {
     --ui-danger-line: #6e3244;
 
     --ui-info: #8be9fd;
-    --ui-info-bg: #1d3640;
+    --ui-info-bg: #1a3540;
     --ui-info-line: #326070;
 
-    --ui-nav-bg: #282a36;
+    --ui-nav-bg: #191a21;
     --ui-nav-fg: #b9bcd0;
     --ui-nav-fg-hover: #f8f8f2;
 }
 
-/* Nord -- nordtheme.com. Polar Night nn0-nn3 for surfaces, Snow Storm for
-   text, Frost nn8 as accent, Aurora for the semantic states. */
+/* Nord -- nordtheme.com. Polar Night nn0-nn3 give a real four-step ramp, which
+   is exactly what the surfaces need; Frost nn8 accents, Aurora for state. */
 html[data-theme="nord"] {
     --ui-bg: #2e3440;
-    --ui-surface: #333a47;
-    --ui-header: #3b4252;
-    --ui-zebra: #313846;
-    --ui-selected: #434c5e;
+    --ui-surface: #3b4252;
+    --ui-header: #485266;
+    --ui-zebra: #333a48;
+    --ui-selected: #4c566a;
 
     --ui-fg: #eceff4;
     --ui-fg2: #d8dee9;
     --ui-fg3: #8a94a6;
 
-    --ui-line: #434c5e;
-    --ui-grid: #3b4252;
+    --ui-line: #4c566a;
+    --ui-grid: #3f4859;
 
     --ui-brand: #88c0d0;
     --ui-brand-fg: #2e3440;
@@ -278,18 +307,19 @@ html[data-theme="nord"] {
     --ui-info-bg: #2f3a47;
     --ui-info-line: #4a5b70;
 
-    --ui-nav-bg: #2e3440;
+    --ui-nav-bg: #272c36;
     --ui-nav-fg: #d8dee9;
     --ui-nav-fg-hover: #eceff4;
 }
 
-/* Gruvbox Dark (medium) -- morhetz. bg #282828, fg #ebdbb2, the warmest of
-   the ten. */
+/* Gruvbox Dark (medium) -- morhetz. bg0_h #1d2021 as canvas, bg0 as surface,
+   bg1 as header: the palette's own hard/normal/soft ramp, which is a wider
+   spread than any other theme here and the warmest of the ten. */
 html[data-theme="gruvbox-dark"] {
-    --ui-bg: #282828;
-    --ui-surface: #2f2c28;
+    --ui-bg: #1d2021;
+    --ui-surface: #282828;
     --ui-header: #3c3836;
-    --ui-zebra: #2d2a26;
+    --ui-zebra: #232525;
     --ui-selected: #504945;
 
     --ui-fg: #ebdbb2;
@@ -297,41 +327,42 @@ html[data-theme="gruvbox-dark"] {
     --ui-fg3: #928374;
 
     --ui-line: #504945;
-    --ui-grid: #3c3836;
+    --ui-grid: #32302f;
 
-    --ui-brand: #83a598;
-    --ui-brand-fg: #282828;
+    --ui-brand: #fabd2f;
+    --ui-brand-fg: #1d2021;
     --ui-off: #7c6f64;
 
     --ui-on: #b8bb26;
     --ui-on-bg: #333418;
     --ui-on-line: #5c5f24;
 
-    --ui-warn: #fabd2f;
-    --ui-warn-bg: #3d3218;
-    --ui-warn-line: #6b5a26;
+    --ui-warn: #fe8019;
+    --ui-warn-bg: #3d2b13;
+    --ui-warn-line: #6b4a22;
 
     --ui-danger: #fb4934;
     --ui-danger-bg: #3d211c;
     --ui-danger-line: #6e392f;
 
-    --ui-info: #8ec07c;
-    --ui-info-bg: #2b3529;
-    --ui-info-line: #4a5c44;
+    --ui-info: #83a598;
+    --ui-info-bg: #23332f;
+    --ui-info-line: #445c54;
 
-    --ui-nav-bg: #282828;
+    --ui-nav-bg: #171819;
     --ui-nav-fg: #bdae93;
     --ui-nav-fg-hover: #ebdbb2;
 }
 
-/* Monokai -- the classic. bg #272822, fg #f8f8f2, cyan #66d9ef as accent.
-   Monokai's signature pink #f92672 is reserved for danger, where its
-   attention-grabbing quality is the point. */
+/* Monokai -- the classic. #272822 is the project background, used as the
+   surface over a darker canvas. Cyan #66d9ef accents; the signature pink
+   #f92672 is reserved for danger, where being impossible to ignore is the
+   point. */
 html[data-theme="monokai"] {
-    --ui-bg: #272822;
-    --ui-surface: #2d2e27;
-    --ui-header: #34352d;
-    --ui-zebra: #2a2b24;
+    --ui-bg: #1e1f1a;
+    --ui-surface: #272822;
+    --ui-header: #3a3b31;
+    --ui-zebra: #232419;
     --ui-selected: #49483e;
 
     --ui-fg: #f8f8f2;
@@ -339,19 +370,19 @@ html[data-theme="monokai"] {
     --ui-fg3: #90918b;
 
     --ui-line: #49483e;
-    --ui-grid: #34352d;
+    --ui-grid: #302f28;
 
     --ui-brand: #66d9ef;
-    --ui-brand-fg: #272822;
+    --ui-brand-fg: #1e1f1a;
     --ui-off: #75715e;
 
     --ui-on: #a6e22e;
     --ui-on-bg: #2e3a1c;
     --ui-on-line: #55692f;
 
-    --ui-warn: #e6db74;
-    --ui-warn-bg: #3a3722;
-    --ui-warn-line: #67613a;
+    --ui-warn: #fd971f;
+    --ui-warn-bg: #3b2c12;
+    --ui-warn-line: #6a4d20;
 
     --ui-danger: #f92672;
     --ui-danger-bg: #3d1c2b;
@@ -361,17 +392,18 @@ html[data-theme="monokai"] {
     --ui-info-bg: #2f2740;
     --ui-info-line: #52436e;
 
-    --ui-nav-bg: #272822;
+    --ui-nav-bg: #191a16;
     --ui-nav-fg: #c6c6c0;
     --ui-nav-fg-hover: #f8f8f2;
 }
 
-/* One Dark -- Atom. bg #282c34, fg #abb2bf, blue #61afef as accent. */
+/* One Dark -- Atom. #282c34 as the surface over Atom's own darker #21252b
+   (which is what the editor uses for its side panels), blue #61afef accent. */
 html[data-theme="one-dark"] {
-    --ui-bg: #282c34;
-    --ui-surface: #2d323b;
-    --ui-header: #333842;
-    --ui-zebra: #2b2f38;
+    --ui-bg: #21252b;
+    --ui-surface: #282c34;
+    --ui-header: #383e4a;
+    --ui-zebra: #262a31;
     --ui-selected: #3e4451;
 
     --ui-fg: #abb2bf;
@@ -379,10 +411,10 @@ html[data-theme="one-dark"] {
     --ui-fg3: #6b7280;
 
     --ui-line: #3e4451;
-    --ui-grid: #333842;
+    --ui-grid: #2f343d;
 
     --ui-brand: #61afef;
-    --ui-brand-fg: #282c34;
+    --ui-brand-fg: #21252b;
     --ui-off: #5c6370;
 
     --ui-on: #98c379;
@@ -397,21 +429,27 @@ html[data-theme="one-dark"] {
     --ui-danger-bg: #3a2529;
     --ui-danger-line: #673d43;
 
-    --ui-info: #56b6c2;
-    --ui-info-bg: #23363a;
-    --ui-info-line: #3c5f66;
+    --ui-info: #c678dd;
+    --ui-info-bg: #322a3d;
+    --ui-info-line: #574566;
 
-    --ui-nav-bg: #282c34;
+    --ui-nav-bg: #1b1f24;
     --ui-nav-fg: #9099a8;
     --ui-nav-fg-hover: #abb2bf;
 }
 
-/* Tokyo Night (storm) -- enkia. bg #24283b, fg #c0caf5, blue #7aa2f7. */
+/* Tokyo Night (storm) -- enkia. bg_dark #1f2335 as the canvas with bg #24283b
+   as the surface, which is how the editor itself separates its sidebar from
+   its panes. */
 html[data-theme="tokyo-night"] {
-    --ui-bg: #24283b;
-    --ui-surface: #292e42;
-    --ui-header: #2f344a;
-    --ui-zebra: #272b3f;
+    /* Canvas is the palette's own #1a1b26 (Tokyo Night "night", the darkest of
+       its three backgrounds) rather than bg_dark #1f2335, which sits only 5
+       luminance points under the surface - too close for a card to read as
+       raised. */
+    --ui-bg: #1a1b26;
+    --ui-surface: #24283b;
+    --ui-header: #343a58;
+    --ui-zebra: #1e2130;
     --ui-selected: #364a82;
 
     --ui-fg: #c0caf5;
@@ -419,7 +457,7 @@ html[data-theme="tokyo-night"] {
     --ui-fg3: #787c99;
 
     --ui-line: #3b4261;
-    --ui-grid: #2f344a;
+    --ui-grid: #2a2f47;
 
     --ui-brand: #7aa2f7;
     --ui-brand-fg: #1a1b26;
@@ -429,9 +467,9 @@ html[data-theme="tokyo-night"] {
     --ui-on-bg: #263328;
     --ui-on-line: #435a3d;
 
-    --ui-warn: #e0af68;
-    --ui-warn-bg: #362f21;
-    --ui-warn-line: #5d5138;
+    --ui-warn: #ff9e64;
+    --ui-warn-bg: #382a1f;
+    --ui-warn-line: #614736;
 
     --ui-danger: #f7768e;
     --ui-danger-bg: #38222c;
@@ -441,7 +479,7 @@ html[data-theme="tokyo-night"] {
     --ui-info-bg: #1f3340;
     --ui-info-line: #37596e;
 
-    --ui-nav-bg: #24283b;
+    --ui-nav-bg: #16171f;
     --ui-nav-fg: #a9b1d6;
     --ui-nav-fg-hover: #c0caf5;
 }
@@ -715,9 +753,25 @@ body {
     color: var(--ui-fg);
 }
 
+/* Card headers carry the accent as a top rule. Before this the accent reached
+   only links, the primary button, the focus ring and a tab underline -- so a
+   theme's defining colour (Dracula's purple, Nord's ice blue, Monokai's cyan)
+   never actually appeared on a working page, which is half of why every theme
+   read as two flat colours. A 2px rule is enough to identify the palette
+   without colouring the furniture. */
 .card-header {
     background-color: var(--ui-header);
     border-bottom-color: var(--ui-line);
+    border-top: 2px solid var(--ui-brand);
+    color: var(--ui-fg);
+    font-weight: 600;
+}
+
+/* Table headers take the raised surface too, so a table reads as a table
+   rather than as rows floating on the page. */
+.table > thead > tr > th {
+    background-color: var(--ui-header);
+    border-bottom: 1px solid var(--ui-line);
 }
 
 .table {

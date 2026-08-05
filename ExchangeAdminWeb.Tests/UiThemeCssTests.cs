@@ -128,6 +128,108 @@ public class UiThemeCssTests
     }
 
     [Fact]
+    public void EveryThemeSeparatesItsSurfacesVisibly()
+    {
+        // The defect this guards: the first cut of these themes kept canvas, surface and header
+        // within ~12 luminance points of each other. That is below the ~20 a step needs to read as
+        // a step, so cards did not sit on the page, table headers did not separate from their
+        // rows, and every palette collapsed into two flat colours regardless of how colourful it
+        // was underneath (owner, 2026-08-04: "I see really only two main colors").
+        //
+        // Tokens all being PRESENT - which the other tests check - says nothing about them being
+        // DISTINGUISHABLE. This is the difference.
+        const double minimumSpread = 15.0;
+
+        var css = ReadAppCss();
+        var offenders = new List<string>();
+
+        foreach (var theme in UiThemeCatalog.All)
+        {
+            var block = FindBlock(css, theme);
+            if (block is null)
+            {
+                continue; // reported by EveryThemeHasASelectorBlock
+            }
+
+            var canvas = Luminance(TokenValue(block, "--ui-bg"));
+            var header = Luminance(TokenValue(block, "--ui-header"));
+            if (canvas is null || header is null)
+            {
+                continue; // reported by EveryThemeDefinesEveryRequiredToken
+            }
+
+            var spread = Math.Abs(header.Value - canvas.Value);
+            if (spread < minimumSpread)
+            {
+                offenders.Add($"{theme.Id}: canvas->header spread is {spread:F1}, needs >= {minimumSpread}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Themes whose surfaces are too close to tell apart:\n" + string.Join("\n", offenders));
+    }
+
+    [Fact]
+    public void EveryThemeSeparatesItsRaisedSurfaceFromItsCanvas()
+    {
+        // The same rule for the step operators see most: a card against the page behind it.
+        const double minimumSpread = 6.0;
+
+        var css = ReadAppCss();
+        var offenders = new List<string>();
+
+        foreach (var theme in UiThemeCatalog.All)
+        {
+            var block = FindBlock(css, theme);
+            if (block is null)
+            {
+                continue;
+            }
+
+            var canvas = Luminance(TokenValue(block, "--ui-bg"));
+            var surface = Luminance(TokenValue(block, "--ui-surface"));
+            if (canvas is null || surface is null)
+            {
+                continue;
+            }
+
+            var spread = Math.Abs(surface.Value - canvas.Value);
+            if (spread < minimumSpread)
+            {
+                offenders.Add($"{theme.Id}: canvas->surface spread is {spread:F1}, needs >= {minimumSpread}");
+            }
+        }
+
+        Assert.True(offenders.Count == 0,
+            "Themes whose cards do not read as raised off the page:\n" + string.Join("\n", offenders));
+    }
+
+    /// <summary>
+    /// Perceived brightness on a 0-255 scale (Rec. 709 coefficients). Good enough to catch
+    /// surfaces that are indistinguishable; not a colour-science claim.
+    /// </summary>
+    private static double? Luminance(string? hex)
+    {
+        if (hex is null || hex.Length != 7 || hex[0] != '#')
+        {
+            return null;
+        }
+
+        var r = Convert.ToInt32(hex.Substring(1, 2), 16);
+        var g = Convert.ToInt32(hex.Substring(3, 2), 16);
+        var b = Convert.ToInt32(hex.Substring(5, 2), 16);
+
+        return (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+    }
+
+    /// <summary>The six-digit hex value a block assigns to a token, or null.</summary>
+    private static string? TokenValue(string block, string token)
+    {
+        var match = Regex.Match(block, Regex.Escape(token) + @":\s*(#[0-9a-fA-F]{6})\s*;");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    [Fact]
     public void DarkThemesOutnumberedByNothingSilly()
     {
         // Not an aesthetic assertion -- it pins that at least one light option

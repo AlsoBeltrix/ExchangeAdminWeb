@@ -6,6 +6,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **Theme palettes reworked 2026-08-04, app `2.5.3`, NOT DEPLOYED.** Owner rejected the themes on
+  sight after `2.5.1` reached dev: *"the themes aren't implemented optimally. I see really only two
+  main colors."* `docs/ThemeSupport-Plan.md` slice 6.
+  **The mechanism was fine; the VALUES were wrong** -- so this was a data-only fix with no rule
+  touched, which is the token layer working as intended.
+  Measured cause, three parts: (a) canvas/surface/header sat within ~12 luminance points, below the
+  ~20 a step needs to read as a step, so cards did not sit on the page and table headers did not
+  separate from rows -- every palette collapsed to background-plus-text; (b) the accent reached
+  only links, the primary button, the focus ring and a tab underline, so the colour that makes a
+  theme recognisable never appeared on a working page; (c) the sidebar shared the page background
+  and read as empty margin. Spread is now 16-33, canvases use each project's own darker variant
+  rather than one hue at four brightnesses, card headers carry a 2px accent rule, and the nav has
+  its own tone.
+  **Two new tests pin what was broken:** surface-separation guards, because the existing contract
+  tests only checked tokens EXIST -- which says nothing about them being distinguishable. The
+  canvas->surface guard caught Tokyo Night at 5.1 during development and forced a deeper canvas.
+  **A false-passing probe is worth remembering:** the first non-vacuity attempt used a literal
+  string replace that silently did not match, and reported PASS. Only the null-reference noise
+  beside it gave it away. A probe that does not visibly change the file proves nothing -- assert
+  the edit applied before trusting the result.
+
 - **Export retention + admin bulk jobs view -- LANDED 2026-08-04, app `2.5.2`, new module
   `AdminBulkJobs 1.0.0`. NOT DEPLOYED.** `docs/AdminBulkJobs-Plan.md` Status: Implemented;
   **9 manual checks unrun.**

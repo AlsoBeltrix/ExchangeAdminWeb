@@ -115,6 +115,37 @@ untestable. The catalog is the testable seam.
    /`getTheme` JS; the pre-paint script now sets `data-theme` and the failsafe class.
 5. **Version bump + docs. DONE** -- app `2.4.1 -> 2.5.0` (minor, not patch: user-visible new
    capability app-wide).
+6. **Palette rework (owner rejection, 2026-08-04). DONE** -- app `2.5.2 -> 2.5.3`.
+
+   Owner on seeing the themes live: *"the themes aren't implemented optimally. I see really only
+   two main colors."* Correct, and measurement said why. Three faults, all in the token VALUES
+   rather than the mechanism -- which is the mechanism working as designed: a theme is data, so
+   this was a data fix with no rule touched.
+
+   1. **Surfaces did not separate.** Canvas, surface, header and zebra sat within ~12 luminance
+      points of each other (Light 5.4, Tokyo Night 12, Dracula 13). A step needs ~20+ to read as a
+      step, so cards did not sit on the page and table headers did not separate from their rows.
+      Every palette therefore collapsed to background-plus-text however colourful it was
+      underneath. Now 16-33 across the ten, using each project's OWN darker variant as the canvas
+      (Dracula `#1e1f29` under `#282a36`, Gruvbox `bg0_h` under `bg0`, One Dark `#21252b`, Tokyo
+      Night `#1a1b26`) rather than one hue at four brightnesses.
+   2. **The accent appeared in six places, all tiny** -- links, primary button, focus ring, tab
+      underline. The colour that makes a theme recognisable never reached a working page. Card
+      headers now carry a 2px accent rule.
+   3. **The sidebar shared the page background**, so it read as empty margin rather than a pane.
+      Every theme now gives it its own darker tone.
+
+   Two contrast repairs found while measuring: Solarized Dark's own base01 tertiary lands at 2.6:1
+   on base02, and Solarized Light's base2/base1 pair was similar. Both lifted -- Solarized's
+   contrast assumes a code editor, not 13px UI labels.
+
+   **Two new tests pin the property that was broken**, because the existing ones only checked that
+   tokens EXIST, which says nothing about them being distinguishable:
+   `EveryThemeSeparatesItsSurfacesVisibly` (canvas->header >= 15) and
+   `EveryThemeSeparatesItsRaisedSurfaceFromItsCanvas` (canvas->surface >= 6). The second caught
+   Tokyo Night at 5.1 during development and forced the deeper canvas above -- a real catch, not a
+   formality. Non-vacuity proven by restoring the rejected Dracula values: both fail, naming the
+   exact spreads.
 
 ## Verification
 
