@@ -84,6 +84,24 @@ if (-not $CoverageFile) {
         exit 1
     }
     $CoverageFile = $found.FullName
+
+    # Freshness guard. `dotnet test` writes a new GUID-named directory per run and never cleans up,
+    # so "newest" is only the right report if nothing interrupted the sequence - and an interrupted
+    # sequence is exactly when someone re-runs the gate. Scoring a stale report is worse than not
+    # running: it reads as proof. Observed 2026-08-04, when a floor check silently scored an
+    # earlier run's report (docs/CoverageRatchetRepair-Plan.md slice 3).
+    #
+    # Only applies to the auto-discovered path: an explicit -CoverageFile is a deliberate choice,
+    # including for the tests of this script.
+    $newestAssembly = Get-ChildItem -Path '.' -Recurse -Filter 'ExchangeAdminWeb.Tests.dll' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+
+    if ($newestAssembly -and $found.LastWriteTime -lt $newestAssembly.LastWriteTime) {
+        Write-Error ("Coverage report is STALE: '{0}' was written {1}, but the test assembly was built {2}. " -f
+            $found.FullName, $found.LastWriteTime, $newestAssembly.LastWriteTime +
+            "Re-run: dotnet test ExchangeAdminWeb.slnx -c Release --collect:'XPlat Code Coverage' --results-directory TestResults")
+        exit 1
+    }
 }
 
 [xml]$report = Get-Content -LiteralPath $CoverageFile
