@@ -1,6 +1,12 @@
 # AD Identity Picker Legibility Plan
 
-Status: **Draft - awaiting owner approval.** Nothing implemented.
+Status: **IMPLEMENTED 2026-08-06.** App version `2.5.5 -> 2.6.0` (shared component, so app-wide).
+**Visual check on dev NOT run** - that is the remaining work, and it is the only way to confirm the
+reported case is actually fixed.
+
+Item 5 (middle-truncation) was NOT implemented and is not needed: the primary label now wraps, so
+the distinguishing suffix is always visible. It stays recorded as the compact alternative should
+two-line rows prove unacceptable in the narrowest pane.
 
 Reviewed by codex (gpt-5.5-dzs @ xhigh) 2026-08-06: verdict **sound after one cause correction**,
 which is incorporated below (the truncation mechanism is end-truncation of a combined inline

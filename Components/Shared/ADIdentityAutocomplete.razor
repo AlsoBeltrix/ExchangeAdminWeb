@@ -15,33 +15,57 @@
 
     @if (_showDropdown && _results.Count > 0)
     {
-        <ul class="list-group position-absolute w-100 shadow-sm"
-            style="z-index: 1050; max-height: 300px; overflow-y: auto; top: 100%;">
+        @* min-width 100% rather than w-100: the dropdown may be WIDER than its input, which
+           matters in narrow admin panes where the input is a few characters across. max-width
+           keeps it inside the viewport. *@
+        <ul class="list-group position-absolute shadow-sm"
+            style="z-index: 1050; max-height: 300px; overflow-y: auto; top: 100%; min-width: 100%; max-width: min(46rem, 90vw); width: max-content;">
             @for (int i = 0; i < _results.Count; i++)
             {
                 var result = _results[i];
                 var index = i;
                 <li class="list-group-item list-group-item-action py-1 px-2 @(index == _highlightedIndex ? "active" : "")"
                     style="cursor: pointer; font-size: 0.9rem;"
+                    title="@RowTitle(result)"
                     @onmousedown="() => SelectResult(result)"
                     @onmousedown:preventDefault>
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div class="text-truncate">
-                            @if (!string.IsNullOrEmpty(result.NetBiosDomain))
+                    <div class="d-flex justify-content-between align-items-start gap-2">
+                        <div class="flex-grow-1" style="min-width: 0;">
+                            @* The identity WRAPS instead of truncating. This is the whole fix: the
+                               row used to be one text-truncate box holding domain + name +
+                               secondary text, end-truncated at a fixed width. Families sharing a
+                               prefix - ExchangeWebAdmins, ExchangeWebPerms - therefore died at the
+                               same character and rendered identically, and the picker writes a SID
+                               that grants module access, so the operator could not tell which row
+                               they were about to authorize. *@
+                            <div style="overflow-wrap: anywhere;">
+                                @if (!string.IsNullOrEmpty(result.NetBiosDomain))
+                                {
+                                    @* A forest-wide search returns several domains, so a bare group
+                                       name does not identify which one grants access. *@
+                                    <span class="text-muted">@result.NetBiosDomain\</span>
+                                }
+                                <span class="fw-semibold">@result.DisplayName</span>
+                            </div>
+                            @* Secondary text is now the part that truncates: losing a UPN is
+                               recoverable, losing the identity is not. *@
+                            @if (!string.IsNullOrWhiteSpace(GetSecondaryText(result)))
                             {
-                                @* A forest-wide search returns several domains, so a bare group
-                                   name does not identify which one grants access. *@
-                                <span class="text-muted">@result.NetBiosDomain\</span>
+                                <div class="text-muted text-truncate" style="font-size: 0.8rem;">
+                                    @GetSecondaryText(result)
+                                </div>
                             }
-                            <span class="fw-semibold">@result.DisplayName</span>
-                            <span class="text-muted ms-1" style="font-size: 0.8rem;">
-                                @GetSecondaryText(result)
-                            </span>
                         </div>
-                        <span class="badge @BadgeClass(result.ObjectType) ms-2"
-                              style="font-size: 0.7rem;">
-                            @result.ObjectType
-                        </span>
+                        @* Only when the results can actually differ. A picker restricted to one
+                           kind renders the same word on every row, spending width that the names
+                           need on a field carrying no information. *@
+                        @if (ShowTypeBadge)
+                        {
+                            <span class="badge @BadgeClass(result.ObjectType) flex-shrink-0"
+                                  style="font-size: 0.7rem;">
+                                @result.ObjectType
+                            </span>
+                        }
                     </div>
                 </li>
             }
@@ -164,6 +188,42 @@
         "OU" => "bg-info text-dark",
         _ => "bg-secondary"
     };
+
+    /// <summary>
+    /// Whether the object-type badge carries information for this picker.
+    /// </summary>
+    /// <remarks>
+    /// Only an unrestricted ("Any") search can return mixed types. A picker filtered to one kind
+    /// renders the identical word on every row, and that width belongs to the names - which is
+    /// what the reported defect was about.
+    /// </remarks>
+    private bool ShowTypeBadge => ShouldShowTypeBadge(ObjectKind);
+
+    internal static bool ShouldShowTypeBadge(string? objectKind) =>
+        string.IsNullOrWhiteSpace(objectKind) ||
+        string.Equals(objectKind, "Any", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The hover text for a row: everything about the entry, unabbreviated.
+    /// </summary>
+    /// <remarks>
+    /// The safety net. The identity itself wraps rather than truncating, but the secondary line
+    /// still truncates and an OU's DN can be very long, so hovering must always be able to
+    /// disclose the full value.
+    /// </remarks>
+    private string RowTitle(ExchangeAdminWeb.Services.ADSearchResult result) =>
+        BuildRowTitle(result.NetBiosDomain, result.DisplayName, GetSecondaryText(result));
+
+    internal static string BuildRowTitle(string? netBiosDomain, string? displayName, string? secondary)
+    {
+        var qualified = string.IsNullOrEmpty(netBiosDomain)
+            ? displayName ?? ""
+            : $"{netBiosDomain}\\{displayName}";
+
+        return string.IsNullOrWhiteSpace(secondary) || string.Equals(secondary, qualified, StringComparison.Ordinal)
+            ? qualified
+            : $"{qualified}\n{secondary}";
+    }
 
     private string GetSecondaryText(ExchangeAdminWeb.Services.ADSearchResult result)
     {
