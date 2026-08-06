@@ -88,6 +88,26 @@ public class PageAuthorizationRecheckTests
     }
 
     [Fact]
+    public void BlockedSenders_ServicedUnblock_IsRecordedWhereSuccessAuditsSurvive()
+    {
+        // AuditService.LogModuleAction writes ["error"] = success ? null : errorDetail, so a detail
+        // passed as errorDetail on a SUCCESSFUL operation is silently discarded. The first cut of
+        // the authorised-servicer feature did exactly that, which would have dropped the record in
+        // the only case it exists for - a serviced unblock succeeds. Review caught it.
+        //
+        // The servicer detail must therefore travel in `extra`, which is written regardless of
+        // outcome. This guards the shape, since the failure mode is silence rather than an error.
+        var body = GetMethodBody("BlockedSenders.razor", "ConfirmUnblock");
+
+        var extra = body.IndexOf("protectedPrincipalServiced", StringComparison.Ordinal);
+        Assert.True(extra >= 0,
+            "a serviced unblock no longer records which protection rules were overridden");
+
+        Assert.Contains("extra: serviced", body);
+        Assert.DoesNotContain("errorDetail: detail", body);
+    }
+
+    [Fact]
     public void MfaReset_ResolvesThroughExchange_NotAdOnly()
     {
         // PLACEMENT ONLY, and it guards a specific regression rather than general correctness.

@@ -432,6 +432,27 @@ public class BlockedSenderProtectionGateTests
         Assert.Contains("directory-unresolved", decision.AuditDetail);
     }
 
+    [Fact]
+    public void TheServicerKeyIsNamespacedSoItCannotCollide()
+    {
+        // A bare suffix (moduleId + "ProtectedServicer") is ambiguous - a module id ending in
+        // another module's name plus the suffix could produce a colliding key, silently granting
+        // one module's servicers rights in another. A delimited prefix cannot.
+        var key = ProtectedPrincipalServicerService.SectionKeyFor("BlockedSenders");
+
+        Assert.Equal("ProtectedServicer:BlockedSenders", key);
+        Assert.StartsWith(ProtectedPrincipalServicerService.SectionKeyPrefix, key);
+    }
+
+    [Theory]
+    [InlineData("Bad:Module")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AModuleIdThatCouldForgeAKeyIsRefused(string moduleId)
+    {
+        Assert.Throws<ArgumentException>(() => ProtectedPrincipalServicerService.SectionKeyFor(moduleId));
+    }
+
     // ---- The legacy exclusion list is protection data too -------------------------------------
 
     [Fact]

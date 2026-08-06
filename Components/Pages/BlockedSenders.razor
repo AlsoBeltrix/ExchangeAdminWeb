@@ -316,16 +316,25 @@
         try
         {
             // gate.AuditDetail is populated on an ALLOW only when the target was a protected
-            // principal serviced by an authorised operator. Recording it here, on the normal
-            // outcome event, is the entire accountability mechanism for that feature: there is no
-            // confirmation prompt and no alert, by design, because servicing VIP mailboxes is the
-            // exec support team's routine work. The audit must therefore carry which rules were
-            // overridden and under whose authority.
-            var detail = opResult.Success ? gate.AuditDetail : opResult.Message;
+            // principal serviced by an authorised operator. Recording it is the entire
+            // accountability mechanism for that feature: there is no confirmation prompt and no
+            // alert, by design, because servicing VIP mailboxes is the exec support team's routine
+            // work. The audit must therefore carry which rules were overridden and under whose
+            // authority.
+            //
+            // It goes in `extra`, NOT `errorDetail`: LogModuleAction writes
+            // ["error"] = success ? null : errorDetail, so a detail passed there on a SUCCESSFUL
+            // operation is silently discarded - which is exactly what happened in the first cut of
+            // this feature. Review caught it. A serviced unblock succeeds, so the record would
+            // have been lost in the one case it exists for.
+            var serviced = opResult.Success && !string.IsNullOrWhiteSpace(gate.AuditDetail)
+                ? new Dictionary<string, object?> { ["protectedPrincipalServiced"] = gate.AuditDetail }
+                : null;
 
             Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender",
                 "BlockedSenders", address, opResult.Success, ticketNumber: ticket,
-                errorDetail: detail);
+                errorDetail: opResult.Success ? null : opResult.Message,
+                extra: serviced);
         }
         catch (Exception ex)
         {

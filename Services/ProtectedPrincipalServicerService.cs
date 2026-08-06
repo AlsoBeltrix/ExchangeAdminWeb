@@ -46,10 +46,18 @@ public readonly record struct ServicerDecision(bool Allowed, string? ServicerGro
 public class ProtectedPrincipalServicerService
 {
     /// <summary>
-    /// The section-access key suffix identifying a module's servicer group. A module's key is its
-    /// id plus this suffix - e.g. <c>BlockedSendersProtectedServicer</c>.
+    /// Prefix for a module's servicer key. A module's key is this plus its id - e.g.
+    /// <c>ProtectedServicer:BlockedSenders</c>.
     /// </summary>
-    public const string SectionKeySuffix = "ProtectedServicer";
+    /// <remarks>
+    /// A delimited PREFIX rather than a bare suffix. Concatenating <c>moduleId + "ProtectedServicer"</c>
+    /// is ambiguous: a module whose id happened to end in another module's name plus the suffix
+    /// could produce a colliding key, and nothing in a flat key space would flag it. The colon
+    /// cannot appear in a module id, so <c>ProtectedServicer:X</c> identifies exactly one module
+    /// and can never be confused with an ordinary section-access key
+    /// (`ModuleCatalog` policy aliases carry no colon).
+    /// </remarks>
+    public const string SectionKeyPrefix = "ProtectedServicer:";
 
     private readonly SectionAccessService _sectionAccess;
     private readonly ILogger<ProtectedPrincipalServicerService> _logger;
@@ -63,7 +71,18 @@ public class ProtectedPrincipalServicerService
     }
 
     /// <summary>The section-access key holding <paramref name="moduleId"/>'s servicer group(s).</summary>
-    public static string SectionKeyFor(string moduleId) => moduleId + SectionKeySuffix;
+    /// <remarks>
+    /// Refuses a module id containing the delimiter, so a caller cannot construct a key that
+    /// resolves to a different module's servicer group. Callers pass compile-time module
+    /// constants today; this guards the case where one later comes from configuration.
+    /// </remarks>
+    public static string SectionKeyFor(string moduleId)
+    {
+        if (string.IsNullOrWhiteSpace(moduleId) || moduleId.Contains(':'))
+            throw new ArgumentException($"Not a valid module id for a servicer key: '{moduleId}'", nameof(moduleId));
+
+        return SectionKeyPrefix + moduleId;
+    }
 
     /// <summary>
     /// Whether <paramref name="user"/> may service protected principals in
