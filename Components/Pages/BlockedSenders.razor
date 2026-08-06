@@ -273,7 +273,9 @@
         // would let an alias-addressed protected principal through, and it denies every
         // unresolvable address - wrong here, where external and decommissioned senders are exactly
         // what needs clearing. See BlockedSenderProtectionGate for the full reasoning.
-        var gate = await ProtectionGate.EvaluateAsync(address);
+        // authState was resolved just above for the authorization re-check; reuse it rather than
+        // letting the gate reach for ambient state.
+        var gate = await ProtectionGate.EvaluateAsync(address, authState.User);
         var protectedError = gate.Reason;
         if (gate.Denied)
         {
@@ -313,9 +315,17 @@
         // Audit the outcome. An audit-write failure must not change the already-committed result.
         try
         {
+            // gate.AuditDetail is populated on an ALLOW only when the target was a protected
+            // principal serviced by an authorised operator. Recording it here, on the normal
+            // outcome event, is the entire accountability mechanism for that feature: there is no
+            // confirmation prompt and no alert, by design, because servicing VIP mailboxes is the
+            // exec support team's routine work. The audit must therefore carry which rules were
+            // overridden and under whose authority.
+            var detail = opResult.Success ? gate.AuditDetail : opResult.Message;
+
             Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender",
                 "BlockedSenders", address, opResult.Success, ticketNumber: ticket,
-                errorDetail: opResult.Success ? null : opResult.Message);
+                errorDetail: detail);
         }
         catch (Exception ex)
         {

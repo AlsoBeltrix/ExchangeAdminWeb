@@ -273,7 +273,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: unblock now gates the TARGET through the protected-principal check. The module
             // previously re-checked only the operator, so a protected principal could be unblocked.
-            Version = "1.1.0",
+            Version = "1.2.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "BlockedSenders", FailClosed: true),
             GranularPermissions = [new("Unblock", "BlockedSendersUnblock", FailClosed: true)]

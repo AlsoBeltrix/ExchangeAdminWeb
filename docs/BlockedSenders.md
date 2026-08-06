@@ -1,6 +1,6 @@
 # Blocked Senders Module
 
-Module ID: `BlockedSenders` · Route: `/blocked-senders` · Category: Exchange · Version: 1.1.0
+Module ID: `BlockedSenders` · Route: `/blocked-senders` · Category: Exchange · Version: 1.2.0
 
 ## Purpose
 
@@ -85,6 +85,23 @@ deliberate:
 Everything else fails closed: ambiguous address, unavailable directory, unreadable protection
 config, or a protection check that could not evaluate a rule.
 
+### Authorised servicers
+
+Members of the group in the `BlockedSendersProtectedServicer` section-access key MAY unblock a
+protected principal. This exists for the executive support team, who service VIP mailboxes as
+routine work; it is not an emergency override, so there is no confirmation prompt, no mandatory
+reason field and no alert on use.
+
+- **The key is separate from `BlockedSenders` and `BlockedSendersUnblock`.** Being able to use the
+  module, or to unblock ordinary senders, confers nothing here.
+- **No group configured means no servicing.** The capability does not exist until it is granted.
+- **It does not bypass uncertainty.** A protection check that could not be evaluated, an
+  unavailable directory or an unreadable config still refuse for everyone - servicing overrides a
+  target known to BE protected, never an unknown.
+- **Every serviced unblock is audited** as an ordinary `UnblockSender` success whose detail records
+  the protection rules that were overridden and the group that authorised it. That record is the
+  accountability mechanism, which is why it must not be dropped.
+
 ## Audit actions emitted
 
 Category `BlockedSenders`:
@@ -137,6 +154,11 @@ so validate these on a dev deploy with `ExchangeOnline` configured:
    address that resolves in neither directory. It must SUCCEED - this is the deliberate difference
    from the mailbox gate, and a regression here would leave exactly the addresses this module
    exists to clear permanently stuck.
+9. **Authorised servicing (1.2.0).** With no `BlockedSendersProtectedServicer` group configured,
+   confirm a protected address is refused for everyone including admins. Then set the key to a
+   group you belong to and confirm the same unblock succeeds, and that the Event Log entry names
+   both the protection rule and the authorising group. Remove the key again and confirm the
+   refusal returns - the capability must not persist once the grant is withdrawn.
 
 ## Rollback / remediation
 

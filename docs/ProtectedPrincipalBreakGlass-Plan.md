@@ -26,9 +26,22 @@ for off-circuit bulk jobs.
 
 
 
-Status: **Draft - awaiting owner approval. NOT approved to implement.** This plan weakens the
-strongest safety control in the application; the decisions below are not defaults an implementer
-may assume.
+Status: **IMPLEMENTED 2026-08-06 for ONE module (Blocked Senders).** The mechanism is built and
+tested; extending it to further modules is a per-module commit each, per the slice rule below.
+**No group is configured anywhere**, so the capability is currently inert - which is the intended
+starting state, not an oversight.
+
+What landed: `ProtectedPrincipalServicerService` (per-module section-access key
+`<ModuleId>ProtectedServicer`, fail-closed throughout), the servicer branch in
+`BlockedSenderProtectionGate`, and the audit detail that records which rules were overridden and
+which group authorised it.
+
+**Deliberately NOT built**, because the reframing removed the need: the per-operation
+confirmation, the mandatory typed reason, the separate audit category and the notification on use.
+See "What this is NOT".
+
+**D2 remains open** - which group, and who is in it. **D3 is answered for now**: Blocked Senders
+is the first and only module. Both are configuration decisions rather than code.
 
 Reviewed by codex (gpt-5.5-dzs @ xhigh) 2026-08-06: verdict **not sound enough to implement**, 5
 findings, all verified against code and all incorporated. Two of them found **pre-existing holes in

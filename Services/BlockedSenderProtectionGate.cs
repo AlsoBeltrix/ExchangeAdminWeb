@@ -1,3 +1,5 @@
+using System.Security.Claims;
+
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
@@ -18,6 +20,19 @@ public readonly record struct BlockedSenderGateDecision(bool Denied, string? Rea
 
     public static BlockedSenderGateDecision Deny(string reason, string? auditDetail = null) =>
         new(true, reason, auditDetail ?? reason);
+
+    /// <summary>
+    /// Allowed because the operator is an authorised servicer for this module, even though the
+    /// target IS a protected principal.
+    /// </summary>
+    /// <remarks>
+    /// Carries an audit detail while allowing, which no other Allow does: the operation proceeds
+    /// normally for the operator, and the audit records that a protected principal was serviced
+    /// and under whose authority. That record is the whole accountability story for this feature -
+    /// there is no confirmation prompt or alert, by design, because this is routine work.
+    /// </remarks>
+    public static BlockedSenderGateDecision AllowAsServicer(string auditDetail) =>
+        new(false, null, auditDetail);
 }
 
 /// <summary>
@@ -48,14 +63,20 @@ public readonly record struct BlockedSenderGateDecision(bool Denied, string? Rea
 /// </remarks>
 public class BlockedSenderProtectionGate
 {
+    /// <summary>Module id, used to look up this module's authorised-servicer group.</summary>
+    public const string ModuleId = "BlockedSenders";
+
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
     private readonly ILogger<BlockedSenderProtectionGate> _logger;
 
     public BlockedSenderProtectionGate(
         ProtectedPrincipalService protectedPrincipals,
+        ProtectedPrincipalServicerService servicers,
         ILogger<BlockedSenderProtectionGate> logger)
     {
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
         _logger = logger;
     }
 
@@ -87,7 +108,13 @@ public class BlockedSenderProtectionGate
     /// gate, and it is what keeps external and decommissioned senders unblockable.</item>
     /// </list>
     /// </remarks>
-    public async Task<BlockedSenderGateDecision> EvaluateAsync(string address)
+    /// <param name="user">
+    /// The operator, passed in rather than read from ambient state. An authorised-servicer
+    /// decision must never depend on whoever happens to be on the thread: there is no
+    /// HttpContext in off-circuit work, and a static current-user would attribute a bypass to the
+    /// wrong person. A null user simply cannot service, which is the safe default.
+    /// </param>
+    public async Task<BlockedSenderGateDecision> EvaluateAsync(string address, ClaimsPrincipal? user = null)
     {
         if (string.IsNullOrWhiteSpace(address))
             return BlockedSenderGateDecision.Deny("A sender address is required.");
@@ -155,7 +182,7 @@ public class BlockedSenderProtectionGate
                 //
                 // Group, OU and pattern rules cannot match an object with no DN and no SAM; they
                 // are inapplicable rather than skipped.
-                return await CheckRawAddressAsync(address);
+                return await CheckRawAddressAsync(address, user);
         }
 
         if (resolved is null)
@@ -179,6 +206,22 @@ public class BlockedSenderProtectionGate
         if (check.IsProtected)
         {
             var rules = string.Join(", ", check.MatchedRules);
+
+            // The target IS protected. An authorised servicer may proceed anyway; everyone else is
+            // refused. Note the ordering: protection is evaluated FIRST and its result is never
+            // weakened - the servicer check only decides whether this operator may act on a target
+            // already known to be protected. See ProtectedPrincipalServicerService.
+            var servicer = _servicers.Evaluate(user, BlockedSenderProtectionGate.ModuleId);
+            if (servicer.Allowed)
+            {
+                _logger.LogInformation(
+                    "Authorised servicer unblocking protected principal {Address} - matched rules: {Rules}, authorised by {Group}",
+                    address, rules, servicer.ServicerGroup);
+
+                return BlockedSenderGateDecision.AllowAsServicer(
+                    $"Protected principal serviced by an authorised operator - matched rules: {rules}; authorised by {servicer.ServicerGroup}");
+            }
+
             _logger.LogWarning("Blocking unblock of protected principal {Address} - matched rules: {Rules}", address, rules);
 
             // Generic banner, specific audit. docs/BlockedSenders.md promises the Event Log names
@@ -201,7 +244,7 @@ public class BlockedSenderProtectionGate
     /// need an on-prem DN or SAM that this principal does not have; they are inapplicable, not
     /// skipped.
     /// </remarks>
-    private async Task<BlockedSenderGateDecision> CheckRawAddressAsync(string address)
+    private async Task<BlockedSenderGateDecision> CheckRawAddressAsync(string address, ClaimsPrincipal? user)
     {
         var synthetic = new ResolvedDirectoryPrincipal(
             Source: "BlockedSenders-Unresolved",
@@ -224,6 +267,22 @@ public class BlockedSenderProtectionGate
         if (check.IsProtected)
         {
             var rules = string.Join(", ", check.MatchedRules);
+
+            // Same servicer rule as the resolved path. A protected row naming an address that no
+            // longer resolves is still a protected principal, and the team authorised to service
+            // protected principals is authorised to service this one too - anything else would
+            // make the capability depend on whether a directory happened to answer.
+            var servicer = _servicers.Evaluate(user, ModuleId);
+            if (servicer.Allowed)
+            {
+                _logger.LogInformation(
+                    "Authorised servicer unblocking unresolved protected address {Address} - matched rules: {Rules}, authorised by {Group}",
+                    address, rules, servicer.ServicerGroup);
+
+                return BlockedSenderGateDecision.AllowAsServicer(
+                    $"Protected principal (directory-unresolved) serviced by an authorised operator - matched rules: {rules}; authorised by {servicer.ServicerGroup}");
+            }
+
             _logger.LogWarning("Blocking unblock of {Address} - unresolved, but a protected row names it: {Rules}", address, rules);
             return BlockedSenderGateDecision.Deny(ProtectedMessage, $"Protected principal (directory-unresolved) - matched rules: {rules}");
         }

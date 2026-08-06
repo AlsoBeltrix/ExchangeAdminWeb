@@ -70,9 +70,14 @@ public class PageAuthorizationRecheckTests
         // tests, and this one keeps the narrow wiring guarantee they cannot see.
         var body = GetMethodBody("BlockedSenders.razor", "ConfirmUnblock");
 
-        var gate = body.IndexOf("ProtectionGate.EvaluateAsync(address)", StringComparison.Ordinal);
+        var gate = body.IndexOf("ProtectionGate.EvaluateAsync(address", StringComparison.Ordinal);
         Assert.True(gate >= 0,
             "ConfirmUnblock no longer gates the target address through BlockedSenderProtectionGate");
+
+        // The operator must be passed explicitly. The authorised-servicer decision depends on who
+        // is acting, and reading that from ambient state would attribute a bypass to whoever
+        // happened to be on the thread - so the call must carry the principal, not find it.
+        Assert.Contains("ProtectionGate.EvaluateAsync(address, authState.User)", body);
 
         var write = body.IndexOf("BlockedSenderSvc.UnblockSenderAsync(", StringComparison.Ordinal);
         Assert.True(write >= 0, "UnblockSenderAsync call not found");

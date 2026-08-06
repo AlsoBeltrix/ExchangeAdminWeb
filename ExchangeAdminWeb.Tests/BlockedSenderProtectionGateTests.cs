@@ -111,9 +111,63 @@ public class BlockedSenderProtectionGateTests
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
 
         var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
-        var gate = new BlockedSenderProtectionGate(pp, Substitute.For<ILogger<BlockedSenderProtectionGate>>());
+
+        // No servicer group configured, so nobody may service a protected principal - the default
+        // every test below assumes unless it opts in via CreateWithServicer.
+        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env,
+            new ModuleCatalog(), new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(testDir)));
+        var servicers = new ProtectedPrincipalServicerService(sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
+        var gate = new BlockedSenderProtectionGate(pp, servicers, Substitute.For<ILogger<BlockedSenderProtectionGate>>());
 
         return (gate, pp);
+    }
+
+    /// <summary>
+    /// A gate whose module HAS an authorised-servicer group, plus a principal in it.
+    /// </summary>
+    private static (BlockedSenderProtectionGate gate, ScriptedPpService pp, System.Security.Claims.ClaimsPrincipal servicer) CreateWithServicer(
+        string groupSid = "S-1-5-21-1-2-3-4001")
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), "eaw-bssvc-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testDir);
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = testDir
+        }).Build();
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(testDir);
+
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env,
+            TestConfigStore.CreateModuleConfig(testDir), Substitute.For<ILogger<ModuleConfigService>>());
+
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), Substitute.For<ILogger<ExtendedLogService>>());
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var trace = new OperationTraceService(config, jsonlLog);
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
+
+        var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
+
+        var repo = new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(testDir));
+        var sectionAccess = new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(), repo);
+        sectionAccess.SaveSectionAccess(new Dictionary<string, string[]>
+        {
+            [ProtectedPrincipalServicerService.SectionKeyFor(BlockedSenderProtectionGate.ModuleId)] = [groupSid]
+        });
+
+        var servicers = new ProtectedPrincipalServicerService(sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+        var gate = new BlockedSenderProtectionGate(pp, servicers, Substitute.For<ILogger<BlockedSenderProtectionGate>>());
+
+        var identity = new System.Security.Claims.ClaimsIdentity("Negotiate", "name", System.Security.Claims.ClaimTypes.Role);
+        identity.AddClaim(new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, "ANALOG\\execsupport"));
+        identity.AddClaim(new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Role, groupSid));
+
+        return (gate, pp, new System.Security.Claims.ClaimsPrincipal(identity));
     }
 
     // ---- The case the whole fix exists for --------------------------------------------------
@@ -272,6 +326,110 @@ public class BlockedSenderProtectionGateTests
         var decision = await gate.EvaluateAsync(Address);
 
         Assert.True(decision.Denied);
+    }
+
+    // ---- Authorised servicers (docs/ProtectedPrincipalBreakGlass-Plan.md) ---------------------
+    //
+    // The exec support team services VIP mailboxes as routine work. What must hold: the capability
+    // does not exist until granted, it is granted PER MODULE, and using it is auditable.
+
+    [Fact]
+    public async Task AnAuthorisedServicerMayUnblockAProtectedPrincipal()
+    {
+        var (gate, pp, servicer) = CreateWithServicer();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ceo@contoso.com");
+
+        var decision = await gate.EvaluateAsync("ceo@contoso.com", servicer);
+
+        Assert.False(decision.Denied);
+    }
+
+    [Fact]
+    public async Task ServicingAProtectedPrincipalIsAudited()
+    {
+        // There is no confirmation prompt and no alert - deliberately, because this is routine
+        // work - so the audit record IS the accountability mechanism. It must name the rules that
+        // were overridden and the group that authorised it.
+        var (gate, pp, servicer) = CreateWithServicer();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "Group:VIPs");
+
+        var decision = await gate.EvaluateAsync("ceo@contoso.com", servicer);
+
+        Assert.False(decision.Denied);
+        Assert.Contains("Group:VIPs", decision.AuditDetail);
+        Assert.Contains("authorised by", decision.AuditDetail);
+    }
+
+    [Fact]
+    public async Task AnOperatorOutsideTheServicerGroupIsStillRefused()
+    {
+        var (gate, pp, _) = CreateWithServicer();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ceo@contoso.com");
+
+        var outsider = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity("Negotiate", "name", System.Security.Claims.ClaimTypes.Role));
+
+        Assert.True((await gate.EvaluateAsync("ceo@contoso.com", outsider)).Denied);
+    }
+
+    [Fact]
+    public async Task WithNoServicerGroupConfiguredNobodyMayService()
+    {
+        // Absence is not permission. This is what makes rollout safe: the capability does not
+        // exist in any module until deliberately granted in that module.
+        var (gate, pp) = Create();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ceo@contoso.com");
+
+        var anyone = new System.Security.Claims.ClaimsPrincipal(
+            new System.Security.Claims.ClaimsIdentity("Negotiate", "name", System.Security.Claims.ClaimTypes.Role));
+
+        Assert.True((await gate.EvaluateAsync("ceo@contoso.com", anyone)).Denied);
+    }
+
+    [Fact]
+    public async Task NoUserMeansNoServicing()
+    {
+        // Off-circuit callers pass no principal. Missing context must never confer the capability.
+        var (gate, pp, _) = CreateWithServicer();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ceo@contoso.com");
+
+        Assert.True((await gate.EvaluateAsync("ceo@contoso.com", null)).Denied);
+    }
+
+    [Fact]
+    public async Task ServicingDoesNotBypassAFailedProtectionCheck()
+    {
+        // Servicing overrides a KNOWN-protected target. It must not paper over a check that could
+        // not be evaluated - that is an unknown, not an authorised exception, and the fail-closed
+        // rule still governs.
+        var (gate, pp, servicer) = CreateWithServicer();
+        pp.CheckResult = ProtectedPrincipalResult.Failed("group membership unavailable");
+
+        Assert.True((await gate.EvaluateAsync("ceo@contoso.com", servicer)).Denied);
+    }
+
+    [Fact]
+    public async Task ServicingDoesNotBypassAnUnavailableDirectory()
+    {
+        var (gate, pp, servicer) = CreateWithServicer();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Unavailable;
+
+        Assert.True((await gate.EvaluateAsync("ceo@contoso.com", servicer)).Denied);
+    }
+
+    [Fact]
+    public async Task AServicerMayAlsoServiceAnUnresolvedProtectedAddress()
+    {
+        // A protected row naming an address that no longer resolves is still a protected
+        // principal; the capability must not depend on whether a directory happened to answer.
+        var (gate, pp, servicer) = CreateWithServicer();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ghost@contoso.com");
+
+        var decision = await gate.EvaluateAsync("ghost@contoso.com", servicer);
+
+        Assert.False(decision.Denied);
+        Assert.Contains("directory-unresolved", decision.AuditDetail);
     }
 
     // ---- The legacy exclusion list is protection data too -------------------------------------

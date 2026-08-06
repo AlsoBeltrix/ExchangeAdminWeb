@@ -174,6 +174,7 @@ try
     builder.Services.AddSingleton<ProtectedPrincipalService>();
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddScoped<BlockedSenderProtectionGate>();
+    builder.Services.AddScoped<ProtectedPrincipalServicerService>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();
