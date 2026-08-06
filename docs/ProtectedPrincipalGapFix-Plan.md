@@ -66,9 +66,23 @@ servicing VIP mailboxes. If a VIP is cloud-only, six modules currently treat the
 already - so the protection the new feature is meant to grant controlled access to does not
 uniformly exist yet.
 
-**MFA Reset is the sharpest case.** It is a Graph-based module operating on cloud identities, so
-cloud-only targets are its normal input, and resolving them AD-only means the protection check is
-close to inert there.
+**MFA Reset is the sharpest case, and needed TWO fixes.** It is a Graph-based module operating on
+cloud identities, so cloud-only targets are its normal input, and resolving them AD-only left the
+protection check close to inert.
+
+Switching it to the Exchange fallback resolver narrowed the hole but did not close it, which review
+caught after the first fix landed. **The module mutates a GRAPH user**
+(`/users/{upn}/authentication/methods`, `Services/MfaResetService.cs:52`), and AD + Exchange
+absence does not prove Entra absence: an Entra-only account with no mailbox - unlicensed, or a
+cloud identity that never had one - resolves `NotFound` in both directories while Graph still finds
+a real user whose MFA is about to be reset.
+
+**The general rule this yields, and it applies to every site in this plan:** protection must be
+evaluated against the directory the module actually MUTATES. Matching the resolver to the write
+target is the check; matching it to whatever resolver was nearest is how these gaps happened. Where
+no resolver covers the mutated directory, the fallback is to run the protected USER rows against
+the raw identity rather than to skip the check - address rows are exactly what protect an identity
+with no on-prem DN.
 
 ## Design
 

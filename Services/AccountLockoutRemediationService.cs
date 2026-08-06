@@ -418,7 +418,12 @@ public sealed class AccountLockoutRemediationService
 
         foreach (var user in allUsers)
         {
-            var firstResolution = await _protectedPrincipals.ResolveWithStatusAsync(user);
+            // Exchange fallback, not AD-only. NOTE: unlike the other GAP B sites this one was
+            // already fail-CLOSED - an unresolved identity is blocked at the next line, not allowed
+            // - so this is not closing a bypass. It stops cloud-only users being refused as
+            // "could not be resolved" when they are perfectly resolvable through Exchange.
+            // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+            var firstResolution = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(user);
             if (firstResolution.status != ProtectedPrincipalService.ResolutionStatus.Resolved || firstResolution.principal == null)
             {
                 var detail = firstResolution.status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
@@ -444,7 +449,10 @@ public sealed class AccountLockoutRemediationService
                 continue;
             }
 
-            var secondResolution = await _protectedPrincipals.ResolveWithStatusAsync(user);
+            // Same resolver as the first read: the re-read compares immutable identifiers against
+            // it, and two different resolvers could disagree for reasons that are not a real
+            // identity change.
+            var secondResolution = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(user);
             if (secondResolution.status != ProtectedPrincipalService.ResolutionStatus.Resolved || secondResolution.principal == null)
             {
                 const string detail = "Target identity could not be re-read immediately before logoff.";

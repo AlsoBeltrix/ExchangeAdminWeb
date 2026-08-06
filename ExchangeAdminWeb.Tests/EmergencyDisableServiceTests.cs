@@ -107,7 +107,8 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.NotNull(module);
         Assert.False(module.EnabledByDefault);
         Assert.True(module.MainPermission.FailClosed);
-        Assert.Equal("1.0.5", module.Version);
+        // 1.1.0: protection resolves through Exchange (docs/ProtectedPrincipalGapFix-Plan.md GAP B).
+        Assert.Equal("1.1.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

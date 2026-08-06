@@ -180,7 +180,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.3.2",
+            Version = "1.4.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
@@ -307,7 +307,7 @@ public sealed class ModuleCatalog
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
@@ -324,7 +324,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.4",
+            Version = "1.1.0",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
@@ -383,7 +383,7 @@ public sealed class ModuleCatalog
             SortOrder = 780,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.1.0",
             MainPermission = new("Access", "AccountLockoutRemediation", FailClosed: true),
             GranularPermissions = [
                 new("Logoff", "AccountLockoutRemediationLogoff", FailClosed: true)
@@ -453,7 +453,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.5",
+            Version = "1.1.0",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [

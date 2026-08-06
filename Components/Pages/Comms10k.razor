@@ -316,7 +316,10 @@
             {
                 try
                 {
-                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(email);
+                    // Exchange fallback, not AD-only: an AD miss reported every cloud-only and
+                    // alias-addressed member as NotFound and skipped the check.
+                    // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+                    var (resolved, resStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(email);
                     if (resStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                     {
                         var reason = resStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous

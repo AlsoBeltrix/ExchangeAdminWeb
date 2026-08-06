@@ -290,13 +290,50 @@
                 }
                 else
                 {
-                    // Reached only when BOTH directories affirmatively answered "no such
-                    // recipient" - the fallback resolver returns Unavailable, not NotFound, when a
-                    // lookup could not run, and that case is refused above. So this is a genuine
-                    // absence: there is no principal to protect. A cloud-only user no longer lands
-                    // here; the resolver returns them Resolved with a null DN and they are checked
-                    // against the protected user rows like anyone else.
-                    Logger.LogInformation("No such recipient in Active Directory or Exchange Online for {Upn} - proceeding", upn);
+                    // Neither AD nor Exchange knows this address - but THIS MODULE MUTATES A GRAPH
+                    // USER, and AD+EXO absence does not prove Entra absence. An Entra-only account
+                    // with no mailbox (unlicensed, or a cloud identity that never had one) resolves
+                    // NotFound here while /users/{upn}/authentication/methods still finds a real
+                    // user whose MFA this page is about to reset. Proceeding on NotFound would
+                    // leave exactly that population unprotected - the gap the AD-only resolve had,
+                    // narrowed but not closed.
+                    //
+                    // So check the protected rows against the raw identity instead of skipping.
+                    // Group, OU and SamAccountName-pattern rules cannot apply to an object with no
+                    // on-prem DN and no SAM - they are inapplicable, not skipped - but the USER
+                    // rows can and do match an address, and those are what protect a cloud
+                    // identity. Same shape PermissionValidator uses when full resolution is not
+                    // required.
+                    var unresolved = new ResolvedDirectoryPrincipal(
+                        Source: "MfaReset-Unresolved",
+                        DisplayName: upn,
+                        UserPrincipalName: upn,
+                        SamAccountName: null,
+                        PrimarySmtpAddress: upn.Contains('@') ? upn : null,
+                        DistinguishedName: null,
+                        ObjectGuid: null,
+                        EntraObjectId: null);
+
+                    var unresolvedCheck = await ProtectedPrincipalService.CheckAsync(unresolved);
+                    if (unresolvedCheck.CheckFailed)
+                    {
+                        result = new MfaResetResult { Success = false, Message = $"Protection check failed: {unresolvedCheck.Reason}" };
+                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                            errorDetail: $"Protection check failed: {unresolvedCheck.Reason}",
+                            methodTypes: methodTypesBeforeReset);
+                        return;
+                    }
+                    if (unresolvedCheck.IsProtected)
+                    {
+                        result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
+                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                            errorDetail: $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}",
+                            methodTypes: methodTypesBeforeReset);
+                        return;
+                    }
+
+                    Logger.LogInformation(
+                        "No such recipient in Active Directory or Exchange Online for {Upn}; protected user rows did not match the raw identity - proceeding", upn);
                 }
             }
             catch (Exception ex)

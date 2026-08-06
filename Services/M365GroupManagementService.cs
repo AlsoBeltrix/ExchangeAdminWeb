@@ -171,8 +171,12 @@ public class M365GroupManagementService
     // also checks, but "UI hiding is not security" (Constitution). Resolves the identity
     // against on-prem AD; fails closed on Unavailable/Ambiguous/CheckFailed and refuses
     // protected principals. Returns null when clear to mutate, or a Fail result to abort.
-    // Known limitation (plan, owner 2026-06-29): a cloud-only account that AD cannot
-    // resolve returns NotFound and is treated as not protected - accepted risk.
+    // FORMER known limitation, now CLOSED: a cloud-only account that AD could not resolve
+    // returned NotFound and was treated as not protected. That was accepted 2026-06-29 because no
+    // resolver could see cloud-only objects; ResolveWithExchangeFallbackAsync (added 2026-07-30 for
+    // the alias bypass, GAP 4) can, so the acceptance was stale rather than deliberate. The gap
+    // mattered most here of all places: this module manages CLOUD groups, so cloud-only members are
+    // its ordinary input. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
     private async Task<M365GroupResult?> CheckProtectedAsync(string identity)
     {
         if (string.IsNullOrWhiteSpace(identity))
@@ -180,7 +184,7 @@ public class M365GroupManagementService
 
         try
         {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
+            var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {

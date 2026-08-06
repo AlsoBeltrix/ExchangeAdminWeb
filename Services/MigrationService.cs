@@ -265,7 +265,10 @@ public class MigrationService : ExchangeServiceBase
 
         try
         {
-            var (resolved, status) = await _protectedPrincipals.ResolveWithStatusAsync(identity);
+            // Exchange fallback, not AD-only: an AD miss reports every cloud-only and
+            // alias-addressed target as NotFound, which skipped the check entirely.
+            // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+            var (resolved, status) = await _protectedPrincipals.ResolveWithExchangeFallbackAsync(identity);
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {

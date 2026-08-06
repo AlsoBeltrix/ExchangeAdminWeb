@@ -5,10 +5,19 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 /// <param name="Denied">True when the unblock must not proceed.</param>
 /// <param name="Reason">Operator-facing reason when denied; null when allowed.</param>
-public readonly record struct BlockedSenderGateDecision(bool Denied, string? Reason)
+/// <param name="AuditDetail">
+/// What to record in the audit event. Separate from <paramref name="Reason"/> on purpose: the
+/// banner stays generic (an operator does not need to be told which protection rule matched, and
+/// enumerating rules to whoever types an address is a small disclosure), while the audit must name
+/// the rule so a later reviewer can tell WHY the refusal happened. Falls back to the operator
+/// message when there is nothing more specific to say.
+/// </param>
+public readonly record struct BlockedSenderGateDecision(bool Denied, string? Reason, string? AuditDetail = null)
 {
     public static BlockedSenderGateDecision Allow() => new(false, null);
-    public static BlockedSenderGateDecision Deny(string reason) => new(true, reason);
+
+    public static BlockedSenderGateDecision Deny(string reason, string? auditDetail = null) =>
+        new(true, reason, auditDetail ?? reason);
 }
 
 /// <summary>
@@ -83,12 +92,17 @@ public class BlockedSenderProtectionGate
         if (string.IsNullOrWhiteSpace(address))
             return BlockedSenderGateDecision.Deny("A sender address is required.");
 
-        // No central protection config means nothing is protected - the same condition every other
-        // gate treats as "no rules to apply", not as a failure.
-        if (!_protectedPrincipals.HasCentralConfig)
-            return BlockedSenderGateDecision.Allow();
-
-        var (_, _, loadError) = _protectedPrincipals.LoadEffectiveConfig();
+        // Load FIRST, and never short-circuit on HasCentralConfig. An earlier version returned
+        // Allow when there was no central config, which skipped two things that matter:
+        //
+        //  - the LEGACY MailboxPermissions/ExcludedUsers list, which LoadEffectiveConfig returns
+        //    independently of the central store and which is still live protection data. "Never
+        //    configured centrally" is exactly the state where the legacy list is the only
+        //    protection there is, so short-circuiting there un-protected precisely the deployments
+        //    relying on it;
+        //  - the corruption check. An unreadable MailboxPermissions config makes LoadEffectiveConfig
+        //    fail closed, and returning early meant that failure was never consulted.
+        var (config, legacyExclusions, loadError) = _protectedPrincipals.LoadEffectiveConfig();
         if (loadError != null)
         {
             // Fail closed: a config that cannot be READ says nothing about whether this address is
@@ -96,6 +110,15 @@ public class BlockedSenderProtectionGate
             _logger.LogWarning("Blocking unblock of {Address} - protection config load failed: {Reason}", address, loadError);
             return BlockedSenderGateDecision.Deny($"Access denied: {loadError}");
         }
+
+        // Only now, with both sources read successfully and both empty, is there provably nothing
+        // to protect. Resolving would be a directory round-trip that cannot change the answer.
+        var hasCentralRules = config is not null &&
+            (config.Users.Length > 0 || config.Groups.Length > 0
+             || config.OrganizationalUnits.Length > 0 || config.SamAccountNamePatterns.Length > 0);
+
+        if (!hasCentralRules && legacyExclusions.Length == 0)
+            return BlockedSenderGateDecision.Allow();
 
         ProtectedPrincipalService.ResolutionStatus status;
         ResolvedDirectoryPrincipal? resolved;
@@ -147,9 +170,13 @@ public class BlockedSenderProtectionGate
 
         if (check.IsProtected)
         {
-            _logger.LogWarning("Blocking unblock of protected principal {Address} - matched rules: {Rules}",
-                address, string.Join(", ", check.MatchedRules));
-            return BlockedSenderGateDecision.Deny(ProtectedMessage);
+            var rules = string.Join(", ", check.MatchedRules);
+            _logger.LogWarning("Blocking unblock of protected principal {Address} - matched rules: {Rules}", address, rules);
+
+            // Generic banner, specific audit. docs/BlockedSenders.md promises the Event Log names
+            // the protection rule, and it must actually do so - a reviewer asking "why was this
+            // refused" cannot answer it from the operator's message alone.
+            return BlockedSenderGateDecision.Deny(ProtectedMessage, $"Protected principal - matched rules: {rules}");
         }
 
         return BlockedSenderGateDecision.Allow();

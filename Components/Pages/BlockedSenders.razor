@@ -281,7 +281,7 @@
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
                     "BlockedSenders", address, success: false, ticketNumber: ticket,
-                    errorDetail: protectedError);
+                    errorDetail: gate.AuditDetail ?? protectedError);
             }
             catch (Exception ex)
             {

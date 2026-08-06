@@ -60,10 +60,27 @@ public class BlockedSenderProtectionGateTests
             return Task.FromResult((p, Status));
         }
 
+        /// <summary>Set false to model a deployment with no protection rules at all.</summary>
+        public bool HasRules = true;
+
         public override (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
-            => LoadError is not null
-                ? (null, Array.Empty<string>(), LoadError)
-                : (new ProtectedPrincipalConfig(), Array.Empty<string>(), null);
+        {
+            if (LoadError is not null)
+                return (null, Array.Empty<string>(), LoadError);
+
+            // Rules present by default. The gate skips resolution entirely when BOTH the central
+            // config and the legacy list are empty, so a fake returning an empty config would make
+            // every resolution and protection test below vacuous - they would pass without the
+            // resolver ever being called.
+            var config = HasRules
+                ? new ProtectedPrincipalConfig { Users = ["someone@contoso.com"] }
+                : new ProtectedPrincipalConfig();
+
+            return (config, LegacyExclusions, null);
+        }
+
+        /// <summary>The legacy MailboxPermissions/ExcludedUsers list.</summary>
+        public string[] LegacyExclusions = Array.Empty<string>();
 
         public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
             => Task.FromResult(CheckResult ?? ProtectedPrincipalResult.NotProtected());
@@ -237,6 +254,60 @@ public class BlockedSenderProtectionGateTests
         var decision = await gate.EvaluateAsync(Address);
 
         Assert.True(decision.Denied);
+    }
+
+    // ---- The legacy exclusion list is protection data too -------------------------------------
+
+    [Fact]
+    public async Task LegacyExclusionsAreStillEvaluated_WhenThereIsNoCentralConfig()
+    {
+        // Review finding: an earlier version returned Allow as soon as HasCentralConfig was false,
+        // which skipped the legacy MailboxPermissions/ExcludedUsers list entirely. That list is
+        // live protection data, and "nothing configured centrally" is precisely the deployment
+        // where it is the ONLY protection - so the short-circuit un-protected exactly the
+        // installations relying on it.
+        var (gate, pp) = Create();
+        pp.HasRules = false;
+        pp.LegacyExclusions = ["legacy-protected@contoso.com"];
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "Legacy:legacy-protected@contoso.com");
+
+        var decision = await gate.EvaluateAsync("legacy-protected@contoso.com");
+
+        Assert.True(decision.Denied);
+    }
+
+    [Fact]
+    public async Task NoRulesAnywhereSkipsResolutionEntirely()
+    {
+        // The one legitimate short-circuit: both sources read successfully and both are empty, so
+        // no directory round-trip can change the answer.
+        var (gate, pp) = Create();
+        pp.HasRules = false;
+        pp.LegacyExclusions = Array.Empty<string>();
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.False(decision.Denied);
+        Assert.Null(pp.LastResolvedIdentity);
+    }
+
+    // ---- Audit detail names the rule; the banner does not -------------------------------------
+
+    [Fact]
+    public async Task ADenialAuditsTheMatchedRule_WhileTheBannerStaysGeneric()
+    {
+        // docs/BlockedSenders.md promises the Event Log detail names the protection rule. The
+        // operator-facing banner deliberately does not: a reviewer needs to know WHY, whoever
+        // typed the address does not need the rule set enumerated back at them.
+        var (gate, pp) = Create();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "Group:VIPs", "User:ceo@contoso.com");
+
+        var decision = await gate.EvaluateAsync("ceo@contoso.com");
+
+        Assert.Equal(BlockedSenderProtectionGate.ProtectedMessage, decision.Reason);
+        Assert.Contains("Group:VIPs", decision.AuditDetail);
+        Assert.Contains("User:ceo@contoso.com", decision.AuditDetail);
+        Assert.DoesNotContain("Group:VIPs", decision.Reason);
     }
 
     [Theory]

@@ -243,10 +243,25 @@
 
         try
         {
-            var resolved = await ProtectedPrincipalService.ResolveDirectoryPrincipalAsync(searchIdentity.Trim());
+            // Was ResolveDirectoryPrincipalAsync, which is a wrapper that discards the status and
+            // returns a bare null. That collapsed two different answers into one: "no such user"
+            // and "the directory did not answer" both rendered as a typo message, so an AD outage
+            // told the operator to check their spelling. It also missed cloud-only targets
+            // entirely. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+            var (resolved, resolveStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(searchIdentity.Trim());
+
+            if (resolveStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable
+                              or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+            {
+                lookupError = resolveStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                    ? $"'{searchIdentity.Trim()}' is ambiguous - it matches multiple directory objects. Contact your administrator."
+                    : "The directory could not be reached, so protection cannot be verified. Try again shortly or contact your administrator.";
+                return;
+            }
+
             if (resolved == null)
             {
-                lookupError = $"Could not resolve '{searchIdentity.Trim()}' to an AD user. Verify the UPN or email.";
+                lookupError = $"'{searchIdentity.Trim()}' was not found in Active Directory or Exchange Online. Verify the UPN or email.";
                 return;
             }
 
