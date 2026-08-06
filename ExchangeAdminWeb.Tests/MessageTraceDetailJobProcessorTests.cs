@@ -194,7 +194,12 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
         var csvFiles = Directory.GetFiles(exportDir, "*.csv");
         Assert.Single(csvFiles);
-        Assert.Contains("Message 1 of 2", File.ReadAllText(csvFiles[0]));
+        // Asserts the export CONTENT, not its layout. This previously matched "Message 1 of 2",
+        // a marker of the stacked multi-shape format that made the file unreadable in Excel; the
+        // export is now one table with one row per message, and what matters here is that both
+        // requested messages are in it.
+        var exported = File.ReadAllText(csvFiles[0]);
+        Assert.Equal(3, exported.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
 
         // Emailed the ready-and-linked notification - no attachment, and the admin address is not a
         // recipient even though one is configured (the owner ruled admins never get the results).
@@ -313,7 +318,9 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
         var csv = File.ReadAllText(Directory.GetFiles(exportDir, "*.csv").Single());
         Assert.Contains("deferred lookup failed", csv);
-        Assert.Contains("Message 2 of 2", csv);
+        // Both messages present: header plus two rows. (Was "Message 2 of 2", a marker of the
+        // old stacked format.)
+        Assert.Equal(3, csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
     }
 
     // -------------------------------------------------------------------------
@@ -450,7 +457,9 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
         var exportDir = Path.Combine(_tempDir, "ExchangeAdminWeb", "MessageTraceExports");
         var csv = File.ReadAllText(Directory.GetFiles(exportDir, "*.csv").Single());
-        Assert.Contains("Message 2 of 2", csv);
+        // The unprocessed message keeps its row rather than being dropped (Known Failure Class
+        // #2). Header plus two rows; the second carries the explanation.
+        Assert.Equal(3, csv.Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
         Assert.Contains("Not processed", csv);
     }
 }
