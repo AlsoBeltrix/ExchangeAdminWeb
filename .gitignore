@@ -85,3 +85,6 @@ GroupMembershipDelegation-*.csv
 # Coverage/test output (written by dotnet test --collect)
 TestResults/
 testResults.xml
+# Captured `dotnet test` console output. TestResults/ above only covers the collector's own
+# directory, so a redirected run log at the repo root was showing up as untracked.
+TestResults-*.txt
