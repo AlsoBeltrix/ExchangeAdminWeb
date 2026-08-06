@@ -164,6 +164,24 @@ public class BlockedSenderProtectionGateTests
     // ---- Status policy, one test per outcome -------------------------------------------------
 
     [Fact]
+    public async Task AnUnresolvableAddressIsStillCheckedAgainstProtectedRows()
+    {
+        // NotFound means no DIRECTORY object exists - not that no protected ROW names the address.
+        // Protected user rows are literal strings matched against UPN and SMTP address, so an
+        // address someone deliberately protected must still be refused even when it resolves to
+        // nothing. Review caught this: the module allowed it while MFA Reset checked it, for no
+        // principled reason.
+        var (gate, pp) = Create();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ghost@contoso.com");
+
+        var decision = await gate.EvaluateAsync("ghost@contoso.com");
+
+        Assert.True(decision.Denied);
+        Assert.Contains("directory-unresolved", decision.AuditDetail);
+    }
+
+    [Fact]
     public async Task AnUnresolvableAddressIsALLOWED_BecauseThereIsNothingToProtect()
     {
         // Deliberately different from the mailbox gate, which denies NotFound. A blocked sender is

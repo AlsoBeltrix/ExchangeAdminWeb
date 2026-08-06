@@ -1,7 +1,14 @@
 # Protected-Principal Gap Fix Plan
 
-Status: **Draft - owner approved the sequencing** (2026-08-06: fix these before the exec-support
-servicer feature). Slices not yet started.
+Status: **IMPLEMENTED 2026-08-06.** All seven sites landed across `eba1d68`, `a410e49`, `121dba3`
+and `fb5aa0c`, reviewed by codex at each stage. **Manual checks NOT run** - the live verification
+below needs a cloud-only protected principal on dev and is the remaining work.
+
+Three defects were found by review AFTER the first implementations and are folded in: the mailbox
+validator did not always resolve through Exchange (alias bypass), MFA Reset remained open because it
+mutates a Graph user that AD+EXO may not know, and the Blocked Senders gate skipped the legacy
+exclusion list. A fourth - an unresolved address was not checked against protected user rows -
+was caught by the final review and fixed in the same pass.
 
 Two holes in the protected-principal control, both live in production. Found by review while
 inventorying enforcement sites for `docs/ProtectedPrincipalBreakGlass-Plan.md`. Neither is a

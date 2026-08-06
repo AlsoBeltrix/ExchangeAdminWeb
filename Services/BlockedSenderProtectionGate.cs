@@ -145,9 +145,17 @@ public class BlockedSenderProtectionGate
                 return BlockedSenderGateDecision.Deny(UnavailableMessage);
 
             case ProtectedPrincipalService.ResolutionStatus.NotFound:
-                _logger.LogInformation(
-                    "No such recipient in Active Directory or Exchange Online for {Address} - nothing to protect, allowing unblock", address);
-                return BlockedSenderGateDecision.Allow();
+                // Neither directory knows this address, so there is no DIRECTORY object to protect.
+                // That is not the same as "no protected ROW mentions it": a protected user row is a
+                // literal string, and MatchesIdentity compares it against the target's UPN and
+                // primary SMTP address. Someone may deliberately protect an address that does not
+                // currently resolve. So check the rows against the raw address before allowing -
+                // the same treatment MFA Reset gives its unresolved targets, and skipping it here
+                // would leave the two modules inconsistent for no reason.
+                //
+                // Group, OU and pattern rules cannot match an object with no DN and no SAM; they
+                // are inapplicable rather than skipped.
+                return await CheckRawAddressAsync(address);
         }
 
         if (resolved is null)
@@ -179,6 +187,49 @@ public class BlockedSenderProtectionGate
             return BlockedSenderGateDecision.Deny(ProtectedMessage, $"Protected principal - matched rules: {rules}");
         }
 
+        return BlockedSenderGateDecision.Allow();
+    }
+
+    /// <summary>
+    /// Runs the protected-principal rules against an address that resolved to no directory object.
+    /// </summary>
+    /// <remarks>
+    /// Only the user rows can match here, and that is enough to matter: they are literal strings
+    /// compared against the target's UPN and primary SMTP address
+    /// (<c>ProtectedPrincipalService.MatchesIdentity</c>), so an address protected deliberately -
+    /// including one that no longer resolves - is still caught. Group, OU and SamAccountName rules
+    /// need an on-prem DN or SAM that this principal does not have; they are inapplicable, not
+    /// skipped.
+    /// </remarks>
+    private async Task<BlockedSenderGateDecision> CheckRawAddressAsync(string address)
+    {
+        var synthetic = new ResolvedDirectoryPrincipal(
+            Source: "BlockedSenders-Unresolved",
+            DisplayName: address,
+            UserPrincipalName: address,
+            SamAccountName: null,
+            PrimarySmtpAddress: address.Contains('@') ? address : null,
+            DistinguishedName: null,
+            ObjectGuid: null,
+            EntraObjectId: null);
+
+        var check = await _protectedPrincipals.CheckAsync(synthetic);
+
+        if (check.CheckFailed)
+        {
+            _logger.LogWarning("Blocking unblock of {Address} - protection check failed on the unresolved address: {Reason}", address, check.Reason);
+            return BlockedSenderGateDecision.Deny($"Access denied: {check.Reason}");
+        }
+
+        if (check.IsProtected)
+        {
+            var rules = string.Join(", ", check.MatchedRules);
+            _logger.LogWarning("Blocking unblock of {Address} - unresolved, but a protected row names it: {Rules}", address, rules);
+            return BlockedSenderGateDecision.Deny(ProtectedMessage, $"Protected principal (directory-unresolved) - matched rules: {rules}");
+        }
+
+        _logger.LogInformation(
+            "No such recipient in Active Directory or Exchange Online for {Address} and no protected row names it - allowing unblock", address);
         return BlockedSenderGateDecision.Allow();
     }
 }
