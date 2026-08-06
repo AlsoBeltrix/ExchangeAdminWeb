@@ -1,44 +1,7 @@
 # Historical Search In-App Delivery Plan
 
-Status: **SUPERSEDED 2026-08-05, never implemented.** Its central premise is false and its central
-mechanism does not work. Kept as the record of both, so neither is rediscovered.
-
-**Superseded by:** widening the realtime path to the full 90-day window
-(`Components/Pages/MessageTrace.razor`, `MessageTrace` module `1.4.0`). No slice of this plan was
-built.
-
-**Premise falsified.** The plan assumed Exchange Online's realtime trace covers only 10 days and
-that anything older must go through the asynchronous `Start-HistoricalSearch` pipeline. The 10-day
-figure came from the deprecated `Get-MessageTrace`. The cmdlet this app actually calls,
-`Get-MessageTraceV2`, serves the **full 90-day retention window synchronously** - measured against
-this tenant 2026-08-05: rows returned at 9, 11, 20, 45, 89 and 90 days back; refused at 91 with
-"Invalid StartDate value. The StartDate can't be older than 90 days from today." Every window the
-page was deferring to an emailed report could be answered in-app immediately.
-
-**Mechanism falsified.** Even for genuinely older data the design could not have worked.
-`Get-HistoricalSearch` does not return report content: it returns `FileUrl`, a link to
-`admin.protection.outlook.com`. Fetching that URL with the app's certificate identity follows a 302
-to `nam02b.admin.protection.outlook.com` and then to `login.microsoftonline.com`, returning a 42 KB
-**HTML sign-in page** - the portal requires an interactive user session. No cmdlet returns the
-bytes; only `Get`/`Start`/`Stop-HistoricalSearch` exist. The app therefore cannot retrieve those
-reports at all, which is precisely the cloud-admin-account barrier this plan set out to remove.
-
-**Two further live facts worth keeping.** `Status = "Done"` does NOT imply a report exists - a
-zero-row search is Done with an empty `FileUrl` and `ReportStatusDescription = "Complete - No
-results found"`, so a poller keying on Done alone would have dereferenced nothing. And
-`Get-HistoricalSearch` accepts only `JobId`; there is no `ResultSize` parameter.
-
-**What survives from this work.** The runner defects the three review rounds found are real and
-independent of this feature - the job runner still has no early-stop mechanism, its registry still
-keys on module id alone so a second processor for a module silently overwrites the first, and jobs
-still run strictly one at a time. None of them is fixed. They matter to whoever next adds a job
-type; the analysis in this document stands.
-
-Everything below is the plan as reviewed, unchanged, and describes work that was NOT done.
-
----
-
-Status when drafted: Draft - awaiting owner approval. D1-D5 open.
+Status: **Draft - awaiting owner approval.** No owner decisions ruled yet; D1-D5 below are open.
+Do not implement any slice until this line says Approved.
 
 Reviewed by codex (gpt-5.5-dzs @ xhigh) 2026-08-05, three rounds: **15 findings total, all verified
 against code, all admitted and all incorporated.** Round 3 confirmed the round-2 corrections landed

@@ -43,28 +43,6 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         return merged;
     }
 
-    /// <summary>
-    /// Submits an asynchronous historical search to Exchange Online. **Currently has no caller.**
-    /// </summary>
-    /// <remarks>
-    /// Retained deliberately rather than deleted: it is the only route to trace data older than
-    /// the 90-day realtime window, so it is the starting point if that is ever needed.
-    ///
-    /// It is NOT wired to the trace page any more. The page routed anything wider than 10 days here
-    /// on the belief that realtime trace could not reach further; measured against this tenant
-    /// 2026-08-05, <c>Get-MessageTraceV2</c> serves the full 90 days synchronously (rows returned at
-    /// 9/11/20/45/89/90 days back, refused at 91), so every window the page was sending here could
-    /// be answered in-app instead.
-    ///
-    /// **Before reviving this, know what it cannot do.** The report is not returned by any cmdlet -
-    /// <c>Get-HistoricalSearch</c> yields a <c>FileUrl</c> on
-    /// <c>admin.protection.outlook.com</c>, and fetching it with this app's certificate identity
-    /// redirects to <c>login.microsoftonline.com</c> and returns a sign-in page (measured
-    /// 2026-08-05). The report reaches a human only as Microsoft's own email to
-    /// <c>NotifyAddress</c>, which is exactly the barrier for operators without a cloud admin
-    /// account. Also note <c>Status = "Done"</c> does not imply a report exists: a zero-row search
-    /// is Done with an empty FileUrl. See docs/HistoricalSearchInApp-Plan.md (Superseded).
-    /// </remarks>
     public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
     {
         // Single-write (Start-HistoricalSearch): safe to retry on a dead pooled session.
