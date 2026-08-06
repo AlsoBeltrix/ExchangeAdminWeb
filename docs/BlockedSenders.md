@@ -1,6 +1,6 @@
 # Blocked Senders Module
 
-Module ID: `BlockedSenders` · Route: `/blocked-senders` · Category: Exchange · Version: 1.0.0
+Module ID: `BlockedSenders` · Route: `/blocked-senders` · Category: Exchange · Version: 1.1.0
 
 ## Purpose
 
@@ -59,10 +59,31 @@ relevant Exchange RBAC role granting the *Blocked Senders* cmdlets).
 
 ## Protected-principal behavior
 
-Not applicable. `Remove-BlockedSenderAddress` clears a service-side spam-block flag keyed by SMTP
-address; it performs no write against a directory principal object (no AD/Graph object mutation),
-so the protected-principal pattern (which governs identity writes bound to GUID/DN) does not
-apply. This is a deliberate, documented non-application — see `docs/BlockedSenders-Plan.md` §6.
+**Enforced since 1.1.0.** An unblock is refused when the target address belongs to a protected
+principal, and the denial is audited.
+
+**This section previously said "not applicable", and that reasoning is recorded here because it is
+why the gap survived review.** The argument was that `Remove-BlockedSenderAddress` clears a
+service-side spam-block flag keyed by SMTP address and writes to no directory object, so a pattern
+governing "identity writes bound to GUID/DN" did not apply. The premise is true; the conclusion was
+wrong. The Constitution binds the guard to the TARGET of a mutating operation, not to the storage
+location of the bit being changed - and re-enabling a principal's ability to send mail is a change
+to that principal's state by any reading. Judging applicability by mechanism rather than by target
+is what produced a module that carefully re-checked the operator and never once looked at who was
+being unblocked.
+
+Gating uses `BlockedSenderProtectionGate`, not the shared mailbox validator, and the difference is
+deliberate:
+
+- resolution always runs through Exchange, so a cloud-only or alias-addressed sender is normalized
+  to its real identity rather than compared as a literal string;
+- an address that **neither** directory knows is ALLOWED, because external, decommissioned and
+  otherwise unresolvable senders are routinely what needs clearing - often the very reason the
+  address was blocked. This is the one place this module deliberately differs from the mailbox
+  gate, which denies an unknown target.
+
+Everything else fails closed: ambiguous address, unavailable directory, unreadable protection
+config, or a protection check that could not evaluate a rule.
 
 ## Audit actions emitted
 
@@ -71,7 +92,10 @@ Category `BlockedSenders`:
 - `ListBlockedSenders` — lookup audit on each list load (success/failure).
 - `UnblockSender` — module audit on each unblock attempt (success and failure), with target
   address, ticket, and error detail on failure.
-- `UnblockSender_Denied` — module audit when the pre-write authorization re-check fails.
+- `UnblockSender_Denied` — module audit when an unblock is refused before the write. Two distinct
+  causes share this action: the pre-write authorization re-check failing (the OPERATOR may not act),
+  and the protected-principal gate refusing (the TARGET may not be acted upon). The `errorDetail`
+  distinguishes them.
 
 Audit-write failures are caught and logged separately; they never change the unblock result.
 
@@ -105,6 +129,14 @@ so validate these on a dev deploy with `ExchangeOnline` configured:
 5. Confirm direct navigation to `/blocked-senders` is denied when the module is disabled or your
    group is removed from `BlockedSenders`.
 6. Confirm the module version shows next to the page heading.
+7. **Protected principal is refused (1.1.0).** Add a protected user row for an address that is also
+   blocked, then attempt the unblock: it must be denied, the banner must say the address belongs to
+   a protected principal, and the Event Log must carry an `UnblockSender_Denied` entry whose detail
+   names the protection rule rather than an authorization failure.
+8. **An unresolvable sender is still unblockable (1.1.0).** Unblock an external or decommissioned
+   address that resolves in neither directory. It must SUCCEED - this is the deliberate difference
+   from the mailbox gate, and a regression here would leave exactly the addresses this module
+   exists to clear permanently stuck.
 
 ## Rollback / remediation
 

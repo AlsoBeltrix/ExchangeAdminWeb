@@ -173,6 +173,7 @@ try
     builder.Services.AddSingleton<EmailService>();
     builder.Services.AddSingleton<ProtectedPrincipalService>();
     builder.Services.AddSingleton<PermissionValidator>();
+    builder.Services.AddScoped<BlockedSenderProtectionGate>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();

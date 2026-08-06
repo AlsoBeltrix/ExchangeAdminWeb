@@ -5,7 +5,7 @@
 @attribute [Authorize(Policy = "BlockedSenders")]
 @rendermode InteractiveServer
 @inject BlockedSenderService BlockedSenderSvc
-@inject PermissionValidator Validator
+@inject BlockedSenderProtectionGate ProtectionGate
 @inject AuditService Audit
 @inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
@@ -268,12 +268,14 @@
         // missing it entirely, which the authorization re-check above does NOT cover: that checks
         // the OPERATOR, this checks the TARGET.
         //
-        // ValidateTargetMailboxAsync rather than a hand-rolled resolve+check: it already routes
-        // through ResolveWithExchangeFallbackAsync, so a cloud-only or alias-addressed blocked
-        // sender is resolved and matched instead of sailing through on an AD miss. A blocked
-        // sender is very often exactly such an address.
-        var protectedError = await Validator.ValidateTargetMailboxAsync(address);
-        if (protectedError is not null)
+        // A dedicated gate, NOT PermissionValidator.ValidateTargetMailboxAsync: that helper skips
+        // Exchange resolution when the protection config holds only address-form user rows, which
+        // would let an alias-addressed protected principal through, and it denies every
+        // unresolvable address - wrong here, where external and decommissioned senders are exactly
+        // what needs clearing. See BlockedSenderProtectionGate for the full reasoning.
+        var gate = await ProtectionGate.EvaluateAsync(address);
+        var protectedError = gate.Reason;
+        if (gate.Denied)
         {
             try
             {
@@ -285,7 +287,7 @@
             {
                 Logger.LogWarning(ex, "Failed to write audit for protected-principal denied unblock of {Address}", address);
             }
-            result = PermissionResult.Fail(protectedError);
+            result = PermissionResult.Fail(protectedError ?? "Access denied.");
             isLoading = false;
             return;
         }

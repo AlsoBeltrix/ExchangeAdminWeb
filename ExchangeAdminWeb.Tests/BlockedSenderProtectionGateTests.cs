@@ -1,0 +1,251 @@
+using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
+
+namespace ExchangeAdminWeb.Tests;
+
+/// <summary>
+/// The unblock protection decision (docs/ProtectedPrincipalGapFix-Plan.md GAP A).
+/// </summary>
+/// <remarks>
+/// These replace the source-scanning tripwires the first cut of this fix shipped with. Those
+/// asserted that a gate call APPEARED in the razor handler and preceded the write, which review
+/// correctly called weak: they would pass if the gate were called on the wrong variable, or if its
+/// result were discarded. What matters is the decision, so the decision moved into a service and
+/// is asserted directly here. A narrow placement test remains in
+/// <see cref="PageAuthorizationRecheckTests"/> for the handler wiring only.
+///
+/// Every branch below is a case where getting it wrong either lets a protected principal be
+/// unblocked, or blocks an address the module exists to clear.
+/// </remarks>
+public class BlockedSenderProtectionGateTests
+{
+    private const string Address = "spammer@contoso.com";
+
+    /// <summary>
+    /// Scripts resolution and the protection check without a directory. Mirrors the seam
+    /// <see cref="PermissionValidatorTests"/> uses - the same virtual members exist for the same
+    /// reason.
+    /// </summary>
+    private sealed class ScriptedPpService : ProtectedPrincipalService
+    {
+        public ProtectedPrincipalService.ResolutionStatus Status = ResolutionStatus.Resolved;
+        public bool ResolveThrows;
+        public bool ReturnNullOnResolved;
+        public string? LoadError;
+        public ProtectedPrincipalResult? CheckResult;
+        public string? LastResolvedIdentity;
+
+        public override bool HasCentralConfig => true;
+
+        public ScriptedPpService(IWebHostEnvironment env, IConfiguration config, ModuleConfigService moduleConfig,
+            ExchangeAdminWeb.Services.Storage.ProtectedPrincipalRepository repo, DelineaService delinea)
+            : base(env, config, moduleConfig, repo, delinea, Substitute.For<ILogger<ProtectedPrincipalService>>())
+        { }
+
+        public override Task<(ResolvedDirectoryPrincipal? principal, ResolutionStatus status)> ResolveWithExchangeFallbackAsync(string identity)
+        {
+            LastResolvedIdentity = identity;
+
+            if (ResolveThrows)
+                throw new InvalidOperationException("directory blew up");
+
+            ResolvedDirectoryPrincipal? p = Status == ResolutionStatus.Resolved && !ReturnNullOnResolved
+                ? new ResolvedDirectoryPrincipal("Test", identity, identity, "sam", identity, "CN=x,DC=y", "guid", null)
+                : null;
+
+            return Task.FromResult((p, Status));
+        }
+
+        public override (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
+            => LoadError is not null
+                ? (null, Array.Empty<string>(), LoadError)
+                : (new ProtectedPrincipalConfig(), Array.Empty<string>(), null);
+
+        public override Task<ProtectedPrincipalResult> CheckAsync(ResolvedDirectoryPrincipal target)
+            => Task.FromResult(CheckResult ?? ProtectedPrincipalResult.NotProtected());
+    }
+
+    private static (BlockedSenderProtectionGate gate, ScriptedPpService pp) Create()
+    {
+        var testDir = Path.Combine(Path.GetTempPath(), "eaw-bsgate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testDir);
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Delinea:SecretServerUrl"] = "https://fake.local",
+            ["Audit:LogRoot"] = testDir
+        }).Build();
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(testDir);
+
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env,
+            TestConfigStore.CreateModuleConfig(testDir), Substitute.For<ILogger<ModuleConfigService>>());
+
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+        var extLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(testDir), Substitute.For<ILogger<ExtendedLogService>>());
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var trace = new OperationTraceService(config, jsonlLog);
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
+
+        var pp = new ScriptedPpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(testDir), delinea);
+        var gate = new BlockedSenderProtectionGate(pp, Substitute.For<ILogger<BlockedSenderProtectionGate>>());
+
+        return (gate, pp);
+    }
+
+    // ---- The case the whole fix exists for --------------------------------------------------
+
+    [Fact]
+    public async Task AProtectedPrincipalIsRefused()
+    {
+        var (gate, pp) = Create();
+        pp.CheckResult = ProtectedPrincipalResult.Protected("protected", "User:ceo@contoso.com");
+
+        var decision = await gate.EvaluateAsync("ceo@contoso.com");
+
+        Assert.True(decision.Denied);
+        Assert.Equal(BlockedSenderProtectionGate.ProtectedMessage, decision.Reason);
+    }
+
+    [Fact]
+    public async Task AnOrdinaryAddressIsAllowed()
+    {
+        // The permissive path, asserted so the denial tests are not passing merely because the
+        // gate denies everything.
+        var (gate, _) = Create();
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.False(decision.Denied);
+        Assert.Null(decision.Reason);
+    }
+
+    // ---- Resolution always goes through Exchange ---------------------------------------------
+
+    [Fact]
+    public async Task ResolutionUsesTheExchangeFallback_NotAnAdOnlyLookup()
+    {
+        // The defect review caught in the first cut: routing through
+        // PermissionValidator.ValidateTargetMailboxAsync skips Exchange resolution entirely when
+        // the protection config holds only address-form user rows, so an alias-addressed protected
+        // principal is compared literally and never normalized to its primary address. This gate
+        // must resolve through Exchange unconditionally - the scripted resolver records that the
+        // fallback overload was the one called.
+        var (gate, pp) = Create();
+
+        await gate.EvaluateAsync("alias@contoso.com");
+
+        Assert.Equal("alias@contoso.com", pp.LastResolvedIdentity);
+    }
+
+    // ---- Status policy, one test per outcome -------------------------------------------------
+
+    [Fact]
+    public async Task AnUnresolvableAddressIsALLOWED_BecauseThereIsNothingToProtect()
+    {
+        // Deliberately different from the mailbox gate, which denies NotFound. A blocked sender is
+        // routinely external, decommissioned or otherwise unresolvable - frequently the reason it
+        // was blocked - and denying those would make the module unable to clear the entries it
+        // exists to clear. NotFound from the fallback resolver means BOTH directories affirmatively
+        // answered "no such recipient", so no principal exists to be protected.
+        var (gate, pp) = Create();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.NotFound;
+
+        var decision = await gate.EvaluateAsync("long-gone@partner.example");
+
+        Assert.False(decision.Denied);
+    }
+
+    [Fact]
+    public async Task AnUnavailableDirectoryIsRefused()
+    {
+        // Known Failure Class #3: a directory that did not answer is not evidence of absence.
+        var (gate, pp) = Create();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Unavailable;
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+        Assert.Equal(BlockedSenderProtectionGate.UnavailableMessage, decision.Reason);
+    }
+
+    [Fact]
+    public async Task AnAmbiguousAddressIsRefused()
+    {
+        var (gate, pp) = Create();
+        pp.Status = ProtectedPrincipalService.ResolutionStatus.Ambiguous;
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+        Assert.Equal(BlockedSenderProtectionGate.AmbiguousMessage, decision.Reason);
+    }
+
+    // ---- Fail-closed on everything that is not an answer -------------------------------------
+
+    [Fact]
+    public async Task AConfigThatCannotBeReadRefuses()
+    {
+        // An unreadable protection config says nothing about whether this address is protected.
+        var (gate, pp) = Create();
+        pp.LoadError = "protected-principals store is corrupt";
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+        Assert.Contains("corrupt", decision.Reason);
+    }
+
+    [Fact]
+    public async Task AFailedProtectionCheckRefuses()
+    {
+        // The check ran but could not evaluate a rule. An unevaluated rule is not a passed rule.
+        var (gate, pp) = Create();
+        pp.CheckResult = ProtectedPrincipalResult.Failed("group membership unavailable");
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+        Assert.Contains("group membership unavailable", decision.Reason);
+    }
+
+    [Fact]
+    public async Task AThrowingResolverRefuses()
+    {
+        var (gate, pp) = Create();
+        pp.ResolveThrows = true;
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+        Assert.Equal(BlockedSenderProtectionGate.UnavailableMessage, decision.Reason);
+    }
+
+    [Fact]
+    public async Task ResolvedWithNoPrincipalRefuses()
+    {
+        // Not a documented resolver state. An unexpected shape must never become an allow.
+        var (gate, pp) = Create();
+        pp.ReturnNullOnResolved = true;
+
+        var decision = await gate.EvaluateAsync(Address);
+
+        Assert.True(decision.Denied);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task ABlankAddressIsRefused(string address)
+    {
+        var (gate, _) = Create();
+
+        Assert.True((await gate.EvaluateAsync(address)).Denied);
+    }
+}
