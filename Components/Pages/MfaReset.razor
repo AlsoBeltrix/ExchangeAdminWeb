@@ -249,7 +249,14 @@
             // Protected principal check — fail closed unless AD lookup confirms no AD object (cloud-only)
             try
             {
-                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithStatusAsync(upn);
+                // Exchange fallback, NOT the AD-only resolve. This module operates on cloud
+                // identities, so a cloud-only target is its NORMAL input - and an AD-only lookup
+                // reports every cloud-only object as NotFound. The old code read that miss as
+                // "no AD object, therefore nothing to protect" and skipped the check entirely,
+                // which left protection close to inert here: a protected user row naming a
+                // cloud-only mailbox was never compared against the target.
+                // docs/ProtectedPrincipalGapFix-Plan.md GAP B.
+                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn);
                 if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
                 {
                     var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
@@ -283,7 +290,13 @@
                 }
                 else
                 {
-                    Logger.LogInformation("AD lookup confirmed no AD object for {Upn} — cloud-only user, proceeding", upn);
+                    // Reached only when BOTH directories affirmatively answered "no such
+                    // recipient" - the fallback resolver returns Unavailable, not NotFound, when a
+                    // lookup could not run, and that case is refused above. So this is a genuine
+                    // absence: there is no principal to protect. A cloud-only user no longer lands
+                    // here; the resolver returns them Resolved with a null DN and they are checked
+                    // against the protected user rows like anyone else.
+                    Logger.LogInformation("No such recipient in Active Directory or Exchange Online for {Upn} - proceeding", upn);
                 }
             }
             catch (Exception ex)

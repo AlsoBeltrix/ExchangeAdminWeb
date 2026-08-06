@@ -82,6 +82,24 @@ public class PageAuthorizationRecheckTests
             "the protected-principal gate must precede the unblock write");
     }
 
+    [Fact]
+    public void MfaReset_ResolvesThroughExchange_NotAdOnly()
+    {
+        // PLACEMENT ONLY, and it guards a specific regression rather than general correctness.
+        //
+        // This module is Graph-based, so a cloud-only target is its ORDINARY input. Resolving
+        // AD-only reports every such user as NotFound, and the handler's else-branch read that as
+        // "cloud-only, nothing to protect" and proceeded - leaving protection close to inert for
+        // the module's main population (docs/ProtectedPrincipalGapFix-Plan.md GAP B).
+        //
+        // Reverting to ResolveWithStatusAsync would reinstate exactly that, silently and with no
+        // other visible change, which is why the resolver choice is pinned here.
+        var body = GetMethodBody("MfaReset.razor", "ExecuteReset");
+
+        Assert.Contains("ResolveWithExchangeFallbackAsync(", body);
+        Assert.DoesNotContain("ResolveWithStatusAsync(", body);
+    }
+
     private static string GetMethodBody(string pageFile, string methodName)
     {
         var path = Path.Combine(GetPagesDirectory(), pageFile);

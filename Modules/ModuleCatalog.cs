@@ -363,7 +363,10 @@ public sealed class ModuleCatalog
             SortOrder = 750,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.4",
+            // 1.1.0: protection now resolves through Exchange. The AD-only lookup reported every
+            // cloud-only user as "no AD object" and skipped the check, which for a Graph module is
+            // the normal case - so protection was close to inert here.
+            Version = "1.1.0",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
