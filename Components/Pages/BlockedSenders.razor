@@ -5,6 +5,7 @@
 @attribute [Authorize(Policy = "BlockedSenders")]
 @rendermode InteractiveServer
 @inject BlockedSenderService BlockedSenderSvc
+@inject PermissionValidator Validator
 @inject AuditService Audit
 @inject EmailService Email
 @inject AuthenticationStateProvider AuthStateProvider
@@ -258,6 +259,33 @@
                 Logger.LogWarning(ex, "Failed to write audit for denied unblock of {Address}", address);
             }
             result = PermissionResult.Fail("Authorization denied. You do not have permission to unblock senders.");
+            isLoading = false;
+            return;
+        }
+
+        // Protected-principal gate. Unblocking changes a principal's mail-flow state, so it is a
+        // mutating operation on a target and must be gated like every other one - this module was
+        // missing it entirely, which the authorization re-check above does NOT cover: that checks
+        // the OPERATOR, this checks the TARGET.
+        //
+        // ValidateTargetMailboxAsync rather than a hand-rolled resolve+check: it already routes
+        // through ResolveWithExchangeFallbackAsync, so a cloud-only or alias-addressed blocked
+        // sender is resolved and matched instead of sailing through on an AD miss. A blocked
+        // sender is very often exactly such an address.
+        var protectedError = await Validator.ValidateTargetMailboxAsync(address);
+        if (protectedError is not null)
+        {
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
+                    "BlockedSenders", address, success: false, ticketNumber: ticket,
+                    errorDetail: protectedError);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to write audit for protected-principal denied unblock of {Address}", address);
+            }
+            result = PermissionResult.Fail(protectedError);
             isLoading = false;
             return;
         }
