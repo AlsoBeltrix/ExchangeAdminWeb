@@ -156,6 +156,33 @@ public class MessageTraceWindowPlannerTests
     }
 
     [Fact]
+    public void NoWindowExceedsTheLimitAcrossADstBoundary()
+    {
+        // Review raised this as a defect: that AddDays on a local value preserves the wall clock,
+        // making a "10 day" window 10 days and one hour of elapsed time across a fall-back
+        // boundary and so over the service limit. MEASURED ON THIS HOST, that is false - DateTime
+        // arithmetic on an Unspecified/Local kind applies no timezone offset, and both forms give
+        // exactly 240 hours across 2026-11-01. The claim was plausible and wrong.
+        //
+        // The test stays as a regression guard: if anyone later moves this path to
+        // DateTimeOffset or an explicit TimeZoneInfo conversion, the concern becomes real and this
+        // catches it. US DST ends 2026-11-01; this range straddles it.
+        var end = new DateTime(2026, 11, 10);
+        var windows = MessageTraceWindowPlanner.Split(end.AddDays(-40), end);
+
+        Assert.All(windows, w =>
+            Assert.True((w.End - w.Start) <= TimeSpan.FromDays(MessageTraceWindowPlanner.MaxWindowDays),
+                $"window {w.Start:s}..{w.End:s} is {(w.End - w.Start).TotalHours:F0}h, over the {MessageTraceWindowPlanner.MaxWindowDays}-day service limit"));
+    }
+
+    [Fact]
+    public void TheDstMarginDoesNotAddWindowsToAFullSearch()
+    {
+        // The margin must be cheap: a 90-day search is nine windows with or without it.
+        Assert.Equal(9, MessageTraceWindowPlanner.Split(Today.AddDays(-90), Today).Count);
+    }
+
+    [Fact]
     public void AZeroLengthRangeStillProducesOneWindow()
     {
         // Degenerate, but it must not return an empty plan - that would run no query at all and

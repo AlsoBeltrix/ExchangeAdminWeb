@@ -400,9 +400,16 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             {
                 // Name the window. "The trace failed" on a 90-day search leaves an operator with no
                 // idea which part of their range is missing or whether a retry would help.
-                merged.Error = $"Trace failed for {window.Start:yyyy-MM-dd} to {window.End:yyyy-MM-dd}: {partial.Error}";
-                merged.Results.Clear();
-                return merged;
+                //
+                // THROW rather than return an error-bearing response. Returning would let the outer
+                // merge treat this as one backend failing while on-prem rows are still rendered as
+                // a result - a table with a hole in the middle of the requested range, which is the
+                // opposite of the rule this branch exists to enforce. A hole INSIDE a backend's
+                // answer is invisible: the rows either side look continuous. RunMessageTraceBackendAsync
+                // catches this and marks the whole cloud backend failed, which the page renders as
+                // an incomplete result.
+                throw new InvalidOperationException(
+                    $"window {window.Start:yyyy-MM-dd} to {window.End:yyyy-MM-dd} failed: {partial.Error}");
             }
 
             merged.Results.AddRange(partial.Results);

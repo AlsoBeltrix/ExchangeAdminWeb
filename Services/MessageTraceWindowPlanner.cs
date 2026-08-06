@@ -35,6 +35,23 @@ public static class MessageTraceWindowPlanner
     /// <summary>Maximum days between StartDate and EndDate in one call. Measured: 10 accepted, 11 refused.</summary>
     public const int MaxWindowDays = 10;
 
+    /// <summary>The window length requested: exactly the service maximum.</summary>
+    /// <remarks>
+    /// A review raised DST here - that <c>AddDays(-10)</c> on a local value preserves the wall
+    /// clock and so spans 10 days and one hour across a fall-back boundary, exceeding the service
+    /// limit twice a year. **Measured on this host (Eastern Standard Time), that is not true**:
+    /// across 2026-11-01, <c>AddDays(-10)</c> and <c>- TimeSpan.FromDays(10)</c> both yield exactly
+    /// 240 hours. <see cref="DateTime"/> arithmetic on an Unspecified or Local kind performs no
+    /// timezone conversion; only <see cref="DateTimeOffset"/> or an explicit
+    /// <see cref="TimeZoneInfo"/> conversion applies an offset, and this path does neither.
+    ///
+    /// The TimeSpan form is kept anyway because it states the intent - a bound on ELAPSED time -
+    /// and stays correct if a caller ever starts passing offset-aware values.
+    /// <c>MessageTraceWindowPlannerTests</c> pins the property across a real DST boundary so the
+    /// question does not need re-deriving.
+    /// </remarks>
+    public static readonly TimeSpan MaxWindow = TimeSpan.FromDays(MaxWindowDays);
+
     /// <summary>
     /// Why a range cannot be traced, or null when it can.
     /// </summary>
@@ -85,7 +102,9 @@ public static class MessageTraceWindowPlanner
 
         while (cursorEnd > start)
         {
-            var cursorStart = cursorEnd.AddDays(-MaxWindowDays);
+            // A TimeSpan subtraction, stating the bound as ELAPSED time. Equivalent to
+            // AddDays here - measured, including across a DST boundary - see MaxWindow.
+            var cursorStart = cursorEnd - MaxWindow;
             if (cursorStart < start)
                 cursorStart = start;
 
