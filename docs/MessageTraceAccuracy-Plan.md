@@ -1,6 +1,23 @@
 # Message Trace Accuracy Plan
 
-Status: **Draft - awaiting owner approval.** Nothing here is implemented.
+Status: **IMPLEMENTED 2026-08-06**, across `90486d2` (revert), `03a9999` (chunking, page bound),
+`cdbed10` (CSV) and the notify-box fix. **Live checks NOT run** - they need real EXO and a genuinely
+wide search, and they are the point of this plan: 1386 unit tests passed while `72b8047` was
+broken, because no test can see the service's date rules.
+
+Slice 2 (a failed backend must not read as an empty one) is implemented too: the merge now records
+which backends FAILED, and the page renders a partial result as incomplete in its own alert rather
+than as a normal table with a warning above it.
+
+**D7 is answered by that implementation** - a partial result is shown and labelled, not withheld,
+because on-prem-only rows are genuinely useful for on-prem delivery questions and honesty is served
+by naming what is missing. **D6 (whether >10-day searches include on-prem) is settled by the
+chunking design**: on-prem is queried once for the whole range alongside the chunked cloud queries,
+so both backends serve every range. **D1 is answered**: the page offers the full 90 days.
+**D2 is closed** by the 50-row render boundary. **D3 (paginate a saturated chunk) and D4 (the trail
+encoding) were not needed**: truncation is now reported per window, and the trail is one column.
+**D5 remains open** - whether `StartHistoricalSearchAsync` should be deleted now that nothing calls
+it.
 
 Supersedes `docs/HistoricalSearchInApp-Plan.md` (never implemented) and repairs commit `72b8047`,
 which is defective and is on `master`.

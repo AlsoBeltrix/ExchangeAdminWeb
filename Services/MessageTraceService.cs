@@ -23,13 +23,28 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
             RunMessageTraceBackendAsync(() => GetOnPremMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "On-prem"));
 
         var merged = new MessageTraceResponse();
-        foreach (var partial in responses)
+        var backendNames = new[] { "Exchange Online", "On-prem" };
+
+        for (var i = 0; i < responses.Length; i++)
         {
+            var partial = responses[i];
             merged.Results.AddRange(partial.Results);
             if (partial.Truncated)
                 merged.Truncated = true;
+
             if (!string.IsNullOrWhiteSpace(partial.Error))
-                merged.Warnings.Add(partial.Error);
+            {
+                // A FAILED backend is not an EMPTY one, and the difference is invisible in a merged
+                // table. When cloud fails and on-prem succeeds, the operator gets a plausible list
+                // that is missing every cloud message, with the reason in a warning banner above
+                // it - partial success presented as success (Known Failure Class #2). Prefixing the
+                // backend name is the minimum honesty: the warning must say WHICH half of the
+                // answer is absent, not merely that something went wrong.
+                merged.FailedBackends.Add(backendNames[i]);
+                merged.Warnings.Add(
+                    $"{backendNames[i]} results are MISSING from this list: {partial.Error}");
+            }
+
             merged.Warnings.AddRange(partial.Warnings);
         }
 

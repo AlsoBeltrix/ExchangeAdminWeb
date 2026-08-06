@@ -75,6 +75,21 @@ public class MessageTraceResponse
     public string? Error { get; set; }
     public List<string> Warnings { get; set; } = new();
 
+    /// <summary>
+    /// Backends that FAILED, as opposed to backends that returned nothing.
+    /// </summary>
+    /// <remarks>
+    /// The distinction the merge could not express before. A trace queries Exchange Online and
+    /// on-prem together; if one fails and the other succeeds, the result is a partial answer that
+    /// looks exactly like a complete one, because the missing rows leave no trace in the table.
+    /// The page must be able to say so plainly rather than relying on a warning banner the eye
+    /// skips over. Empty means every backend answered.
+    /// </remarks>
+    public List<string> FailedBackends { get; set; } = new();
+
+    /// <summary>True when at least one backend failed, so these results are incomplete.</summary>
+    public bool IsPartial => FailedBackends.Count > 0;
+
     public static readonly int MaxResults = 1000;
 }
 

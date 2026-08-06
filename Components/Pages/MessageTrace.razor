@@ -338,6 +338,20 @@
                 </div>
             }
 
+            @* A failed backend is stated as an INCOMPLETE RESULT, not as a warning beside a
+               normal-looking table. When cloud fails and on-prem succeeds the operator otherwise
+               sees a plausible list missing every cloud message - partial success presented as
+               success, and the most expensive way this page can mislead someone. *@
+            @if (response?.IsPartial == true)
+            {
+                <div class="alert alert-danger">
+                    <strong>These results are incomplete.</strong>
+                    @string.Join(" and ", response.FailedBackends) could not be searched, so any
+                    matching messages there are missing from the list below. Re-run the search
+                    before concluding a message does not exist.
+                </div>
+            }
+
             @if (response?.Warnings.Any() == true)
             {
                 <div class="alert alert-warning">
@@ -645,7 +659,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || emailResolveStarted || !authChecked)
+        // NOT gated on firstRender. It used to be, and the combination with the authChecked guard
+        // was a real defect: if authorization had not finished by the first render, the resolve
+        // never started and nothing re-triggered it, so the notify box stayed empty for the whole
+        // circuit. A job submitted from that page carried an empty recipient list and the export
+        // notification went to nobody - reported 2026-08-06, and confirmed from the job payload
+        // (Recipients: []). The page then said "No notification was requested", which reads as the
+        // operator's choice rather than a bug.
+        //
+        // emailResolveStarted still makes this run exactly once per circuit; the difference is
+        // that it now runs on the first render where auth IS complete, rather than only the very
+        // first render.
+        if (emailResolveStarted || !authChecked)
             return;
 
         emailResolveStarted = true;
@@ -910,6 +935,18 @@
         }
     }
 
+    /// <summary>
+    /// Exports the WHOLE result set, not the rendered page.
+    /// </summary>
+    /// <remarks>
+    /// Owner direction 2026-08-06: "render the first 50, and have an export option for more."
+    /// The table is bounded because Blazor Server holds every rendered row in circuit memory; the
+    /// export has no such constraint, so it must carry everything the search actually found.
+    /// Exporting only the rendered rows would make the page limit silently become the answer.
+    ///
+    /// Columns match the table's, in the same order, so the file is the page extended rather than
+    /// a second differently-shaped artifact.
+    /// </remarks>
     private async Task ExportCsv()
     {
         if (response?.Results == null || !response.Results.Any()) return;
@@ -1104,6 +1141,20 @@
             return Task.CompletedTask;
         }
         recipientInputError = null;
+
+        // An EMPTY box is still valid - clearing it deliberately means "notify nobody", and the
+        // export is produced either way. But it must be the operator's choice, not an accident:
+        // when the box was never touched AND is empty, the pre-fill failed (AD unreachable, or the
+        // address could not be resolved) and submitting silently would send the notification
+        // nowhere while the page reported success. That is what happened on 2026-08-06.
+        if (!recipientTouched && recipients.Count == 0)
+        {
+            recipientInputError =
+                "Your email address could not be looked up, so the notify box is empty. "
+                + "Enter an address to be notified, or clear this message and submit again to produce the export without a notification.";
+            recipientTouched = true; // a second submit is now an explicit choice
+            return Task.CompletedTask;
+        }
 
         detailActionError = null;
         emailJobSubmitted = false;
