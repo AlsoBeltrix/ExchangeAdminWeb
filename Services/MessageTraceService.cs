@@ -14,8 +14,12 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
 
     public async Task<MessageTraceResponse> GetMessageTraceAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId = null)
     {
+        // The cloud query is CHUNKED; the on-prem one is not. Get-MessageTraceV2 refuses a window
+        // wider than 10 days (measured 2026-08-06: 10 accepted, 11 returns a 400), while
+        // Get-MessageTrackingLog has no such limit - so chunking both would issue N pointless
+        // on-prem queries and risk duplicating on-prem rows.
         var responses = await Task.WhenAll(
-            RunMessageTraceBackendAsync(() => GetCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "Exchange Online"),
+            RunMessageTraceBackendAsync(() => GetChunkedCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "Exchange Online"),
             RunMessageTraceBackendAsync(() => GetOnPremMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId), "On-prem"));
 
         var merged = new MessageTraceResponse();
@@ -343,6 +347,67 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Runs the cloud trace across as many <=10-day windows as the requested range needs, and
+    /// concatenates the results.
+    /// </summary>
+    /// <remarks>
+    /// Sequential, not parallel: all EXO work funnels through one 5-slot pool, and nine
+    /// simultaneous chunks would fight for slots and invite throttling. Measured cost of the worst
+    /// case - a full 90-day scoped search, nine windows - is about 10 seconds.
+    ///
+    /// **A failed window fails the whole search.** Returning eight windows of nine as though the
+    /// answer were complete is a wrong answer presented as a right one (Known Failure Class #2),
+    /// and unlike a missing BACKEND, a missing window is invisible in the result: the rows either
+    /// side of the hole look continuous.
+    ///
+    /// Windows are emitted newest-first, so a result cap consumed part-way through drops the
+    /// OLDEST messages rather than the most recent.
+    /// </remarks>
+    private async Task<MessageTraceResponse> GetChunkedCloudMessageTraceAsync(
+        string? sender, string? recipient, DateTime startDate, DateTime endDate, string? subjectFilter, string? messageId)
+    {
+        var windows = MessageTraceWindowPlanner.Split(startDate, endDate);
+
+        // The overwhelmingly common case - a range inside one window - must behave exactly as it
+        // did before, with no extra allocation or merging.
+        if (windows.Count == 1)
+            return await GetCloudMessageTraceAsync(sender, recipient, startDate, endDate, subjectFilter, messageId);
+
+        var merged = new MessageTraceResponse();
+
+        foreach (var window in windows)
+        {
+            var partial = await GetCloudMessageTraceAsync(sender, recipient, window.Start, window.End, subjectFilter, messageId);
+
+            if (!string.IsNullOrWhiteSpace(partial.Error))
+            {
+                // Name the window. "The trace failed" on a 90-day search leaves an operator with no
+                // idea which part of their range is missing or whether a retry would help.
+                merged.Error = $"Trace failed for {window.Start:yyyy-MM-dd} to {window.End:yyyy-MM-dd}: {partial.Error}";
+                merged.Results.Clear();
+                return merged;
+            }
+
+            merged.Results.AddRange(partial.Results);
+            merged.Warnings.AddRange(partial.Warnings);
+
+            if (partial.Truncated)
+            {
+                // Per-window truncation, reported per window: a 90-day search that saturated one
+                // chunk is still complete in the other eight, and a generic banner would imply
+                // otherwise.
+                merged.Truncated = true;
+                merged.Warnings.Add(
+                    $"More results exist between {window.Start:yyyy-MM-dd} and {window.End:yyyy-MM-dd} than could be returned. "
+                    + "Narrow the date range or add a sender or recipient to see them all.");
+            }
+        }
+
+        merged.TotalAvailable = merged.Results.Count;
+        return merged;
+    }
 
     private async Task<MessageTraceResponse> RunMessageTraceBackendAsync(Func<Task<MessageTraceResponse>> query, string backend)
     {

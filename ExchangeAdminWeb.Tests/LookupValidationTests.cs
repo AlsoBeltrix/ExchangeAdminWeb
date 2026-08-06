@@ -23,11 +23,25 @@ public class MessageTraceDateValidationTests
     }
 
     [Fact]
-    public void ExceedsNinetyDays_ReturnsError()
+    public void ExactlyNinetyDays_IsValid()
+    {
+        // Changed deliberately. This test previously asserted that a 90-day range was REFUSED,
+        // which was true only because the app could not serve one - a single Get-MessageTraceV2
+        // call caps at a 10-day window. Chunking removed that limitation, and 90 days is precisely
+        // Exchange Online's retention, so the full window is now the supported maximum rather than
+        // an error. The boundary itself is proven in MessageTraceWindowPlannerTests: 90 accepted,
+        // 91 refused, both measured against the live service.
+        Assert.Null(MessageTrace.ValidateDateRange(
+            DateTime.Today.AddDays(-90), DateTime.Today));
+    }
+
+    [Fact]
+    public void BeyondRetention_ReturnsError()
     {
         var result = MessageTrace.ValidateDateRange(
-            DateTime.Today.AddDays(-90), DateTime.Today);
-        Assert.Contains("90 days", result);
+            DateTime.Today.AddDays(-91), DateTime.Today);
+
+        Assert.Contains("90 days of message trace data", result);
     }
 
     [Fact]

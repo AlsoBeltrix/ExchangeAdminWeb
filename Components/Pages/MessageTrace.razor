@@ -366,7 +366,19 @@
                 @if (response.Results.Any())
                 {
                     <div class="d-flex justify-content-between align-items-center mb-2">
-                        <p class="text-muted mb-0">@response.Results.Count result(s)</p>
+                        @* State the TRUE total, always. A page limit and a truncated query are
+                           different facts, and an operator must never mistake "showing 50" for
+                           "50 exist". *@
+                        <p class="text-muted mb-0">
+                            @if (RenderedResultCount < response.Results.Count)
+                            {
+                                <text>Showing the newest <strong>@RenderedResultCount</strong> of <strong>@response.Results.Count</strong> result(s) - export to get them all</text>
+                            }
+                            else
+                            {
+                                <text>@response.Results.Count result(s)</text>
+                            }
+                        </p>
                         <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
                     </div>
 
@@ -459,7 +471,13 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                @for (var i = 0; i < response.Results.Count; i++)
+                                @* Render a bounded page, never the whole result set. This is
+                                   Blazor Server: every row is built server-side, pushed over the
+                                   SignalR circuit and held in server memory, so a large result set
+                                   rendered in full degrades the circuit and, on a shared process,
+                                   other operators' sessions with it. The export carries everything;
+                                   the table is for recognising a message, not for reading them all. *@
+                                @for (var i = 0; i < RenderedResultCount; i++)
                                 {
                                     var index = i;
                                     var msg = response.Results[index];
@@ -676,18 +694,35 @@
         return inclusive > DateTime.Now ? DateTime.Now : inclusive;
     }
 
-    public static string? ValidateDateRange(DateTime start, DateTime end)
-    {
-        if (end < start)
-            return "End date must be after start date.";
-        if ((end - start).TotalDays > 89)
-            return "Date range cannot exceed 90 days.";
-        if (start > DateTime.Today)
-            return "Start date cannot be in the future.";
-        if (end > DateTime.Today)
-            return "End date cannot be in the future.";
-        return null;
-    }
+    /// <summary>
+    /// Why the requested range cannot be traced, or null when it can.
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="MessageTraceWindowPlanner"/> so the page and the service cannot
+    /// disagree about what Exchange Online will accept. The rules it applies are measured, not
+    /// assumed - see that type.
+    ///
+    /// Note what is NOT validated here any more: the 10-day service window. A range wider than
+    /// that is legal and is split into chunks behind the scenes, so the operator never learns the
+    /// limit exists.
+    /// </remarks>
+    public static string? ValidateDateRange(DateTime start, DateTime end) =>
+        MessageTraceWindowPlanner.ValidateRange(start, end, DateTime.Today);
+
+    /// <summary>
+    /// How many result rows the table renders. Fixed, not configurable.
+    /// </summary>
+    /// <remarks>
+    /// Owner direction 2026-08-06: "render the first 50, and have an export option for more".
+    ///
+    /// This is a boundary, not a tuning knob. Raising it walks toward the volume that degrades a
+    /// Blazor Server circuit - the rows are rendered server-side and held in server memory for the
+    /// life of the page - and the export already serves the case it would be raised for.
+    /// </remarks>
+    public const int MaxRenderedResults = 50;
+
+    private int RenderedResultCount =>
+        Math.Min(response?.Results.Count ?? 0, MaxRenderedResults);
 
     private async Task RunTrace()
     {
