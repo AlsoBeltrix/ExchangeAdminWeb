@@ -1,6 +1,18 @@
 # Message Trace: retire the historical-search branch
 
-Status: **Draft, awaiting owner approval.**
+Status: **Implemented 2026-08-07 in `4b976e9`. NOT YET PROVEN — the 7 manual checks below have not
+been run, and the automated suite is not evidence here.** Owner approved 2026-08-07.
+
+Landed as one commit rather than the four slices planned below: the deletions are interdependent
+(removing the page branch orphans the service method, and the guard test asserts the result of
+both), so splitting them would have left intermediate commits that either did not build or asserted
+something untrue.
+
+One correction found during implementation, recorded because it nearly repeated the original
+mistake: slice 4's day-count guard was first written against `RunTrace`'s method body. The original
+defect declared the comparison as a FIELD and only used the flag inside `RunTrace`, so the
+body-scoped assertion passed while the reinstated defect was present. The guard is now scoped to the
+whole page source. Caught by running the non-vacuity probe, not by reading the test.
 
 Repairs a defect the owner found on dev/prod running `2.6.0`: a search wider than
 9 days still says results will be emailed, instead of running the chunked search

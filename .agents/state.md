@@ -11,6 +11,34 @@ prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on p
 the older entries below record where that stream stood *when it landed*; they are history, not
 current state, and are not maintained. Read the `Deployed:` entry, never them.
 
+- **Message Analysis: the 90-day search reached dev/prod BROKEN in `2.6.0` and is repaired in
+  `4b976e9`. MessageTrace `1.3.1 -> 1.4.0`. NOT DEPLOYED; 7 manual checks unrun.**
+  `docs/MessageTraceHistoricalRetirement-Plan.md` Status: Implemented.
+  **The owner found it by using the app.** Any range wider than 9 days still went to
+  `Start-HistoricalSearch` and told the operator results would be emailed, while the chunked
+  in-app search built in `03a9999` sat unused in the same build. And the emailed report is one
+  those operators often cannot open: `Get-HistoricalSearch` returns only a portal `FileUrl`
+  needing an interactive sign-in, which is the barrier the work existed to remove.
+  **How it survived three passes: `72b8047` deleted the page branch correctly but rested on a
+  false premise; `90486d2` reverted it WHOLE, taking the correct deletion with the bad premise;
+  `03a9999` restored only the service half.** A revert that undoes two things and a repair that
+  redoes one is not a shape diff review catches. The 1.4.0 version bump was lost the same way,
+  so the catalog understated this module through the whole work stream.
+  **1483 tests passed against the defect.** No bUnit harness exists, so no test can see which
+  branch a Razor handler takes; the planner and chunking tests were all green and all irrelevant.
+  `MessageTracePageRoutingTests` is the answer - a source-level tripwire, explicitly not
+  behavioural coverage, because a reintroduced branch is exactly what a tripwire can see.
+  **Its first cut was itself too weak and the probe caught it:** the day-count guard was scoped to
+  `RunTrace`'s body, but the defect declared the comparison as a FIELD, so it passed with the
+  defect reinstated. Now scoped to the whole page.
+  **Rule this earns, and it generalises past this module: a plan marked Implemented on a green
+  suite, in a repo where no test can render the page, states more than the evidence supports.**
+  `docs/MessageTraceAccuracy-Plan.md` said exactly that in its own caveat and was still marked
+  Implemented; it is now corrected in place.
+  **NEXT: deploy and run the 7 manual checks.** Load-bearing: a 30-day search renders rows in the
+  page with no email promise, and no gap or duplicate row at a chunk boundary - the second is
+  invisible to every test, because the rows either side of a missing window look continuous.
+
 - **BitLocker Recovery module INTEGRATED 2026-08-07. New module `BitLockerRecovery 1.0.0`, no base
   app bump (Constitution: adding a module does not bump the base version). NOT DEPLOYED; 12 manual
   checks unrun.** `docs/BitLockerRecoveryModule-Plan.md` Status: Implemented.
