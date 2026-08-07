@@ -777,4 +777,72 @@ public sealed class BitLockerRecoveryTests : IDisposable
         Assert.Equal(string.Empty, BitLockerRecovery.AuditSearchTarget(null));
         Assert.Equal(string.Empty, BitLockerRecovery.AuditSearchTarget("   "));
     }
+
+    // ---- Empty-result messaging (blr-2) ----------------------------------------------------
+    //
+    // A truncated empty result is the module's central failure mode wearing its most
+    // convincing disguise: the search stopped at its cap before finding a key, so machines
+    // that may hold one were never examined, yet the screen is the emptiest and most
+    // definitive-looking the page can produce. "No key on file" and "I stopped looking" must
+    // never read alike on a live recovery call.
+
+    [Fact]
+    public void NoResults_TruncatedSearchDoesNotClaimCompleteness()
+    {
+        var message = BitLockerRecovery.NoResultsMessage(truncated: true, warned: false, searchedLiveAd: true);
+
+        Assert.DoesNotContain("searched successfully", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("result limit", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NoResults_TruncatedTakesPrecedenceOverEveryCompleteMessage()
+    {
+        // No combination of the other flags may resurrect a completeness claim for a capped
+        // search. This is the guard that stops a later refactor reordering the branches.
+        foreach (var warned in new[] { true, false })
+        {
+            foreach (var live in new[] { true, false })
+            {
+                var message = BitLockerRecovery.NoResultsMessage(truncated: true, warned, live);
+
+                Assert.DoesNotContain("searched successfully", message, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("did not complete successfully", message, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+    }
+
+    [Fact]
+    public void NoResults_TruncatedTellsTheOperatorNotToTrustTheEmptyResult()
+    {
+        var message = BitLockerRecovery.NoResultsMessage(truncated: true, warned: false, searchedLiveAd: false);
+
+        Assert.Contains("Narrow the search", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not examined", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NoResults_DegradedLiveSearchStillReportsTheDegradation()
+    {
+        var message = BitLockerRecovery.NoResultsMessage(truncated: false, warned: true, searchedLiveAd: true);
+
+        Assert.Contains("did not complete successfully", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NoResults_CompleteLiveSearchReportsSuccess()
+    {
+        var message = BitLockerRecovery.NoResultsMessage(truncated: false, warned: false, searchedLiveAd: true);
+
+        Assert.Contains("Live Active Directory and the archive were searched successfully", message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoResults_ArchiveOnlySearchSuggestsLiveAd()
+    {
+        var message = BitLockerRecovery.NoResultsMessage(truncated: false, warned: false, searchedLiveAd: false);
+
+        Assert.Contains("archive was searched successfully", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Search live", message, StringComparison.OrdinalIgnoreCase);
+    }
 }

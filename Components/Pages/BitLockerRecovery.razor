@@ -96,19 +96,8 @@
 
         @if (results.Count == 0)
         {
-            <div class="alert alert-secondary">
-                @if (warnings.Count > 0)
-                {
-                    <span>No archive recovery keys found. Live Active Directory did not complete successfully.</span>
-                }
-                else if (searchedLiveAd)
-                {
-                    <span>No recovery keys found. Live Active Directory and the archive were searched successfully.</span>
-                }
-                else
-                {
-                    <span>No recovery keys found. The archive was searched successfully. Search live Active Directory only if the key may have been created since the latest daily export.</span>
-                }
+            <div class="alert @(truncated ? "alert-warning" : "alert-secondary")">
+                <span>@NoResultsMessage(truncated, warnings.Count > 0, searchedLiveAd)</span>
             </div>
         }
         else
@@ -339,6 +328,30 @@
 
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// What to tell an operator when a search returned no keys.
+    /// </summary>
+    /// <remarks>
+    /// The distinction this makes is the module's central rule: on a live recovery call,
+    /// "this machine has no key on file" and "I stopped looking" must not read alike.
+    ///
+    /// A TRUNCATED empty result is the dangerous case and takes precedence over everything
+    /// else. The search hit its result cap before finding a key, so machines that may hold
+    /// one were never examined -- yet it is the emptiest, most definitive-looking screen the
+    /// page can show. Claiming a successful search here is a confidently wrong answer.
+    /// </remarks>
+    internal static string NoResultsMessage(bool truncated, bool warned, bool searchedLiveAd) =>
+        truncated
+            ? "No recovery keys found yet, but this search stopped at its result limit before " +
+              "finding one, so machines that may hold a key were not examined. Narrow the search " +
+              "-- do not read this as the machine having no key on file."
+            : warned
+                ? "No archive recovery keys found. Live Active Directory did not complete successfully."
+                : searchedLiveAd
+                    ? "No recovery keys found. Live Active Directory and the archive were searched successfully."
+                    : "No recovery keys found. The archive was searched successfully. Search live " +
+                      "Active Directory only if the key may have been created since the latest daily export.";
 
     /// <summary>
     /// What may be recorded as the audit target for a recovery-screen search.
