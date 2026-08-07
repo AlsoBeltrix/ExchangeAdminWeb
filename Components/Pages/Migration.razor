@@ -877,7 +877,7 @@
                 : singleBatchName.Trim();
 
             singleCreateResult = await MigrationSvc.CreateMigrationBatchAsync(
-                singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete);
+                singleMigrationDirection, new List<string> { singleResult.EmailAddress }, finalBatchName, singleAutoStart, singleAutoComplete, authState.User);
 
             var ipAddress = clientIpAddress;
             var singleExcluded = singleCreateResult.ExcludedTargets ?? Array.Empty<string>();
@@ -885,8 +885,11 @@
 
             try
             {
+                // A serviced override succeeded, so it cannot ride errorDetail - that field is
+                // written as null on success and the record of who permitted it would vanish.
                 Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, singleMigrationDirection.ToString(),
-                    singleCreatedCount, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message);
+                    singleCreatedCount, singleAutoStart, singleAutoComplete, singleTicketNumber, singleCreateResult.Success, singleCreateResult.Message,
+                    ProtectedPrincipalServicing.Extra(singleCreateResult.ServicedNote));
 
                 // Audit every protected-principal exclusion as its own denial row, never silent.
                 foreach (var excluded in singleExcluded)
@@ -903,6 +906,7 @@
                     Success = singleCreateResult.Success,
                     Message = singleCreateResult.Message,
                     Detail = $"Audit logging failed: {ex.Message}",
+                    ServicedNote = singleCreateResult.ServicedNote,
                     ExcludedTargets = singleCreateResult.ExcludedTargets
                 };
             }
@@ -1014,7 +1018,7 @@
                 : bulkBatchName.Trim();
 
             createResult = await MigrationSvc.CreateMigrationBatchAsync(
-                migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete);
+                migrationDirection, eligibleEmails, finalBatchName, bulkAutoStart, bulkAutoComplete, authState.User);
 
             var ipAddress = clientIpAddress;
             var bulkExcluded = createResult.ExcludedTargets ?? Array.Empty<string>();
@@ -1022,8 +1026,11 @@
 
             try
             {
+                // A serviced override succeeded, so it cannot ride errorDetail - that field is
+                // written as null on success and the record of who permitted it would vanish.
                 Audit.LogMigrationBatch(currentUser, ipAddress, finalBatchName, migrationDirection.ToString(),
-                    createdCount, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message);
+                    createdCount, bulkAutoStart, bulkAutoComplete, bulkTicketNumber, createResult.Success, createResult.Message,
+                    ProtectedPrincipalServicing.Extra(createResult.ServicedNote));
 
                 // Audit every protected-principal exclusion as its own denial row, never silent.
                 foreach (var excluded in bulkExcluded)
@@ -1040,6 +1047,7 @@
                     Success = createResult.Success,
                     Message = createResult.Message,
                     Detail = $"Audit logging failed: {ex.Message}",
+                    ServicedNote = createResult.ServicedNote,
                     ExcludedTargets = createResult.ExcludedTargets
                 };
             }

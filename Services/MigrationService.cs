@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Management.Automation;
+using System.Security.Claims;
 using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
@@ -263,10 +264,17 @@ public class MigrationService : ExchangeServiceBase
     /// or Ambiguous, and on any exception. Returns null when the target is clear to migrate, or
     /// a Fail result (whose Message is the operator-facing reason) to exclude it.
     /// </summary>
-    private async Task<PermissionResult?> CheckProtectedAsync(string identity)
+    /// <summary>
+    /// Outcome of the gate for ONE target: a <paramref name="Denial"/> excluding it, or null to
+    /// migrate it. <paramref name="ServicedNote"/> is set only when the target was protected and an
+    /// authorised servicer overrode the exclusion; it must reach the page's audit call.
+    /// </summary>
+    internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote);
+
+    private async Task<ProtectionGate> CheckProtectedAsync(string identity, ClaimsPrincipal? actingUser)
     {
         if (string.IsNullOrWhiteSpace(identity))
-            return null;
+            return new(null, null);
 
         try
         {
@@ -277,26 +285,42 @@ public class MigrationService : ExchangeServiceBase
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
-                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                return new(PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
                     ? "Identity is ambiguous - matches multiple AD users."
-                    : "Protection check unavailable. Cannot verify if this mailbox is protected.");
+                    : "Protection check unavailable. Cannot verify if this mailbox is protected."), null);
             }
 
             if (resolved != null)
             {
                 var check = await _protectedPrincipals.CheckAsync(resolved);
                 if (check.CheckFailed)
-                    return PermissionResult.Fail($"Protection check failed: {check.Reason}");
+                    return new(PermissionResult.Fail($"Protection check failed: {check.Reason}"), null);
+
+                // An authorised servicer may proceed. Protection is evaluated first and never
+                // weakened - this only decides whether THIS operator may migrate a target already
+                // known to be protected. A null actingUser refuses, so any caller that does not
+                // supply one is safe. Note this overrides only the PROTECTED verdict: an
+                // Unavailable, Ambiguous or failed check above already returned, because a check
+                // that could not complete does not know whether the target is protected, so there
+                // is no refusal for a servicer to override.
                 if (check.IsProtected)
-                    return PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.");
+                {
+                    var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                        _servicers, actingUser, ServicerModuleId, check.MatchedRules, qualifier: identity);
+
+                    if (servicedNote is null)
+                        return new(PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted."), null);
+
+                    return new(null, servicedNote);
+                }
             }
 
-            return null;
+            return new(null, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected principal check failed for migration target {Identity} - excluding as precaution", identity);
-            return PermissionResult.Fail($"Protection check error: {ex.Message}");
+            return new(PermissionResult.Fail($"Protection check error: {ex.Message}"), null);
         }
     }
 
@@ -307,25 +331,39 @@ public class MigrationService : ExchangeServiceBase
     /// path. The <paramref name="checker"/> seam exists for unit testing; production passes null
     /// and the real gate is used.
     /// </summary>
-    internal async Task<(List<string> allowed, List<string> excluded)> PartitionByProtectionAsync(
+    /// <remarks>
+    /// Servicing is decided PER TARGET, so a batch can carry a mix: some targets clear, some
+    /// excluded, some protected-but-serviced. The serviced notes come back alongside the allowed
+    /// list so the caller can audit each override individually - a batch-level "some target was
+    /// serviced" would not say which, which is the fact an audit exists to answer.
+    /// </remarks>
+    internal async Task<(List<string> allowed, List<string> excluded, List<string> servicedNotes)> PartitionByProtectionAsync(
         IEnumerable<string> targets,
-        Func<string, Task<PermissionResult?>>? checker = null)
+        ClaimsPrincipal? actingUser = null,
+        Func<string, Task<ProtectionGate>>? checker = null)
     {
-        checker ??= CheckProtectedAsync;
+        checker ??= target => CheckProtectedAsync(target, actingUser);
 
         var allowed = new List<string>();
         var excluded = new List<string>();
+        var servicedNotes = new List<string>();
 
         foreach (var target in targets)
         {
-            var block = await checker(target);
-            if (block == null)
+            var gate = await checker(target);
+            if (gate.Denial == null)
+            {
                 allowed.Add(target);
+                if (!string.IsNullOrWhiteSpace(gate.ServicedNote))
+                    servicedNotes.Add(gate.ServicedNote!);
+            }
             else
-                excluded.Add($"{target} - {block.Message}");
+            {
+                excluded.Add($"{target} - {gate.Denial.Message}");
+            }
         }
 
-        return (allowed, excluded);
+        return (allowed, excluded, servicedNotes);
     }
 
     /// <summary>
@@ -336,21 +374,33 @@ public class MigrationService : ExchangeServiceBase
     /// Exchange/AD eligibility verdict. The <paramref name="checker"/> seam exists for unit
     /// testing; production passes null and the real gate is used.
     /// </summary>
+    /// <remarks>
+    /// This is the ELIGIBILITY display path, not a write, so it deliberately does not service:
+    /// no actingUser is taken and the flag reflects the protection verdict alone. An operator who
+    /// holds the grant still sees the target flagged as protected, and the override is applied and
+    /// recorded at the batch write, which is where the mutation actually happens. Flagging it as
+    /// clear here would hide from the operator that they are about to use their grant.
+    /// </remarks>
     internal async Task ApplyProtectionFlagAsync(
         MigrationEligibilityResult result,
-        Func<string, Task<PermissionResult?>>? checker = null)
+        Func<string, Task<ProtectionGate>>? checker = null)
     {
-        checker ??= CheckProtectedAsync;
+        checker ??= target => CheckProtectedAsync(target, actingUser: null);
 
-        var block = await checker(result.EmailAddress);
-        if (block != null)
+        var gate = await checker(result.EmailAddress);
+        if (gate.Denial != null)
         {
             result.IsProtected = true;
-            result.ProtectionNote = block.Message;
+            result.ProtectionNote = gate.Denial.Message;
         }
     }
 
-    public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete)
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the servicer decision needs a real principal, and a default
+    /// would silently make every caller that forgot it unable to service - or invite an ambient
+    /// lookup, which attributes a bypass to whoever is on the thread. Null refuses.
+    /// </param>
+    public async Task<PermissionResult> CreateMigrationBatchAsync(MigrationDirection direction, List<string> eligibleEmails, string batchName, bool autoStart, bool autoComplete, ClaimsPrincipal? actingUser)
     {
         string[]? targetDatabases = null;
         if (direction == MigrationDirection.ToOnPrem)
@@ -366,7 +416,7 @@ public class MigrationService : ExchangeServiceBase
         // decision (2026-06-30): one protected target must not block the whole batch and the
         // exclusion must never be silent - filter the protected targets out, migrate the rest,
         // and report the exclusions back clearly.
-        var (allowedEmails, excludedTargets) = await PartitionByProtectionAsync(eligibleEmails);
+        var (allowedEmails, excludedTargets, servicedNotes) = await PartitionByProtectionAsync(eligibleEmails, actingUser);
 
         if (allowedEmails.Count == 0)
         {
@@ -482,18 +532,23 @@ https://admin.exchange.microsoft.com/#/migration";
             return (message, details);
         });
 
+        // Every serviced override in the batch, one line each, so the audit names which targets
+        // were overridden rather than only that some were. Null when nothing was serviced.
+        var servicedSummary = servicedNotes.Count > 0 ? string.Join("\n", servicedNotes) : null;
+
         // Carry the protected-principal exclusions back to the caller so the page and the admin
         // notification can surface them. RunAsync builds the result; re-wrap to attach the list
         // (and prepend a clear note to the success message) without losing Success/Detail.
-        if (excludedTargets.Count > 0)
+        if (excludedTargets.Count > 0 || servicedSummary != null)
         {
             return new PermissionResult
             {
                 Success = result.Success,
-                Message = result.Success
+                Message = result.Success && excludedTargets.Count > 0
                     ? $"{result.Message} NOTE: {excludedTargets.Count} protected principal(s) were excluded and NOT migrated."
                     : result.Message,
                 Detail = result.Detail,
+                ServicedNote = servicedSummary,
                 ExcludedTargets = excludedTargets
             };
         }

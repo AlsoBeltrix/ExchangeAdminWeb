@@ -40,12 +40,13 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
     {
         var service = CreateService();
 
-        var (allowed, excluded) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, _) = await service.PartitionByProtectionAsync(
             new[] { "clean1@contoso.com", "ceo@contoso.com", "clean2@contoso.com" },
-            checker: id => Task.FromResult<PermissionResult?>(
+            checker: id => Task.FromResult(new MigrationService.ProtectionGate(
                 id == "ceo@contoso.com"
                     ? PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.")
-                    : null));
+                    : null,
+                null)));
 
         Assert.Equal(new[] { "clean1@contoso.com", "clean2@contoso.com" }, allowed);
         var only = Assert.Single(excluded);
@@ -58,9 +59,9 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
     {
         var service = CreateService();
 
-        var (allowed, excluded) = await service.PartitionByProtectionAsync(
+        var (allowed, excluded, _) = await service.PartitionByProtectionAsync(
             new[] { "a@contoso.com", "b@contoso.com" },
-            checker: _ => Task.FromResult<PermissionResult?>(null));
+            checker: _ => Task.FromResult(new MigrationService.ProtectionGate(null, null)));
 
         Assert.Equal(2, allowed.Count);
         Assert.Empty(excluded);
@@ -79,7 +80,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             new List<string> { "user@contoso.com" },
             "batch-1",
             autoStart: false,
-            autoComplete: false);
+            autoComplete: false,
+            actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("protected principal", result.Message);
@@ -101,7 +103,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             new List<string> { "u1@contoso.com", "u2@contoso.com" },
             "batch-2",
             autoStart: false,
-            autoComplete: false);
+            autoComplete: false,
+            actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("protected principals", result.Message);
@@ -120,7 +123,7 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             Status = MigrationStatus.Eligible
         };
 
-        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(null));
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult(new MigrationService.ProtectionGate(null, null)));
 
         Assert.False(result.IsProtected);
         Assert.Null(result.ProtectionNote);
@@ -137,8 +140,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             Status = MigrationStatus.Eligible
         };
 
-        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
-            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.")));
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult(new MigrationService.ProtectionGate(
+            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted."), null)));
 
         Assert.True(result.IsProtected);
         Assert.Contains("protected principal", result.ProtectionNote);
@@ -157,8 +160,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
         };
         result.IneligibilityReasons.Add("Already cloud mailbox");
 
-        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
-            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted.")));
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult(new MigrationService.ProtectionGate(
+            PermissionResult.Fail("This mailbox is a protected principal. Operation not permitted."), null)));
 
         Assert.True(result.IsProtected);
         Assert.Contains("protected principal", result.ProtectionNote);
@@ -176,8 +179,8 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
             Status = MigrationStatus.Eligible
         };
 
-        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult<PermissionResult?>(
-            PermissionResult.Fail("Protection check unavailable. Cannot verify if mailbox is protected.")));
+        await service.ApplyProtectionFlagAsync(result, checker: _ => Task.FromResult(new MigrationService.ProtectionGate(
+            PermissionResult.Fail("Protection check unavailable. Cannot verify if mailbox is protected."), null)));
 
         Assert.True(result.IsProtected);
         Assert.Contains("unavailable", result.ProtectionNote);
