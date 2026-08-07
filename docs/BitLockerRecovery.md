@@ -4,7 +4,10 @@ Look up BitLocker recovery keys from the ExchangeAdminWeb admin UI. Searches
 use the historical SQLite archive by default and can explicitly include live
 Active Directory when needed.
 
-Status: Integrated into the host 2026-08-07. Manual validation not yet run.
+Status: Integrated into the host 2026-08-07. Manual validation in progress on dev; the archive
+path, live AD fallback and reveal have all been exercised by the owner, and one defect found that
+way is fixed (`blr-3`, a second search rendering a false "no keys found" while the live query was
+still in flight).
 
 ## Purpose and operators
 

@@ -778,6 +778,85 @@ public sealed class BitLockerRecoveryTests : IDisposable
         Assert.Equal(string.Empty, BitLockerRecovery.AuditSearchTarget("   "));
     }
 
+    // ---- In-flight rendering (blr-3) -------------------------------------------------------
+    //
+    // Reported from dev: with the live-AD box ticked, a SECOND search flashed "No recovery keys
+    // found. Live Active Directory and the archive were searched successfully" and then replaced it
+    // with the real rows. A first search after a page load looked fine.
+    //
+    // Cause: SearchAsync emptied `results` but left `searched` true from the previous search, so
+    // the zero-results branch rendered for the whole time the live query was in flight. Live AD
+    // takes seconds - long enough for an operator on a recovery call to read a definitive "no keys
+    // on file" and act on it.
+    //
+    // Same failure as blr-2 reached a different way: an incomplete search stating completeness. The
+    // condition lives in markup, so a source assertion is the only automation that reaches it.
+
+    [Fact]
+    public void SearchResults_AreNotRenderedWhileASearchIsStillRunning()
+    {
+        var source = ReadPage();
+
+        Assert.Contains("@if (searched && !isSearching && errorMessage == null)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SearchAsync_RetractsThePreviousAnswerBeforeRunningTheNextOne()
+    {
+        // Belt and braces with the render guard above: clearing `searched` means that even if the
+        // render condition is later relaxed, a stale completed answer is not left on screen.
+        var body = GetPageMethodBody("SearchAsync");
+
+        Assert.Contains("searched = false;", body);
+
+        // ...and it must precede the await, or it retracts nothing.
+        var retract = body.IndexOf("searched = false;", StringComparison.Ordinal);
+        var call = body.IndexOf("await RecoveryService.", StringComparison.Ordinal);
+        Assert.True(call >= 0, "search call not found");
+        Assert.True(retract < call, "the previous answer must be retracted before the new search runs");
+    }
+
+    [Fact]
+    public void SearchAsync_ResetsTruncationBetweenSearches()
+    {
+        // truncated survived a search too, so a narrow second search could inherit the first
+        // search's cap warning and its alert-warning styling.
+        var body = GetPageMethodBody("SearchAsync");
+
+        Assert.Contains("truncated = false;", body);
+    }
+
+    private static string ReadPage()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var page = Path.Combine(dir.FullName, "Components", "Pages", "BitLockerRecovery.razor");
+            if (File.Exists(page))
+                return File.ReadAllText(page);
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException("Could not locate BitLockerRecovery.razor from the test base directory.");
+    }
+
+    private static string GetPageMethodBody(string methodName)
+    {
+        var source = ReadPage();
+
+        var signature = System.Text.RegularExpressions.Regex.Match(source,
+            $@"private\s+async\s+Task(<[^>]+>)?\s+{System.Text.RegularExpressions.Regex.Escape(methodName)}\s*\(");
+        Assert.True(signature.Success, $"handler '{methodName}' not found");
+
+        var start = signature.Index;
+        var next = System.Text.RegularExpressions.Regex.Match(source[(start + signature.Length)..],
+            @"\n    private\s+(async\s+)?[A-Za-z]");
+        return next.Success
+            ? source.Substring(start, signature.Length + next.Index)
+            : source[start..];
+    }
+
     // ---- Empty-result messaging (blr-2) ----------------------------------------------------
     //
     // A truncated empty result is the module's central failure mode wearing its most

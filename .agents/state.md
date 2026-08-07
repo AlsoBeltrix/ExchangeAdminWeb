@@ -79,9 +79,28 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   blr-2: a live search that hit its result cap before finding a key rendered "searched
   successfully" -- the module's own fail-closed rule ("no key exists" and "I could not look" must
   not look alike) violated by the page, while both services reported truncation correctly.
-  **NEXT: the plan's 12 manual checks on dev -- none run.** Load-bearing ones: an archive-only
-  (deleted-from-AD) machine shows `Archive only`; a reveal audits the machine and key ID but
-  **never the key**; a broken archive path errors rather than showing an empty table.
+  **DEPLOYED TO DEV by the owner 2026-08-07 and exercised. One defect found that way: `blr-3`,
+  fixed.** Archive search, live AD fallback, and reveal all work; the archive holds 124,942 rows.
+  **`blr-3` (HIGH): a SECOND search rendered "No recovery keys found ... searched successfully"
+  for the whole time the live AD query was in flight**, then replaced it with the keys it had just
+  said did not exist. `SearchAsync` emptied `results` but never cleared `searched`, so the
+  zero-results branch rendered over emptied data. Live AD takes seconds - long enough for an
+  operator on a recovery call to read a definitive "no key on file" and act on it.
+  **The first search after a page load was always fine**, which is why it survived: the obvious
+  manual test passes. Only the owner's second-search sequence exposed it.
+  **Third instance of one pattern, and it is now the thing to watch in this repo: the service was
+  correct and the PAGE was wrong** (`blr-2`, the MessageTrace historical branch, now `blr-3`). The
+  page is the only part no test can see - no bUnit harness - so service correctness keeps proving
+  nothing about what an operator gets. Source-level assertions are the only automation that
+  reaches it.
+  **A near-miss in the fix's own proof, worth remembering:** the first non-vacuity probe used
+  `\r\n`-suffixed replacements that silently matched nothing, so 1 of 3 guards fired and the other
+  two looked weak. Verifying the file contents AFTER the revert - rather than trusting the
+  reverting script - showed the revert had not applied. **A non-vacuity probe that does not
+  confirm its own revert landed can manufacture a false verdict in either direction.**
+  **NEXT: the remaining manual checks.** Unrun: an archive-only (deleted-from-AD) machine shows
+  `Archive only`; a broken archive path errors rather than showing an empty table; search by
+  pasted 48-digit key redacts in the audit record (`blr-1`).
 
 - **HANDOFF 2026-08-05, as of `e9ad05d`. Tree clean, CI green.**
   **Coverage 64.7% -> 66.0%** over the gated security-critical scope; the floor was raised with it

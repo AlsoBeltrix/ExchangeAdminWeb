@@ -82,7 +82,12 @@
         <div class="alert alert-danger">@errorMessage</div>
     }
 
-    @if (searched && errorMessage == null)
+    @* !isSearching is load-bearing, not cosmetic. SearchAsync clears results at the start but a
+       previous search has already set `searched`, so without this the zero-results branch renders
+       for the whole time a live Active Directory query is in flight - telling the operator "no
+       recovery keys found, searched successfully" about a search that is still running. Live AD
+       takes seconds, so that false answer is on screen long enough to be read and acted on. *@
+    @if (searched && !isSearching && errorMessage == null)
     {
         @if (warnings.Count > 0)
         {
@@ -251,6 +256,12 @@
         revealed.Clear();
         results = [];
         warnings = [];
+        truncated = false;
+
+        // Retract the previous answer before running the next one. Leaving `searched` set meant a
+        // second search rendered the emptied result set as a completed no-keys answer while the
+        // new query was still running.
+        searched = false;
 
         try
         {
