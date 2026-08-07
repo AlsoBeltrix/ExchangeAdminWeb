@@ -498,6 +498,23 @@ C-Suite, Board of Directors, ceo@example.com
   Principals admin UI)
 - Cache is invalidated immediately when module config is saved via UI
 
+#### Protected principal servicing (authorised bypass)
+
+Named groups can be allowed to act on protected principals **within one specific module** — built
+for the executive support team, who service VIP mailboxes as their ordinary job. It is routine
+authorised work, not an emergency override, so there is no per-operation confirmation and no alert
+on use; the actions are audited like every other action, and additionally record which group
+authorised them.
+
+- Configured per module, on **Module Config** → **Access** → *Protected principal servicing*
+- Offered only for modules whose code consults the servicer service. Today that is
+  **Blocked Senders** alone; a grant elsewhere would confer nothing, so no editor is shown
+- Separate from the module's own access groups: being able to use a module never implies being
+  able to act on protected principals in it
+- Fail-closed and inert by default. With no group configured — the shipped state — the capability
+  does not exist anywhere
+- Membership in a servicing group for one module confers nothing in any other
+
 ### Audit Logging
 
 All operations are logged as JSON Lines (.jsonl). Business audit records and diagnostic operation trace records are separate files:

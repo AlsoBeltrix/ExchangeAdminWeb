@@ -26,8 +26,24 @@ for off-circuit bulk jobs.
 
 
 
-Status: **IMPLEMENTED 2026-08-06 for ONE module (Blocked Senders).** The mechanism is built and
-tested; extending it to further modules is a per-module commit each, per the slice rule below.
+Status: **IMPLEMENTED 2026-08-06 for ONE module (Blocked Senders), but UNREACHABLE until
+2026-08-07.** The mechanism is built and tested; extending it to further modules is a per-module
+commit each, per the slice rule below.
+
+**CORRECTION 2026-08-07.** The "IMPLEMENTED" claim above was true of the mechanism and false of the
+feature. No admin surface wrote the `ProtectedServicer:<moduleId>` section-access key, so no group
+could ever be granted the capability - it did nothing for anyone from the day it landed, and both
+live config stores held zero such rows when checked. `ModuleConfig.razor` builds its grant editors
+from a module's `MainPermission` and `GranularPermissions` only, and the servicer key is
+deliberately neither.
+
+The section below calls the ungranted state "the intended default", which is correct and
+fail-closed. What it never said is that there was no way OUT of that state short of a hand-written
+database row. Fixed by `docs/ProtectedPrincipalServicerAdminUI-Plan.md`.
+
+**The lesson, and it is not specific to this plan: a capability is not implemented until it can be
+reached by the person meant to use it.** Registered, consumed and unit-tested is not the same as
+usable, and marking a plan Implemented on the first three hid the absence of the fourth for a day.
 **No group is configured anywhere**, so the capability is currently inert - which is the intended
 starting state, not an oversight.
 

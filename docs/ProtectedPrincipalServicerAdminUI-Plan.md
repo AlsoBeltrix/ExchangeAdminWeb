@@ -1,6 +1,19 @@
 # Protected-principal servicer: make the group configurable
 
-Status: **Draft, awaiting owner approval.**
+Status: **Implemented 2026-08-07. NOT YET PROVEN - the manual checks below have not been run.**
+Owner approved 2026-08-07; reviewed clean by grok (`grok-4.5-build`, 0 findings) before any code.
+
+Landed as one commit rather than three slices: the editor, its opt-in rule and the save-path wiring
+are one change, and the guards assert the result of all three together.
+
+Two corrections found while implementing, both from checking rather than assuming:
+
+- Adding the servicer alias to `policyAliases` (needed for the shared save path) also made the
+  ORDINARY grant loop render it a second time - untitled, unwarned, and captioned as plain module
+  access. That would have presented a protection bypass as a normal grant. The loop now excludes
+  it, and a guard pins that.
+- The plan assumed a `TestConfigStore.CreateSectionAccess` helper and a `repo.GetAll()`; neither
+  exists. The real API is `TryGetAll(out ...)`, wrapped in a local helper.
 
 ## Why
 

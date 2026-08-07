@@ -11,6 +11,37 @@ prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on p
 the older entries below record where that stream stood *when it landed*; they are history, not
 current state, and are not maintained. Read the `Deployed:` entry, never them.
 
+- **The protected-principal SERVICER capability was unreachable for a day, and the export UI was
+  unusable. Both fixed 2026-08-07. NOT DEPLOYED.**
+  `docs/ProtectedPrincipalServicerAdminUI-Plan.md` and `docs/MessageTraceExportUX-Plan.md`, both
+  Implemented, both reviewed clean by **grok** (`grok-4.5-build`, 0 findings) as plans before any
+  code was written. MessageTrace `1.4.0 -> 1.4.1`.
+  **SERVICER: marked IMPLEMENTED 2026-08-06 while no operator could reach it.** The service was
+  registered, consumed by `BlockedSenderProtectionGate` and unit-tested - and nothing wrote the
+  `ProtectedServicer:<moduleId>` key it reads, so no group could ever be granted it. Verified at
+  the time of the fix: zero such rows in BOTH live config stores.
+  **Rule this earns, and it generalises: a capability is not implemented until the person meant to
+  use it can reach it.** Registered + consumed + unit-tested is not usable, and marking the plan
+  Implemented on the first three hid the missing fourth. `docs/ProtectedPrincipalBreakGlass-Plan.md`
+  is corrected in place rather than quietly re-marked.
+  **The hazard that shaped the fix: `SaveSectionAccess` -> `SaveAll` -> `ClearAndInsert` REPLACES
+  the whole section-access store.** `ModuleConfig.razor` is safe only because it reads every alias
+  and writes the full map back, so the new editor JOINS that read-modify-write instead of adding a
+  second save path. Two behavioural tests against a real SQLite store pin it - the failure would be
+  silent destruction of authorization state, whose only symptom is a team quietly losing access.
+  **Caught while implementing:** adding the alias to `policyAliases` for the save path also made the
+  ORDINARY grant loop render it again - unwarned, captioned as plain module access, presenting a
+  protection bypass as a normal grant. Excluded, and guarded.
+  **EXPORT UX: nothing misbehaved and the feature was still unusable.** Two different exports (all
+  results/summary CSV; max-50 per-message detail) shared one panel that named neither, a correct
+  "export to get them all" pointed at the wrong control, and a correctly-disabled button gave no
+  reason. Owner: *"it's unclear how to get anything... the download button doesn't work."*
+  **Presentation was the defect** - no threshold, service or delivery mechanism changed.
+  **NEXT: deploy, then the manual checks.** Load-bearing: save a module's ordinary access and
+  confirm a configured servicer grant SURVIVES (the whole-store-replace hazard, directly), and a
+  servicer-group member actually unblocking a protected sender - the only end-to-end proof the
+  capability does anything at all.
+
 - **Message Analysis: the 90-day search reached dev/prod BROKEN in `2.6.0` and is repaired in
   `4b976e9`. MessageTrace `1.3.1 -> 1.4.0`. NOT DEPLOYED; 7 manual checks unrun.**
   `docs/MessageTraceHistoricalRetirement-Plan.md` Status: Implemented.
