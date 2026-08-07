@@ -120,7 +120,11 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         });
 
         var pp = new FakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
-        var gate = new ConferenceRoomProtectionGate(pp, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        // Real servicer service over the same section-access store. No ProtectedServicer row is
+        // seeded, so it denies - which is what keeps these bulk assertions unchanged: a job has no
+        // ClaimsPrincipal to service with in the first place.
+        var servicers = new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
+        var gate = new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
         var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace);
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var rooms = new FakeRoomOps();

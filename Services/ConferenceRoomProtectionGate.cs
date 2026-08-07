@@ -1,3 +1,5 @@
+using System.Security.Claims;
+
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
@@ -7,6 +9,24 @@ namespace ExchangeAdminWeb.Services;
 /// context, while the protection decision itself lives in exactly one place.
 /// </summary>
 public sealed record ProtectionDenial(string Message, string AuditDetail);
+
+/// <summary>
+/// The outcome of the Conference Rooms protection gate: proceed, proceed as an authorised servicer,
+/// or refuse.
+/// </summary>
+/// <remarks>
+/// A servicer allow carries <see cref="ServicedAuditDetail"/>, which the caller MUST record in the
+/// audit event's <c>extra</c> - never as an error detail, since a serviced action succeeds and
+/// every audit method drops the error field on success.
+/// </remarks>
+public sealed record ProtectionOutcome(ProtectionDenial? Denial, string? ServicedAuditDetail)
+{
+    public bool IsDenied => Denial is not null;
+
+    public static ProtectionOutcome Allow() => new(null, null);
+    public static ProtectionOutcome AllowAsServicer(string auditDetail) => new(null, auditDetail);
+    public static ProtectionOutcome Deny(ProtectionDenial denial) => new(denial, null);
+}
 
 /// <summary>
 /// The single protected-principal enforcement point for every ConferenceRooms room-mutating write
@@ -23,14 +43,20 @@ public sealed record ProtectionDenial(string Message, string AuditDetail);
 /// </summary>
 public sealed class ConferenceRoomProtectionGate
 {
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    public const string ModuleId = "ConferenceRooms";
+
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
     private readonly ILogger<ConferenceRoomProtectionGate> _logger;
 
     public ConferenceRoomProtectionGate(
         ProtectedPrincipalService protectedPrincipals,
+        ProtectedPrincipalServicerService servicers,
         ILogger<ConferenceRoomProtectionGate> logger)
     {
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
         _logger = logger;
     }
 
@@ -44,11 +70,33 @@ public sealed class ConferenceRoomProtectionGate
         string identity,
         Func<ProtectionDenial, TResult> onDenied,
         Func<Task<TResult>> onAllowed)
+        => await GuardThenRunAsync(identity, user: null, onDenied, _ => onAllowed());
+
+    /// <summary>
+    /// As above, but consults the authorised-servicer grant for <paramref name="user"/> when the
+    /// target turns out to be protected.
+    /// </summary>
+    /// <remarks>
+    /// The principal is a REQUIRED parameter with no default, deliberately. An off-circuit bulk job
+    /// has no operator, and a defaulted or ambient principal there would either fail open or
+    /// attribute a bypass to whoever happened to be on the thread. Bulk callers pass null
+    /// explicitly, which denies - see <see cref="Jobs.ConferenceRoomBulkProcessor"/>.
+    ///
+    /// <paramref name="onAllowed"/> receives the serviced audit detail: null on an ordinary allow,
+    /// and a description of the overridden rules when a servicer authorised it. The caller must put
+    /// that in the audit event's <c>extra</c>, because a serviced action SUCCEEDS and the error
+    /// field is dropped on success.
+    /// </remarks>
+    public async Task<TResult> GuardThenRunAsync<TResult>(
+        string identity,
+        ClaimsPrincipal? user,
+        Func<ProtectionDenial, TResult> onDenied,
+        Func<string?, Task<TResult>> onAllowed)
     {
-        var denial = await EvaluateAsync(identity);
-        if (denial is not null)
-            return onDenied(denial);
-        return await onAllowed();
+        var outcome = await EvaluateAsync(identity, user);
+        if (outcome.Denial is not null)
+            return onDenied(outcome.Denial);
+        return await onAllowed(outcome.ServicedAuditDetail);
     }
 
     /// <summary>
@@ -60,7 +108,7 @@ public sealed class ConferenceRoomProtectionGate
     /// The alias case was a real bypass, because protected rows are stored as primary addresses.
     /// NotFound now means both directories were asked and neither knows the recipient.
     /// </summary>
-    private async Task<ProtectionDenial?> EvaluateAsync(string identity)
+    private async Task<ProtectionOutcome> EvaluateAsync(string identity, ClaimsPrincipal? user)
     {
         try
         {
@@ -70,7 +118,7 @@ public sealed class ConferenceRoomProtectionGate
                 var reason = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
                     ? "Identity is ambiguous - matches multiple AD users."
                     : "Protection check unavailable.";
-                return new ProtectionDenial(reason, $"{reason} - blocked");
+                return ProtectionOutcome.Deny(new ProtectionDenial(reason, $"{reason} - blocked"));
             }
             if (resolved != null)
             {
@@ -78,19 +126,38 @@ public sealed class ConferenceRoomProtectionGate
                 if (check.CheckFailed)
                 {
                     var msg = $"Protection check failed: {check.Reason}";
-                    return new ProtectionDenial(msg, msg);
+                    return ProtectionOutcome.Deny(new ProtectionDenial(msg, msg));
                 }
                 if (check.IsProtected)
-                    return new ProtectionDenial(
+                {
+                    var rules = string.Join(", ", check.MatchedRules);
+
+                    // The target IS protected, and that result is never weakened - the servicer
+                    // check only decides whether THIS operator may act on a target already known
+                    // to be protected. A null user (bulk job) denies, because Evaluate refuses a
+                    // null principal.
+                    var servicer = _servicers.Evaluate(user, ModuleId);
+                    if (servicer.Allowed)
+                    {
+                        _logger.LogInformation(
+                            "Authorised servicer acting on protected room {Identity} - matched rules: {Rules}, authorised by {Group}",
+                            identity, rules, servicer.ServicerGroup);
+
+                        return ProtectionOutcome.AllowAsServicer(
+                            $"Protected principal serviced by an authorised operator - matched rules: {rules}; authorised by {servicer.ServicerGroup}");
+                    }
+
+                    return ProtectionOutcome.Deny(new ProtectionDenial(
                         "This is a protected principal. Operation not permitted.",
-                        $"Protected principal - matched rules: {string.Join(", ", check.MatchedRules)}");
+                        $"Protected principal - matched rules: {rules}"));
+                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected principal check failed for {Identity} - blocking as precaution", identity);
-            return new ProtectionDenial($"Protection check error: {ex.Message}", $"Protection check exception: {ex.Message}");
+            return ProtectionOutcome.Deny(new ProtectionDenial($"Protection check error: {ex.Message}", $"Protection check exception: {ex.Message}"));
         }
-        return null;
+        return ProtectionOutcome.Allow();
     }
 }

@@ -889,13 +889,13 @@
             // or fail-closed target never reaches old-value capture, the trace scope, or Set-Place.
             // A denial is audited here under the Finder (SetMetadata) action. This closes the
             // single-room Finder gap via the same shared gate the Type and bulk paths use.
-            result = await ProtectionGate.GuardThenRunAsync(email,
+            result = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
                 onDenied: denial =>
                 {
                     AuditFinderAction(email, false, ticket, denial.AuditDetail);
                     return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
                 },
-                onAllowed: async () =>
+                onAllowed: async serviced =>
                 {
                     // Capture old values
                     Dictionary<string, object?>? oldValues = null;
@@ -922,7 +922,7 @@
                         ["floor"] = floor, ["floorLabel"] = floorLabel, ["timezone"] = timezone,
                         ["countryOrRegion"] = countryOrRegion, ["state"] = state
                     };
-                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues);
+                    AuditFinderAction(email, r.Success, ticket, r.Success ? null : r.Message, oldValues, newValues, serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetMetadata", email, r.Success, ticket, r.Message);
                     return r;
                 });
@@ -1149,13 +1149,13 @@
             // Protected-principal gate: the write runs only inside onAllowed, so a protected or
             // fail-closed target never reaches the trace scope or Set-* write. A denial is audited
             // here under the Type action; the shared gate is the single enforcement point.
-            result = await ProtectionGate.GuardThenRunAsync(email,
+            result = await ProtectionGate.GuardThenRunAsync(email, await CurrentUserAsync(),
                 onDenied: denial =>
                 {
                     AuditTypeAction(email, false, ticket, denial.AuditDetail);
                     return new RoomOperationResult { Email = email, Success = false, Message = denial.Message };
                 },
-                onAllowed: async () =>
+                onAllowed: async serviced =>
                 {
                     using var op = OpTrace.BeginOperation("ConferenceRooms", "SetType", currentUser, clientIpAddress, email, ticket);
                     var r = await RoomService.SetRoomTypeAsync(email, roomType, typeTimezone.Trim(),
@@ -1169,7 +1169,7 @@
                         ["roomType"] = selectedRoomType, ["timezone"] = typeTimezone,
                         ["site"] = typeSite, ["removePerms"] = typeRemovePerms
                     };
-                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues);
+                    AuditTypeAction(email, r.Success, ticket, r.Success ? null : r.Message, newValues: newValues, servicedAuditDetail: serviced);
                     await NotifyRoomAdminAsync("ConferenceRooms_SetType", email, r.Success, ticket, r.Message);
                     return r;
                 });
@@ -1382,6 +1382,18 @@
         }
     }
 
+    /// <summary>
+    /// The acting operator, for the protected-principal servicer decision.
+    /// </summary>
+    /// <remarks>
+    /// Read fresh at the call site rather than cached in a field: the servicer grant is checked
+    /// against the CURRENT token, so a stale copy could authorise a bypass using group membership
+    /// the operator no longer has. Both mutating handlers call this immediately after
+    /// <see cref="ReauthorizeAsync"/>, on the same circuit.
+    /// </remarks>
+    private async Task<System.Security.Claims.ClaimsPrincipal> CurrentUserAsync() =>
+        (await AuthStateProvider.GetAuthenticationStateAsync()).User;
+
     private async Task<bool> ReauthorizeAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -1394,17 +1406,33 @@
         return true;
     }
 
+    /// <summary>
+    /// Wraps a serviced-action note for the audit event's <c>extra</c>.
+    /// </summary>
+    /// <remarks>
+    /// It must go in `extra`, never `errorDetail`: LogConferenceRoomAction writes
+    /// <c>["error"] = success ? null : errorDetail</c>, and a serviced action SUCCEEDS - so the one
+    /// field explaining why a protected room could be modified would be dropped exactly when it
+    /// matters. That defect already happened once in Blocked Senders.
+    /// </remarks>
+    private static Dictionary<string, object?>? ServicedExtra(string? servicedAuditDetail) =>
+        string.IsNullOrWhiteSpace(servicedAuditDetail)
+            ? null
+            : new Dictionary<string, object?> { ["protectedPrincipalServiced"] = servicedAuditDetail };
+
     private void AuditFinderAction(string target, bool success, string ticket, string? error = null,
-        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null)
+        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
+        string? servicedAuditDetail = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetMetadata", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ServicedExtra(servicedAuditDetail)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 
     private void AuditTypeAction(string target, bool success, string ticket, string? error = null,
-        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null)
+        Dictionary<string, object?>? oldValues = null, Dictionary<string, object?>? newValues = null,
+        string? servicedAuditDetail = null)
     {
-        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues); }
+        try { Audit.LogConferenceRoomAction(currentUser, clientIpAddress, "ConferenceRooms_SetType", target, success, ticket, errorDetail: error, oldValues: oldValues, newValues: newValues, extra: ServicedExtra(servicedAuditDetail)); }
         catch (Exception ex) { Logger.LogError(ex, "Audit failed"); }
     }
 

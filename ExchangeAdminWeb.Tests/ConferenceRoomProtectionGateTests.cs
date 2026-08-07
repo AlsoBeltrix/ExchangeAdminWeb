@@ -76,7 +76,14 @@ public class ConferenceRoomProtectionGateTests : IDisposable
         var trace = new OperationTraceService(config, jsonlLog);
         var delinea = new DelineaService(httpClientFactory, config, NullLogger<DelineaService>.Instance, extLog, trace);
         var pp = new FakePpService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea);
-        var gate = new ConferenceRoomProtectionGate(pp, NullLogger<ConferenceRoomProtectionGate>.Instance);
+        // Real servicer service over a store with no ProtectedServicer row, so it denies. These
+        // existing assertions are about the PROTECTION decision and must keep passing unchanged:
+        // adding a servicer dependency must not turn any refusal into an allow.
+        var sectionAccess = new SectionAccessService(
+            config, NullLogger<SectionAccessService>.Instance, env, catalog,
+            new Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
+        var gate = new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
         return (gate, pp);
     }
 

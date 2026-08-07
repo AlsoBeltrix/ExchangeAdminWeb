@@ -89,13 +89,20 @@ public sealed class ConferenceRoomBulkProcessor : IBulkJobProcessor
         // onAllowed, so a protected/fail-closed target never reaches the trace scope or any side
         // effect (Known Failure Class #1). A denial is audited here under the _Bulk action with the
         // captured job actor/ip/ticket.
-        return await _protectionGate.GuardThenRunAsync(target,
+        // NO SERVICER BYPASS HERE, and the null is explicit rather than incidental. A job runs
+        // off-circuit: the submitting operator's circuit is gone, and this row is executing later
+        // under no one. The job record carries SubmittedBy as a STRING, which cannot answer
+        // "is this principal in the servicing group" - IsInRole needs a real token, and
+        // reconstructing one from a name would be inventing an identity. So a protected room in a
+        // bulk CSV still refuses, whoever submitted it, and the operator re-runs that row
+        // interactively where their own token is present.
+        return await _protectionGate.GuardThenRunAsync(target, user: null,
             onDenied: denial =>
             {
                 Audit(job, actionAudit, target, success: false, ticket, denial.AuditDetail);
                 return Failed(target, denial.Message);
             },
-            onAllowed: async () =>
+            onAllowed: async _ =>
             {
                 // 3) Clean-root trace scope + 4) same ConferenceRoomService methods the live page uses.
                 var traceAction = isFinder ? "SetMetadata_Bulk" : "SetType_Bulk";

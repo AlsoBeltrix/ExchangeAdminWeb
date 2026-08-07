@@ -200,8 +200,21 @@ public sealed class ProtectedPrincipalServicerAdminUiTests : IDisposable
         var source = ReadPage();
 
         Assert.Contains("ModulesWithProtectedPrincipalServicing", source, StringComparison.Ordinal);
-        Assert.Matches(new Regex(@"ModulesWithProtectedPrincipalServicing\s*=\s*new\([^)]*\)\s*\{\s*""BlockedSenders""\s*\}"), source);
         Assert.Contains("ModulesWithProtectedPrincipalServicing.Contains(module.Id)", source, StringComparison.Ordinal);
+
+        // The list must stay a LIST. Asserting its exact contents would make every module slice
+        // edit this test, which trains people to edit it - and the thing that matters is not which
+        // modules are on it but that membership is deliberate. A wildcard, or the catalog, would
+        // offer the editor for modules whose gate never calls Evaluate: a grant that appears to do
+        // something and does nothing.
+        var declaration = Regex.Match(source,
+            @"ModulesWithProtectedPrincipalServicing\s*=\s*new\([^)]*\)\s*\{(?<members>[^}]*)\}");
+        Assert.True(declaration.Success, "the opt-in list is no longer an explicit set literal");
+
+        var members = declaration.Groups["members"].Value;
+        Assert.DoesNotContain("Catalog", members, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("GetAll", members, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"BlockedSenders\"", members, StringComparison.Ordinal);
     }
 
     [Fact]
