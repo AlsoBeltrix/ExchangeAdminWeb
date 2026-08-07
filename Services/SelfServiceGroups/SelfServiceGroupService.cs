@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Security.Claims;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services.SelfServiceGroups;
@@ -339,8 +340,16 @@ public class SelfServiceGroupService
     /// <param name="memberIdentity">The user-typed identity of the USER member to add/remove
     /// (UPN / email / sAMAccountName).</param>
     /// <param name="operation">Add or Remove.</param>
+    /// <param name="actingUser">
+    /// The authenticated principal, for the protected-principal servicer decision only. REQUIRED and
+    /// not defaulted: a default would silently make every caller that forgot it unable to service -
+    /// or invite an ambient lookup, which attributes a bypass to whoever is on the thread. Null
+    /// refuses. This does NOT replace <paramref name="callerSid"/>: ownership and eligibility still
+    /// key on the SID, so the servicer grant cannot become a second, weaker route to those checks.
+    /// </param>
     public async Task<MembershipChangeResult> ChangeMemberAsync(
-        string callerSid, string groupObjectGuid, string memberIdentity, MembershipOperation operation)
+        string callerSid, string groupObjectGuid, string memberIdentity, MembershipOperation operation,
+        ClaimsPrincipal? actingUser)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
@@ -385,9 +394,9 @@ public class SelfServiceGroupService
         // Fail-closed when protected or the check cannot complete (Known Failure Class #3). Enforced in
         // the service, not just the page, so protection cannot be bypassed by a non-page caller ("UI
         // hiding is not security").
-        var protectionDenial = await CheckMemberProtectedAsync(member);
-        if (protectionDenial is not null)
-            return MembershipChangeResult.From(protectionDenial);
+        var protection = await CheckMemberProtectedAsync(member, actingUser);
+        if (protection.Denial is not null)
+            return MembershipChangeResult.From(protection.Denial);
 
         // Serialize per-group so two changes to the same group cannot interleave their check->write
         // cycles (plan section 6.5). Keyed on the immutable objectGUID.
@@ -439,7 +448,8 @@ public class SelfServiceGroupService
                     return new MembershipChangeResult(
                         PermissionResult.Ok(operation == MembershipOperation.Add
                             ? "That user is already a member of the group."
-                            : "That user is not a member of the group."),
+                            : "That user is not a member of the group.",
+                            protection.ServicedNote),
                         member.PrimarySmtpAddress, member.DisplayName, isSecurityGroup, MembershipChanged: false);
                 }
 
@@ -508,7 +518,8 @@ public class SelfServiceGroupService
                 return new MembershipChangeResult(
                     PermissionResult.Ok(operation == MembershipOperation.Add
                         ? "The user was added to the group."
-                        : "The user was removed from the group."),
+                        : "The user was removed from the group.",
+                        protection.ServicedNote),
                     member.PrimarySmtpAddress, member.DisplayName, isSecurityGroup, MembershipChanged: true);
             }));
         }
@@ -526,21 +537,54 @@ public class SelfServiceGroupService
     /// fail-closed (Known Failure Class #3). Returns null when the member is clear to mutate, or a Fail
     /// result to abort.
     /// </summary>
-    private async Task<PermissionResult?> CheckMemberProtectedAsync(ResolvedDirectoryPrincipal member)
+    /// <summary>
+    /// Outcome of the gate: a <paramref name="Denial"/> to return to the caller, or null to proceed.
+    /// <paramref name="ServicedNote"/> is set only when the member was protected and an authorised
+    /// servicer overrode the refusal; it must reach the page's audit call.
+    /// </summary>
+    internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote);
+
+    /// <remarks>
+    /// Internal rather than private as a TEST SEAM (the project already exposes internals to
+    /// ExchangeAdminWeb.Tests). ChangeMemberAsync fetches this module's AD credential before it
+    /// reaches this gate and returns early when none is configured, so no test can drive the gate
+    /// through the public method without a live directory. Exposing the decision itself is what
+    /// makes the servicer path testable at all; it stays a decision with no side effects.
+    /// </remarks>
+    internal async Task<ProtectionGate> CheckMemberProtectedAsync(
+        ResolvedDirectoryPrincipal member, ClaimsPrincipal? actingUser)
     {
         try
         {
             var check = await _protectedPrincipals.CheckAsync(member);
             if (check.CheckFailed)
-                return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
+                return new(PermissionResult.Fail("The protection check could not be completed. Please try again shortly."), null);
+
+            // An authorised servicer may proceed. Protection is evaluated first and never weakened -
+            // this only decides whether THIS operator may act on a member already known to be
+            // protected. A null actingUser refuses, so any caller that does not supply one is safe.
+            //
+            // Note this module's ordinary user is a group owner, not an administrator, so the grant
+            // will almost never match here; that is correct rather than pointless. An IT operator who
+            // holds the grant and is also a group owner gets the same override they have elsewhere,
+            // and every other self-service user keeps hitting the refusal.
             if (check.IsProtected)
-                return PermissionResult.Fail("That user is a protected account and cannot be changed here. Contact the IT Support Desk.");
-            return null;
+            {
+                var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, check.MatchedRules);
+
+                if (servicedNote is null)
+                    return new(PermissionResult.Fail("That user is a protected account and cannot be changed here. Contact the IT Support Desk."), null);
+
+                return new(null, servicedNote);
+            }
+
+            return new(null, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected-principal check failed for member - blocking as a precaution");
-            return PermissionResult.Fail("The protection check could not be completed. Please try again shortly.");
+            return new(PermissionResult.Fail("The protection check could not be completed. Please try again shortly."), null);
         }
     }
 

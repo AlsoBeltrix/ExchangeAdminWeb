@@ -415,14 +415,20 @@
                 return;
             }
 
-            var outcome = await GroupService.ChangeMemberAsync(callerSid, group.ObjectGuid, member, operation);
+            var outcome = await GroupService.ChangeMemberAsync(callerSid, group.ObjectGuid, member, operation, authState.User);
             changeResult = outcome.Result;
+
+            var changeExtra = new Dictionary<string, object?> { ["member"] = member };
+            // A serviced override succeeded, so it cannot ride errorDetail - that field is written
+            // as null on success and the record of who permitted it would vanish.
+            if (!string.IsNullOrWhiteSpace(outcome.Result.ServicedNote))
+                changeExtra[ProtectedPrincipalServicing.AuditKey] = outcome.Result.ServicedNote;
 
             // Audit-first, best-effort notify (owner decision B, 2026-07-27): the audit record is
             // written FIRST and its own failure is logged, never allowed to mask the operation; the
             // notifications are best-effort and never change the result the user sees (Constitution
             // "Notifications"). No background worker / outbox.
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, changeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             var memberDetail = string.IsNullOrWhiteSpace(outcome.AffectedMemberDisplayName) ? member : $"{outcome.AffectedMemberDisplayName} ({member})";
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, [operation == MembershipOperation.Add ? "Member Added" : "Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
