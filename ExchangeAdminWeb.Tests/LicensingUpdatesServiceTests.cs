@@ -62,9 +62,18 @@ public class LicensingUpdatesServiceTests : IDisposable
         var operationTrace = new OperationTraceService(config, new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()));
         var audit = new AuditService(new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>()), operationTrace);
 
+        // Real servicer service over a store with no ProtectedServicer row, so it denies. Every
+        // protection assertion in this class must keep passing unchanged: a servicer path that
+        // turned one of these refusals into an allow would be the bug, not the fix.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
+            new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
         return new LicensingUpdatesService(
             new ModuleCredentialService(moduleConfig, delineaService, Substitute.For<ILogger<ModuleCredentialService>>()),
-            moduleConfig, protectedPrincipalService, operationTrace, audit,
+            moduleConfig, protectedPrincipalService, servicers, operationTrace, audit,
             Substitute.For<ILogger<LicensingUpdatesService>>());
     }
 

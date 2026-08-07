@@ -317,7 +317,7 @@
                 return;
             }
 
-            applyResult = await LicenseService.ApplyCsvAsync(previewResult, ticketNumber.Trim(), currentUser, clientIpAddress);
+            applyResult = await LicenseService.ApplyCsvAsync(previewResult, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
 
             if (applyResult.Success)
             {

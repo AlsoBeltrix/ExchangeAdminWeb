@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Security.Claims;
 using CsvHelper;
 using CsvHelper.Configuration;
 
@@ -42,6 +43,10 @@ public class LicensingUpdatesService
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalService _protectedPrincipalService;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "LicensingUpdates";
     private readonly OperationTraceService _operationTrace;
     private readonly AuditService _audit;
     private readonly ILogger<LicensingUpdatesService> _logger;
@@ -58,6 +63,7 @@ public class LicensingUpdatesService
         ModuleCredentialService moduleCredentials,
         ModuleConfigService moduleConfig,
         ProtectedPrincipalService protectedPrincipalService,
+        ProtectedPrincipalServicerService servicers,
         OperationTraceService operationTrace,
         AuditService audit,
         ILogger<LicensingUpdatesService> logger)
@@ -65,6 +71,7 @@ public class LicensingUpdatesService
         _moduleCredentials = moduleCredentials;
         _moduleConfig = moduleConfig;
         _protectedPrincipalService = protectedPrincipalService;
+        _servicers = servicers;
         _operationTrace = operationTrace;
         _audit = audit;
         _logger = logger;
@@ -121,7 +128,12 @@ public class LicensingUpdatesService
         return new(true, null, licenseType, rows);
     }
 
-    public async Task<LicenseBulkResult> ApplyCsvAsync(LicensePreviewResult preview, string ticket, string performedBy, string ip)
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the servicer decision needs a real principal, and a default
+    /// would silently make every caller that forgot it unable to service - or invite an ambient
+    /// lookup, which attributes a bypass to whoever is on the thread. Null refuses.
+    /// </param>
+    public async Task<LicenseBulkResult> ApplyCsvAsync(LicensePreviewResult preview, string ticket, string performedBy, string ip, ClaimsPrincipal? actingUser)
     {
         var creds = await _moduleCredentials.GetCredentialsAsync("LicensingUpdates", "licensing apply");
         if (creds == null)
@@ -139,11 +151,8 @@ public class LicensingUpdatesService
             target: $"{applyRows.Count} users",
             ticket: ticket);
 
-        var protectionResults = new Dictionary<string, ProtectedPrincipalResult>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in applyRows)
-        {
-            protectionResults[PrincipalKey(row.Principal!)] = await _protectedPrincipalService.CheckAsync(row.Principal!);
-        }
+        var (protectionResults, servicedNotes, servicedNotesByUpn) =
+            await EvaluateProtectionAsync(applyRows, actingUser);
 
         if (!await _adThrottle.WaitAsync(TimeSpan.FromMinutes(2)))
             return new(false, "AD service is busy.", 0, 0, 0, 0, 0, []);
@@ -151,7 +160,7 @@ public class LicensingUpdatesService
         List<LicenseApplyRow> results;
         try
         {
-            results = await Task.Run(() => ApplyChanges(applyRows, preview.LicenseType, creds.Value, protectionResults));
+            results = await Task.Run(() => ApplyChanges(applyRows, preview.LicenseType, creds.Value, protectionResults, servicedNotes));
         }
         finally
         {
@@ -168,12 +177,19 @@ public class LicensingUpdatesService
         {
             try
             {
+                // A serviced override succeeds, so it cannot ride errorDetail - that field is
+                // written as null on success and the record of who permitted it would vanish.
+                var servicedNote = row.UserPrincipalName != null
+                    ? servicedNotesByUpn.GetValueOrDefault(row.UserPrincipalName)
+                    : null;
+
                 _audit.LogModuleAction(performedBy, ip, "LicensingUpdates_Update",
                     "LicensingUpdates",
                     $"{row.UserPrincipalName ?? row.InputIdentity} [{row.Status}] {row.PreviousValue ?? "(empty)"} -> {row.NewValue ?? "(empty)"}",
                     row.Status == "Success" || row.Status == "Unchanged",
                     ticketNumber: ticket,
-                    errorDetail: row.Error);
+                    errorDetail: row.Error,
+                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
             }
             catch (Exception auditEx)
             {
@@ -260,7 +276,8 @@ public class LicensingUpdatesService
     private List<LicenseApplyRow> ApplyChanges(
         List<LicensePreviewRow> rows, string licenseType,
         (string username, string password, string domain) creds,
-        Dictionary<string, ProtectedPrincipalResult> protectionResults)
+        Dictionary<string, ProtectedPrincipalResult> protectionResults,
+        Dictionary<string, string> servicedNotes)
     {
         var results = new List<LicenseApplyRow>();
 
@@ -289,7 +306,9 @@ public class LicensingUpdatesService
                     results.Add(new(row.InputIdentity, principal.UserPrincipalName, "CheckFailed", row.CurrentValue, null, protectionResult.Reason));
                     continue;
                 }
-                if (protectionResult.IsProtected)
+                // An authorised servicer proceeds; the note was decided on the request thread above.
+                var servicedNote = servicedNotes.GetValueOrDefault(PrincipalKey(principal));
+                if (protectionResult.IsProtected && servicedNote == null)
                 {
                     results.Add(new(row.InputIdentity, principal.UserPrincipalName, "Protected", row.CurrentValue, null, "Protected principal."));
                     continue;
@@ -355,6 +374,63 @@ public class LicensingUpdatesService
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Runs the protection check and the servicer decision for every row, before any AD write.
+    /// </summary>
+    /// <remarks>
+    /// The servicer decision is made HERE, on the request thread beside the protection check, and
+    /// never inside <c>ApplyChanges</c>: that runs on a worker thread via <c>Task.Run</c>, where
+    /// the acting principal is not on the ambient context and reading one would attribute the
+    /// override to whoever owns the thread. Decided per row, so a batch can service one protected
+    /// user and still refuse another.
+    ///
+    /// Two keyed views come back deliberately. The apply loop keys on <c>PrincipalKey</c>, which
+    /// prefers ObjectGuid; the audit loop only sees <c>LicenseApplyRow</c>, which carries the UPN.
+    /// Looking the notes up by UPN against the PrincipalKey view would silently find nothing and
+    /// drop the override from the audit record - the one place it must never be missing.
+    ///
+    /// Internal as a TEST SEAM (the project already exposes internals to ExchangeAdminWeb.Tests):
+    /// ApplyCsvAsync returns at the credential gate before reaching this, so the servicer decision
+    /// is not otherwise reachable without a live directory. It is a decision with no side effects.
+    /// </remarks>
+    internal async Task<(
+        Dictionary<string, ProtectedPrincipalResult> protectionResults,
+        Dictionary<string, string> servicedNotes,
+        Dictionary<string, string> servicedNotesByUpn)> EvaluateProtectionAsync(
+        List<LicensePreviewRow> applyRows,
+        ClaimsPrincipal? actingUser)
+    {
+        var protectionResults = new Dictionary<string, ProtectedPrincipalResult>(StringComparer.OrdinalIgnoreCase);
+        var servicedNotes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var servicedNotesByUpn = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in applyRows)
+        {
+            var key = PrincipalKey(row.Principal!);
+            var check = await _protectedPrincipalService.CheckAsync(row.Principal!);
+            protectionResults[key] = check;
+
+            // Protection is evaluated first and never weakened - this only decides whether THIS
+            // operator may act on a user already known to be protected. A failed check is not
+            // serviceable: it does not know whether the user is protected, so there is no refusal
+            // to override. A null actingUser refuses.
+            if (check.IsProtected && !check.CheckFailed)
+            {
+                var note = ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, check.MatchedRules,
+                    qualifier: row.Principal!.UserPrincipalName);
+
+                if (note != null)
+                {
+                    servicedNotes[key] = note;
+                    servicedNotesByUpn[row.Principal!.UserPrincipalName] = note;
+                }
+            }
+        }
+
+        return (protectionResults, servicedNotes, servicedNotesByUpn);
     }
 
     private static string PrincipalKey(ResolvedDirectoryPrincipal principal) =>
