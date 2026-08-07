@@ -1,6 +1,18 @@
 # Message Analysis: make the two exports comprehensible
 
-Status: **Draft, awaiting owner approval.**
+Status: **Implemented 2026-08-07. NOT YET PROVEN - the manual checks below have not been run, and
+the automated suite cannot see any of this.** Owner approved 2026-08-07; reviewed clean by grok
+(`grok-4.5-build`, 0 findings) before implementation.
+
+Landed as one commit rather than four slices: every change is markup in one file plus its guard
+test, and splitting them would have produced intermediate commits whose tests asserted wording the
+page did not yet carry.
+
+One correction found while implementing: the first guard failed against the fixed page, because the
+phrase it forbids ("export to get them all") survived in the Razor COMMENT explaining its removal.
+The comment was reworded. A guard that a comment can satisfy - or in this case break - is a guard
+matching text rather than intent; worth noting since the same class of error made two blr-4 guards
+vacuous.
 
 Owner, 2026-08-07, using the deployed app: *"message analysis won't let me export items. the
 Download details button doesn't click. it's unclear how to get anything. email? it says export to

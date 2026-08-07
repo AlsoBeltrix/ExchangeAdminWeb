@@ -361,47 +361,89 @@
                         @* State the TRUE total, always. A page limit and a truncated query are
                            different facts, and an operator must never mistake "showing 50" for
                            "50 exist". *@
+                        @* States the count and NOTHING about how to export. It used to append a
+                           pointer to "the export", which was true only of the summary CSV sitting
+                           at the far right of this same line - an operator read it as pointing at
+                           the selection controls directly below, which cap at 50, and reported the
+                           page as broken. The two exports now name their own scope where they are.
+                           *@
                         <p class="text-muted mb-0">
                             @if (RenderedResultCount < response.Results.Count)
                             {
-                                <text>Showing the newest <strong>@RenderedResultCount</strong> of <strong>@response.Results.Count</strong> result(s) - export to get them all</text>
+                                <text>Showing the newest <strong>@RenderedResultCount</strong> of <strong>@response.Results.Count</strong> result(s)</text>
                             }
                             else
                             {
                                 <text>@response.Results.Count result(s)</text>
                             }
                         </p>
-                        <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
                     </div>
 
+                    @* TWO DIFFERENT EXPORTS, stated as two. They were previously one undifferentiated
+                       panel plus a button on another line, and the difference between "everything,
+                       summary" and "a selection, full detail" was nowhere on the page. *@
                     <div class="border rounded p-2 mb-2 bg-light">
+                        <div class="d-flex flex-wrap align-items-center gap-2 pb-2 mb-2 border-bottom">
+                            <div class="flex-grow-1">
+                                <strong style="font-size: 0.85rem;">All @response.Results.Count result(s), summary rows</strong>
+                                <div class="form-text mb-0">One line per message - the columns in the table below. Downloads immediately.</div>
+                            </div>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="ExportCsv">Export CSV</button>
+                        </div>
+
+                        @{
+                            var action = MessageTraceDetailReport.ResolveAction(selectedIndices.Count);
+                            var liveBlocked = action == MessageTraceDetailAction.EmailOnly;
+                            // Why the live button is unavailable, on the CONTROL. A disabled button
+                            // that states no reason is what produced "the Download details button
+                            // doesn't click" - it was refusing correctly and silently.
+                            var liveTitle = liveBlocked
+                                ? $"Live download is limited to {MessageTraceDetailReport.LiveMax} messages. Use \"Export details as a job\" for this selection."
+                                : action == MessageTraceDetailAction.None
+                                    ? "Select at least one message."
+                                    : $"Download the delivery detail for the selected message(s) now.";
+                        }
+
+                        <div>
+                            <strong style="font-size: 0.85rem;">Selected messages, full delivery detail</strong>
+                            <div class="form-text mb-2">
+                                The per-hop trail for each selected message, one Exchange lookup each.
+                                At most <strong>@MessageTraceDetailReport.EmailMax</strong> per export
+                                - this is a ceiling, not a page, so narrow the search to cover more.
+                            </div>
+                        </div>
+
                         <div class="d-flex flex-wrap align-items-center gap-2">
-                            <span class="me-2"><strong>@selectedIndices.Count</strong> selected@(SelectionCappedAt50 ? " (cap 50)" : "")</span>
-                            @{
-                                var action = MessageTraceDetailReport.ResolveAction(selectedIndices.Count);
-                            }
-                            <button type="button" class="btn btn-sm btn-primary" disabled="@(action != MessageTraceDetailAction.LiveOrEmail || detailActionBusy)" @onclick="DownloadSelectedDetails">
+                            <span class="me-2"><strong>@selectedIndices.Count</strong> selected@(SelectionCappedAt50 ? $" (cap {MessageTraceDetailReport.EmailMax})" : "")</span>
+                            <button type="button" class="btn btn-sm btn-primary" title="@liveTitle"
+                                    disabled="@(action != MessageTraceDetailAction.LiveOrEmail || detailActionBusy)" @onclick="DownloadSelectedDetails">
                                 @if (detailActionBusy && detailActionKind == "download")
                                 {
                                     <span class="spinner-border spinner-border-sm me-1"></span>
                                 }
-                                Download details
+                                Download details (up to @MessageTraceDetailReport.LiveMax)
                             </button>
-                            <button type="button" class="btn btn-sm btn-outline-primary" disabled="@(action == MessageTraceDetailAction.None || detailActionBusy)" @onclick="EmailSelectedDetails">
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    title="Produce the detail export as a background job and list it on Downloadable Reports."
+                                    disabled="@(action == MessageTraceDetailAction.None || detailActionBusy)" @onclick="EmailSelectedDetails">
                                 @if (detailActionBusy && detailActionKind == "email")
                                 {
                                     <span class="spinner-border spinner-border-sm me-1"></span>
                                 }
-                                Email details
+                                Export details as a job
                             </button>
                             @if (selectedIndices.Count > 0)
                             {
                                 <button type="button" class="btn btn-sm btn-link" @onclick="ClearSelection" disabled="@detailActionBusy">Clear</button>
                             }
                         </div>
-                        @if (action == MessageTraceDetailAction.EmailOnly)
+                        @if (liveBlocked)
                         {
-                            <div class="form-text mb-0">@MessageTraceDetailReport.LiveMax or fewer can be downloaded live; @(selectedIndices.Count) selected must be delivered by email.</div>
+                            <div class="form-text mb-0 mt-1">
+                                <strong>Live download is unavailable for @selectedIndices.Count messages.</strong>
+                                @MessageTraceDetailReport.LiveMax or fewer can be downloaded live; use
+                                <strong>Export details as a job</strong> for this selection.
+                            </div>
                         }
                         @if (selectedIndices.Count > 0)
                         {

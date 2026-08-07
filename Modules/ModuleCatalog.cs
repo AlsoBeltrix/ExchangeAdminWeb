@@ -220,7 +220,7 @@ public sealed class ModuleCatalog
             SortOrder = 500,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.4.0",
+            Version = "1.4.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MessageTrace", FailClosed: true),
             ConfigFields = [

@@ -38,7 +38,16 @@ Analyze message headers and search mail flow across Exchange Online and on-premi
 - Header Analysis is the primary workflow and supports pasted headers plus `.eml` and `.msg` uploads
 - Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
-- The results table renders the first 50 rows and states the true total; use the detail export for more. This is a fixed boundary, not a setting: Blazor Server renders rows server-side and holds them in circuit memory, so a large table degrades other operators' sessions too
+- The results table renders the first 50 rows and states the true total. This is a fixed boundary, not a setting: Blazor Server renders rows server-side and holds them in circuit memory, so a large table degrades other operators' sessions too
+- **Two different exports, and they are not interchangeable:**
+
+  | Control | Covers | Contents | Delivery |
+  | --- | --- | --- | --- |
+  | **Export CSV** | every result, however many | one summary line per message - the table columns | downloads immediately |
+  | **Download details (up to 10)** | the selected messages | the full per-hop delivery trail | downloads immediately |
+  | **Export details as a job** | the selected messages, max 50 | the full per-hop delivery trail | background job, listed on Downloadable Reports |
+
+  Delivery detail costs one Exchange lookup per message, so the 50 is a **ceiling rather than a page**: there is no way to obtain detail for every result in one export, and narrowing the search is how to cover more. Live download is capped lower still, at 10
 - Subject and Message ID filters work on every range, including a 90-day one
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
