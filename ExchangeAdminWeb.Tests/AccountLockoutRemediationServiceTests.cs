@@ -14,10 +14,10 @@ namespace ExchangeAdminWeb.Tests;
 /// <summary>
 /// Deterministic unit coverage for AccountLockoutRemediationService: the guard-clause ordering
 /// and config-driven helpers that do not require live AD / WinRM / Delinea. The PowerShell
-/// session-query/logoff, 4740 event read, AD computer enumeration, and the protected-principal
-/// guard (which run only once credentials resolve against a real Delinea secret) are
-/// manual-validation-only and not exercised here - see
-/// docs/AccountLockoutRemediation-Incorporation-Plan.md.
+/// session-query/logoff, 4740 event read, and AD computer enumeration (which run only once
+/// credentials resolve against a real Delinea secret) are manual-validation-only and not exercised
+/// here - see docs/AccountLockoutRemediation-Incorporation-Plan.md. The protected-principal guard
+/// IS covered, via the internal seam, in AccountLockoutRemediationServicerTests.
 /// </summary>
 public sealed class AccountLockoutRemediationServiceTests : IDisposable
 {
@@ -242,10 +242,20 @@ public sealed class AccountLockoutRemediationServiceTests : IDisposable
         // firing can be observed. Constructed with a minimal config + substitute logger.
         email = Substitute.For<EmailService>(config, Substitute.For<ILogger<EmailService>>());
 
+        // Real servicer service over a store with no ProtectedServicer row, so it denies. Every
+        // protection assertion in this class must keep passing unchanged: a servicer path that
+        // turned one of these refusals into an allow would be the bug, not the fix.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog,
+            new SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
         return new AccountLockoutRemediationService(
             moduleCredentials,
             moduleConfig,
             protectedPrincipals,
+            servicers,
             authorization,
             audit,
             email,

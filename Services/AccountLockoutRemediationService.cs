@@ -14,6 +14,7 @@ public sealed class AccountLockoutRemediationService
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
     private readonly IAuthorizationService _authorization;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -24,6 +25,7 @@ public sealed class AccountLockoutRemediationService
         ModuleCredentialService moduleCredentials,
         ModuleConfigService moduleConfig,
         ProtectedPrincipalService protectedPrincipals,
+        ProtectedPrincipalServicerService servicers,
         IAuthorizationService authorization,
         AuditService audit,
         EmailService email,
@@ -33,6 +35,7 @@ public sealed class AccountLockoutRemediationService
         _moduleCredentials = moduleCredentials;
         _moduleConfig = moduleConfig;
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
         _authorization = authorization;
         _audit = audit;
         _email = email;
@@ -406,7 +409,14 @@ public sealed class AccountLockoutRemediationService
         }
     }
 
-    private async Task<(Dictionary<string, string[]> machineMap, List<ComputerSessionActionRow> rows)> GuardTargetUsersAsync(
+    /// <remarks>
+    /// Internal rather than private as a TEST SEAM (the project already exposes internals to
+    /// ExchangeAdminWeb.Tests). RunLogoffAsync fetches an AD credential and reaches a live
+    /// directory before this guard runs, so no test can drive the servicer path through the public
+    /// methods. Exposing the guard is what makes the decision testable; it stays a filter plus its
+    /// audit rows, with no directory write of its own.
+    /// </remarks>
+    internal async Task<(Dictionary<string, string[]> machineMap, List<ComputerSessionActionRow> rows)> GuardTargetUsersAsync(
         Dictionary<string, string[]> machineMap,
         AccountLockoutOperatorContext context,
         string ticketNumber,
@@ -442,11 +452,25 @@ public sealed class AccountLockoutRemediationService
                 continue;
             }
 
+            // An authorised servicer may proceed. Protection is evaluated first and never weakened -
+            // this only decides whether THIS operator may act on a user already known to be
+            // protected. The blocked paths above stay blocked: an unresolved, ambiguous or failed
+            // check does not know whether the user is protected, so there is no refusal to override.
+            //
+            // context.Principal is the operator on the circuit, the same identity the module's own
+            // authorization checks use, so a null principal cannot reach here to be serviced.
+            string? servicedNote = null;
             if (protection.IsProtected)
             {
-                rows.Add(BlockedUserRow(user, "protected-principal", protection.Reason));
-                AuditLogoff(context, action, user, false, ticketNumber, protection.Reason, new Dictionary<string, object?> { ["protectedPrincipal"] = true });
-                continue;
+                servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    _servicers, context.Principal, ModuleId, protection.MatchedRules, qualifier: user);
+
+                if (servicedNote is null)
+                {
+                    rows.Add(BlockedUserRow(user, "protected-principal", protection.Reason));
+                    AuditLogoff(context, action, user, false, ticketNumber, protection.Reason, new Dictionary<string, object?> { ["protectedPrincipal"] = true });
+                    continue;
+                }
             }
 
             // Same resolver as the first read: the re-read compares immutable identifiers against
@@ -467,6 +491,15 @@ public sealed class AccountLockoutRemediationService
                 rows.Add(BlockedUserRow(user, "identity-mismatch", detail));
                 AuditLogoff(context, action, user, false, ticketNumber, detail, new Dictionary<string, object?> { ["immutableMismatch"] = true });
                 continue;
+            }
+
+            // A serviced override succeeds, so it cannot ride errorDetail - that field is written as
+            // null on success and the record of who permitted it would vanish. Audited here, per
+            // user, because this method is where the override decision was actually made.
+            if (servicedNote is not null)
+            {
+                AuditLogoff(context, action, user, true, ticketNumber, null,
+                    ProtectedPrincipalServicing.Extra(servicedNote));
             }
 
             allowedUsers.Add(user);
