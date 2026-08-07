@@ -6,7 +6,7 @@ documented rule is that recovery keys never reach an audit record, a log line, o
 an error message.
 **Status**: Verified
 **Branch**: — (default-branch mode)
-**Commit**: `bd85e2e`
+**Commit**: `53f3ac5`
 
 ## Evidence
 

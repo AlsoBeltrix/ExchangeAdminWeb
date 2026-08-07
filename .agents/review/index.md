@@ -42,8 +42,20 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | sid-2 | MEDIUM | Legacy sectionaccess.json imports AFTER the migration, leaving names in the table for the process lifetime | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed `019b814`; SectionAccessService resolved before the migration; probe reproduces the bug, fails 1 |
 | sidf-1 | HIGH | The sid-1 fix filtered STATIC AdminGroups too, locking every admin out of the admin page on deploy | `[x]` | | codex/gpt-5.5-dzs/xhigh/frontier (fallback grade) (codex-cli 0.146.0, second pass, base d2844e1..019b814, capability_ok) — filter scoped to the dynamic store; verified against LIVE PROD config (AdminGroups = ANALOG\ExchangeWebAdmins, a name); probe reinstating it fails 2 |
 | tsr-1 | MEDIUM | Coverage ratchet set 0.7 points below the measured baseline, so tests could be deleted and CI still pass | `[x]` | | codex/default configured model (gpt-5.5-dzs @ xhigh)/std (codex-cli 0.146.0, generation pass, base 802ea74..2543fb9, capability_ok) — floor moved to a committed file at the measured value, comparison de-rounded, 11 Pester tests added for the gate itself; probe: 64.9% coverage passed the shipped gate (exit 0), fails after the fix (exit 1) |
+| blr-1 | HIGH | A pasted 48-digit recovery key was written to the audit log in cleartext | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.146.1, generation pass, base 81fd069..e39e18f, capability_ok) — fixed in `53f3ac5`; audit target now parsed and redacted at the page, key IDs kept verbatim; guard: revert -> 4 fail, restore -> 36 pass |
+| blr-2 | MEDIUM | A capped search that found nothing told the operator it had searched successfully | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (same pass) — fixed in `61552d9`; zero-results branch reads Truncated first; reviewer's paging suggestion declined as a search-strategy change, recorded in the finding; guard: revert -> 3 fail, restore -> 42 pass |
 
 Notes:
+- **blr-1..2 came from one generation-half dispatch** (`codereview codex gpt-5.5-dzs xhigh
+  81fd069..e39e18f`) over the BitLocker Recovery module integration. Verdict **findings** (2),
+  both verified against the code before any fix, both fixed one-per-commit with a non-vacuity
+  probe each, neither declined. T1 did not match (no sensitive path in the diff), so the pass
+  ran at standard as routed.
+  **blr-1 is the one worth remembering: the module took great care to keep recovery keys out of
+  the audit log on the REVEAL path, and then wrote one there from the SEARCH path.** The
+  recovery-screen box is documented to accept a pasted 48-digit key, so the leak was on the
+  happy path, and it bypassed the very `RevealRecoveryKey` event that exists to record a key
+  reaching a human. Three prior review rounds over the same code missed it.
 - **sidf-1 was the OWED FRONTIER PASS over the whole SID work stream** (`d2844e1..019b814`,
   including the sid-1/sid-2 fixes). It found a HIGH defect **introduced by the sid-1 fix itself**:
   that fix filtered non-SID values on every requirement, including the static

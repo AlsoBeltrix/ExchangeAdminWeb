@@ -37,6 +37,20 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   home, which is why all six existing host call sites write it fully qualified.
   A fourth (unguarded `Directory.Delete` in test teardown, failing 29 of 30 tests on held SQLite
   handles) surfaced in the same out-of-tree run; the host's own tests all wrap this in try/catch.
+  **`codereview` generation pass over `81fd069..e39e18f` returned 2 findings, both real, both
+  fixed** -- `blr-1` (HIGH, `53f3ac5`) and `blr-2` (MEDIUM, `61552d9`); see
+  `.agents/review/findings/blr-*.md`.
+  **blr-1 is the load-bearing lesson and it is the same shape as ppv-1 and sid-1: the guard was
+  built correctly and the reasoning about what it covered was wrong.** The module took real care
+  to keep a recovery key out of the audit record on the REVEAL path -- and then wrote one there
+  from the SEARCH path, because the page audited the raw contents of a box that is *documented to
+  accept a pasted 48-digit recovery key*. So the leak sat on the happy path, in a durable store
+  readable by more people than may reveal a key, and it never tripped the `RevealRecoveryKey`
+  event that exists to record exactly that disclosure. Three earlier review rounds over this same
+  code missed it, including two of my own.
+  blr-2: a live search that hit its result cap before finding a key rendered "searched
+  successfully" -- the module's own fail-closed rule ("no key exists" and "I could not look" must
+  not look alike) violated by the page, while both services reported truncation correctly.
   **NEXT: the plan's 12 manual checks on dev -- none run.** Load-bearing ones: an archive-only
   (deleted-from-AD) machine shows `Archive only`; a reveal audits the machine and key ID but
   **never the key**; a broken archive path errors rather than showing an empty table.

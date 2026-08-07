@@ -6,7 +6,7 @@ Not HIGH: it needs a broad search term, it discloses nothing, and the operator c
 recover by narrowing the search — if they think to.
 **Status**: Verified
 **Branch**: — (default-branch mode)
-**Commit**: `<pending>`
+**Commit**: `61552d9`
 
 ## Evidence
 
