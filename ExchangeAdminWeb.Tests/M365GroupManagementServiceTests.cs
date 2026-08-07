@@ -83,7 +83,7 @@ public class M365GroupManagementServiceTests : IDisposable
     {
         var service = CreateServiceWithUnavailableResolver();
 
-        var result = await service.AddMemberAsync("00000000-0000-0000-0000-000000000001", identity);
+        var result = await service.AddMemberAsync("00000000-0000-0000-0000-000000000001", identity, actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
@@ -97,7 +97,7 @@ public class M365GroupManagementServiceTests : IDisposable
     {
         var service = CreateServiceWithUnavailableResolver();
 
-        var result = await service.AddOwnerAsync("00000000-0000-0000-0000-000000000001", identity);
+        var result = await service.AddOwnerAsync("00000000-0000-0000-0000-000000000001", identity, actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
@@ -114,7 +114,8 @@ public class M365GroupManagementServiceTests : IDisposable
         var result = await service.RemoveMemberAsync(
             "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
-            identity);
+            identity,
+            actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
@@ -131,7 +132,8 @@ public class M365GroupManagementServiceTests : IDisposable
         var result = await service.RemoveOwnerAsync(
             "00000000-0000-0000-0000-000000000001",
             "00000000-0000-0000-0000-000000000002",
-            identity);
+            identity,
+            actingUser: null);
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);

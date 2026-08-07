@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 
 namespace ExchangeAdminWeb.Services;
@@ -160,17 +161,25 @@ public class M365GroupManagementService
         return await GetPagedMembersAsync($"/groups/{Uri.EscapeDataString(groupId)}/owners?$select=id,displayName,mail,userPrincipalName&$top=999");
     }
 
-    public Task<M365GroupResult> AddMemberAsync(string groupId, string memberUpnOrId) =>
-        AddDirectoryObjectAsync(groupId, "members", memberUpnOrId);
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the servicer decision needs a real principal, and a default
+    /// would silently make every caller that forgot it unable to service - or invite an ambient
+    /// lookup, which attributes a bypass to whoever is on the thread. Null refuses.
+    /// </param>
+    public Task<M365GroupResult> AddMemberAsync(string groupId, string memberUpnOrId, ClaimsPrincipal? actingUser) =>
+        AddDirectoryObjectAsync(groupId, "members", memberUpnOrId, actingUser);
 
-    public Task<M365GroupResult> AddOwnerAsync(string groupId, string ownerUpnOrId) =>
-        AddDirectoryObjectAsync(groupId, "owners", ownerUpnOrId);
+    /// <param name="actingUser">See <see cref="AddMemberAsync"/>: required, null refuses.</param>
+    public Task<M365GroupResult> AddOwnerAsync(string groupId, string ownerUpnOrId, ClaimsPrincipal? actingUser) =>
+        AddDirectoryObjectAsync(groupId, "owners", ownerUpnOrId, actingUser);
 
-    public Task<M365GroupResult> RemoveMemberAsync(string groupId, string memberObjectId, string memberIdentityForCheck) =>
-        RemoveDirectoryObjectAsync(groupId, "members", memberObjectId, memberIdentityForCheck);
+    /// <param name="actingUser">See <see cref="AddMemberAsync"/>: required, null refuses.</param>
+    public Task<M365GroupResult> RemoveMemberAsync(string groupId, string memberObjectId, string memberIdentityForCheck, ClaimsPrincipal? actingUser) =>
+        RemoveDirectoryObjectAsync(groupId, "members", memberObjectId, memberIdentityForCheck, actingUser);
 
-    public Task<M365GroupResult> RemoveOwnerAsync(string groupId, string ownerObjectId, string ownerIdentityForCheck) =>
-        RemoveDirectoryObjectAsync(groupId, "owners", ownerObjectId, ownerIdentityForCheck);
+    /// <param name="actingUser">See <see cref="AddMemberAsync"/>: required, null refuses.</param>
+    public Task<M365GroupResult> RemoveOwnerAsync(string groupId, string ownerObjectId, string ownerIdentityForCheck, ClaimsPrincipal? actingUser) =>
+        RemoveDirectoryObjectAsync(groupId, "owners", ownerObjectId, ownerIdentityForCheck, actingUser);
 
     // Protected-principal gate, enforced in-service immediately before the Graph write
     // regardless of caller, mirroring GroupManagementService.CheckProtectedAsync. The page
@@ -183,10 +192,17 @@ public class M365GroupManagementService
     // the alias bypass, GAP 4) can, so the acceptance was stale rather than deliberate. The gap
     // mattered most here of all places: this module manages CLOUD groups, so cloud-only members are
     // its ordinary input. docs/ProtectedPrincipalGapFix-Plan.md GAP B.
-    private async Task<M365GroupResult?> CheckProtectedAsync(string identity)
+    /// <summary>
+    /// Outcome of the gate: a <paramref name="Denial"/> to return to the caller, or null to
+    /// proceed. <paramref name="ServicedNote"/> is set only when the identity was protected and an
+    /// authorised servicer overrode the refusal; it must reach the page's audit call.
+    /// </summary>
+    private readonly record struct ProtectionGate(M365GroupResult? Denial, string? ServicedNote);
+
+    private async Task<ProtectionGate> CheckProtectedAsync(string identity, ClaimsPrincipal? actingUser)
     {
         if (string.IsNullOrWhiteSpace(identity))
-            return null;
+            return new(null, null);
 
         try
         {
@@ -194,38 +210,51 @@ public class M365GroupManagementService
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
-                return new M365GroupResult
+                return new(new M365GroupResult
                 {
                     Success = false,
                     Message = status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
                         ? "Identity is ambiguous - matches multiple AD users."
                         : "Protection check unavailable. Cannot verify if this member is protected."
-                };
+                }, null);
             }
 
             if (resolved != null)
             {
                 var check = await _protectedPrincipals.CheckAsync(resolved);
                 if (check.CheckFailed)
-                    return new M365GroupResult { Success = false, Message = $"Protection check failed: {check.Reason}" };
+                    return new(new M365GroupResult { Success = false, Message = $"Protection check failed: {check.Reason}" }, null);
+
+                // An authorised servicer may proceed. Protection is evaluated first and never
+                // weakened - this only decides whether THIS operator may act on an identity
+                // already known to be protected. A null actingUser refuses, so any caller that
+                // does not supply one is safe.
                 if (check.IsProtected)
-                    return new M365GroupResult { Success = false, Message = "This member is a protected principal. Operation not permitted." };
+                {
+                    var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                        _servicers, actingUser, ServicerModuleId, check.MatchedRules);
+
+                    if (servicedNote is null)
+                        return new(new M365GroupResult { Success = false, Message = "This member is a protected principal. Operation not permitted." }, null);
+
+                    return new(null, servicedNote);
+                }
             }
 
-            return null;
+            return new(null, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected principal check failed for {Identity} - blocking as precaution", identity);
-            return new M365GroupResult { Success = false, Message = $"Protection check error: {ex.Message}" };
+            return new(new M365GroupResult { Success = false, Message = $"Protection check error: {ex.Message}" }, null);
         }
     }
 
-    private async Task<M365GroupResult> AddDirectoryObjectAsync(string groupId, string relationship, string identity)
+    private async Task<M365GroupResult> AddDirectoryObjectAsync(string groupId, string relationship, string identity, ClaimsPrincipal? actingUser)
     {
-        var denial = await CheckProtectedAsync(identity);
-        if (denial is not null)
-            return denial;
+        var gate = await CheckProtectedAsync(identity, actingUser);
+        if (gate.Denial is not null)
+            return gate.Denial;
 
         var client = await GetGraphClientAsync();
         var body = new Dictionary<string, object>
@@ -239,14 +268,14 @@ public class M365GroupManagementService
 
         var noun = relationship == "owners" ? "owner" : "member";
         _logger.LogInformation("Added {Noun} {Identity} to group {GroupId}", noun, identity, groupId);
-        return new M365GroupResult { Success = true, Message = $"Added {noun} {identity}." };
+        return new M365GroupResult { Success = true, Message = $"Added {noun} {identity}.", ServicedNote = gate.ServicedNote };
     }
 
-    private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck)
+    private async Task<M365GroupResult> RemoveDirectoryObjectAsync(string groupId, string relationship, string objectId, string identityForCheck, ClaimsPrincipal? actingUser)
     {
-        var denial = await CheckProtectedAsync(identityForCheck);
-        if (denial is not null)
-            return denial;
+        var gate = await CheckProtectedAsync(identityForCheck, actingUser);
+        if (gate.Denial is not null)
+            return gate.Denial;
 
         var client = await GetGraphClientAsync();
         var ok = await client.DeleteAsync($"/groups/{Uri.EscapeDataString(groupId)}/{relationship}/{Uri.EscapeDataString(objectId)}/$ref");
@@ -255,7 +284,7 @@ public class M365GroupManagementService
 
         var noun = relationship == "owners" ? "owner" : "member";
         _logger.LogInformation("Removed {Noun} {Identity} from group {GroupId}", noun, identityForCheck, groupId);
-        return new M365GroupResult { Success = true, Message = $"Removed {noun} {identityForCheck}." };
+        return new M365GroupResult { Success = true, Message = $"Removed {noun} {identityForCheck}.", ServicedNote = gate.ServicedNote };
     }
 
     private async Task<List<M365GroupMember>> GetPagedMembersAsync(string initialUrl)
@@ -339,4 +368,15 @@ public class M365GroupResult
 {
     public bool Success { get; set; }
     public string Message { get; set; } = "";
+
+    /// <summary>
+    /// Set when the target was a protected principal and an authorised servicer overrode the
+    /// refusal. Names the authorising group and the rules overridden.
+    /// </summary>
+    /// <remarks>
+    /// The service decides but the PAGE audits, so the note has to survive the trip back. It
+    /// belongs in the audit event's <c>extra</c> - never <c>errorDetail</c>, which is written as
+    /// null on a successful action and would discard the record of who permitted the override.
+    /// </remarks>
+    public string? ServicedNote { get; set; }
 }

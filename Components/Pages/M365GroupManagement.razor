@@ -573,34 +573,37 @@
         }
     }
 
+    // The op takes the acting principal rather than closing over one: these closures are built
+    // before the pipeline re-authenticates, so the only principal they could capture is a stale
+    // or absent one. The pipeline hands them the freshly authorised user.
     private Task AddMember() =>
         RunMemberOpAsync("M365GroupManagement_AddMember", addMemberIdentity.Trim(),
-            () => GroupService.AddMemberAsync(selectedGroup!.Id, addMemberIdentity.Trim()),
+            user => GroupService.AddMemberAsync(selectedGroup!.Id, addMemberIdentity.Trim(), user),
             () => addMemberIdentity = "");
 
     private Task AddOwner() =>
         RunMemberOpAsync("M365GroupManagement_AddOwner", addOwnerIdentity.Trim(),
-            () => GroupService.AddOwnerAsync(selectedGroup!.Id, addOwnerIdentity.Trim()),
+            user => GroupService.AddOwnerAsync(selectedGroup!.Id, addOwnerIdentity.Trim(), user),
             () => addOwnerIdentity = "");
 
     private Task RemoveMember(M365GroupMember m) =>
         RunMemberOpAsync("M365GroupManagement_RemoveMember",
             string.IsNullOrEmpty(m.Mail) ? m.UserPrincipalName : m.Mail,
-            () => GroupService.RemoveMemberAsync(selectedGroup!.Id, m.Id,
-                string.IsNullOrEmpty(m.UserPrincipalName) ? m.Mail : m.UserPrincipalName),
+            user => GroupService.RemoveMemberAsync(selectedGroup!.Id, m.Id,
+                string.IsNullOrEmpty(m.UserPrincipalName) ? m.Mail : m.UserPrincipalName, user),
             () => confirmRemoveMember = null);
 
     private Task RemoveOwner(M365GroupMember o) =>
         RunMemberOpAsync("M365GroupManagement_RemoveOwner",
             string.IsNullOrEmpty(o.Mail) ? o.UserPrincipalName : o.Mail,
-            () => GroupService.RemoveOwnerAsync(selectedGroup!.Id, o.Id,
-                string.IsNullOrEmpty(o.UserPrincipalName) ? o.Mail : o.UserPrincipalName),
+            user => GroupService.RemoveOwnerAsync(selectedGroup!.Id, o.Id,
+                string.IsNullOrEmpty(o.UserPrincipalName) ? o.Mail : o.UserPrincipalName, user),
             () => confirmRemoveOwner = null);
 
     // Shared member/owner mutation pipeline: server re-auth, invoke the service write,
     // audit + admin notification (no affected-user notification — owner decision
     // 2026-06-29, docs/M365MemberOwnerManagement-Plan.md), reload on success.
-    private async Task RunMemberOpAsync(string action, string targetLabel, Func<Task<M365GroupResult>> op, Action onSuccess)
+    private async Task RunMemberOpAsync(string action, string targetLabel, Func<System.Security.Claims.ClaimsPrincipal, Task<M365GroupResult>> op, Action onSuccess)
     {
         if (selectedGroup == null) return;
 
@@ -623,9 +626,13 @@
                 return;
             }
 
-            operationResult = await op();
+            operationResult = await op(authState.User);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            // A serviced override succeeded, so it cannot ride errorDetail - that field is
+            // written as null on success and the record of who permitted it would vanish.
+            var extra = ProtectedPrincipalServicing.Extra(operationResult.ServicedNote);
+
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message, extra); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = $"{selectedGroup.DisplayName} ({selectedGroup.Id})", ["Target"] = targetLabel }, operationResult.Success ? null : operationResult.Message); }
