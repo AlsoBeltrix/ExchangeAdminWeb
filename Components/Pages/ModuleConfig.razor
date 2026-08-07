@@ -614,8 +614,8 @@
     /// <remarks>
     /// An explicit list, not a descriptor flag. A servicer grant does something only where a gate
     /// calls <c>Evaluate</c>, and that is gate CODE, not metadata - a descriptor field would let a
-    /// module advertise the capability by declaration and silently grant nothing. Verified against
-    /// the callers: <c>BlockedSenderProtectionGate</c> is the only one today.
+    /// module advertise the capability by declaration and silently grant nothing. Every entry below
+    /// is verified against a real <c>Evaluate</c> caller in that module's gate.
     ///
     /// Add a module here in the same commit that adds its <c>Evaluate</c> call, never before.
     /// </remarks>
@@ -624,6 +624,7 @@
         {
             "BlockedSenders", "ConferenceRooms", "MfaReset", "EmergencyDisable", "Comms10k",
             "ADAttributeEditor", "MailboxPermissions", "CalendarPermissions", "OutOfOffice",
+            "GroupManagement",
         };
 
     /// <summary>The servicer section-access key for this module, or null where it has not opted in.</summary>

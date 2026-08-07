@@ -273,9 +273,15 @@
             // covers non-'@' identities the old page gate missed. The page no longer
             // pre-checks — that duplicated gate produced unaudited failed mutation attempts
             // (2026-06-17 review). The single audited path below records every denial.
-            opResult = await GroupService.AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), selectedGroup.SamAccountName);
+            opResult = await GroupService.AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), authState.User, selectedGroup.SamAccountName);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            var addExtra = new Dictionary<string, object?> { ["member"] = newMember.Trim() };
+            // A serviced override succeeded, so it cannot ride errorDetail - that field is
+            // written as null on success and the record of who permitted it would vanish.
+            if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
+                addExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;
+
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, addExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim() }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
@@ -323,9 +329,14 @@
             // covers non-'@' identities the old page gate missed. The page no longer
             // pre-checks — that duplicated gate produced unaudited failed mutation attempts
             // (2026-06-17 review). The single audited path below records every denial.
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, selectedGroup.SamAccountName);
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            var removeExtra = new Dictionary<string, object?> { ["member"] = member };
+            // See AddMember: a serviced override succeeds, so the note must travel in extra.
+            if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
+                removeExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;
+
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, removeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)

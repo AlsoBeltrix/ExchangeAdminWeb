@@ -1,5 +1,6 @@
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Security.Claims;
 using ExchangeAdminWeb.Models;
 
 namespace ExchangeAdminWeb.Services;
@@ -45,10 +46,17 @@ public class GroupManagementService
     /// which then resolves in AD and matches. A cloud-only member cannot reach an on-prem group in
     /// any case - AddMemberAsync's own Get-ADUser lookup rejects it before the write.
     /// </summary>
-    private async Task<PermissionResult?> CheckProtectedAsync(string member)
+    /// <summary>
+    /// Outcome of the gate: a <paramref name="Denial"/> to return to the caller, or null to
+    /// proceed. <paramref name="ServicedNote"/> is set only when the member was protected and
+    /// an authorised servicer overrode the refusal; it must reach the page's audit call.
+    /// </summary>
+    private readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote);
+
+    private async Task<ProtectionGate> CheckProtectedAsync(string member, ClaimsPrincipal? actingUser)
     {
         if (string.IsNullOrWhiteSpace(member))
-            return null;
+            return new(null, null);
 
         try
         {
@@ -56,26 +64,39 @@ public class GroupManagementService
             if (status is ProtectedPrincipalService.ResolutionStatus.Unavailable
                        or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
             {
-                return PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                return new(PermissionResult.Fail(status == ProtectedPrincipalService.ResolutionStatus.Ambiguous
                     ? "Identity is ambiguous - matches multiple AD users."
-                    : "Protection check unavailable. Cannot verify if this member is protected.");
+                    : "Protection check unavailable. Cannot verify if this member is protected."), null);
             }
 
             if (resolved != null)
             {
                 var check = await _protectedPrincipals.CheckAsync(resolved);
                 if (check.CheckFailed)
-                    return PermissionResult.Fail($"Protection check failed: {check.Reason}");
+                    return new(PermissionResult.Fail($"Protection check failed: {check.Reason}"), null);
+
+                // An authorised servicer may proceed. Protection is evaluated first and never
+                // weakened - this only decides whether THIS operator may act on a member already
+                // known to be protected. A null actingUser refuses, so any caller that does not
+                // supply one is safe.
                 if (check.IsProtected)
-                    return PermissionResult.Fail("This member is a protected principal. Operation not permitted.");
+                {
+                    var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                        _servicers, actingUser, ServicerModuleId, check.MatchedRules);
+
+                    if (servicedNote is null)
+                        return new(PermissionResult.Fail("This member is a protected principal. Operation not permitted."), null);
+
+                    return new(null, servicedNote);
+                }
             }
 
-            return null;
+            return new(null, null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Protected principal check failed for member {Member} - blocking as precaution", member);
-            return PermissionResult.Fail($"Protection check error: {ex.Message}");
+            return new(PermissionResult.Fail($"Protection check error: {ex.Message}"), null);
         }
     }
 
@@ -222,11 +243,16 @@ public class GroupManagementService
         }));
     }
 
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, string? samAccountName = null)
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the servicer decision needs a real principal, and a default
+    /// would silently make every caller that forgot it unable to service - or invite an ambient
+    /// lookup, which attributes a bypass to whoever is on the thread. Null refuses.
+    /// </param>
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null)
     {
-        var protectionDenial = await CheckProtectedAsync(member);
-        if (protectionDenial is not null)
-            return protectionDenial;
+        var gate = await CheckProtectedAsync(member, actingUser);
+        if (gate.Denial is not null)
+            return gate.Denial;
 
         var creds = await GetCredentialsAsync("on-prem AD group membership add");
         if (creds is null)
@@ -268,15 +294,16 @@ public class GroupManagementService
             ps.Invoke();
             ps.Commands.Clear();
 
-            return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).");
+            return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).", gate.ServicedNote);
         }));
     }
 
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, string? samAccountName = null)
+    /// <param name="actingUser">See <see cref="AddMemberAsync"/>: required, null refuses.</param>
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null)
     {
-        var protectionDenial = await CheckProtectedAsync(member);
-        if (protectionDenial is not null)
-            return protectionDenial;
+        var gate = await CheckProtectedAsync(member, actingUser);
+        if (gate.Denial is not null)
+            return gate.Denial;
 
         var creds = await GetCredentialsAsync("on-prem AD group membership remove");
         if (creds is null)
@@ -319,7 +346,7 @@ public class GroupManagementService
             ps.Invoke();
             ps.Commands.Clear();
 
-            return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).");
+            return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).", gate.ServicedNote);
         }));
     }
 

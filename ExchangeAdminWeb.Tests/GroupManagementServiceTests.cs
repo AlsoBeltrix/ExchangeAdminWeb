@@ -74,7 +74,7 @@ public class GroupManagementServiceTests : IDisposable
     {
         var service = CreateServiceWithUnavailableResolver();
 
-        var result = await service.AddMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", member, "SomeGroup");
+        var result = await service.AddMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", member, actingUser: null, "SomeGroup");
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
@@ -88,7 +88,7 @@ public class GroupManagementServiceTests : IDisposable
     {
         var service = CreateServiceWithUnavailableResolver();
 
-        var result = await service.RemoveMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", member, "SomeGroup");
+        var result = await service.RemoveMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", member, actingUser: null, "SomeGroup");
 
         Assert.False(result.Success);
         Assert.Contains("Protection check unavailable", result.Message);
@@ -191,7 +191,7 @@ public class GroupManagementServiceTests : IDisposable
         pp.Verdict = ProtectedPrincipalResult.Protected("matched", "User:vip@contoso.com");
         var service = CreateServiceWith(pp, out _);
 
-        var result = await service.AddMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", "SomeGroup");
+        var result = await service.AddMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", actingUser: null, "SomeGroup");
 
         Assert.False(result.Success);
         Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
@@ -205,7 +205,7 @@ public class GroupManagementServiceTests : IDisposable
         pp.Verdict = ProtectedPrincipalResult.Protected("matched", "User:vip@contoso.com");
         var service = CreateServiceWith(pp, out _);
 
-        var result = await service.RemoveMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", "SomeGroup");
+        var result = await service.RemoveMemberAsync("CN=Some Group,OU=Groups,DC=contoso,DC=com", "VIPalias@o365.contoso.com", actingUser: null, "SomeGroup");
 
         Assert.False(result.Success);
         Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
