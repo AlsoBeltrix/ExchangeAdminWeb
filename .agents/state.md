@@ -6,6 +6,57 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **HANDOFF 2026-08-07, as of `8fb0592`. IN FLIGHT: protected-principal servicing for EVERY module.
+  Owner: *"all of them. every place where a principal is protected we need to allow a priv group to
+  act on them anyway."* 9 of 15 modules done, 6 remain. UNCOMMITTED WORKING TREE - see below.**
+  Plan `docs/ProtectedPrincipalServicerAllModules-Plan.md`, revised after grok review (5 findings,
+  3 HIGH, all verified and folded in). **Read the plan before resuming; it is cold-implementable.**
+  **COMMITTED AND GREEN** (`b351005`, `1ba7d49`, `8fb0592`): slice 0a audit `extra` channel on 9
+  methods; slice 0b servicer service Scoped -> Singleton; Conference Rooms.
+  **UNCOMMITTED, BUILD IS GREEN, FULL SUITE NOT RUN.** 21 modified files plus new
+  `Services/ProtectedPrincipalServicing.cs`. Covers MFA Reset, Emergency Disable, Comms-10k,
+  AD Attribute Editor (incl. undo), Mailbox Permissions, Calendar, Out of Office, and the opt-in
+  list for all nine. **Commit this as one slice after a full `dotnet test` before doing anything
+  else** - it is the largest uncommitted authorization change this repo has held.
+  **REMAINING 6, dependencies wired but GATES UNTOUCHED:** GroupManagement, M365GroupManagement,
+  SelfServiceGroups, Migration, LicensingUpdates, AccountLockoutRemediation. Each already has
+  `_servicers`, `ServicerModuleId` and a ctor parameter; none consults them yet, so they compile and
+  behave exactly as before.
+  **`Services/ProtectedPrincipalServicing.cs` is the shared helper every module uses** -
+  `NoteFor(...)` returns the audit note or null-to-refuse, `Extra(...)` wraps it for an audit call.
+  Returning a nullable note rather than a bool is deliberate: a caller cannot allow the action while
+  forgetting to record why.
+  **Three shapes the plan did not predict, and they generalise:**
+  (1) **Emergency Disable has TWO gates** - the page blocks at lookup and hides the write UI, the
+  service blocks again at the write. Both had to honour servicing or a servicer never reaches the
+  button. Check every remaining module for this.
+  (2) **`ValidateTargetMailboxAsync` now returns a `TargetValidation` record**, not a string, and
+  takes an explicit `moduleId` - it serves THREE modules, and a borrowed id would let a Mailbox
+  grant authorise Calendar or Out of Office. A back-compat string overload remains and never
+  services (it passes no principal).
+  (3) **Migration's gate is passed as a DELEGATE** (`checker ??= CheckProtectedAsync`,
+  `MigrationService.cs:314,343`). Changing its signature changes a delegate type and every
+  substitution site. **Not in the plan's shape analysis - it likely warrants its own slice.**
+  **Slice 0a caught a real defect in itself:** nine methods gained the `extra` parameter and
+  `LogLookupAction` was left without the merge - a parameter accepted and silently dropped.
+  `AuditExtraChannelTests` found it. That is the most repeatable mistake in this work.
+  **NOT DONE: the codex review.** The owner asked for ONE review over the whole range once the code
+  is finished; range will be `b351005..HEAD`.
+
+## Next
+
+1. Run the full suite on the working tree, then commit it as one slice.
+2. Do the 6 remaining services, one commit each; Migration's delegate gate on its own.
+3. Add each to `ModulesWithProtectedPrincipalServicing` in the same commit as its gate, never before.
+4. One codex review over `b351005..HEAD`, long timeout, then remediate.
+
+Gate that applies to every slice: the existing protection suites must pass **unmodified**. Editing
+one to accommodate a servicer path means a refusal quietly became an allow.
+
+## Blockers
+
+None live. The work is paused mid-stream, not stuck.
+
 **Deployed versions are owned by the single `Deployed:` entry below** -- as of 2026-08-05, dev and
 prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on prod` notes inside
 the older entries below record where that stream stood *when it landed*; they are history, not
