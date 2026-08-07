@@ -106,5 +106,10 @@ Notes:
   2a97d09; `ConferenceRoomProtectionGate`, 672 tests pass, non-vacuity verified).
   Only follow-up: live-tenant/UI validation (deferred, no dev tenant).
 - Scratch dispatch artifacts (`*.prompt.txt`, `*.schema.json`, `*.result.json`) are
-  left untracked pending the owner's commit-vs-clean decision.
+  **gitignored** as of 2026-08-07, and the nine that had been committed are untracked (the files
+  stay on disk). The durable record is the finding doc plus the index row, which quote whatever
+  mattered; the scratch was a second copy free to drift. Settled by consequence rather than
+  preference: leaving them untracked blocked a **prod deploy**, because `deploy-pipeline.ps1`
+  refuses to promote a build made from a dirty tree - correctly, since "which source produced
+  this binary" is exactly what an incident needs to answer.
 

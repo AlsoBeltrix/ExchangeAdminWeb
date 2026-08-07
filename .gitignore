@@ -58,6 +58,14 @@ Thumbs.db
 # Reviewer-harness incantations + tier pins: machine-specific (CLI paths, versions,
 # model routes), self-authored by the codereview playbook, never hand-maintained.
 .agents/review/*.local.json
+# Scratch dispatch artifacts for a single review run: the prompt sent, the JSON schema
+# pinned, and the raw verdict. The durable record is the finding doc plus the index row,
+# which quote whatever mattered; keeping the scratch would be a second copy that drifts.
+# Ignored rather than merely deleted because leaving them untracked blocks a prod deploy -
+# deploy-pipeline.ps1 refuses a dirty tree, and it is right to.
+.agents/review/*.prompt.txt
+.agents/review/*.schema.json
+.agents/review/*.result.json
 
 # Local/private cleanup archive
 _not_for_github/
