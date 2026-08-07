@@ -47,7 +47,15 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | blr-3 | HIGH | A second search showed a false "no keys found, searched successfully" while the live AD query was still running | `[x]` | | **Owner, on dev** — not review, not tests. `SearchAsync` emptied `results` but never cleared `searched`, so the zero-results branch rendered over emptied data for the whole in-flight window. First search after a page load was always fine, which is why it survived. Render gate now also requires `!isSearching`, and the previous answer is retracted before the new query runs; guard: revert -> 3 fail, restore -> 45 pass |
 | blr-4 | MEDIUM | A running search showed nothing at all, so the page read as hung | `[x]` | | **Owner, on prod — caused by the blr-3 fix.** Suppressing the stale result left the results area blank for the seconds a live AD query takes. In-flight indicator added, plus a forced render + `Task.Yield` before the work: `Microsoft.Data.Sqlite`'s `*Async` methods complete synchronously, so the handler could finish the archive query without ever yielding to the renderer. **Two of the three guards were false coverage on the first cut** — they matched the Search button's own `isSearching` spinner and text inside the disabled block, so they passed against the broken page; both now anchor the condition to the markup it gates. Each guard proven against its own mutation; restore -> 48 pass |
 
+| ppsvc-1 | HIGH | On an unconfigured store the protected-principal bypass defaulted to `Security:AllowedGroups` | `[x]` | | codex/gpt-5.5-dzs/xhigh/std (codex-cli 0.146.1, generation pass, base `a378785..025a5c6`, capability_ok) — the fail-closed set is built from catalog policy aliases, and a `ProtectedServicer:` key is deliberately none, so it fell through to the legacy app-wide fallback. **Worse than reported: `Evaluate` reads the same method, so the bypass was live with no admin page involvement and no stored row to find.** Fixed in the service by prefix-matching the key as fail-closed; guard: revert -> 2 fail, restore -> 10 pass, 197 authorization tests unmoved |
+
 Notes:
+- **ppsvc-1 is the case for reviewing a diff you believe is safe.** The commit had already been
+  reviewed clean as a PLAN by grok, was written against a plan that named the whole-store-replace
+  hazard explicitly, and shipped with 8 passing guards. The defect was in none of that: it was a
+  pre-existing fallback in a file the diff never touched, reachable because the new key was not the
+  KIND of thing the existing fail-closed set knew how to cover. A plan review cannot see that, and
+  neither can a test suite that never runs against an unconfigured store.
 - **blr-1..2 came from one generation-half dispatch** (`codereview codex gpt-5.5-dzs xhigh
   81fd069..e39e18f`) over the BitLocker Recovery module integration. Verdict **findings** (2),
   both verified against the code before any fix, both fixed one-per-commit with a non-vacuity

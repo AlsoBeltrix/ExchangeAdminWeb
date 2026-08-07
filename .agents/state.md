@@ -37,6 +37,24 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   "export to get them all" pointed at the wrong control, and a correctly-disabled button gave no
   reason. Owner: *"it's unclear how to get anything... the download button doesn't work."*
   **Presentation was the defect** - no threshold, service or delivery mechanism changed.
+  **`ppsvc-1` (HIGH) was found by the codex review of the landed diff, and it is the case for
+  running that review even when a change looks safe.** On a server where section access has never
+  been configured, `GetGroupsForSection` falls back to the legacy app-wide `Security:AllowedGroups`
+  unless the section is fail-closed - and the fail-closed set is built from CATALOG POLICY ALIASES,
+  which a `ProtectedServicer:` key deliberately is not. So the most privileged grant in the app
+  defaulted to its widest audience.
+  **Worse than the review stated, and checking rather than accepting is what found it:** the review
+  located it at the admin page pre-populating the editor. `ProtectedPrincipalServicerService.Evaluate`
+  reads the same method, so the bypass was live on an unconfigured store with **no admin
+  involvement at all** and no stored row to find afterwards. The page-only remedy it also offered
+  would have left the real hole open. Fixed in the service: any key under the servicer prefix is
+  fail-closed by construction, prefix-matched because the keys are built per module at runtime.
+  **What makes this worth recording: the commit had already been reviewed clean as a PLAN by grok,
+  was written against a plan that named the storage hazard explicitly, and shipped with 8 passing
+  guards.** The defect was in none of that - it was a pre-existing fallback in a file the diff never
+  touched, reachable only because the new key was not the KIND of thing the existing fail-closed set
+  knew about. A plan review cannot see that, and no test suite that never runs against an
+  unconfigured store can either.
   **NEXT: deploy, then the manual checks.** Load-bearing: save a module's ordinary access and
   confirm a configured servicer grant SURVIVES (the whole-store-replace hazard, directly), and a
   servicer-group member actually unblocking a protected sender - the only end-to-end proof the

@@ -65,10 +65,34 @@ public class SectionAccessService
     {
         var (data, source) = ReadSectionAccess();
         if (source == SectionAccessSource.None)
-            return _failClosedSections.Contains(section) ? Array.Empty<string>() : _allowedGroups;
+            return IsFailClosed(section) ? Array.Empty<string>() : _allowedGroups;
 
         return data.TryGetValue(section, out var groups) ? groups : Array.Empty<string>();
     }
+
+    /// <summary>
+    /// Whether a section denies outright when no section-access source exists, rather than
+    /// falling back to the legacy app-wide <c>Security:AllowedGroups</c>.
+    /// </summary>
+    /// <remarks>
+    /// The catalog-derived set covers module policy aliases. It CANNOT cover
+    /// <see cref="ProtectedPrincipalServicerService.SectionKeyPrefix"/> keys, because those are
+    /// not policy aliases and no descriptor declares them - so on a server where section access
+    /// has never been configured, a servicer key fell through to the AllowedGroups fallback and
+    /// every member of that broad group silently became authorised to act on protected
+    /// principals. The most privileged grant in the app, defaulting to the widest audience.
+    ///
+    /// Found by review (codex) before the servicer editor was ever used, and it did not need the
+    /// admin page to trigger: <c>ProtectedPrincipalServicerService.Evaluate</c> calls this method
+    /// directly, so the bypass was live on an unconfigured store regardless of the UI.
+    ///
+    /// Prefix-matched rather than enumerated: the keys are constructed per module at runtime, so
+    /// there is no list to keep in step. Any future key under this prefix is fail-closed by
+    /// construction, which is the right default for a capability that overrides a protection.
+    /// </remarks>
+    private bool IsFailClosed(string section) =>
+        _failClosedSections.Contains(section)
+        || section.StartsWith(ProtectedPrincipalServicerService.SectionKeyPrefix, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Friendly names for stored group values, keyed by the stored value (a SID after migration).

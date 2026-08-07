@@ -1,6 +1,10 @@
+using System.Security.Claims;
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -97,6 +101,71 @@ public sealed class ProtectedPrincipalServicerAdminUiTests : IDisposable
         Assert.Equal(["S-1-5-21-1-2-3-3001"], after["MfaReset"]);
         Assert.Equal(["S-1-5-21-1-2-3-1001"], after["BlockedSenders"]);
         Assert.Equal(["S-1-5-21-1-2-3-2001"], after["ProtectedServicer:BlockedSenders"]);
+    }
+
+    // ---- Fail-open on an unconfigured store (found by codex review, pre-deploy) ---------------
+    //
+    // GetGroupsForSection falls back to the legacy app-wide Security:AllowedGroups when NO
+    // section-access source exists, unless the section is fail-closed. The fail-closed set is
+    // built from catalog policy aliases - and a ProtectedServicer: key is not one, because no
+    // descriptor declares it.
+    //
+    // So on a server where section access had never been configured, the most privileged grant in
+    // the app defaulted to the widest group in it. Worse than the review stated: this needed no
+    // admin page at all, because ProtectedPrincipalServicerService.Evaluate calls the same method
+    // directly, so the bypass was live regardless of the UI.
+
+    [Fact]
+    public void AServicerKey_NeverFallsBackToAllowedGroups()
+    {
+        // The store is deliberately EMPTY and unconfigured, with a populated AllowedGroups - the
+        // exact shape of a fresh server.
+        var service = CreateSectionAccessOverEmptyStore(allowedGroups: ["ANALOG\\Domain Users"]);
+
+        var ordinary = service.GetGroupsForSection("SomeNonFailClosedSection");
+        var servicer = service.GetGroupsForSection(
+            ProtectedPrincipalServicerService.SectionKeyFor("BlockedSenders"));
+
+        // The legacy fallback still applies to what it always applied to...
+        Assert.Equal(["ANALOG\\Domain Users"], ordinary);
+        // ...and must never reach a protection bypass.
+        Assert.Empty(servicer);
+    }
+
+    [Fact]
+    public void OnAnUnconfiguredStore_NoOneCanServiceProtectedPrincipals()
+    {
+        // End to end through the decision the gates actually consult, not just the store read.
+        var service = CreateSectionAccessOverEmptyStore(allowedGroups: ["ANALOG\\Domain Users"]);
+        var servicers = new ProtectedPrincipalServicerService(
+            service, NullLogger<ProtectedPrincipalServicerService>.Instance);
+
+        var user = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Name, "ANALOG\\someone"), new Claim(ClaimTypes.Role, "ANALOG\\Domain Users")],
+            "TestAuth"));
+
+        var decision = servicers.Evaluate(user, "BlockedSenders");
+
+        Assert.False(decision.Allowed);
+        Assert.Null(decision.ServicerGroup);
+    }
+
+    private SectionAccessService CreateSectionAccessOverEmptyStore(string[] allowedGroups)
+    {
+        Directory.CreateDirectory(_tempDir);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            allowedGroups.Select((g, i) => new KeyValuePair<string, string?>($"Security:AllowedGroups:{i}", g))
+                         .ToDictionary(kv => kv.Key, kv => kv.Value)).Build();
+
+        var env = Substitute.For<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_tempDir);
+
+        return new SectionAccessService(
+            config,
+            NullLogger<SectionAccessService>.Instance,
+            env,
+            new Modules.ModuleCatalog(),
+            new SectionAccessRepository(TestConfigStore.Create(_tempDir)));
     }
 
     [Fact]
