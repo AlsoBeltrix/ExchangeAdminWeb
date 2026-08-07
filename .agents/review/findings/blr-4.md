@@ -4,7 +4,7 @@
 believes the app has frozen will reload and start over, losing the search. Not HIGH because
 nothing incorrect is asserted and the results do arrive.
 **Status**: Verified
-**Commit**: `<pending>`
+**Commit**: `b31ff66`
 **Branch**: — (default-branch mode)
 
 Found by the owner on prod, immediately after `blr-3` was deployed. **Caused by the `blr-3` fix.**
