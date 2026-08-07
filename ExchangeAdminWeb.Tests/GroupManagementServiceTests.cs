@@ -62,7 +62,7 @@ public class GroupManagementServiceTests : IDisposable
         var protectedPrincipals = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
         return new GroupManagementService(
-            moduleConfig, moduleCredentials, protectedPrincipals,
+            moduleConfig, moduleCredentials, protectedPrincipals, CreateDenyingServicers(config, env),
             Substitute.For<ILogger<GroupManagementService>>());
     }
 
@@ -142,8 +142,21 @@ public class GroupManagementServiceTests : IDisposable
         var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(), extLog, trace);
         var moduleCredentials = new ModuleCredentialService(moduleConfig, delinea, Substitute.For<ILogger<ModuleCredentialService>>());
 
-        return new GroupManagementService(moduleConfig, moduleCredentials, pp,
+        return new GroupManagementService(moduleConfig, moduleCredentials, pp, CreateDenyingServicers(config, env),
             Substitute.For<ILogger<GroupManagementService>>());
+    }
+
+    // Real servicer service over a store with no ProtectedServicer row, so it denies.
+    // Every assertion in this class is about the PROTECTION decision and must keep
+    // passing unchanged: a servicer path that made one of them pass would be a
+    // refusal quietly turned into an allow.
+    private ProtectedPrincipalServicerService CreateDenyingServicers(IConfiguration config, IWebHostEnvironment env)
+    {
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
+            new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        return new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
     }
 
     private FallbackOnlyPpService CreateFallbackPp()

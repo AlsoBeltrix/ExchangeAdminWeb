@@ -25,5 +25,5 @@ public interface IUndoableModule
     string ModuleId { get; }
     bool CanUndo(Dictionary<string, object?> auditEvent);
     Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent);
-    Task<UndoResult> ExecuteUndoAsync(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket);
+    Task<UndoResult> ExecuteUndoAsync(Dictionary<string, object?> auditEvent, string performedBy, string ip, string ticket, System.Security.Claims.ClaimsPrincipal? actingUser);
 }

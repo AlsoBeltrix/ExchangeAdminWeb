@@ -30,7 +30,7 @@ public class EmergencyDisableServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "  ", "DOMAIN\\admin", "10.0.0.1");
+        var result = await service.DisableAsync(MakePrincipal(), "  ", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -55,7 +55,7 @@ public class EmergencyDisableServiceTests : IDisposable
         });
         var service = CreateService(protectedPrincipalsJson: protectedConfig);
 
-        var result = await service.DisableAsync(MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1");
+        var result = await service.DisableAsync(MakePrincipal("ceo@contoso.com"), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -71,7 +71,7 @@ public class EmergencyDisableServiceTests : IDisposable
         File.WriteAllText(Path.Combine(_configDir, "protected-principals.json"), "not valid json {{{");
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1");
+        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -85,7 +85,7 @@ public class EmergencyDisableServiceTests : IDisposable
     {
         var service = CreateService();
 
-        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1");
+        var result = await service.DisableAsync(MakePrincipal(), "INC001", "DOMAIN\\admin", "10.0.0.1", actingUser: null);
 
         Assert.False(result.Success);
         Assert.Null(result.Snapshot);
@@ -190,10 +190,19 @@ public class EmergencyDisableServiceTests : IDisposable
         var protectedPrincipalService = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
         var email = new EmailService(config, Substitute.For<ILogger<EmailService>>());
 
+        // Real servicer service over a store with no ProtectedServicer row, so it denies. These
+        // existing assertions are about the PROTECTION decision and must keep passing unchanged.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, new Modules.ModuleCatalog(),
+            new Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
         return new EmergencyDisableService(
             moduleCredentials,
             moduleConfig,
             protectedPrincipalService,
+            servicers,
             operationTrace,
             audit,
             email,

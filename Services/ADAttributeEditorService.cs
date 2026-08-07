@@ -44,6 +44,10 @@ public class ADAttributeEditorService
 {
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ProtectedPrincipalService _protectedPrincipalService;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "ADAttributeEditor";
     private readonly OperationTraceService _operationTrace;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -83,6 +87,7 @@ public class ADAttributeEditorService
     public ADAttributeEditorService(
         ModuleCredentialService moduleCredentials,
         ProtectedPrincipalService protectedPrincipalService,
+        ProtectedPrincipalServicerService servicers,
         OperationTraceService operationTrace,
         AuditService audit,
         EmailService email,
@@ -93,6 +98,7 @@ public class ADAttributeEditorService
     {
         _moduleCredentials = moduleCredentials;
         _protectedPrincipalService = protectedPrincipalService;
+        _servicers = servicers;
         _operationTrace = operationTrace;
         _audit = audit;
         _email = email;
@@ -490,6 +496,10 @@ public class ADAttributeEditorService
         string performedBy,
         string ip,
         string ticket,
+        // REQUIRED and not defaulted: the servicer decision needs a real principal, and a default
+        // would silently make every caller that forgot it unable to service - or invite an ambient
+        // lookup, which attributes a bypass to whoever is on the thread. Null refuses.
+        System.Security.Claims.ClaimsPrincipal? actingUser,
         int? maxLevel = null)
     {
         var allowlist = GetAllowlist();
@@ -513,8 +523,19 @@ public class ADAttributeEditorService
         var protectionResult = await _protectedPrincipalService.CheckAsync(target);
         if (protectionResult.CheckFailed)
             return new(false, protectionResult.Reason, null);
+
+        // An authorised servicer may proceed. Protection is evaluated first and never weakened -
+        // this only decides whether THIS operator may act on a target already known to be
+        // protected. A null actingUser refuses, so any caller that does not supply one is safe.
+        string? servicedNote = null;
         if (protectionResult.IsProtected)
-            return new(false, "Target is a protected principal and cannot be modified.", null);
+        {
+            servicedNote = ProtectedPrincipalServicing.NoteFor(
+                _servicers, actingUser, ServicerModuleId, protectionResult.MatchedRules);
+
+            if (servicedNote is null)
+                return new(false, "Target is a protected principal and cannot be modified.", null);
+        }
 
         var creds = await _moduleCredentials.GetCredentialsAsync("ADAttributeEditor", "attribute save");
         if (creds == null)
@@ -525,7 +546,7 @@ public class ADAttributeEditorService
 
         try
         {
-            return await Task.Run(() => PerformSave(target, proposedValues, creds.Value, allowlist, performedBy, ip, ticket));
+            return await Task.Run(() => PerformSave(target, proposedValues, creds.Value, allowlist, performedBy, ip, ticket, servicedNote));
         }
         finally
         {
@@ -666,7 +687,8 @@ public class ADAttributeEditorService
         List<EditableAttribute> allowlist,
         string performedBy,
         string ip,
-        string ticket)
+        string ticket,
+        string? servicedNote)
     {
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -764,7 +786,7 @@ public class ADAttributeEditorService
             return new(false, errMsg, null);
         }
 
-        LogAudit(target, changes, performedBy, ip, ticket, true, null);
+        LogAudit(target, changes, performedBy, ip, ticket, true, null, servicedNote);
 
         return new(true, null, changes);
     }
@@ -875,7 +897,7 @@ public class ADAttributeEditorService
         return null;
     }
 
-    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail)
+    private void LogAudit(ResolvedDirectoryPrincipal target, List<AttributeChange> changes, string performedBy, string ip, string ticket, bool success, string? errorDetail, string? servicedNote = null)
     {
         var changedAttrs = changes.Select(c => c.Name).ToArray();
         var details = new Dictionary<string, object?>
@@ -887,7 +909,7 @@ public class ADAttributeEditorService
 
         _operationTrace.Step("AttributeWriteCompleted", success ? "Success" : "Failed", details: details);
 
-        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail);
+        _audit.LogADAttributeEdit(performedBy, ip, target.UserPrincipalName, changes, success, ticket, errorDetail, extra: ProtectedPrincipalServicing.Extra(servicedNote));
     }
 
     private string[] GetConfiguredSearchBases()

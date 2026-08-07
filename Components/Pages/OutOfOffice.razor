@@ -190,6 +190,13 @@
     private DateTime startTime = DateTime.Now;
     private DateTime endTime = DateTime.Now.AddDays(7);
     private bool isSetting = false;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "OutOfOffice";
+
+    // Set when an authorised servicer overrode a protected-principal refusal, and merged into the
+    // SUCCESS audit's extra. Assigned on every validation so one serviced action cannot label the next.
+    private string? servicedNote;
     private string? setValidationError;
     private PermissionResult? setResult;
 
@@ -261,7 +268,18 @@
         setValidationError = ValidateOofSchedule(oofState, startTime, endTime);
         if (setValidationError != null) return;
 
-        var protectedError = await Validator.ValidateTargetMailboxAsync(setEmail.Trim());
+        // Own module id. This validator is shared with Mailbox Permissions and Calendar, so
+        // borrowing one of theirs would let a grant there authorise Out of Office changes to
+        // protected principals - the per-module boundary is the containment for this whole design.
+        //
+        // The principal is read here rather than reused from below: this check runs BEFORE the
+        // authorization re-check that creates `authState`, and the servicer decision must be made
+        // against the current token wherever it is asked.
+        var oofAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var protectedValidation = await Validator.ValidateTargetMailboxAsync(
+            setEmail.Trim(), oofAuthState.User, ServicerModuleId);
+        servicedNote = protectedValidation.ServicedNote;
+        var protectedError = protectedValidation.Error;
         if (protectedError != null)
         {
             setResult = PermissionResult.Fail(protectedError);
@@ -321,6 +339,12 @@
                 ["previousState"] = previousState,
                 ["newState"] = oofState
             };
+
+            // MERGED into the existing extra, not replacing it: this page already records state
+            // transitions there, and overwriting the dictionary would trade one audit field for
+            // another. Only present when a servicer overrode a protected-principal refusal.
+            if (servicedNote is not null)
+                extra[ProtectedPrincipalServicing.AuditKey] = servicedNote;
 
             try
             {

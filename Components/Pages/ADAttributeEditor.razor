@@ -433,7 +433,7 @@
             foreach (var change in pendingChanges)
                 proposedValues[change.Name] = change.NewValue;
 
-            var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), saveMaxLevel);
+            var result = await EditorService.SaveAsync(lookupResult!.Principal!, proposedValues, currentUser, clientIpAddress, ticketNumber.Trim(), actingUser: authState.User, maxLevel: saveMaxLevel);
 
             if (result.Success)
             {

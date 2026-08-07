@@ -6,6 +6,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
 {
     private readonly ADAttributeEditorService _editorService;
     private readonly ProtectedPrincipalService _protectedPrincipalService;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "ADAttributeEditor";
     private readonly ModuleEnablementService _moduleEnablement;
     private readonly AuditService _audit;
     private readonly OperationTraceService _operationTrace;
@@ -14,6 +18,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
     public ADAttributeEditorUndoService(
         ADAttributeEditorService editorService,
         ProtectedPrincipalService protectedPrincipalService,
+        ProtectedPrincipalServicerService servicers,
         ModuleEnablementService moduleEnablement,
         AuditService audit,
         OperationTraceService operationTrace,
@@ -21,6 +26,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
     {
         _editorService = editorService;
         _protectedPrincipalService = protectedPrincipalService;
+        _servicers = servicers;
         _moduleEnablement = moduleEnablement;
         _audit = audit;
         _operationTrace = operationTrace;
@@ -125,7 +131,10 @@ public class ADAttributeEditorUndoService : IUndoableModule
         Dictionary<string, object?> auditEvent,
         string performedBy,
         string ip,
-        string ticket)
+        string ticket,
+        // REQUIRED: undo reverses a change to a principal that may since have become protected,
+        // so it needs the same servicer decision as a forward edit. Null refuses.
+        System.Security.Claims.ClaimsPrincipal? actingUser)
     {
         var target = GetString(auditEvent, "target");
         var originalOperationId = GetString(auditEvent, "operationId");
@@ -167,7 +176,9 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 scope.Complete(false, protCheck.Reason);
                 return new UndoResult(false, $"Protected principal check failed: {protCheck.Reason}", null);
             }
-            if (protCheck.IsProtected)
+            if (protCheck.IsProtected
+                && ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, protCheck.MatchedRules) is null)
             {
                 scope.Complete(false, "Target is a protected principal");
                 return new UndoResult(false, "Target is a protected principal and cannot be modified.", null);
@@ -220,6 +231,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 performedBy,
                 ip,
                 ticket,
+                actingUser,
                 maxLevel);
 
             if (!saveResult.Success)

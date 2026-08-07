@@ -295,6 +295,13 @@
         return true;
     }
 
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "CalendarPermissions";
+
+    // Set when an authorised servicer overrode a protected-principal refusal, and carried into the
+    // SUCCESS audit. Assigned on every validation so one serviced action cannot label the next.
+    private string? servicedNote;
+
     private async Task SubmitSingle()
     {
         isLoading = true;
@@ -319,7 +326,12 @@
             return;
         }
 
-        var validationError = await Validator.ValidateTargetMailboxAsync(target);
+        // Own module id, never Mailbox Permissions': the validator is shared, the grants are not.
+        // Read here: this check runs before the authorization re-check that creates `authState`.
+        var validationAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var validation = await Validator.ValidateTargetMailboxAsync(target, validationAuthState.User, ServicerModuleId);
+        servicedNote = validation.ServicedNote;
+        var validationError = validation.Error;
         if (validationError is not null)
         {
             result = PermissionResult.Fail(validationError);
@@ -414,10 +426,13 @@
 
             var ipAddress = clientIpAddress;
 
+            // Serviced note in `extra`, not errorDetail: this is the SUCCESS path and the error
+            // field is dropped on success.
             Audit.LogCalendarPermission(
                 currentUser, ipAddress, action, target, user, level,
                 opResult.Success, ticket,
-                errorDetail: opResult.Success ? null : opResult.Message);
+                errorDetail: opResult.Success ? null : opResult.Message,
+                extra: ProtectedPrincipalServicing.Extra(servicedNote));
 
             // Send admin notification
             await Email.SendAdminNotificationAsync(

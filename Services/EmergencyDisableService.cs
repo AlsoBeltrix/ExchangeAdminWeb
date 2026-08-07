@@ -32,6 +32,7 @@ public class EmergencyDisableService
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalService _protectedPrincipalService;
+    private readonly ProtectedPrincipalServicerService _servicers;
     private readonly OperationTraceService _operationTrace;
     private readonly AuditService _audit;
     private readonly EmailService _email;
@@ -43,10 +44,14 @@ public class EmergencyDisableService
 
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "EmergencyDisable";
+
     public EmergencyDisableService(
         ModuleCredentialService moduleCredentials,
         ModuleConfigService moduleConfig,
         ProtectedPrincipalService protectedPrincipalService,
+        ProtectedPrincipalServicerService servicers,
         OperationTraceService operationTrace,
         AuditService audit,
         EmailService email,
@@ -59,6 +64,7 @@ public class EmergencyDisableService
         _moduleCredentials = moduleCredentials;
         _moduleConfig = moduleConfig;
         _protectedPrincipalService = protectedPrincipalService;
+        _servicers = servicers;
         _operationTrace = operationTrace;
         _audit = audit;
         _email = email;
@@ -69,8 +75,14 @@ public class EmergencyDisableService
         _logger = logger;
     }
 
+    /// <param name="actingUser">
+    /// The operator, for the protected-principal servicer decision. REQUIRED and not defaulted: a
+    /// null principal refuses, and a default would quietly make every caller that forgot it into a
+    /// caller that cannot service - or, worse, invite an ambient lookup.
+    /// </param>
     public async Task<EmergencyDisableResult> DisableAsync(
-        ResolvedDirectoryPrincipal target, string ticket, string performedBy, string ip)
+        ResolvedDirectoryPrincipal target, string ticket, string performedBy, string ip,
+        System.Security.Claims.ClaimsPrincipal? actingUser)
     {
         using var opScope = _operationTrace.BeginOperation(
             module: "EmergencyDisable",
@@ -104,15 +116,33 @@ public class EmergencyDisableService
             opScope.Complete(false, failMsg);
             return new EmergencyDisableResult(false, failMsg, null, steps);
         }
+        string? servicedNote = null;
         if (protectionResult.IsProtected)
         {
-            var blockedMsg = $"Target is a protected principal: {protectionResult.Reason}";
-            _operationTrace.Step("ProtectedPrincipalCheck", "Blocked", details: new Dictionary<string, object?> { ["matchedRules"] = protectionResult.MatchedRules });
-            steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "BLOCKED", blockedMsg));
-            opScope.Complete(false, blockedMsg);
-            return new EmergencyDisableResult(false, blockedMsg, null, steps);
+            // An authorised servicer may proceed. Protection is evaluated first and never
+            // weakened - this only decides whether THIS operator may act on a target already
+            // known to be protected.
+            servicedNote = ProtectedPrincipalServicing.NoteFor(
+                _servicers, actingUser, ServicerModuleId, protectionResult.MatchedRules);
+
+            if (servicedNote is null)
+            {
+                var blockedMsg = $"Target is a protected principal: {protectionResult.Reason}";
+                _operationTrace.Step("ProtectedPrincipalCheck", "Blocked", details: new Dictionary<string, object?> { ["matchedRules"] = protectionResult.MatchedRules });
+                steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "BLOCKED", blockedMsg));
+                opScope.Complete(false, blockedMsg);
+                return new EmergencyDisableResult(false, blockedMsg, null, steps);
+            }
+
+            // The step trail is this module's durable record of what happened, so a serviced
+            // override is a visible step rather than a silent OK.
+            _operationTrace.Step("ProtectedPrincipalCheck", "Serviced", details: new Dictionary<string, object?> { ["matchedRules"] = protectionResult.MatchedRules });
+            steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "SERVICED", servicedNote));
         }
-        steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "OK", null));
+        else
+        {
+            steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "OK", null));
+        }
 
         // 2. Get AD credentials from Delinea
         var adCreds = await _moduleCredentials.GetCredentialsAsync("EmergencyDisable", "disable compromised account");

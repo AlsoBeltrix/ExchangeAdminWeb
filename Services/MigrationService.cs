@@ -12,6 +12,10 @@ public class MigrationService : ExchangeServiceBase
     private readonly IConfiguration _config;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "Migration";
     private readonly string[] _adminNotificationEmails;
 
     private string MigrationConfig(string key, string fallbackConfigKey, string defaultValue = "")
@@ -41,12 +45,13 @@ public class MigrationService : ExchangeServiceBase
         }
     }
 
-    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MigrationService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace, ProtectedPrincipalService protectedPrincipals)
+    public MigrationService(IConfiguration config, ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MigrationService> logger, ModuleConfigService moduleConfig, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace, ProtectedPrincipalService protectedPrincipals, ProtectedPrincipalServicerService servicers)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "Migration", operationTrace)
     {
         _config = config;
         _moduleConfig = moduleConfig;
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
 
         var adminEmail = config["Email:AdminNotificationEmail"] ?? "";
         _adminNotificationEmails = adminEmail.Split(',', StringSplitOptions.RemoveEmptyEntries)

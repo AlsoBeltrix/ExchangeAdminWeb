@@ -78,7 +78,14 @@ public class PermissionValidatorTests
         var exoPoolLogger = Substitute.For<ILogger<ExoConnectionPool>>();
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, exoPoolLogger, operationTrace);
 
-        return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, logger, scopeFactory);
+        // Real servicer over a store with no ProtectedServicer row, so it denies - these existing
+        // assertions are about the PROTECTION decision and must keep passing unchanged.
+        var servicers = new ProtectedPrincipalServicerService(
+            new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
+                new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(Path.GetTempPath()))),
+            Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
+        return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory);
     }
 
     // --- Self-grant validation ---
@@ -304,7 +311,11 @@ public class PermissionValidatorTests
         scopeFactory.CreateScope().Returns(scope);
         scope.ServiceProvider.Returns(Substitute.For<IServiceProvider>());
 
-        var validator = new PermissionValidator(config, moduleConfig, exoPool, pp,
+        var servicers2 = new ProtectedPrincipalServicerService(
+            new SectionAccessService(config, Substitute.For<ILogger<SectionAccessService>>(), env, new ModuleCatalog(),
+                new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(Path.GetTempPath()))),
+            Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+        var validator = new PermissionValidator(config, moduleConfig, exoPool, pp, servicers2,
             Substitute.For<ILogger<PermissionValidator>>(), scopeFactory);
 
         return (validator, pp);

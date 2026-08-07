@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject EmergencyDisableService DisableService
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ProtectedPrincipalServicerService Servicers
 @inject AuditService Audit
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IAuthorizationService AuthorizationService
@@ -197,6 +198,13 @@
     private string searchIdentity = "";
     private string? lookupError;
     private bool protectedBlocked;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "EmergencyDisable";
+
+    // Set when an authorised servicer overrode the protected-principal refusal at lookup, and
+    // carried into the disable call so the service-side gate reaches the same decision.
+    private string? servicedNote;
     private ResolvedDirectoryPrincipal? resolvedPrincipal;
 
     private string ticketNumber = "";
@@ -234,6 +242,7 @@
         isLoading = true;
         lookupError = null;
         protectedBlocked = false;
+        servicedNote = null;
         resolvedPrincipal = null;
         disableResult = null;
         operationResult = null;
@@ -274,7 +283,16 @@
             if (protectionCheck.IsProtected)
             {
                 resolvedPrincipal = resolved;
-                protectedBlocked = true;
+
+                // This gate hides the whole write UI, so it must honour servicing too - otherwise
+                // an authorised servicer could never reach the button, and the service-side check
+                // that also honours it would be unreachable. Both gates must agree; only the
+                // service one is authoritative for the write.
+                var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+                servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    Servicers, authState.User, ServicerModuleId, protectionCheck.MatchedRules);
+
+                protectedBlocked = servicedNote is null;
                 return;
             }
 
@@ -308,7 +326,7 @@
                 return;
             }
 
-            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress);
+            disableResult = await DisableService.DisableAsync(resolvedPrincipal, ticketNumber.Trim(), currentUser, clientIpAddress, authState.User);
 
             if (disableResult.Success)
             {
@@ -335,6 +353,7 @@
         searchIdentity = "";
         lookupError = null;
         protectedBlocked = false;
+        servicedNote = null;
         resolvedPrincipal = null;
         disableResult = null;
         operationResult = null;

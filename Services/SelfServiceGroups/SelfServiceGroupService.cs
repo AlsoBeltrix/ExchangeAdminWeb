@@ -33,6 +33,10 @@ public class SelfServiceGroupService
 {
     private readonly ModuleCredentialService _moduleCredentials;
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "SelfServiceGroups";
     private readonly ILogger<SelfServiceGroupService> _logger;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
 
@@ -47,10 +51,12 @@ public class SelfServiceGroupService
     public SelfServiceGroupService(
         ModuleCredentialService moduleCredentials,
         ProtectedPrincipalService protectedPrincipals,
+        ProtectedPrincipalServicerService servicers,
         ILogger<SelfServiceGroupService> logger)
     {
         _moduleCredentials = moduleCredentials;
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
         _logger = logger;
     }
 

@@ -11,6 +11,10 @@ public class M365GroupManagementService
     private readonly OperationTraceService _operationTrace;
     private readonly AuditService _audit;
     private readonly ProtectedPrincipalService _protectedPrincipals;
+    private readonly ProtectedPrincipalServicerService _servicers;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "M365GroupManagement";
 
     public M365GroupManagementService(
         ModuleConfigService moduleConfig,
@@ -19,6 +23,7 @@ public class M365GroupManagementService
         OperationTraceService operationTrace,
         AuditService audit,
         ProtectedPrincipalService protectedPrincipals,
+        ProtectedPrincipalServicerService servicers,
         ILogger<M365GroupManagementService> logger)
     {
         _moduleConfig = moduleConfig;
@@ -27,6 +32,7 @@ public class M365GroupManagementService
         _operationTrace = operationTrace;
         _audit = audit;
         _protectedPrincipals = protectedPrincipals;
+        _servicers = servicers;
         _logger = logger;
     }
 

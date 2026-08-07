@@ -620,7 +620,11 @@
     /// Add a module here in the same commit that adds its <c>Evaluate</c> call, never before.
     /// </remarks>
     private static readonly HashSet<string> ModulesWithProtectedPrincipalServicing =
-        new(StringComparer.OrdinalIgnoreCase) { "BlockedSenders", "ConferenceRooms" };
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "BlockedSenders", "ConferenceRooms", "MfaReset", "EmergencyDisable", "Comms10k",
+            "ADAttributeEditor", "MailboxPermissions", "CalendarPermissions", "OutOfOffice",
+        };
 
     /// <summary>The servicer section-access key for this module, or null where it has not opted in.</summary>
     private string? ServicerAlias;

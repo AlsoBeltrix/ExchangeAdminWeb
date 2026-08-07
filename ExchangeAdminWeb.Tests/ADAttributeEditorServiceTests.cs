@@ -75,7 +75,15 @@ public class ADAttributeEditorServiceTests : IDisposable
         var attrRepo = _attrStore != null
             ? new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore)
             : TestConfigStore.CreateAttributeEditor(_tempDir);
-        return new ADAttributeEditorService(moduleCredentials, protectedPrincipalService, operationTrace, audit, email, moduleConfig, attrRepo, _env, _logger);
+        // Real servicer service over a store with no ProtectedServicer row, so it denies. These
+        // existing assertions are about the PROTECTION decision and must keep passing unchanged.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), _env, new Modules.ModuleCatalog(),
+            new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
+        return new ADAttributeEditorService(moduleCredentials, protectedPrincipalService, servicers, operationTrace, audit, email, moduleConfig, attrRepo, _env, _logger);
     }
 
     private ExchangeAdminWeb.Services.Storage.IConfigStore? _attrStore;

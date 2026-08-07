@@ -12,6 +12,7 @@
 @inject ClientInfoService ClientInfo
 @inject ILogger<MfaReset> Logger
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ProtectedPrincipalServicerService Servicers
 
 <PageTitle>MFA Reset</PageTitle>
 
@@ -209,6 +210,15 @@
         resetConfirmPending = false;
     }
 
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "MfaReset";
+
+    private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
+        ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
+
+    private static Dictionary<string, object?>? ServicedExtra(string? note) =>
+        ProtectedPrincipalServicing.Extra(note);
+
     private async Task ExecuteReset()
     {
         isLoading = true;
@@ -218,6 +228,9 @@
         var upn = userPrincipalName.Trim();
         var ticket = ticketNumber.Trim();
         var methodTypesBeforeReset = methods.Select(m => m.MethodType).ToArray();
+        // Set when an authorised servicer overrode a protected-principal refusal, and carried into
+        // the SUCCESS audit below. Null on an ordinary reset.
+        string? servicedAuditDetail = null;
         // Notify admins on any real attempt against the target (reset, protected block,
         // fail-closed protection outcome, or exception) — but not on the trivial
         // ticket-invalid / auth-denied pre-gates. Set once those gates pass.
@@ -281,11 +294,18 @@
                     }
                     if (protectionCheck.IsProtected)
                     {
-                        result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
-                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                            errorDetail: $"Protected principal — matched rules: {string.Join(", ", protectionCheck.MatchedRules)}",
-                            methodTypes: methodTypesBeforeReset);
-                        return;
+                        // An authorised servicer may proceed; everyone else is refused. Protection
+                        // is evaluated first and never weakened - this only decides whether THIS
+                        // operator may act on a target already known to be protected.
+                        servicedAuditDetail = ServicerNoteFor(authState.User, protectionCheck.MatchedRules);
+                        if (servicedAuditDetail is null)
+                        {
+                            result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
+                            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                                errorDetail: $"Protected principal - matched rules: {string.Join(", ", protectionCheck.MatchedRules)}",
+                                methodTypes: methodTypesBeforeReset);
+                            return;
+                        }
                     }
                 }
                 else
@@ -325,11 +345,18 @@
                     }
                     if (unresolvedCheck.IsProtected)
                     {
-                        result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
-                        Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
-                            errorDetail: $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}",
-                            methodTypes: methodTypesBeforeReset);
-                        return;
+                        // Same servicer rule as the resolved branch. Both sites must honour it, or
+                        // a cloud-only protected identity would be the one case a servicer cannot
+                        // service - which is precisely the population this module exists for.
+                        servicedAuditDetail = ServicerNoteFor(authState.User, unresolvedCheck.MatchedRules, "directory-unresolved");
+                        if (servicedAuditDetail is null)
+                        {
+                            result = new MfaResetResult { Success = false, Message = "This user is a protected principal. MFA reset is not permitted." };
+                            Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, false, ticket,
+                                errorDetail: $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}",
+                                methodTypes: methodTypesBeforeReset);
+                            return;
+                        }
                     }
 
                     Logger.LogInformation(
@@ -348,11 +375,16 @@
 
             result = await MfaService.ResetAllMethodsAsync(upn);
 
+            // The serviced note rides `extra`, never errorDetail: this call is the SUCCESS path,
+            // and LogMfaResetAction writes ["error"] = success ? null : errorDetail - so the one
+            // field explaining why a protected user's MFA could be reset would be dropped exactly
+            // when it matters.
             Audit.LogMfaResetAction(currentUser, clientIpAddress, "MfaReset_Execute", upn, result.Success, ticket,
                 errorDetail: result.Success ? null : result.Message,
                 removedCount: result.RemovedCount,
                 totalMethods: result.TotalMethods,
-                methodTypes: methodTypesBeforeReset);
+                methodTypes: methodTypesBeforeReset,
+                extra: ServicedExtra(servicedAuditDetail));
 
             Logger.LogInformation("User {Admin} reset MFA for {Target} (ticket {Ticket}): {Result}", currentUser, upn, ticket, result.Message);
         }

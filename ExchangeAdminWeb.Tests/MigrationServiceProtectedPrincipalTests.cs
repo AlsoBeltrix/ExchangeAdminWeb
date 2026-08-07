@@ -216,6 +216,15 @@ public class MigrationServiceProtectedPrincipalTests : IDisposable
         var enablement = new ModuleEnablementService(catalog, env, moduleConfig, TestConfigStore.CreateModuleEnablement(_tempDir), config, Substitute.For<ILogger<ModuleEnablementService>>());
         var exoPool = new ExoConnectionPool(config, moduleConfig, enablement, Substitute.For<ILogger<ExoConnectionPool>>(), operationTrace);
 
-        return new MigrationService(config, exoPool, delinea, Substitute.For<ILogger<MigrationService>>(), moduleConfig, moduleCredentials, operationTrace, protectedPrincipals);
+        // Real servicer service over a store with no ProtectedServicer row, so it denies.
+        // The existing assertions are about the PROTECTION decision and must keep passing
+        // unchanged: a servicer path that made one pass would be a refusal turned into an allow.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog,
+            new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
+        return new MigrationService(config, exoPool, delinea, Substitute.For<ILogger<MigrationService>>(), moduleConfig, moduleCredentials, operationTrace, protectedPrincipals, servicers);
     }
 }

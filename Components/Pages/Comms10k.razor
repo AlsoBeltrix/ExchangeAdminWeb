@@ -13,6 +13,7 @@
 @inject IJSRuntime JS
 @inject ILogger<ExchangeAdminWeb.Components.Pages.Comms10k> Logger
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ProtectedPrincipalServicerService Servicers
 @using CsvHelper
 @using CsvHelper.Configuration
 @using System.Globalization
@@ -166,6 +167,9 @@
     private string ticketNumber = "";
     private string validatedTicket = "";
     private bool confirmPending;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor.</summary>
+    private const string ServicerModuleId = "Comms10k";
     private Comms10kMemberList? preview;
     private List<string> parsedEmails = new();
     private Comms10kResolveResult? resolveResult;
@@ -352,22 +356,37 @@
                     return;
                 }
             }
+            // Decided ONCE for the whole list, not per member. This operation replaces the entire
+            // membership in a single call, so it either proceeds or it does not - servicing some
+            // protected members and refusing others is not a state this module can produce.
+            string? servicedNote = null;
             if (blockedPrincipals.Count > 0)
             {
                 var blockedList = string.Join("; ", blockedPrincipals.Take(5));
                 var suffix = blockedPrincipals.Count > 5 ? $" and {blockedPrincipals.Count - 5} more" : "";
-                result = new Comms10kUpdateResult { Success = false, Message = $"Replace blocked — protected principal(s) in proposed list: {blockedList}{suffix}" };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, $"Protected principals: {blockedList}{suffix}"); } catch { }
-                return;
+
+                servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    Servicers, authState.User, ServicerModuleId, blockedPrincipals);
+
+                if (servicedNote is null)
+                {
+                    result = new Comms10kUpdateResult { Success = false, Message = $"Replace blocked - protected principal(s) in proposed list: {blockedList}{suffix}" };
+                    try { Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace", "Comms10k", "blocked", false, ticket, $"Protected principals: {blockedList}{suffix}"); } catch { }
+                    return;
+                }
             }
 
             result = await Comms10kService.ExecuteReplaceAsync(resolveResult.ResolvedDns, currentUser);
 
             try
             {
+                // The serviced note rides `extra`: this call reports SUCCESS, and LogModuleAction
+                // drops errorDetail on success, so the field explaining why protected members were
+                // allowed would vanish exactly when it matters.
                 Audit.LogModuleAction(currentUser, clientIpAddress, "Comms10k_Replace",
                     "Comms10k", $"{resolveResult.ResolvedDns.Count} members", result.Success, ticket,
-                    result.Success ? null : result.Message);
+                    result.Success ? null : result.Message,
+                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for Comms10k replace"); }
 

@@ -61,8 +61,17 @@ public class M365GroupManagementServiceTests : IDisposable
         var audit = new AuditService(jsonlLog, operationTrace);
         var protectedPrincipals = new ProtectedPrincipalService(env, config, moduleConfig, TestConfigStore.CreateProtectedPrincipal(_tempDir), delinea, Substitute.For<ILogger<ProtectedPrincipalService>>());
 
+        // Real servicer service over a store with no ProtectedServicer row, so it denies.
+        // The existing assertions are about the PROTECTION decision and must keep passing
+        // unchanged: a servicer path that made one pass would be a refusal turned into an allow.
+        var sectionAccess = new SectionAccessService(
+            config, Substitute.For<ILogger<SectionAccessService>>(), env, catalog,
+            new ExchangeAdminWeb.Services.Storage.SectionAccessRepository(TestConfigStore.Create(_tempDir)));
+        var servicers = new ProtectedPrincipalServicerService(
+            sectionAccess, Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
+
         return new M365GroupManagementService(
-            moduleConfig, delinea, httpClientFactory, operationTrace, audit, protectedPrincipals,
+            moduleConfig, delinea, httpClientFactory, operationTrace, audit, protectedPrincipals, servicers,
             Substitute.For<ILogger<M365GroupManagementService>>());
     }
 
