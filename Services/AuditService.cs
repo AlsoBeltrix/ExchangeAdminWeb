@@ -11,6 +11,31 @@ public class AuditService
         _operationTrace = operationTrace;
     }
 
+    /// <summary>
+    /// Merges caller-supplied fields into an audit event, whatever the outcome.
+    /// </summary>
+    /// <remarks>
+    /// The ONLY channel for a detail that must survive a SUCCESSFUL operation. Every method here
+    /// writes <c>["error"] = success ? null : errorDetail</c>, so a detail passed as
+    /// <c>errorDetail</c> on a success is silently discarded - which is how an authorised-servicer
+    /// record was lost once already (blr-era finding).
+    ///
+    /// That matters most for protected-principal servicing: the record exists precisely because
+    /// the action SUCCEEDED against a principal the app would normally refuse, so the one field
+    /// explaining why it was allowed cannot live in the failure channel.
+    ///
+    /// Merged last, so a caller can override a computed field deliberately rather than being
+    /// silently ignored.
+    /// </remarks>
+    private static void MergeExtra(Dictionary<string, object?> evt, Dictionary<string, object?>? extra)
+    {
+        if (extra == null)
+            return;
+
+        foreach (var kvp in extra)
+            evt[kvp.Key] = kvp.Value;
+    }
+
     public void LogMailboxPermission(
         string performedBy,
         string ipAddress,
@@ -21,7 +46,8 @@ public class AuditService
         bool success,
         string ticketNumber,
         bool? autoMapping = null,
-        string? errorDetail = null)
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -39,6 +65,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -51,7 +78,8 @@ public class AuditService
         string? accessRight,
         bool success,
         string ticketNumber,
-        string? errorDetail = null)
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -68,6 +96,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -77,7 +106,8 @@ public class AuditService
         string emailAddress,
         string status,
         string ticketNumber,
-        string? reasons = null)
+        string? reasons = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -93,6 +123,7 @@ public class AuditService
             ["reasons"] = reasons
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -106,7 +137,8 @@ public class AuditService
         bool autoComplete,
         string ticketNumber,
         bool success,
-        string? errorDetail = null)
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -125,6 +157,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -135,7 +168,8 @@ public class AuditService
         string target,
         bool success,
         string ticketNumber = "",
-        string? errorDetail = null)
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -150,6 +184,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -177,12 +212,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
-        if (extra != null)
-        {
-            foreach (var kvp in extra)
-                evt[kvp.Key] = kvp.Value;
-        }
-
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -193,7 +223,8 @@ public class AuditService
         string target,
         bool success,
         string? errorDetail = null,
-        string ticketNumber = "")
+        string ticketNumber = "",
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -208,6 +239,7 @@ public class AuditService
             ["error"] = success ? null : errorDetail
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -221,7 +253,8 @@ public class AuditService
         string? errorDetail = null,
         int? removedCount = null,
         int? totalMethods = null,
-        string[]? methodTypes = null)
+        string[]? methodTypes = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -239,6 +272,7 @@ public class AuditService
             ["methodTypes"] = methodTypes is { Length: > 0 } ? methodTypes : null
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -253,7 +287,8 @@ public class AuditService
         string ticketNumber = "",
         string? errorDetail = null,
         Dictionary<string, object?>? oldValues = null,
-        Dictionary<string, object?>? newValues = null)
+        Dictionary<string, object?>? newValues = null,
+        Dictionary<string, object?>? extra = null)
     {
         var evt = new Dictionary<string, object?>
         {
@@ -279,6 +314,7 @@ public class AuditService
                 evt[$"new_{kv.Key}"] = kv.Value;
         }
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -289,7 +325,8 @@ public class AuditService
         List<AttributeChange> changes,
         bool success,
         string ticketNumber,
-        string? errorDetail = null)
+        string? errorDetail = null,
+        Dictionary<string, object?>? extra = null)
     {
         var changedAttrs = changes.Select(c => c.Name).ToArray();
         var evt = new Dictionary<string, object?>
@@ -312,6 +349,7 @@ public class AuditService
             evt[$"new_{change.Name}"] = change.NewValue;
         }
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
@@ -320,7 +358,8 @@ public class AuditService
         string ipAddress,
         string section,
         string[] previousGroups,
-        string[] newGroups)
+        string[] newGroups,
+        Dictionary<string, object?>? extra = null)
     {
         var removed = previousGroups.Except(newGroups, StringComparer.OrdinalIgnoreCase).ToArray();
         var added = newGroups.Except(previousGroups, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -338,6 +377,7 @@ public class AuditService
             ["removed"] = removed.Length > 0 ? removed : null
         };
 
+        MergeExtra(evt, extra);
         WriteAuditEvent(evt);
     }
 
