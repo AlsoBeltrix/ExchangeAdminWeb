@@ -1,0 +1,350 @@
+@page "/bitlocker-recovery"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "BitLockerRecovery")]
+@rendermode InteractiveServer
+@inject BitLockerRecoveryService RecoveryService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<BitLockerRecovery> Logger
+
+<PageTitle>BitLocker Recovery</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-warning py-2 mb-3">
+        <small>
+            <strong>Recovery keys decrypt a whole disk.</strong>
+            Confirm who you are speaking to before reading a key out. Every reveal is audited.
+        </small>
+    </div>
+
+    <h1 class="mb-4">BitLocker Recovery<ModuleVersion /></h1>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label mb-1" for="searchTerm">Computer name</label>
+                    <input id="searchTerm" class="form-control" @bind="searchTerm"
+                           @bind:event="oninput" @onkeydown="OnSearchKeyDown"
+                           placeholder="Name or fragment" />
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label mb-1" for="keyId">or recovery screen value</label>
+                    <input id="keyId" class="form-control" @bind="keyId"
+                           @bind:event="oninput" @onkeydown="OnSearchKeyDown"
+                           placeholder="Key ID or 48-digit recovery key" />
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary w-100"
+                            @onclick="SearchAsync"
+                            disabled="@(isSearching || !HasSearchTerm)">
+                        @if (isSearching)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Search
+                    </button>
+                </div>
+            </div>
+            <div class="form-text mt-2">
+                Paste the recovery key ID or the 48-digit recovery key when the caller can
+                read their screen but the machine name does not match.
+            </div>
+            <div class="form-check mt-3">
+                <input id="includeLiveAd" class="form-check-input" type="checkbox" @bind="includeLiveAd" />
+                <label class="form-check-label" for="includeLiveAd">
+                    Search live Active Directory too
+                </label>
+                <div class="form-text">
+                    Usually slower. Use when a key may have been created since the latest daily export.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (errorMessage != null)
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+
+    @if (searched && errorMessage == null)
+    {
+        @if (warnings.Count > 0)
+        {
+            <div class="alert alert-warning py-2">
+                @foreach (var warning in warnings)
+                {
+                    <div>@warning</div>
+                }
+            </div>
+        }
+
+        @if (results.Count == 0)
+        {
+            <div class="alert alert-secondary">
+                @if (warnings.Count > 0)
+                {
+                    <span>No archive recovery keys found. Live Active Directory did not complete successfully.</span>
+                }
+                else if (searchedLiveAd)
+                {
+                    <span>No recovery keys found. Live Active Directory and the archive were searched successfully.</span>
+                }
+                else
+                {
+                    <span>No recovery keys found. The archive was searched successfully. Search live Active Directory only if the key may have been created since the latest daily export.</span>
+                }
+            </div>
+        }
+        else
+        {
+            @if (truncated)
+            {
+                <div class="alert alert-info py-2">
+                    <small>Showing the first @results.Count matches. Narrow the search to see others.</small>
+                </div>
+            }
+
+            <div class="card">
+                <div class="card-header"><strong>@results.Count key(s)</strong></div>
+                <div class="card-body p-0">
+                    <div style="max-height: calc(100vh - 420px); overflow-y: auto;">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead class="table-light sticky-top">
+                                <tr>
+                                    <th>Computer</th>
+                                    <th>Recovery key</th>
+                                    <th>Created</th>
+                                    <th>Key ID</th>
+                                    <th>Source</th>
+                                    <th>Last seen in AD</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var key in results)
+                                {
+                                    <tr>
+                                        <td class="text-nowrap">@key.ComputerName</td>
+                                        <td>
+                                            @if (revealed.Contains(key.RowId))
+                                            {
+                                                <code class="user-select-all">@key.RecoveryPassword</code>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-outline-secondary btn-sm"
+                                                        @onclick="() => RevealAsync(key)">
+                                                    Reveal
+                                                </button>
+                                            }
+                                        </td>
+                                        <td class="text-nowrap">
+                                            @(key.CreatedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "")
+                                        </td>
+                                        <td><small class="text-muted">@key.KeyId</small></td>
+                                        <td class="text-nowrap">
+                                            @if (key.FoundInLiveDirectory)
+                                            {
+                                                <span class="badge bg-success">Live AD</span>
+                                            }
+                                            else if (key.LastSeenInAdUtc.HasValue)
+                                            {
+                                                <span class="badge bg-info text-dark">Archive</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary">Archive only</span>
+                                            }
+                                        </td>
+                                        <td class="text-nowrap">
+                                            @if (key.FoundInLiveDirectory)
+                                            {
+                                                <span title="This key was returned by the live Active Directory search.">
+                                                    Now
+                                                </span>
+                                            }
+                                            else if (key.LastSeenInAdUtc.HasValue)
+                                            {
+                                                <span title="An export run saw this key in Active Directory on this date. It does not prove the machine is still there.">
+                                                    @key.LastSeenInAdUtc!.Value.ToLocalTime().ToString("yyyy-MM-dd")
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                <span class="badge bg-secondary" title="No export run has ever seen this key in Active Directory, so this archive is the only copy.">
+                                                    Never
+                                                </span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+
+    private string searchTerm = "";
+    private string keyId = "";
+    private bool isSearching;
+    private bool searched;
+    private bool includeLiveAd;
+    private bool searchedLiveAd;
+    private bool truncated;
+    private string? errorMessage;
+
+    private List<BitLockerRecoveryKey> results = [];
+    private List<string> warnings = [];
+
+    // Reveals are per-row and never persist across a search. Keyed on the
+    // result-set row id, because no natural key is unique: historical rows
+    // have no key ID and may share a created timestamp, so keying on those
+    // would let one audited reveal expose several keys.
+    private readonly HashSet<int> revealed = [];
+
+    private bool HasSearchTerm =>
+        !string.IsNullOrWhiteSpace(searchTerm) || !string.IsNullOrWhiteSpace(keyId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "BitLockerRecovery");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        authChecked = true;
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && HasSearchTerm && !isSearching)
+        {
+            await SearchAsync();
+        }
+    }
+
+    private async Task SearchAsync()
+    {
+        isSearching = true;
+        errorMessage = null;
+        revealed.Clear();
+        results = [];
+        warnings = [];
+
+        try
+        {
+            // A recovery-screen identifier targets one key, so it wins when both are given.
+            var byKeyId = !string.IsNullOrWhiteSpace(keyId);
+            var target = byKeyId ? keyId.Trim() : searchTerm.Trim();
+
+            searchedLiveAd = includeLiveAd;
+
+            var result = byKeyId
+                ? await RecoveryService.SearchByKeyIdAsync(keyId, includeLiveAd)
+                : await RecoveryService.SearchByComputerNameAsync(searchTerm, includeLiveAd);
+
+            searched = true;
+
+            if (!result.Success)
+            {
+                errorMessage = result.Error;
+            }
+            else
+            {
+                results = [.. result.Keys];
+                warnings = [.. result.Warnings];
+                truncated = result.Truncated;
+            }
+
+            // The search itself is a lookup, not a disclosure: no key has been
+            // shown yet. The reveal below is the security event.
+            SafeAudit(() => Audit.LogLookupAction(
+                currentUser,
+                clientIpAddress,
+                byKeyId ? "BitLockerSearchByKeyId" : "BitLockerSearchByName",
+                target,
+                result.Success,
+                result.Success ? null : result.Error));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "BitLocker recovery search failed.");
+            errorMessage = "The search could not be completed. Try again, or contact an administrator.";
+        }
+        finally
+        {
+            isSearching = false;
+        }
+    }
+
+    private Task RevealAsync(BitLockerRecoveryKey key)
+    {
+        revealed.Add(key.RowId);
+
+        // Revealing is the auditable act: this is the moment a recovery key
+        // reaches a human. The key itself never enters the audit record.
+        SafeAudit(() => Audit.LogModuleAction(
+            currentUser,
+            clientIpAddress,
+            "RevealRecoveryKey",
+            "BitLockerRecovery",
+            key.ComputerName,
+            success: true,
+            extra: new Dictionary<string, object?>
+            {
+                ["KeyId"] = key.KeyId,
+                ["LastSeenInAdUtc"] = key.LastSeenInAdUtc,
+                ["Source"] = key.StatusLabel,
+            }));
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// An audit write must never change what the operator sees: the key has
+    /// already been revealed by the time this runs.
+    /// </summary>
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write BitLocker recovery audit record.");
+        }
+    }
+}

@@ -171,6 +171,34 @@ Authorize or deauthorize DHCP servers in Active Directory.
 - **Requires:** Module-specific Delinea secret (Enterprise Admin credentials)
 - Section access key: `DhcpAuthorization`
 
+### BitLocker Recovery (`/bitlocker-recovery`)
+
+Look up BitLocker recovery keys for a caller locked out at the pre-boot screen.
+Read-only: the module never writes to Active Directory or to the archive.
+Disabled by default and fail-closed, because a recovery key decrypts a whole disk.
+
+- Search by computer name fragment, full key ID GUID, short key ID prefix, or a
+  pasted 48-digit recovery key. The key ID and recovery key are the only
+  identifiers that survive a machine rename or reimage
+- Reads a local SQLite archive written by the scheduled `Export-BitLockerKey.ps1`
+  task. Deleting a computer object from AD deletes its `msFVE-RecoveryInformation`
+  children, so for retired hardware the archive is the **only** surviving copy
+- Optionally also searches live Active Directory, for a key created since the
+  latest export. Noticeably slower, so it is off by default
+- Results are masked until an operator reveals one. **The reveal is the audited
+  security event**, not the search; the recovery key itself never enters an audit
+  record, log line, or error message
+- An unreachable source is an error, never an empty result: on a recovery call
+  "no key exists" and "I could not look" must not look alike. If live AD fails
+  but the archive succeeds, archive rows are shown with a warning
+- **Requires:** `ArchiveDatabasePath` pointing at a **local** path (SQLite WAL
+  needs shared memory that SMB does not provide, so UNC paths are refused). Live
+  AD fallback additionally needs a module-specific Delinea secret for an account
+  that can read `msFVE-RecoveryPassword`, plus the ActiveDirectory PowerShell
+  module on the web server
+- Section access key: `BitLockerRecovery`
+- Full operator and maintainer notes: `docs/BitLockerRecovery.md`
+
 ### Named Locations (`/named-locations`)
 
 Manage Entra ID Conditional Access named locations via Microsoft Graph API.

@@ -11,6 +11,36 @@ prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on p
 the older entries below record where that stream stood *when it landed*; they are history, not
 current state, and are not maintained. Read the `Deployed:` entry, never them.
 
+- **BitLocker Recovery module INTEGRATED 2026-08-07. New module `BitLockerRecovery 1.0.0`, no base
+  app bump (Constitution: adding a module does not bump the base version). NOT DEPLOYED; 12 manual
+  checks unrun.** `docs/BitLockerRecoveryModule-Plan.md` Status: Implemented.
+  Module count 24 -> 25, configurable policy aliases 33 -> 34. **1471 passed / 0 failed / 3 skipped**
+  (the 3 skips are the pre-existing AD-unavailable tests), build/format/`git diff --check`/ASCII all
+  clean. Guard proven non-vacuous: removing the descriptor fails 3 catalog tests.
+  **Authored outside this repo** as an isolated package at
+  `D:\source\scripts\BitLocker\ExchangeAdminWebModule` (it lives beside the `Export-BitLockerKey.ps1`
+  task that writes the archive it reads). The package is the upstream; the host now carries a copy.
+  **Read-only module, so no ticket, no protected-principal check, no confirmation dialog** -- those
+  guard writes and this performs none. `FailClosed: true` and disabled by default anyway, because a
+  recovery key decrypts a whole disk. **The REVEAL is the audited security event, not the search.**
+  **Three defects were caught by review before integration, and the pattern is worth keeping: the
+  package validator passed clean at every step while all three were live.** It is a shape checker,
+  not a compiler.
+  (1) A per-computer `PowerShell.Create()` inside the result loop, each re-importing the AD module --
+  51 runspaces for a default search, 501 at the cap; now one `InitialSessionState` runspace per
+  search, matching `ADDirectorySearchService`.
+  (2) A failed live-AD lookup discarded successful ARCHIVE rows and returned a bare failure -- on a
+  recovery call that is the worst possible direction to fail. Now returns the rows with a warning,
+  the `MessageTraceResponse.IsPartial` shape.
+  (3) `ExecutionPolicy` unqualified -- **the module did not compile at all**, found only by building
+  it against the host DLL out-of-tree. `Microsoft.PowerShell.ExecutionPolicy` is the enum's real
+  home, which is why all six existing host call sites write it fully qualified.
+  A fourth (unguarded `Directory.Delete` in test teardown, failing 29 of 30 tests on held SQLite
+  handles) surfaced in the same out-of-tree run; the host's own tests all wrap this in try/catch.
+  **NEXT: the plan's 12 manual checks on dev -- none run.** Load-bearing ones: an archive-only
+  (deleted-from-AD) machine shows `Archive only`; a reveal audits the machine and key ID but
+  **never the key**; a broken archive path errors rather than showing an empty table.
+
 - **HANDOFF 2026-08-05, as of `e9ad05d`. Tree clean, CI green.**
   **Coverage 64.7% -> 66.0%** over the gated security-critical scope; the floor was raised with it
   (`b5df487`) -- the value itself lives in `.agents/review/coverage-floor.txt`, which owns it.

@@ -481,6 +481,51 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "BitLockerRecovery",
+            DisplayName = "BitLocker Recovery",
+            Description = "Look up BitLocker recovery keys, including keys for machines removed from Active Directory.",
+            Route = "bitlocker-recovery",
+            // Reused deliberately: a padlock would read better, but no shield or lock class
+            // exists in the host CSS today and the package validator rejects an icon class it
+            // cannot find. Adding one is a separate change.
+            IconCss = "bi bi-gear-fill-nav-menu",
+            Category = "Infrastructure",
+            SortOrder = 810,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            // Fail-closed: a recovery key decrypts an entire disk.
+            MainPermission = new("Access", "BitLockerRecovery", FailClosed: true),
+            ConfigFields = [
+                new(
+                    "ArchiveDatabasePath",
+                    "Archive Database Path",
+                    "Full path to the BitLocker recovery key SQLite database written by the scheduled export. Must be on a local disk, not a UNC path."),
+                new(
+                    "DelineaSecretId",
+                    "AD Reader Delinea Secret ID",
+                    "Optional unless live AD fallback is used. Secret Server secret containing the AD account allowed to read msFVE-RecoveryPassword.",
+                    Required: false),
+                new(
+                    "ActiveDirectorySearchBase",
+                    "Active Directory Search Base",
+                    "Optional DN limiting live BitLocker recovery searches to one AD subtree.",
+                    Required: false),
+                new(
+                    "ActiveDirectoryServer",
+                    "Active Directory Server",
+                    "Optional domain controller used for live BitLocker recovery searches.",
+                    Required: false),
+                new(
+                    "SearchResultLimit",
+                    "Search Result Limit",
+                    "Maximum rows returned by one search. Capped at 500.",
+                    Required: false,
+                    DefaultValue: "50")
+            ]
+        },
+        new()
+        {
             Id = "LicensingUpdates",
             DisplayName = "Licensing Updates",
             Description = "Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.",

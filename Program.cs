@@ -126,6 +126,12 @@ try
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<M365GroupManagementService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
+    // BitLocker recovery. Scoped: the service opens a short-lived SQLite connection per query and
+    // holds no state between them. Needs no HttpClient, no Graph registration and no Exchange
+    // connection -- default searches read the local archive, and the optional live AD fallback
+    // uses ModuleCredentialService with a module-specific Delinea secret.
+    builder.Services.AddScoped<IBitLockerLiveDirectorySearch, PowerShellBitLockerLiveDirectorySearch>();
+    builder.Services.AddScoped<BitLockerRecoveryService>();
     builder.Services.AddScoped<GroupManagementService>();
     builder.Services.AddScoped<ExchangeAdminWeb.Services.SelfServiceGroups.SelfServiceGroupService>();
     builder.Services.AddScoped<ADAttributeEditorService>();

@@ -13,7 +13,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(24, _catalog.GetAll().Count); // 24 modules (23 operational + 1 config-only)
+        Assert.Equal(25, _catalog.GetAll().Count); // 25 modules (24 operational + 1 config-only)
     }
 
     [Fact]
@@ -93,6 +93,7 @@ public class ModuleCatalogTests
         Assert.Contains("ADAttributeEditorLevel3", aliases);
         Assert.Contains("EmergencyDisable", aliases);
         Assert.Contains("DhcpAuthorization", aliases);
+        Assert.Contains("BitLockerRecovery", aliases);
         Assert.Contains("EventLog", aliases);
         Assert.Contains("UndoAuditedActions", aliases);
         Assert.DoesNotContain("AdminSettings", aliases);
@@ -105,7 +106,7 @@ public class ModuleCatalogTests
         // Cross-module job administration. Configurable so the groups entitled to see every
         // module's jobs at once are set deliberately, not inherited from another module's grant.
         Assert.Contains("AdminBulkJobs", aliases);
-        Assert.Equal(33, aliases.Count);
+        Assert.Equal(34, aliases.Count);
     }
 
     [Fact]
