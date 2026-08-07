@@ -180,7 +180,15 @@ try
     builder.Services.AddSingleton<ProtectedPrincipalService>();
     builder.Services.AddSingleton<PermissionValidator>();
     builder.Services.AddScoped<BlockedSenderProtectionGate>();
-    builder.Services.AddScoped<ProtectedPrincipalServicerService>();
+    // SINGLETON, deliberately. PermissionValidator and M365GroupManagementService are singletons
+    // and must consult this to authorise servicing; a singleton cannot inject a scoped service,
+    // and forcing it creates a captive dependency that outlives its scope. This service is
+    // stateless and its only dependencies are SectionAccessService (already a singleton) and a
+    // logger, so the scoped registration was wrong rather than load-bearing.
+    //
+    // Scoped consumers keep working - BlockedSenderProtectionGate above is scoped and injects this
+    // one, which is always legal in that direction.
+    builder.Services.AddSingleton<ProtectedPrincipalServicerService>();
     builder.Services.AddSingleton<ServiceNowService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();
