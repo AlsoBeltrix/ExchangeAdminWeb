@@ -1,3 +1,4 @@
+using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
@@ -709,5 +710,71 @@ public sealed class BitLockerRecoveryTests : IDisposable
         Assert.True(result.Success);
         Assert.Empty(result.Keys);
         Assert.Null(result.Error);
+    }
+
+    // ---- Audit target redaction (blr-1) ----------------------------------------------------
+    //
+    // The recovery-screen box legitimately accepts a pasted 48-digit recovery key -- the docs
+    // invite it and the parser has a branch for it. Auditing that verbatim writes a working
+    // disk-decryption key into the audit log, which is durable, separately stored, readable by
+    // more people than may reveal a key, and reachable without tripping the RevealRecoveryKey
+    // event that exists to record exactly that disclosure.
+
+    [Fact]
+    public void AuditTarget_RedactsAPastedRecoveryPassword()
+    {
+        var password = "111111-222222-333333-444444-555555-666666-777777-888888";
+
+        var target = BitLockerRecovery.AuditSearchTarget(password);
+
+        Assert.DoesNotContain("111111", target, StringComparison.Ordinal);
+        Assert.DoesNotContain("888888", target, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuditTarget_RedactsARecoveryPasswordEvenWithSurroundingText()
+    {
+        // The load-bearing case. The parser matches a recovery password anywhere in the input,
+        // so a redaction keyed on "the whole box is 48 digits" would pass the test above and
+        // still leak the key here -- which is how an operator actually pastes it.
+        var target = BitLockerRecovery.AuditSearchTarget(
+            "Recovery key: 111111-222222-333333-444444-555555-666666-777777-888888 (from caller)");
+
+        Assert.DoesNotContain("111111", target, StringComparison.Ordinal);
+        Assert.DoesNotContain("888888", target, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AuditTarget_KeepsAFullKeyId()
+    {
+        // A key ID is an identifier, not a secret, and it is what makes the record useful.
+        var target = BitLockerRecovery.AuditSearchTarget("{7A159302-48BB-435E-9A81-3F1AEF9A7A40}");
+
+        Assert.Equal("7a159302-48bb-435e-9a81-3f1aef9a7a40", target);
+    }
+
+    [Fact]
+    public void AuditTarget_KeepsAShortKeyId()
+    {
+        var target = BitLockerRecovery.AuditSearchTarget("Recovery key ID: 7A159302");
+
+        Assert.Equal("7a159302", target);
+    }
+
+    [Fact]
+    public void AuditTarget_KeepsAnUnparseableStringForDiagnostics()
+    {
+        // Not a key, and the service refuses it. Blanking it would strip the audit record of
+        // the diagnostic value it exists for.
+        var target = BitLockerRecovery.AuditSearchTarget("  what the caller read out  ");
+
+        Assert.Equal("what the caller read out", target);
+    }
+
+    [Fact]
+    public void AuditTarget_HandlesEmptyInput()
+    {
+        Assert.Equal(string.Empty, BitLockerRecovery.AuditSearchTarget(null));
+        Assert.Equal(string.Empty, BitLockerRecovery.AuditSearchTarget("   "));
     }
 }

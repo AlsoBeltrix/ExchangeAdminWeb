@@ -97,6 +97,12 @@ in the directory.
 Recovery keys themselves never enter an audit record, a log line, or an error
 message.
 
+This includes the **search** target, not only the reveal. An operator may paste a
+48-digit recovery key into the recovery-screen box to find a machine, so the audit
+record shows `(recovery key, redacted)` in place of the pasted value. Key IDs are
+recorded verbatim: they are identifiers, not secrets, and they are what makes the
+record useful.
+
 An audit write failure is logged and swallowed: the key has already been shown
 by then, so failing the operation would misreport what happened.
 

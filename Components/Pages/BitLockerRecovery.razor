@@ -267,7 +267,15 @@
         {
             // A recovery-screen identifier targets one key, so it wins when both are given.
             var byKeyId = !string.IsNullOrWhiteSpace(keyId);
-            var target = byKeyId ? keyId.Trim() : searchTerm.Trim();
+
+            // NOT the raw box contents. The recovery-screen box legitimately accepts a pasted
+            // 48-digit recovery key, and auditing that verbatim would write a working
+            // disk-decryption key into the audit log - a durable store readable by more people
+            // than may reveal a key, and reachable without tripping the RevealRecoveryKey event
+            // that exists to record exactly that disclosure.
+            var target = byKeyId
+                ? AuditSearchTarget(keyId)
+                : searchTerm.Trim();
 
             searchedLiveAd = includeLiveAd;
 
@@ -330,6 +338,33 @@
             }));
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// What may be recorded as the audit target for a recovery-screen search.
+    /// </summary>
+    /// <remarks>
+    /// A recovery password is a secret and must never be persisted; a key ID is an
+    /// identifier and is what makes the audit record useful, so it is kept verbatim.
+    ///
+    /// Parsed rather than pattern-matched on the whole string, using the same parser the
+    /// service uses, so the two can never disagree about what was entered. That matters:
+    /// the parser finds a recovery password ANYWHERE in the input, so redacting only when
+    /// the entire box is 48 digits would still leak "Recovery key: 111111-...-888888".
+    ///
+    /// An unparseable string is kept as typed. It is not a key, the service refuses it,
+    /// and blanking it would strip the record of the diagnostic value it exists for.
+    /// </remarks>
+    internal static string AuditSearchTarget(string? rawIdentifier)
+    {
+        var identifier = BitLockerRecoveryIdentifierParser.Parse(rawIdentifier);
+
+        return identifier?.Kind switch
+        {
+            BitLockerRecoveryIdentifierKind.RecoveryPassword => "(recovery key, redacted)",
+            BitLockerRecoveryIdentifierKind.KeyIdPrefix => identifier.Value.Value,
+            _ => rawIdentifier?.Trim() ?? string.Empty,
+        };
     }
 
     /// <summary>
