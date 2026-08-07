@@ -6,11 +6,42 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Protected-principal servicing: CODE COMPLETE 2026-08-07 at `6f7f2ac`. ALL 15 of 15 modules.
-  Tree clean, 1567 passed / 0 failed / 3 skipped, format clean. NOT DEPLOYED; no manual check run.
-  CODEX REVIEW IN FLIGHT over `b351005..HEAD` (10 commits, 52 files) - its findings are the next
-  work.** Owner: *"all of them. every place where a principal is protected we need to allow a priv
+- **HANDOFF 2026-08-07, as of `9108c2f`. Protected-principal servicing: all 15 modules coded and
+  green, then the codex review found 3 HIGH defects. NONE FIXED. Tree clean, 1567 passed / 0 failed
+  / 3 skipped, format clean. NOT DEPLOYED; no manual check run; 20 commits unpushed (policy: ask).**
+  **The code is complete; it is not correct yet. Resume at the three findings, not at new work.**
+  Owner: *"all of them. every place where a principal is protected we need to allow a priv
   group to act on them anyway."*
+  **THE THREE FINDINGS - `.agents/review/findings/pps-{1,2,3}.md`, recorded in `9108c2f`, all
+  `[ ]` open in `.agents/review/index.md`.** All three are the same shape: the service was right
+  and the PAGE, or the call site, was wrong.
+  **pps-2 first** - it is the one that makes the capability unreachable, and it is my error rather
+  than a pre-existing gap. `Components/Pages/ADAttributeEditor.razor:313` sets `protectedBlocked`
+  and hides the edit UI with no servicer consultation, so the serviced save gate at
+  `ADAttributeEditorService.cs:533` can never be reached from the page. Undo preview gets no
+  principal while execute does, so preview refuses what execute would allow.
+  **pps-1**: Mailbox/Calendar bulk CSV calls the back-compat `ValidateTargetMailboxAsync` overload
+  (`Services/MailboxPermissionService.cs:222`) which by construction never services - a servicer is
+  allowed one row at a time and refused for the same mailbox in a CSV. Separately
+  `MailboxPermissions.razor:540` `ExecuteOnPrem` re-checks authorization but NOT protection after
+  the confirmation dialog, so the write's protection verdict is arbitrarily stale.
+  **pps-3**: `Services/ADAttributeEditorUndoService.cs:180` evaluates `NoteFor(...) is null` inside
+  a boolean and discards the note on the ALLOW path - the write proceeds with no record of who
+  permitted it. Emergency Disable keeps its note in the operation trace and out of the
+  `AuditService` event. **The helper returns a nullable note precisely so permission and record
+  cannot be separated; a bare null test defeats that by design.** Worth a source-level guard
+  forbidding that call shape.
+  **Two caveats on the review, both load-bearing for whoever reads it next.** Its auth token was
+  revoked mid-run (`refresh_token_invalidated`), so it **never produced a final consolidated
+  report** - the findings were recovered from the reasoning trace in `.git/codex-review-out.txt`
+  (untracked, may not survive) and each was verified against the current code before recording.
+  Severities and proposed fixes are MINE, not the reviewer's. And it found these by treating the
+  commit messages as CLAIMS to check: my own `e1547e7` message asserting these modules honour
+  servicing is what made the gap visible.
+  **Its analysis phase confirmed clean:** DI lifetimes (no captive dependency), ASCII, the opt-in
+  list against real gates for all 15 modules, Migration's per-target notes surviving the
+  audit-failure rewrap, Self-Service not letting the grant bypass ownership, Conference Rooms'
+  deliberate null-principal bulk refusal, and Licensing's request-thread decision.
   Plan `docs/ProtectedPrincipalServicerAllModules-Plan.md`, revised after grok review (5 findings,
   3 HIGH, all folded in).
   **The commits, one module or slice each:** `b351005`/`1ba7d49`/`8fb0592` (audit `extra` channel,
@@ -64,16 +95,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-1. **Read the codex review output at `.git/codex-review-out.txt`** and remediate its findings, one
-   commit per finding. Highest priority: anything that turns a refusal into an allow or loses an
-   audit record of an override, and anything in a `.razor` file - no bUnit harness exists, so no
-   test can see a page defect.
+1. **Fix pps-2, then pps-3, then pps-1 - one commit per finding**, reading the finding doc first;
+   each carries its evidence, its predicted failure, and a proposed approach. Every fix needs a
+   guard that FAILS against the current code, and pps-1/pps-2 are page defects, so those guards are
+   source-level tripwires - no bUnit harness exists, no test can render a page. Update the finding
+   doc and the index row to `[x]` in the same commit as the fix.
 2. Bump versions. **Not yet done for any of this work** - the shared helper and the audit `extra`
    channel are app-wide, so the base app version is owed a bump, and every one of the 15 modules
    whose gate changed owes its own (Constitution: the two rules fire independently).
 3. Then deploy and run the manual checks. The load-bearing one: **a member of a servicer group
    actually acting on a protected principal in a module, and the audit record naming the group that
    permitted it.** Nothing automated proves the capability does anything end to end.
+
+**Do not treat "all 15 modules done" as done.** Three of the fifteen are advertised in the admin
+UI as offering a grant that, on at least one path each, silently does nothing or leaves no record.
 
 The owner decision still outstanding: **which group gets the servicer grant, and who is in it.**
 The owner said they would create it. Not a build input - the code is complete without it - but the
