@@ -98,6 +98,13 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   two looked weak. Verifying the file contents AFTER the revert - rather than trusting the
   reverting script - showed the revert had not applied. **A non-vacuity probe that does not
   confirm its own revert landed can manufacture a false verdict in either direction.**
+  Module `1.0.0 -> 1.0.1` for blr-1/2/3: they are behaviour changes landing after the module first
+  reached dev, so the version must distinguish the two builds.
+  **The isolated package at `D:\source\scripts\BitLocker\ExchangeAdminWebModule` is now STALE.**
+  The host copies of `BitLockerRecovery.razor` and `BitLockerRecoveryTests.cs` carry blr-1/2/3 and
+  the package does not (the three service files are still identical). **The host is authoritative
+  from here** - a future re-copy from that package would silently revert three fixes, one of them
+  a cleartext-key leak into the audit log.
   **NEXT: the remaining manual checks.** Unrun: an archive-only (deleted-from-AD) machine shows
   `Archive only`; a broken archive path errors rather than showing an empty table; search by
   pasted 48-digit key redacts in the audit record (`blr-1`).
