@@ -6,7 +6,7 @@ live recovery call is looking for one. Live AD takes seconds, so the false answe
 screen long enough to be read and acted on.
 **Status**: Verified
 **Branch**: — (default-branch mode)
-**Commit**: `<pending>`
+**Commit**: `c615955`
 
 Found by the owner on dev, not by review or tests. Reported first as "the live AD search box
 returns an immediate no results even after running an archive only search returns results".
