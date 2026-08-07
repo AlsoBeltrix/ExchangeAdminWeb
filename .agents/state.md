@@ -6,52 +6,78 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **HANDOFF 2026-08-07, as of `8fb0592`. IN FLIGHT: protected-principal servicing for EVERY module.
-  Owner: *"all of them. every place where a principal is protected we need to allow a priv group to
-  act on them anyway."* 9 of 15 modules done, 6 remain. UNCOMMITTED WORKING TREE - see below.**
+- **Protected-principal servicing: CODE COMPLETE 2026-08-07 at `6f7f2ac`. ALL 15 of 15 modules.
+  Tree clean, 1567 passed / 0 failed / 3 skipped, format clean. NOT DEPLOYED; no manual check run.
+  CODEX REVIEW IN FLIGHT over `b351005..HEAD` (10 commits, 52 files) - its findings are the next
+  work.** Owner: *"all of them. every place where a principal is protected we need to allow a priv
+  group to act on them anyway."*
   Plan `docs/ProtectedPrincipalServicerAllModules-Plan.md`, revised after grok review (5 findings,
-  3 HIGH, all verified and folded in). **Read the plan before resuming; it is cold-implementable.**
-  **COMMITTED AND GREEN** (`b351005`, `1ba7d49`, `8fb0592`): slice 0a audit `extra` channel on 9
-  methods; slice 0b servicer service Scoped -> Singleton; Conference Rooms.
-  **UNCOMMITTED, BUILD IS GREEN, FULL SUITE NOT RUN.** 21 modified files plus new
-  `Services/ProtectedPrincipalServicing.cs`. Covers MFA Reset, Emergency Disable, Comms-10k,
-  AD Attribute Editor (incl. undo), Mailbox Permissions, Calendar, Out of Office, and the opt-in
-  list for all nine. **Commit this as one slice after a full `dotnet test` before doing anything
-  else** - it is the largest uncommitted authorization change this repo has held.
-  **REMAINING 6, dependencies wired but GATES UNTOUCHED:** GroupManagement, M365GroupManagement,
-  SelfServiceGroups, Migration, LicensingUpdates, AccountLockoutRemediation. Each already has
-  `_servicers`, `ServicerModuleId` and a ctor parameter; none consults them yet, so they compile and
-  behave exactly as before.
+  3 HIGH, all folded in).
+  **The commits, one module or slice each:** `b351005`/`1ba7d49`/`8fb0592` (audit `extra` channel,
+  servicer service Scoped -> Singleton, Conference Rooms), `e1547e7` (seven modules at once: MFA
+  Reset, Emergency Disable, Comms-10k, AD Attribute Editor + undo, Mailbox, Calendar, Out of
+  Office), `c0fc79e` GroupManagement, `5f07fe8` M365GroupManagement, `037365c` SelfServiceGroups,
+  `c745f78` Migration, `15c001d` AccountLockoutRemediation, `6f7f2ac` LicensingUpdates.
   **`Services/ProtectedPrincipalServicing.cs` is the shared helper every module uses** -
   `NoteFor(...)` returns the audit note or null-to-refuse, `Extra(...)` wraps it for an audit call.
   Returning a nullable note rather than a bool is deliberate: a caller cannot allow the action while
   forgetting to record why.
-  **Three shapes the plan did not predict, and they generalise:**
-  (1) **Emergency Disable has TWO gates** - the page blocks at lookup and hides the write UI, the
-  service blocks again at the write. Both had to honour servicing or a servicer never reaches the
-  button. Check every remaining module for this.
-  (2) **`ValidateTargetMailboxAsync` now returns a `TargetValidation` record**, not a string, and
-  takes an explicit `moduleId` - it serves THREE modules, and a borrowed id would let a Mailbox
-  grant authorise Calendar or Out of Office. A back-compat string overload remains and never
-  services (it passes no principal).
-  (3) **Migration's gate is passed as a DELEGATE** (`checker ??= CheckProtectedAsync`,
-  `MigrationService.cs:314,343`). Changing its signature changes a delegate type and every
-  substitution site. **Not in the plan's shape analysis - it likely warrants its own slice.**
+  **The invariants every gate holds, and what to check any future module against:** protection is
+  evaluated FIRST and never weakened; fail-closed outranks servicing (unavailable / ambiguous /
+  check-failed still deny, because they do not know whether the target is protected, so there is no
+  refusal to override); a null acting principal REFUSES; the grant is PER MODULE; the note names
+  both the authorising group and the rules overridden; and it travels in the audit event's `extra`,
+  never `errorDetail`, which is written as null on success and would silently discard it.
+  **Five shapes the plan did not predict, all generalisable:**
+  (1) **Emergency Disable has TWO gates** - the page hides the write UI at lookup, the service
+  blocks again at the write. Both must honour servicing or the servicer never reaches the button.
+  (2) **`ValidateTargetMailboxAsync` serves THREE modules**, so it returns a `TargetValidation`
+  record and takes an explicit `moduleId`; a borrowed id would let a Mailbox grant authorise
+  Calendar or Out of Office.
+  (3) **Migration's gate was a DELEGATE**, and per-target: `PartitionByProtectionAsync` returns the
+  serviced notes as a LIST beside allowed/excluded, one per override, because a batch-level "some
+  target was serviced" cannot say which - the question an audit exists to answer.
+  (4) **Off-request-thread work cannot decide servicing.** LicensingUpdates' `ApplyChanges` runs
+  under `Task.Run`, where the acting principal is not ambient and reading one would attribute the
+  override to whoever owns the thread. The decision moved to `EvaluateProtectionAsync` on the
+  request thread; `ApplyChanges` receives already-decided notes.
+  (5) **A note keyed for one loop is not keyed for the other.** LicensingUpdates keys the apply loop
+  on `PrincipalKey` (ObjectGuid when present) and the audit loop only ever sees a UPN, so a single
+  view would have made the write with no record of who permitted it. Two views, both tested.
+  **Three services needed an internal TEST SEAM** (`SelfServiceGroupService.CheckMemberProtectedAsync`,
+  `AccountLockoutRemediationService.GuardTargetUsersAsync`,
+  `LicensingUpdatesService.EvaluateProtectionAsync`): each sits behind a credential fetch and a live
+  directory read, so the servicer path is unreachable from the public method in a test. The project
+  already exposes internals to the test assembly; all three stay decisions with no side effects.
+  **Every existing protection suite passes UNMODIFIED in substance** - the only edits were
+  constructing a servicer service over a store with no grant (so it denies) and passing
+  `actingUser: null`. That was the standing gate: editing one to accommodate a servicer path would
+  mean a refusal quietly became an allow.
+  **Non-vacuity proven per module by reverting the servicer path**, each time confirming the revert
+  had actually landed before trusting the verdict and confirming it was gone after: GroupManagement
+  2 of 6 fail, M365 4 of 8, SelfServiceGroups 1 of 6, Migration 2 of 8, AccountLockout 1 of 7,
+  Licensing 3 of 8 - in every case exactly the allow-path tests, with the refusal tests still
+  passing.
   **Slice 0a caught a real defect in itself:** nine methods gained the `extra` parameter and
   `LogLookupAction` was left without the merge - a parameter accepted and silently dropped.
   `AuditExtraChannelTests` found it. That is the most repeatable mistake in this work.
-  **NOT DONE: the codex review.** The owner asked for ONE review over the whole range once the code
-  is finished; range will be `b351005..HEAD`.
 
 ## Next
 
-1. Run the full suite on the working tree, then commit it as one slice.
-2. Do the 6 remaining services, one commit each; Migration's delegate gate on its own.
-3. Add each to `ModulesWithProtectedPrincipalServicing` in the same commit as its gate, never before.
-4. One codex review over `b351005..HEAD`, long timeout, then remediate.
+1. **Read the codex review output at `.git/codex-review-out.txt`** and remediate its findings, one
+   commit per finding. Highest priority: anything that turns a refusal into an allow or loses an
+   audit record of an override, and anything in a `.razor` file - no bUnit harness exists, so no
+   test can see a page defect.
+2. Bump versions. **Not yet done for any of this work** - the shared helper and the audit `extra`
+   channel are app-wide, so the base app version is owed a bump, and every one of the 15 modules
+   whose gate changed owes its own (Constitution: the two rules fire independently).
+3. Then deploy and run the manual checks. The load-bearing one: **a member of a servicer group
+   actually acting on a protected principal in a module, and the audit record naming the group that
+   permitted it.** Nothing automated proves the capability does anything end to end.
 
-Gate that applies to every slice: the existing protection suites must pass **unmodified**. Editing
-one to accommodate a servicer path means a refusal quietly became an allow.
+The owner decision still outstanding: **which group gets the servicer grant, and who is in it.**
+The owner said they would create it. Not a build input - the code is complete without it - but the
+capability grants nothing until a group is configured per module in Module Config.
 
 ## Blockers
 
