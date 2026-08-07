@@ -4,7 +4,7 @@
 server where section access had never been configured, every member of the legacy app-wide
 `AllowedGroups` was authorised to act on protected principals, silently, with no grant ever made.
 **Status**: Verified
-**Commit**: `<pending>`
+**Commit**: `628b257`
 **Branch**: — (default-branch mode)
 
 Found by `codereview codex` (gpt-5.5-dzs @ xhigh, standard) over `a378785..025a5c6`, before the
