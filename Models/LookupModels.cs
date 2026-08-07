@@ -93,13 +93,6 @@ public class MessageTraceResponse
     public static readonly int MaxResults = 1000;
 }
 
-public class HistoricalSearchResponse
-{
-    public bool Success { get; set; }
-    public string? JobId { get; set; }
-    public string? Error { get; set; }
-}
-
 public class RecipientInfoResult
 {
     public required string EmailAddress { get; set; }

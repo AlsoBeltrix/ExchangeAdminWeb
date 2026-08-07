@@ -31,13 +31,15 @@ Check migration eligibility and create move batches between Exchange Online and 
 
 Analyze message headers and search mail flow across Exchange Online and on-premises transport logs.
 
-- Realtime trace queries both Exchange Online message trace and on-premises message tracking logs
+- Trace queries both Exchange Online message trace and on-premises message tracking logs
+- **Any range up to 90 days is searched in the app and rendered on the page.** Exchange Online accepts a maximum span of 10 days per call, so a wider range is split into contiguous windows and queried in sequence; on-premises is queried once for the whole range. The operator never sees the limit. 90 days is the hard ceiling because that is Exchange Online's retention
+- If one window fails, the whole Exchange Online result is reported as failed rather than returned with an invisible hole in the middle of the range
 - Optional ticket number is recorded in audit logs only; it does not call ServiceNow
-- Historical-search reports are delivered only to the authenticated user's email address
 - Header Analysis is the primary workflow and supports pasted headers plus `.eml` and `.msg` uploads
 - Extracts Message-ID, sender, recipient, subject, routing hops, authentication details, spam/filtering clues, delivery-failure evidence, and all parsed header values
 - Header analysis can populate or immediately run a trace using the parsed Message-ID and date window
-- Historical Exchange Online searches are still submitted as background jobs for ranges beyond the realtime window
+- The results table renders the first 50 rows and states the true total; use the detail export for more. This is a fixed boundary, not a setting: Blazor Server renders rows server-side and holds them in circuit memory, so a large table degrades other operators' sessions too
+- Subject and Message ID filters work on every range, including a 90-day one
 - Per-message delivery-detail exports above the live threshold run as background jobs. The notification email carries a link to the Downloadable Reports page (`/message-analysis/reports`), never the export itself, so the data stays behind the login gate
 - The notification recipient box is pre-filled with the operator's own address and is freely editable: any address may be added, and clearing it entirely is valid and means no email is sent. The export is still produced and still listed on the Downloadable Reports page. Administrators are never added to the recipient set
 - Downloadable Reports lists those exports with who requested what; downloading requires Message Analysis access and a ticket number, which is recorded with the download for audit

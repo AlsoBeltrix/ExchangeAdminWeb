@@ -16,8 +16,24 @@ chunking design**: on-prem is queried once for the whole range alongside the chu
 so both backends serve every range. **D1 is answered**: the page offers the full 90 days.
 **D2 is closed** by the 50-row render boundary. **D3 (paginate a saturated chunk) and D4 (the trail
 encoding) were not needed**: truncation is now reported per window, and the trail is one column.
-**D5 remains open** - whether `StartHistoricalSearchAsync` should be deleted now that nothing calls
-it.
+**D5 CLOSED 2026-08-07: `StartHistoricalSearchAsync` is deleted**
+(`docs/MessageTraceHistoricalRetirement-Plan.md`). Leaving it dead did not stay dead.
+
+**CORRECTION 2026-08-07 - this plan's "Implemented" status was true of the SERVICE and false of the
+PAGE, and the gap reached dev and prod in `2.6.0`.** `D1 is answered: the page offers the full 90
+days` above is wrong as written. The chunking landed; the page's historical branch did not go with
+it. `72b8047` had deleted that branch correctly, the revert in `90486d2` took the deletion back
+along with the false premise, and `03a9999` restored only the service half. So every range wider
+than 9 days still went to `Start-HistoricalSearch` and told the operator to expect an email, while
+the chunked search sat unused in the same build.
+
+Found by the owner using the deployed app, not by any test - 1483 tests passed against it. Repaired
+in `docs/MessageTraceHistoricalRetirement-Plan.md`, which also adds the source-level guard that
+would have caught it.
+
+The lesson this plan should carry: **its own "live checks NOT run" caveat was the accurate part of
+its status, and it was not enough of a brake.** A plan marked Implemented on the strength of a green
+suite, in a repo where no test can render the page, states more than the evidence supports.
 
 Supersedes `docs/HistoricalSearchInApp-Plan.md` (never implemented) and repairs commit `72b8047`,
 which is defective and is on `master`.

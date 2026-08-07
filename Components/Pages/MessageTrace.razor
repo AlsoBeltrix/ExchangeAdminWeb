@@ -289,11 +289,11 @@
             <div class="row g-3 mb-3">
                 <div class="col-md-4">
                     <label class="form-label">Subject Contains</label>
-                    <input type="text" class="form-control" @bind="subjectFilter" placeholder="@(IsHistoricalRange ? "(not available for historical search)" : "(optional)")" disabled="@(isLoading || IsHistoricalRange)" />
+                    <input type="text" class="form-control" @bind="subjectFilter" placeholder="(optional)" disabled="@isLoading" />
                 </div>
                 <div class="col-md-4">
                     <label class="form-label">Message ID</label>
-                    <input type="text" class="form-control" @bind="messageId" placeholder="<message-id@example.com>" disabled="@(isLoading || IsHistoricalRange)" />
+                    <input type="text" class="form-control" @bind="messageId" placeholder="<message-id@example.com>" disabled="@isLoading" />
                 </div>
                 <div class="col-md-2 d-flex align-items-end">
                     <button class="btn btn-primary" @onclick="RunTrace" disabled="@(!IsFormValid || isLoading)">
@@ -311,31 +311,9 @@
                 <span class="form-text ms-1">- detail exports produced as background jobs.</span>
             </div>
 
-            @if (IsHistoricalRange)
-            {
-                <div class="alert alert-info mb-3">
-                    <strong>Historical search:</strong> Exchange Online realtime trace covers the last 10 days.
-                    Older searches are submitted as background jobs and results are emailed when ready. Subject, Message ID, and on-premises tracking-log search are realtime-only.
-                </div>
-                <div class="row g-3 mb-3">
-                    <div class="col-md-4">
-                        <label class="form-label">Send report to</label>
-                        <input type="email" class="form-control" value="@userEmail" disabled />
-                        <div class="form-text">Historical-search reports are sent only to your authenticated email address.</div>
-                    </div>
-                </div>
-            }
-
             @if (validationError != null)
             {
                 <div class="alert alert-danger">@validationError</div>
-            }
-
-            @if (historicalSubmitted)
-            {
-                <div class="alert alert-success">
-                    Historical search submitted successfully. Results will be emailed to <strong>@userEmail</strong> when processing is complete.
-                </div>
             }
 
             @* A failed backend is stated as an INCOMPLETE RESULT, not as a warning beside a
@@ -588,7 +566,6 @@
     private bool isLoading = false;
     private string? validationError;
     private MessageTraceResponse? response;
-    private bool historicalSubmitted = false;
     private int? expandedIndex;
     private bool detailLoading;
     private MessageTraceDetail? detail;
@@ -630,7 +607,6 @@
     private void ShowTraceTab() => activeTab = "trace";
     private void ShowHeadersTab() => activeTab = "headers";
     private void TogglePasteInput() => showPasteInput = !showPasteInput;
-    private bool IsHistoricalRange => (endDate - startDate).TotalDays > 9;
 
     protected override async Task OnInitializedAsync()
     {
@@ -754,16 +730,6 @@
         validationError = ValidateDateRange(startDate, endDate);
         if (validationError != null) return;
 
-        if (IsHistoricalRange && !string.IsNullOrWhiteSpace(messageId))
-        {
-            validationError = "Message ID search is available only for realtime trace windows of 10 days or less.";
-            return;
-        }
-
-        if (IsHistoricalRange)
-            subjectFilter = "";
-
-        historicalSubmitted = false;
         isLoading = true;
         response = null;
         expandedIndex = null;
@@ -777,14 +743,14 @@
 
         try
         {
-            if (IsHistoricalRange)
-            {
-                await RunHistoricalSearch();
-            }
-            else
-            {
-                await RunRealtimeTrace();
-            }
+            // EVERY range runs here, including a 90-day one. There is no second path.
+            //
+            // There used to be: a range wider than 9 days was submitted to Start-HistoricalSearch
+            // and the operator was told to wait for an email. That branch survived the work that
+            // made it unnecessary (docs/MessageTraceHistoricalRetirement-Plan.md), so the chunked
+            // search sat in the build while the page walked past it. Do not reintroduce a
+            // date-width branch here - the service splits wide ranges into windows itself.
+            await RunRealtimeTrace();
         }
         finally
         {
@@ -812,48 +778,6 @@
         {
             response = new MessageTraceResponse { Error = ex.Message };
             Audit.LogLookupAction(currentUser, clientIpAddress, "MessageTrace", TraceTarget(), false, ex.Message, ticketNumber.Trim());
-        }
-    }
-
-    private async Task RunHistoricalSearch()
-    {
-        // Await the resolve rather than reading the field: the operator can reach this button
-        // before the deferred lookup lands.
-        var notifyAddress = (await ResolveOperatorEmailAsync()).Trim();
-        if (string.IsNullOrWhiteSpace(notifyAddress) || !notifyAddress.Contains('@'))
-        {
-            // Name the real cause. The old text blamed the operator's account for what is almost
-            // always Active Directory being unreachable (plan D3).
-            validationError = "Your email address could not be looked up in Active Directory, so there is nowhere to send the report. This usually means the directory is unreachable - contact an administrator.";
-            return;
-        }
-
-        var target = TraceTarget();
-        var reportTitle = $"MessageTrace_{currentUser}_{startDate:yyyyMMdd}-{endDate:yyyyMMdd}";
-
-        try
-        {
-            var result = await MsgTrace.StartHistoricalSearchAsync(
-                string.IsNullOrWhiteSpace(sender) ? null : sender.Trim(),
-                string.IsNullOrWhiteSpace(recipient) ? null : recipient.Trim(),
-                startDate, EffectiveEndDate(endDate),
-                notifyAddress, reportTitle);
-
-            if (result.Success)
-            {
-                historicalSubmitted = true;
-            }
-            else
-            {
-                response = new MessageTraceResponse { Error = result.Error ?? "Failed to submit historical search." };
-            }
-
-            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, result.Success, result.Error, ticketNumber.Trim());
-        }
-        catch (Exception ex)
-        {
-            response = new MessageTraceResponse { Error = ex.Message };
-            Audit.LogLookupAction(currentUser, clientIpAddress, "HistoricalSearch", target, false, ex.Message, ticketNumber.Trim());
         }
     }
 

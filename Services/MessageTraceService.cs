@@ -62,42 +62,17 @@ public class MessageTraceService : ExchangeServiceBase, Jobs.IMessageTraceDetail
         return merged;
     }
 
-    public async Task<HistoricalSearchResponse> StartHistoricalSearchAsync(string? sender, string? recipient, DateTime startDate, DateTime endDate, string notifyAddress, string reportTitle)
-    {
-        // Single-write (Start-HistoricalSearch): safe to retry on a dead pooled session.
-        return await RunPooledQueryAsync((ps, tracker) =>
-        {
-            var response = new HistoricalSearchResponse();
-
-            try
-            {
-                ps.AddCommand("Start-HistoricalSearch")
-                  .AddParameter("StartDate", startDate)
-                  .AddParameter("EndDate", endDate)
-                  .AddParameter("ReportTitle", reportTitle)
-                  .AddParameter("ReportType", "MessageTrace")
-                  .AddParameter("NotifyAddress", new[] { notifyAddress })
-                  .AddParameter("ErrorAction", "Stop");
-
-                if (!string.IsNullOrWhiteSpace(sender))
-                    ps.AddParameter("SenderAddress", sender);
-                if (!string.IsNullOrWhiteSpace(recipient))
-                    ps.AddParameter("RecipientAddress", recipient);
-
-                var results = Invoke(ps, tracker);
-                var result = results.FirstOrDefault();
-                response.JobId = result?.Properties["JobId"]?.Value?.ToString();
-                response.Success = true;
-            }
-            catch (Exception ex)
-            {
-                response.Error = ex.Message;
-                _logger.LogError(ex, "Error starting historical search");
-            }
-
-            return response;
-        }, allowRetry: true);
-    }
+    // Start-HistoricalSearch is deliberately NOT wrapped here any more.
+    //
+    // It was the only route to data older than the 90-day retention window, but it cannot deliver
+    // a report inside this app: measured 2026-08-05, Get-HistoricalSearch returns only a FileUrl on
+    // admin.protection.outlook.com, and fetching that with the app's certificate identity follows a
+    // 302 chain to an interactive sign-in page. The operators this module exists for are the ones
+    // without cloud admin accounts, so the emailed report was unreachable for exactly them.
+    //
+    // Keeping the method dead invited a caller, and one appeared: the page routed every range wider
+    // than 9 days to it and told the operator to wait for an email, while the chunked in-app search
+    // sat unused. See docs/MessageTraceHistoricalRetirement-Plan.md.
 
     // -------------------------------------------------------------------------
     // Per-message delivery detail (the full per-hop trail for one message)
