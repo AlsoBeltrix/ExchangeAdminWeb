@@ -82,6 +82,29 @@
         <div class="alert alert-danger">@errorMessage</div>
     }
 
+    @* An in-flight search must SAY it is in flight, in the results area, not only as a spinner in
+       the button. Suppressing the stale result (blr-3) without putting anything in its place left
+       the page blank for the seconds a live Active Directory query takes, which reads as hung -
+       and an operator on a recovery call who thinks the app has hung will reload it and start
+       over. Silence is not a safe default here; it is just a different wrong answer. *@
+    @if (isSearching)
+    {
+        <div class="alert alert-info d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <span>
+                @if (includeLiveAd)
+                {
+                    <text>Searching the archive and live Active Directory. The live search can take
+                    a while on a broad name - please wait rather than retrying.</text>
+                }
+                else
+                {
+                    <text>Searching the archive...</text>
+                }
+            </span>
+        </div>
+    }
+
     @* !isSearching is load-bearing, not cosmetic. SearchAsync clears results at the start but a
        previous search has already set `searched`, so without this the zero-results branch renders
        for the whole time a live Active Directory query is in flight - telling the operator "no
@@ -262,6 +285,14 @@
         // second search rendered the emptied result set as a completed no-keys answer while the
         // new query was still running.
         searched = false;
+
+        // Paint the searching state BEFORE any work starts, rather than relying on the handler
+        // reaching an await that actually yields. Microsoft.Data.Sqlite's *Async methods complete
+        // synchronously, so the whole archive query can run without ever returning to the
+        // renderer - and on an archive miss the first real yield would not come until the live AD
+        // credential fetch, leaving the operator watching an unchanged page until then.
+        StateHasChanged();
+        await Task.Yield();
 
         try
         {

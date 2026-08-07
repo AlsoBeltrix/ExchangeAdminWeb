@@ -94,6 +94,17 @@ as `MessageTrace.razor` uses for its detail fetches.
 Not dispatched. The owner found this defect after the codereview pass on
 `81fd069..e39e18f` returned two other findings; this fix is landing directly.
 
+## Follow-on defect this fix caused (blr-4)
+
+Suppressing the stale result left **nothing** in its place, so the results area went blank for the
+seconds a live AD query takes. Owner, from prod: "just appears hung until results appear". Fixed by
+`blr-4`, which adds the in-flight indicator this fix should have shipped with.
+
+The lesson is narrow and worth keeping: **removing a wrong answer is only half a fix.** A blank
+region is not a neutral state - an operator who believes the app has hung reloads and starts over,
+which on a recovery call is worse than the flicker it replaced. When a guard suppresses output,
+something true has to take its place.
+
 ## How three passes missed it
 
 Worth recording, because the pattern is now repeated:

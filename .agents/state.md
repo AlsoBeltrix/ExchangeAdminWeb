@@ -98,6 +98,19 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   two looked weak. Verifying the file contents AFTER the revert - rather than trusting the
   reverting script - showed the revert had not applied. **A non-vacuity probe that does not
   confirm its own revert landed can manufacture a false verdict in either direction.**
+  **`blr-4` (MEDIUM) was CAUSED BY the blr-3 fix and found on PROD.** Suppressing the stale result
+  left the results area blank for the seconds a live AD query takes, so the page read as hung.
+  **Removing a wrong answer is only half a fix** - a blank region is not neutral, and an operator
+  who thinks the app froze reloads mid-search. Fixed with an in-flight indicator, plus a forced
+  render and `Task.Yield` before the work: `Microsoft.Data.Sqlite`'s `*Async` methods complete
+  SYNCHRONOUSLY, so the handler can finish the whole archive query without ever yielding to the
+  renderer, and an indicator that is never painted is not an indicator.
+  **Two of blr-4's three guards were false coverage on the first cut**, and only the mutation probe
+  exposed it: they matched `@if (isSearching)` on the Search button's own spinner and message text
+  still sitting inside the disabled block, so both passed against the broken page. **A guard that a
+  broken page satisfies is worse than no guard, because it reads as coverage.** Now anchored to the
+  markup each condition gates. Second time in two days a probe caught a weak proof (see the `\r\n`
+  revert that silently matched nothing, above) - **the probe is doing more work than the tests.**
   Module `1.0.0 -> 1.0.1` for blr-1/2/3: they are behaviour changes landing after the module first
   reached dev, so the version must distinguish the two builds.
   **The isolated package at `D:\source\scripts\BitLocker\ExchangeAdminWebModule` is now STALE.**

@@ -816,6 +816,78 @@ public sealed class BitLockerRecoveryTests : IDisposable
         Assert.True(retract < call, "the previous answer must be retracted before the new search runs");
     }
 
+    // ---- In-flight FEEDBACK (blr-4) --------------------------------------------------------
+    //
+    // blr-3 stopped the page asserting a stale result while a search ran, but put nothing in its
+    // place, so the results area went blank for the seconds a live AD query takes. Owner, from
+    // prod: "just appears hung until results appear".
+    //
+    // The pair matters and neither half is optional: suppressing a wrong answer without showing a
+    // true one is not neutral. An operator on a recovery call who believes the app has hung will
+    // reload and start over - so blank is a different wrong answer, not a safe default.
+
+    [Fact]
+    public void Page_ShowsAnInFlightIndicatorWhileSearching()
+    {
+        // Asserts the indicator BLOCK, not just the words. A first cut checked for
+        // "@if (isSearching)" and the message text separately, and both still passed when the
+        // block was disabled to `@if (false)` - the condition matched the Search button's own
+        // spinner higher up the page, and the text was still present inside the dead block. Two
+        // guards that a broken page satisfies are worse than no guard, because they read as
+        // coverage. Pinning the condition together with the alert it gates is what makes this
+        // fail when the block stops rendering.
+        var source = ReadPage();
+
+        var block = System.Text.RegularExpressions.Regex.Match(
+            source,
+            @"@if \(isSearching\)\s*\{\s*<div class=""alert alert-info");
+
+        Assert.True(block.Success,
+            "the in-flight indicator block is no longer gated on isSearching, so a running search shows nothing");
+        Assert.Contains("Searching the archive", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_WarnsThatALiveDirectorySearchIsSlow()
+    {
+        // The whole point of the indicator is the live-AD case, which is the slow one. A generic
+        // spinner with no expectation set still invites a retry. Anchored to the branch that
+        // renders it, for the reason above.
+        var source = ReadPage();
+
+        // Anchored to the WHOLE indicator block, not just the inner branch. Matching only
+        // `@if (includeLiveAd)` still passed with the outer block disabled - the branch survives
+        // inside dead markup - which is the same false-coverage trap as the test above.
+        var liveBranch = System.Text.RegularExpressions.Regex.Match(
+            source,
+            @"@if \(isSearching\).*?@if \(includeLiveAd\).*?please wait rather than retrying",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        Assert.True(liveBranch.Success,
+            "the live-AD wait message is no longer rendered from the in-flight indicator");
+    }
+
+    [Fact]
+    public void SearchAsync_PaintsTheSearchingStateBeforeDoingTheWork()
+    {
+        // Load-bearing, and not obvious: Microsoft.Data.Sqlite's *Async methods complete
+        // synchronously, so the archive query can run start to finish without the handler ever
+        // yielding to the renderer. Without an explicit yield the indicator would not appear until
+        // some LATER await happened to be genuinely asynchronous - on an archive hit, possibly
+        // never, which is precisely the reported symptom.
+        var body = GetPageMethodBody("SearchAsync");
+
+        var paint = body.IndexOf("StateHasChanged();", StringComparison.Ordinal);
+        Assert.True(paint >= 0, "SearchAsync no longer forces a render before starting work");
+
+        var yield = body.IndexOf("await Task.Yield();", StringComparison.Ordinal);
+        Assert.True(yield > paint, "the forced render must be followed by a yield, or it cannot reach the browser");
+
+        var work = body.IndexOf("await RecoveryService.", StringComparison.Ordinal);
+        Assert.True(work >= 0, "search call not found");
+        Assert.True(yield < work, "the searching state must be painted before the search runs, not after");
+    }
+
     [Fact]
     public void SearchAsync_ResetsTruncationBetweenSearches()
     {

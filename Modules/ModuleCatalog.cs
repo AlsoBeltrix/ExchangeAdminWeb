@@ -493,7 +493,7 @@ public sealed class ModuleCatalog
             SortOrder = 810,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.1",
+            Version = "1.0.2",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new("Access", "BitLockerRecovery", FailClosed: true),
             ConfigFields = [
