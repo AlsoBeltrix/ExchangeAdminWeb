@@ -498,7 +498,10 @@
             }
 
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            bulkResult = await CalendarService.ProcessCalendarPermissionsCsvAsync(stream, bulkIsSet, Validator, currentUser, Audit, ipAddress, ticket);
+            // The re-authorised principal, so a servicer's CSV row is serviced exactly as their
+            // single-target submit would be (pps-1).
+            var bulkAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            bulkResult = await CalendarService.ProcessCalendarPermissionsCsvAsync(stream, bulkIsSet, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
 
             var action = bulkIsSet ? "BulkSetCalendar" : "BulkRemoveCalendar";
 
@@ -563,6 +566,23 @@
                 return;
             }
 
+            // Re-validate IMMEDIATELY BEFORE the write, not once before the confirmation prompt.
+            // This handler re-enters after the operator confirms a dialog, which is an unbounded
+            // pause: the earlier verdict may be arbitrarily stale, and the Constitution requires
+            // the protection check immediately before the write regardless (pps-1). It also
+            // produces the serviced note this path had no way to audit.
+            var onPremAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var onPremValidation = await Validator.ValidateTargetMailboxAsync(
+                target, onPremAuthState.User, ServicerModuleId);
+            if (onPremValidation.Error is not null)
+            {
+                result = PermissionResult.Fail(onPremValidation.Error);
+                Audit.LogCalendarPermission(
+                    currentUser, clientIpAddress, action, target, user, level,
+                    false, ticket, errorDetail: onPremValidation.Error);
+                return;
+            }
+
             PermissionResult opResult;
             if (tabIndex == 0)
                 opResult = await CalendarService.SetCalendarPermissionOnPremAsync(target, user, onPremAccessRight.ToString());
@@ -571,7 +591,8 @@
 
             Audit.LogCalendarPermission(
                 currentUser, clientIpAddress, action, target, user, level,
-                opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message);
+                opResult.Success, ticket, errorDetail: opResult.Success ? null : opResult.Message,
+                extra: ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote));
 
             await Email.SendAdminNotificationAsync(
                 currentUser, clientIpAddress, action, target, user,

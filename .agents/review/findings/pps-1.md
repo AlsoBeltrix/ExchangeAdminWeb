@@ -3,7 +3,7 @@
 **Severity**: HIGH -- an authorised servicer is refused on the bulk path (the capability silently
 does nothing where it is most useful), and the on-prem path performs a write whose protection
 decision is stale and whose override is absent from the audit record.
-**Status**: Verified
+**Status**: Fixed
 **Branch**: -- (default-branch mode)
 **Commit**: `6f7f2ac`
 
@@ -56,27 +56,46 @@ the other is worse than one that does not exist, because nothing tells the opera
 
 ## Approach
 
-Not yet implemented -- recorded first, per the one-finding-per-commit rule.
+(a) `ClaimsPrincipal?` and an explicit module id thread through
+`ProcessMailboxPermissionsCsvAsync` and `ProcessCalendarPermissionsCsvAsync` to the servicing
+overload. Each row's serviced note joins that row's existing audit call via `extra`, never
+`errorDetail`. Both services gained their own `ServicerModuleId` constant matching the page's --
+the validator serves three modules, so a borrowed id would cross-authorise.
 
-(a) Thread `ClaimsPrincipal?` and the module id through
-`ProcessMailboxPermissionsCsvAsync` / the Calendar equivalent to the servicing overload, and
-carry each row's serviced note into that row's audit call. The per-row audit already exists;
-the note joins its `extra`, never `errorDetail`.
+(b) `ExecuteOnPrem` re-validates immediately before the write on BOTH pages, and carries the
+resulting note into the audit. Calendar had the identical defect and is fixed in the same change;
+the finding as written named only Mailbox, and Calendar was found by checking rather than assuming
+the pair diverged.
 
-(b) Re-run the protection validation inside `ExecuteOnPrem` immediately before the write, and
-carry the resulting note into the audit call. Re-validating is correct regardless of servicing:
-a confirmation dialog is an unbounded pause.
+Re-validating is correct independent of servicing: a confirmation dialog is an unbounded pause, so
+the pre-prompt verdict may be arbitrarily stale, and the Constitution requires the check
+immediately before the write.
 
 ## Files changed
 
-None yet.
+- `Services/MailboxPermissionService.cs`, `Services/CalendarPermissionService.cs` -- bulk entry
+  points take the principal; loops use the servicing overload; per-row audit carries the note.
+- `Components/Pages/MailboxPermissions.razor`, `Components/Pages/CalendarPermissions.razor` --
+  bulk passes the re-authorised principal; `ExecuteOnPrem` re-validates and audits the note.
+- `ExchangeAdminWeb.Tests/BulkAndOnPremServicingTests.cs` -- new.
 
 ## Guard proof
 
-Pending. Both need a test that fails with the current code: for (a), an authorised servicer's
-bulk row against a protected target must be applied rather than refused; for (b), the on-prem
-execute path must consult protection at execute time (source-level tripwire -- no bUnit harness
-exists, so no test can render the page).
+Reverting both halves fails **3 of 10**: the Mailbox bulk loop, the Calendar on-prem check, and the
+Calendar on-prem audit. Reverts confirmed applied at both files before trusting the verdict, and
+confirmed removed after.
+
+Mixed strength, stated rather than glossed: the bulk entry-point guard is reflection over the
+compiled signature (a missing principal parameter means the method CANNOT service, whatever its
+body does); the loop and on-prem guards are source-level, because the loop can carry a principal
+and still call the non-servicing overload, and `ExecuteOnPrem` is a `.razor` handler no test can
+render. The on-prem guards are anchored INSIDE the `ExecuteOnPrem` body -- a file-wide match would
+have been satisfied by the single-submit handler's own validation while the on-prem write stayed
+unchecked, which is exactly the state being fixed.
+
+One guard was rewritten mid-work: the first cut matched exact source formatting and failed on
+whitespace, which is a guard a reformat breaks and a real regression could slip past. Now matched
+on the call's arguments.
 
 ## Coder dispute (if any)
 

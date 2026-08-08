@@ -506,7 +506,10 @@
             }
 
             await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
-            bulkResult = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket);
+            // The re-authorised principal, so a servicer's CSV row is serviced exactly as their
+            // single-target submit would be (pps-1).
+            var bulkAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            bulkResult = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
 
             var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
 
@@ -565,6 +568,25 @@
                 return;
             }
 
+            // Re-validate IMMEDIATELY BEFORE the write, not once before the confirmation prompt.
+            // This handler re-enters after the operator confirms a dialog, which is an unbounded
+            // pause: the earlier verdict may be arbitrarily stale, and the Constitution requires
+            // the protection check immediately before the write regardless (pps-1). It also
+            // produces the serviced note this path had no way to audit.
+            var onPremAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var onPremValidation = await Validator.ValidateTargetMailboxAsync(
+                target, onPremAuthState.User, ServicerModuleId);
+            if (onPremValidation.Error is not null)
+            {
+                result = PermissionResult.Fail(onPremValidation.Error);
+                Audit.LogMailboxPermission(
+                    currentUser, clientIpAddress, action, target, user, permType,
+                    false, ticket, errorDetail: onPremValidation.Error);
+                return;
+            }
+
+            var onPremExtra = ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote);
+
             var opResult = tabIndex == 0
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
@@ -576,13 +598,13 @@
             {
                 var faSuccess = opResult.Success || succeeded.Contains("FullAccess");
                 Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}FullAccess", target, user, "FullAccess",
-                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message);
+                    faSuccess, ticket, errorDetail: faSuccess ? null : opResult.Message, extra: onPremExtra);
             }
             if (sendAs)
             {
                 var saSuccess = opResult.Success || succeeded.Contains("SendAs");
                 Audit.LogMailboxPermission(currentUser, clientIpAddress, $"OnPrem_{actionVerb}SendAs", target, user, "SendAs",
-                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message);
+                    saSuccess, ticket, errorDetail: saSuccess ? null : opResult.Message, extra: onPremExtra);
             }
 
             var isPartial = !opResult.Success && succeeded.Length > 0;

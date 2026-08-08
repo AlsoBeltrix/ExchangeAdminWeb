@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Management.Automation;
+using System.Security.Claims;
 using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
@@ -10,6 +11,13 @@ namespace ExchangeAdminWeb.Services;
 
 public class MailboxPermissionService : ExchangeServiceBase
 {
+    /// <summary>
+    /// Module id for the servicer grant. Must match the catalog descriptor AND the page's own
+    /// constant: PermissionValidator serves three modules, so a borrowed id would let a grant in
+    /// one authorise the others.
+    /// </summary>
+    private const string ServicerModuleId = "MailboxPermissions";
+
     public MailboxPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<MailboxPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "MailboxPermissions", operationTrace) { }
 
@@ -161,7 +169,13 @@ public class MailboxPermissionService : ExchangeServiceBase
         }
     }
 
-    public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber)
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the protected-principal servicer decision needs a real
+    /// principal. Bulk is where a servicer grant is MOST useful and it was the path that could not
+    /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
+    /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
+    /// </param>
+    public async Task<BulkOperationResult> ProcessMailboxPermissionsCsvAsync(Stream csvStream, bool isAdd, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
@@ -218,8 +232,13 @@ public class MailboxPermissionService : ExchangeServiceBase
                 if (sendAs) permissions.Add("SendAs");
                 var permType = string.Join("+", permissions);
 
-                // Validate target is not excluded
-                var validationError = await validator.ValidateTargetMailboxAsync(row.Target);
+                // Validate target is not excluded. The servicing overload with an explicit module
+                // id: the back-compat overload cannot service by construction, which is what made
+                // a servicer's CSV row refuse while their single-target submit succeeded (pps-1).
+                var targetValidation = await validator.ValidateTargetMailboxAsync(
+                    row.Target, actingUser, ServicerModuleId);
+                var servicedNote = targetValidation.ServicedNote;
+                var validationError = targetValidation.Error;
                 if (validationError is not null)
                 {
                     audit.LogMailboxPermission(
@@ -267,10 +286,14 @@ public class MailboxPermissionService : ExchangeServiceBase
                     : await RemoveMailboxPermissionsAsync(row.Target, row.User, fullAccess, sendAs);
 
                 var action = $"Bulk{(isAdd ? "Add" : "Remove")}_{permType}";
+                // Per row, because servicing is decided per row: a batch can mix serviced and
+                // ordinary targets. The note rides extra - a serviced row SUCCEEDS, and errorDetail
+                // is written as null on success, so the record of who permitted it would vanish.
                 audit.LogMailboxPermission(
                     currentUser, ipAddress, action, row.Target, row.User, permType,
                     result.Success, ticketNumber, isAdd && fullAccess ? autoMap : null,
-                    errorDetail: result.Success ? null : result.Message);
+                    errorDetail: result.Success ? null : result.Message,
+                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
 
                 if (result.Success)
                 {

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Management.Automation;
 using System.Management.Automation.Runspaces;
+using System.Security.Claims;
 using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
@@ -10,6 +11,13 @@ namespace ExchangeAdminWeb.Services;
 
 public class CalendarPermissionService : ExchangeServiceBase
 {
+    /// <summary>
+    /// Module id for the servicer grant. Must match the catalog descriptor AND the page's own
+    /// constant: PermissionValidator serves three modules, so a borrowed id would let a grant in
+    /// one authorise the others.
+    /// </summary>
+    private const string ServicerModuleId = "CalendarPermissions";
+
     public CalendarPermissionService(ExoConnectionPool exoPool, DelineaService delineaService, ILogger<CalendarPermissionService> logger, IConfiguration config, ModuleCredentialService moduleCredentials, OperationTraceService operationTrace)
         : base(exoPool, delineaService, logger, config["OnPremExchange:ServerUri"] ?? "", moduleCredentials, "CalendarPermissions", operationTrace) { }
 
@@ -69,7 +77,13 @@ public class CalendarPermissionService : ExchangeServiceBase
         }, () => ($"Calendar permission removed for {user} on {calendarPath}", null), allowRetry: true);
     }
 
-    public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber)
+    /// <param name="actingUser">
+    /// REQUIRED and not defaulted: the protected-principal servicer decision needs a real
+    /// principal. Bulk is where a servicer grant is MOST useful and it was the path that could not
+    /// use it - the single-target form serviced a protected mailbox while the same mailbox in a CSV
+    /// was refused (pps-1). Null refuses, so any caller without a principal is safe.
+    /// </param>
+    public async Task<BulkOperationResult> ProcessCalendarPermissionsCsvAsync(Stream csvStream, bool isSet, PermissionValidator validator, string currentUser, AuditService audit, string ipAddress, string ticketNumber, ClaimsPrincipal? actingUser)
     {
         var config = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
@@ -99,7 +113,13 @@ public class CalendarPermissionService : ExchangeServiceBase
         {
             try
             {
-                var validationError = await validator.ValidateTargetMailboxAsync(row.Target);
+                // The servicing overload with an explicit module id: the back-compat overload
+                // cannot service by construction, and a borrowed id would let a Mailbox grant
+                // authorise Calendar - the validator serves three modules (pps-1).
+                var targetValidation = await validator.ValidateTargetMailboxAsync(
+                    row.Target, actingUser, ServicerModuleId);
+                var servicedNote = targetValidation.ServicedNote;
+                var validationError = targetValidation.Error;
                 if (validationError is not null)
                 {
                     audit.LogCalendarPermission(
@@ -149,9 +169,13 @@ public class CalendarPermissionService : ExchangeServiceBase
                     : await RemoveCalendarPermissionAsync(row.Target, row.User);
 
                 var action = $"Bulk{(isSet ? "Set" : "Remove")}Calendar";
+                // Per row, because servicing is decided per row: a batch can mix serviced and
+                // ordinary targets. The note rides extra - a serviced row SUCCEEDS, and errorDetail
+                // is written as null on success, so the record of who permitted it would vanish.
                 audit.LogCalendarPermission(
                     currentUser, ipAddress, action, row.Target, row.User,
                     isSet ? row.AccessRight : null, result.Success, ticketNumber,
+                    extra: ProtectedPrincipalServicing.Extra(servicedNote),
                     errorDetail: result.Success ? null : result.Message);
 
                 if (result.Success)
