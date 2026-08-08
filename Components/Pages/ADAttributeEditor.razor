@@ -4,6 +4,7 @@
 @rendermode InteractiveServer
 @inject ADAttributeEditorService EditorService
 @inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ProtectedPrincipalServicerService Servicers
 @inject AuditService Audit
 @inject EmailService Email
 @inject OperationTraceService OperationTrace
@@ -68,6 +69,17 @@
             {
                 <div class="alert alert-warning">
                     <strong>Protected Principal:</strong> This user is protected and cannot be modified through this interface.
+                </div>
+            }
+
+            @* An override is never silent: the operator must see they are acting under a grant,
+               not discover it in the audit log afterwards. *@
+            @if (protectedServiced)
+            {
+                <div class="alert alert-danger">
+                    <strong>Protected Principal - override in effect:</strong> This user is protected.
+                    You may edit them because your group is authorised to service protected principals
+                    in this module. Every change you make here is recorded against that authorisation.
                 </div>
             }
 
@@ -232,6 +244,12 @@
     private string searchIdentity = "";
     private string? searchError;
     private bool protectedBlocked;
+
+    /// <summary>Target is protected AND this operator holds the servicer grant for this module.</summary>
+    private bool protectedServiced;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor and the service.</summary>
+    private const string ServicerModuleId = "ADAttributeEditor";
     private bool isReadOnly;
 
     private AttributeLookupResult? lookupResult;
@@ -276,6 +294,7 @@
         isLoading = true;
         searchError = null;
         protectedBlocked = false;
+        protectedServiced = false;
         isReadOnly = false;
         lookupResult = null;
         editableAttributes = new();
@@ -310,10 +329,29 @@
                 searchError = protectionCheck.Reason;
                 return;
             }
+
+            // This gate HIDES the edit UI, so it is part of the authorization decision, not a
+            // display detail: if it blocks where the service would allow, the servicer capability
+            // is unreachable and the service-side grant silently does nothing (pps-2). It must
+            // therefore ask the same question ADAttributeEditorService.SaveAsync asks, with the
+            // same module id, and reach the same answer.
+            //
+            // Protection is evaluated first and never weakened. A null principal refuses, and the
+            // service re-decides independently before the write - this does not authorise anything
+            // on its own.
             if (protectionCheck.IsProtected)
             {
-                protectedBlocked = true;
-                return;
+                var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+                var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    Servicers, authState.User, ServicerModuleId, protectionCheck.MatchedRules);
+
+                if (servicedNote is null)
+                {
+                    protectedBlocked = true;
+                    return;
+                }
+
+                protectedServiced = true;
             }
 
             var maxLevel = await DetermineMaxLevelAsync();

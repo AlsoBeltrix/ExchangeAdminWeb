@@ -4,7 +4,7 @@
 Editor and for undo preview, in modules whose commit message claims it works. Same class as the
 2026-08-06 defect where the capability shipped "implemented" and no operator could reach it.
 
-**Status**: Verified
+**Status**: Fixed
 **Branch**: -- (default-branch mode)
 **Commit**: `6f7f2ac`
 
@@ -48,23 +48,41 @@ disagree, the stricter one wins silently and the capability evaporates.
 
 ## Approach
 
-Not yet implemented -- recorded first, per the one-finding-per-commit rule.
-
 (a) The page's lookup gate consults the servicer for the same module id and, when serviced, allows
 the edit UI while surfacing that an override is in effect. The operator must SEE that they are
 acting under a grant; a silent allow is its own hazard.
 
-(b) Pass the current `ClaimsPrincipal` into undo preview so preview and execute make the same
-decision. A preview that refuses what execute would allow is a UI lie either way.
+(b) `IUndoableModule.PreviewUndoAsync` now takes the acting principal, as execute already did, so
+preview and execute reach the same decision. A preview that refuses what execute would allow is a
+UI lie either way.
+
+The note is deliberately DISCARDED in preview, and commented as such at the call site: a preview
+performs no write and emits no audit event, so there is no record for it to belong to. That is the
+one legitimate use of the `NoteFor(...) is null` shape; on a write path it is finding pps-3.
 
 ## Files changed
 
-None yet.
+- `Components/Pages/ADAttributeEditor.razor` -- lookup gate consults the servicer; new
+  `protectedServiced` flag, reset alongside `protectedBlocked`; override banner.
+- `Services/IUndoableModule.cs` -- `PreviewUndoAsync` takes the acting principal, with the reason
+  recorded on the parameter.
+- `Services/ADAttributeEditorUndoService.cs` -- preview honours the grant.
+- `Components/Pages/AdminEventLog.razor` -- passes the current principal into preview.
+- `ExchangeAdminWeb.Tests/PageProtectionGateServicingTests.cs` -- new.
 
 ## Guard proof
 
-Pending. Source-level tripwires, since no bUnit harness exists: the page's protection branch must
-reference the servicer service, and preview/execute must take the same principal parameter.
+`PageProtectionGateServicingTests`, source-level tripwires (no bUnit harness exists, so no test can
+render a page). Restoring the defect fails **3 of 5** page guards; the 2 that still pass are the
+Emergency Disable theory case and the state-reset guard, neither of which depends on that branch.
+Revert confirmed applied at the file before trusting the verdict, and confirmed removed after.
+
+The interface guard is weaker and says so in its own comment: removing the parameter breaks the
+BUILD, so the compiler catches that revert before the test runs. It exists to state intent, so a
+later change making the parameter optional or unused has something to fail against.
+
+Emergency Disable is pinned by the same theory test despite already being correct -- it is the
+module whose two-gate shape was recorded and then not applied here, so the pair is held together.
 
 ## Coder dispute (if any)
 

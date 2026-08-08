@@ -766,7 +766,10 @@
                 return;
             }
 
-            undoPreview = await handler.PreviewUndoAsync(evt.RawFields);
+            // The same principal the execute call passes, so preview and execute agree about a
+            // protected target this operator may service (pps-2).
+            var previewAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            undoPreview = await handler.PreviewUndoAsync(evt.RawFields, previewAuthState.User);
         }
         catch (Exception ex)
         {

@@ -53,7 +53,7 @@ public class ADAttributeEditorUndoService : IUndoableModule
             && auditEvent.Keys.Any(k => k.StartsWith("new_", StringComparison.OrdinalIgnoreCase));
     }
 
-    public async Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent)
+    public async Task<UndoPreview> PreviewUndoAsync(Dictionary<string, object?> auditEvent, System.Security.Claims.ClaimsPrincipal? actingUser)
     {
         var target = GetString(auditEvent, "target");
         var operationId = GetString(auditEvent, "operationId");
@@ -80,8 +80,21 @@ public class ADAttributeEditorUndoService : IUndoableModule
             var protCheck = await _protectedPrincipalService.CheckAsync(lookupResult.Principal);
             if (protCheck.CheckFailed)
                 return ErrorPreview($"Protected principal check failed: {protCheck.Reason}", action, operationId);
-            if (protCheck.IsProtected)
+
+            // Must reach the same decision as ExecuteUndoAsync below. A preview that refuses what
+            // execute would allow denies the servicer an Undo button, so the grant is unreachable
+            // even though the execute gate honours it (pps-2).
+            //
+            // Discarding the note is correct HERE and only here: a preview performs no write and
+            // emits no audit event, so there is no record for it to belong to. Every other caller
+            // must keep it - see pps-3, where exactly this call shape on a WRITE path allowed the
+            // operation and threw away the record of who permitted it.
+            if (protCheck.IsProtected
+                && ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, protCheck.MatchedRules) is null)
+            {
                 return ErrorPreview("Target is a protected principal and cannot be modified.", action, operationId);
+            }
         }
 
         // Build change list with conflict detection
