@@ -189,12 +189,22 @@ public class ADAttributeEditorUndoService : IUndoableModule
                 scope.Complete(false, protCheck.Reason);
                 return new UndoResult(false, $"Protected principal check failed: {protCheck.Reason}", null);
             }
-            if (protCheck.IsProtected
-                && ProtectedPrincipalServicing.NoteFor(
-                    _servicers, actingUser, ServicerModuleId, protCheck.MatchedRules) is null)
+            // The note is BOUND, not tested and dropped. This is a write path: allowing the undo
+            // while discarding the note would leave a successful modification of a protected
+            // principal with nothing in the audit record naming who permitted it (pps-3). The
+            // helper returns a nullable note precisely so the permission and the record cannot be
+            // separated, and `NoteFor(...) is null` as a bare condition defeats that by design.
+            string? servicedNote = null;
+            if (protCheck.IsProtected)
             {
-                scope.Complete(false, "Target is a protected principal");
-                return new UndoResult(false, "Target is a protected principal and cannot be modified.", null);
+                servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, protCheck.MatchedRules);
+
+                if (servicedNote is null)
+                {
+                    scope.Complete(false, "Target is a protected principal");
+                    return new UndoResult(false, "Target is a protected principal and cannot be modified.", null);
+                }
             }
 
             // Verify no conflicts before executing
@@ -250,13 +260,13 @@ public class ADAttributeEditorUndoService : IUndoableModule
             if (!saveResult.Success)
             {
                 // The SaveAsync already audits failure internally, but we also need the undo-specific audit
-                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error);
+                LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, false, saveResult.Error, servicedNote);
                 scope.Complete(false, saveResult.Error);
                 return new UndoResult(false, saveResult.Error, null);
             }
 
             // Log the undo-specific audit event (the SaveAsync already logged a standard ADAttributeEditor_Update)
-            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null);
+            LogUndoAudit(performedBy, ip, target, changedAttributes, auditEvent, originalOperationId, ticket, true, null, servicedNote);
 
             var reversalOperationId = _operationTrace.CurrentOperationId;
             scope.Complete(true);
@@ -284,13 +294,19 @@ public class ADAttributeEditorUndoService : IUndoableModule
         string? originalOperationId,
         string ticket,
         bool success,
-        string? errorDetail)
+        string? errorDetail,
+        string? servicedNote)
     {
         var extra = new Dictionary<string, object?>
         {
             ["originalOperationId"] = originalOperationId,
             ["changedAttributes"] = changedAttributes
         };
+
+        // A serviced override SUCCEEDS, so it cannot ride errorDetail: that field is written as
+        // null on success and the record of who permitted it would be silently discarded.
+        if (!string.IsNullOrWhiteSpace(servicedNote))
+            extra[ProtectedPrincipalServicing.AuditKey] = servicedNote;
 
         foreach (var attr in changedAttributes)
         {

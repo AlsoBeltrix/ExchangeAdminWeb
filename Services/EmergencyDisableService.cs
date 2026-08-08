@@ -134,8 +134,10 @@ public class EmergencyDisableService
                 return new EmergencyDisableResult(false, blockedMsg, null, steps);
             }
 
-            // The step trail is this module's durable record of what happened, so a serviced
-            // override is a visible step rather than a silent OK.
+            // A serviced override is a visible step rather than a silent OK. The step trail is
+            // operator-facing and diagnostic, NOT the durable record - the note also goes to the
+            // audit event via LogAudit below, which is the store that answers "who permitted
+            // this?" later (pps-3: it was in the trail and missing from the audit).
             _operationTrace.Step("ProtectedPrincipalCheck", "Serviced", details: new Dictionary<string, object?> { ["matchedRules"] = protectionResult.MatchedRules });
             steps.Add(new DisableStepResult("ProtectedPrincipalCheck", "SERVICED", servicedNote));
         }
@@ -297,7 +299,7 @@ public class EmergencyDisableService
         var overallError = allMutationsSucceeded ? null : "One or more steps failed. Review step details and escalate for manual follow-up.";
 
         // 8. Audit the operation
-        LogAudit(target, performedBy, ip, ticket, overallSuccess, steps, overallError);
+        LogAudit(target, performedBy, ip, ticket, overallSuccess, steps, overallError, servicedNote);
 
         // 9. Send security team notification
         await SendSecurityNotificationAsync(target, performedBy, ip, ticket, overallSuccess, steps);
@@ -621,13 +623,21 @@ public class EmergencyDisableService
         string ticket,
         bool success,
         List<DisableStepResult> steps,
-        string? errorDetail)
+        string? errorDetail,
+        string? servicedNote)
     {
         var stepSummary = steps
             .Where(s => s.Step is "DisableAD" or "ResetPassword" or "RevokeEntraSessions" or "DisableEntra")
             .Select(s => $"{s.Step}={s.Status}")
             .ToArray();
 
+        // The operation trace already records a "Serviced" step, but the trace is diagnostic and
+        // the audit log is the durable record - different stores, different retention, different
+        // readers. An override present only in the trace cannot answer "who permitted this?" from
+        // the audit log, which is where that question gets asked (pps-3).
+        //
+        // It rides extra, never errorDetail: a serviced disable SUCCEEDS, and errorDetail is
+        // written as null on success.
         _audit.LogModuleAction(
             performedBy,
             ip,
@@ -636,7 +646,8 @@ public class EmergencyDisableService
             target.UserPrincipalName,
             success,
             ticket,
-            errorDetail ?? (success ? null : string.Join("; ", stepSummary)));
+            errorDetail ?? (success ? null : string.Join("; ", stepSummary)),
+            ProtectedPrincipalServicing.Extra(servicedNote));
     }
 
     private async Task SendSecurityNotificationAsync(

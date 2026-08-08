@@ -4,7 +4,7 @@
 the exact failure the shared helper's doc comment names as "the single most repeatable mistake in
 this work", and it recurred anyway in two places.
 
-**Status**: Verified
+**Status**: Fixed
 **Branch**: -- (default-branch mode)
 **Commit**: `6f7f2ac`
 
@@ -51,23 +51,47 @@ helper's own warning is one directory away.
 
 ## Approach
 
-Not yet implemented -- recorded first, per the one-finding-per-commit rule.
+(a) The note is bound to a local, refused on null, and passed into `LogUndoAudit`, which merges it
+into the `extra` dictionary it already builds.
 
-(a) Assign the note to a local, refuse on null, and pass it into the undo audit call's `extra`.
-(b) Pass Emergency Disable's existing serviced note into the `AuditService` event alongside the
-trace step, not instead of it.
+(b) Emergency Disable's note is threaded into `LogAudit` alongside the trace step, not instead of
+it. A comment claiming the step trail was "this module's durable record" was corrected in the same
+change -- it is diagnostic; the audit log is the durable record.
 
-Consider a follow-up guard: a source-level test asserting no call site uses `NoteFor(...) is null`
-as a bare condition. That is a lint-shaped rule and it catches precisely this recurrence.
+The follow-up guard was built rather than deferred: `NoWritePath_TestsTheServicedNoteAndThrowsItAway`
+scans every file under `Services/` and `Components/Pages/` for `NoteFor(...) is null` used as a
+bare condition. One narrow allowlisted exemption, and the exemption itself is bounded to a single
+occurrence so a regression in the same file still fails.
 
 ## Files changed
 
-None yet.
+- `Services/ADAttributeEditorUndoService.cs` -- note bound and carried to the audit; the preview
+  path's deliberate discard commented as the one legitimate case.
+- `Services/EmergencyDisableService.cs` -- note reaches `LogAudit` and rides `extra`; the
+  incorrect "durable record" comment corrected.
+- `ExchangeAdminWeb.Tests/AuditExtraChannelTests.cs` -- the call-site guard.
+- `ExchangeAdminWeb.Tests/EmergencyDisableServiceTests.cs` -- servicing test plus the
+  audit-threading guard; harness gained an opt-in servicer grant.
 
 ## Guard proof
 
-Pending. For (a), a test asserting the undo audit event carries the servicer key when a servicer
-undoes a protected target -- it must fail against the current code, which emits no such key.
+The call-site guard is the strong one, and it is behavioural about the source: restoring the
+discarding shape in the undo write path fails it with the precise message ("2 inline NoteFor
+null-tests; only the no-audit PREVIEW path may discard the note"). Revert confirmed applied before
+trusting the verdict, and confirmed removed after.
+
+Emergency Disable's audit threading is guarded source-level, and the reason is recorded in the test
+rather than left implicit: `LogAudit` sits past a Delinea credential fetch and two live backends,
+so no unit test can drive it. The accompanying behavioural test asserts what IS reachable -- that a
+granted servicer reaches `SERVICED` where an ordinary operator is `BLOCKED` -- and states plainly
+that the run stops before any audit is written. Reverting the threading fails 1.
+
+## Known gaps
+
+`DisableAsync` has early-return paths (blank ticket, protected-and-refused, credential failures)
+that return before `LogAudit` and so write no audit record at all. Pre-existing, unchanged by this
+fix, and out of scope for it -- but a refused attempt on a protected principal arguably deserves an
+audit row, and currently gets only an operation-trace step. Worth its own decision.
 
 ## Coder dispute (if any)
 

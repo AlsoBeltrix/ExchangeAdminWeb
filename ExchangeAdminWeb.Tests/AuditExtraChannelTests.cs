@@ -88,6 +88,79 @@ public class AuditExtraChannelTests
             "extra must merge after the computed fields");
     }
 
+    [Fact]
+    public void NoWritePath_TestsTheServicedNoteAndThrowsItAway()
+    {
+        // The other tests in this file guard the audit METHODS. This one guards the CALL SITES,
+        // which is where pps-3 happened: the note was computed, used only to decide the allow, and
+        // discarded - so a protected principal was modified with nothing in the audit naming who
+        // permitted it.
+        //
+        // The shape is `NoteFor(...) is null` used as a bare condition. NoteFor returns a nullable
+        // NOTE rather than a bool precisely so permission and record cannot be separated; testing
+        // it inline for null extracts the permission and drops the record. Binding it to a
+        // variable first is what makes the note available to the audit call.
+        //
+        // ONE legitimate exception, allowlisted below: a PREVIEW performs no write and emits no
+        // audit event, so there is no record for the note to belong to.
+        const string previewExemption = "ADAttributeEditorUndoService.cs";
+
+        var offenders = new List<string>();
+
+        foreach (var file in EnumerateSourceFiles())
+        {
+            var text = File.ReadAllText(file);
+            if (!text.Contains("ProtectedPrincipalServicing.NoteFor", StringComparison.Ordinal))
+                continue;
+
+            // NoteFor(...) reached by an `is null` test without first being assigned. Matches
+            // across newlines because the call is usually wrapped.
+            var inlineNullTests = Regex.Matches(
+                text,
+                @"ProtectedPrincipalServicing\.NoteFor\((?:[^()]|\([^()]*\))*\)\s*is null",
+                RegexOptions.Singleline);
+
+            if (inlineNullTests.Count == 0)
+                continue;
+
+            var name = Path.GetFileName(file);
+            if (string.Equals(name, previewExemption, StringComparison.OrdinalIgnoreCase))
+            {
+                // The exemption is narrow: one occurrence, in preview. A second would mean the
+                // write path regressed to the discarding shape.
+                Assert.True(inlineNullTests.Count == 1,
+                    $"{name} has {inlineNullTests.Count} inline NoteFor null-tests; only the "
+                    + "no-audit PREVIEW path may discard the note");
+                continue;
+            }
+
+            offenders.Add(name);
+        }
+
+        Assert.True(offenders.Count == 0,
+            "these files test the serviced note for null and discard it, so an allowed override "
+            + "leaves no audit record of who permitted it: " + string.Join(", ", offenders));
+    }
+
+    private static IEnumerable<string> EnumerateSourceFiles()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            var services = Path.Combine(dir.FullName, "Services");
+            var pages = Path.Combine(dir.FullName, "Components", "Pages");
+            if (Directory.Exists(services) && Directory.Exists(pages))
+            {
+                return Directory.EnumerateFiles(services, "*.cs", SearchOption.AllDirectories)
+                    .Concat(Directory.EnumerateFiles(pages, "*.razor", SearchOption.AllDirectories));
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not locate Services and Components/Pages from the test base directory.");
+    }
+
     private static IEnumerable<string> MethodsAcceptingExtra(string source)
     {
         // Reflection would only see the signature, not whether the body honours it, so the
