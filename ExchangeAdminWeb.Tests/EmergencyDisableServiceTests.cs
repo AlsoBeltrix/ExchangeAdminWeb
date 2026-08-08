@@ -107,8 +107,11 @@ public class EmergencyDisableServiceTests : IDisposable
         Assert.NotNull(module);
         Assert.False(module.EnabledByDefault);
         Assert.True(module.MainPermission.FailClosed);
-        // 1.1.0: protection resolves through Exchange (docs/ProtectedPrincipalGapFix-Plan.md GAP B).
-        Assert.Equal("1.1.0", module.Version);
+        // 1.2.0: an authorised servicer group may act on a protected principal here, with the
+        // override recorded in the audit event (not only the operation trace - see pps-3).
+        // 1.1.0 was protection resolving through Exchange (docs/ProtectedPrincipalGapFix-Plan.md
+        // GAP B).
+        Assert.Equal("1.2.0", module.Version);
         Assert.Contains(module.ConfigFields, f => f.Key == "DelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "NotifySecurityTeam");

@@ -141,7 +141,7 @@ public sealed class ModuleCatalog
             SortOrder = 100,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.4",
+            Version = "1.1.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
@@ -161,7 +161,7 @@ public sealed class ModuleCatalog
             SortOrder = 200,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.1.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "CalendarPermissions", FailClosed: true),
             GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
@@ -180,7 +180,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.4.0",
+            Version = "1.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
@@ -256,7 +256,7 @@ public sealed class ModuleCatalog
             SortOrder = 700,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.1.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "OutOfOffice", FailClosed: true)
         },
@@ -273,7 +273,7 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: unblock now gates the TARGET through the protected-principal check. The module
             // previously re-checked only the operator, so a protected principal could be unblocked.
-            Version = "1.2.0",
+            Version = "1.3.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "BlockedSenders", FailClosed: true),
             GranularPermissions = [new("Unblock", "BlockedSendersUnblock", FailClosed: true)]
@@ -289,7 +289,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.1.1",
+            Version = "2.2.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -307,7 +307,7 @@ public sealed class ModuleCatalog
             SortOrder = 155,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.3.0",
             MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
@@ -324,7 +324,7 @@ public sealed class ModuleCatalog
             SortOrder = 160,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new("Access", "Comms10k", FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
@@ -346,7 +346,7 @@ public sealed class ModuleCatalog
             SortOrder = 165,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.3.0",
             MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
@@ -366,7 +366,7 @@ public sealed class ModuleCatalog
             // 1.1.0: protection now resolves through Exchange. The AD-only lookup reported every
             // cloud-only user as "no AD object" and skipped the check, which for a Graph module is
             // the normal case - so protection was close to inert here.
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new("Access", "MfaReset", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
@@ -383,7 +383,7 @@ public sealed class ModuleCatalog
             SortOrder = 780,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new("Access", "AccountLockoutRemediation", FailClosed: true),
             GranularPermissions = [
                 new("Logoff", "AccountLockoutRemediationLogoff", FailClosed: true)
@@ -405,7 +405,7 @@ public sealed class ModuleCatalog
             SortOrder = 350,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.4.0",
+            Version = "2.5.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
             ConfigFields = [
@@ -453,7 +453,7 @@ public sealed class ModuleCatalog
             SortOrder = 740,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -535,7 +535,7 @@ public sealed class ModuleCatalog
             SortOrder = 450,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            Version = "1.1.0",
             MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
@@ -554,7 +554,7 @@ public sealed class ModuleCatalog
             SortOrder = 170,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.5",
+            Version = "1.4.0",
             MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
             GranularPermissions = [
                 new("Level1", "ADAttributeEditorLevel1", FailClosed: true),
