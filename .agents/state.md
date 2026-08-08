@@ -6,31 +6,35 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **HANDOFF 2026-08-07, as of `9108c2f`. Protected-principal servicing: all 15 modules coded and
-  green, then the codex review found 3 HIGH defects. NONE FIXED. Tree clean, 1567 passed / 0 failed
-  / 3 skipped, format clean. NOT DEPLOYED; no manual check run; 20 commits unpushed (policy: ask).**
-  **The code is complete; it is not correct yet. Resume at the three findings, not at new work.**
+- **Protected-principal servicing: COMPLETE 2026-08-07 at `80d2759`. All 15 modules, all 3 review
+  findings fixed, versions bumped. App `2.6.0 -> 2.7.0`. Tree clean, 1586 passed / 0 failed / 3
+  skipped, format clean. NOT DEPLOYED; NO MANUAL CHECK RUN - that is the whole of what remains.**
   Owner: *"all of them. every place where a principal is protected we need to allow a priv
   group to act on them anyway."*
-  **THE THREE FINDINGS - `.agents/review/findings/pps-{1,2,3}.md`, recorded in `9108c2f`, all
-  `[ ]` open in `.agents/review/index.md`.** All three are the same shape: the service was right
-  and the PAGE, or the call site, was wrong.
-  **pps-2 first** - it is the one that makes the capability unreachable, and it is my error rather
-  than a pre-existing gap. `Components/Pages/ADAttributeEditor.razor:313` sets `protectedBlocked`
-  and hides the edit UI with no servicer consultation, so the serviced save gate at
-  `ADAttributeEditorService.cs:533` can never be reached from the page. Undo preview gets no
-  principal while execute does, so preview refuses what execute would allow.
-  **pps-1**: Mailbox/Calendar bulk CSV calls the back-compat `ValidateTargetMailboxAsync` overload
-  (`Services/MailboxPermissionService.cs:222`) which by construction never services - a servicer is
-  allowed one row at a time and refused for the same mailbox in a CSV. Separately
-  `MailboxPermissions.razor:540` `ExecuteOnPrem` re-checks authorization but NOT protection after
-  the confirmation dialog, so the write's protection verdict is arbitrarily stale.
-  **pps-3**: `Services/ADAttributeEditorUndoService.cs:180` evaluates `NoteFor(...) is null` inside
-  a boolean and discards the note on the ALLOW path - the write proceeds with no record of who
-  permitted it. Emergency Disable keeps its note in the operation trace and out of the
-  `AuditService` event. **The helper returns a nullable note precisely so permission and record
-  cannot be separated; a bare null test defeats that by design.** Worth a source-level guard
-  forbidding that call shape.
+  **DEPLOY NOTE, load-bearing: dev and prod both run `2.6.0`, which is the build where this work
+  was coded but NOT yet correct** - it carries all three findings below. `2.7.0` is the first
+  version where the capability works end to end. Do not confuse them during an incident.
+  **THE THREE FINDINGS, all fixed** - `.agents/review/findings/pps-{1,2,3}.md`, all `[x]` in
+  `.agents/review/index.md`. All three were the same shape, which is now this repo's signature
+  failure: **the service was right and the PAGE, or the call site, was wrong.**
+  **pps-2 (`efd25ad`)**: `ADAttributeEditor.razor` blocked at lookup with no servicer consultation
+  and hid the edit UI, so the serviced save gate was unreachable; undo preview took no principal
+  while execute did. **This was the Emergency Disable two-gate shape I recorded during the work and
+  then applied only to the six remaining SERVICES, never to the pages of the nine already done.**
+  The rule it earns: *a page gate that hides the write UI is part of the authorization decision,
+  not a display detail.* A serviced operator now also sees a banner - an override they cannot see
+  is one they cannot decline.
+  **pps-3 (`a345342`)**: the undo service evaluated `NoteFor(...) is null` inside a boolean and
+  discarded the note on the ALLOW path; Emergency Disable kept its note in the operation trace and
+  out of the audit event. **The helper returns a nullable note precisely so permission and record
+  cannot be separated; a bare null test defeats that by design.** A guard now forbids that call
+  shape across `Services/` and `Components/Pages/`, with one bounded exemption for the no-audit
+  preview path.
+  **pps-1 (`57ab7a5`)**: bulk CSV called the back-compat overload that can never service, so a
+  servicer was allowed one row at a time and refused for the same mailbox in a CSV; and
+  `ExecuteOnPrem` re-checked authorization but not protection after its confirmation dialog.
+  **The reviewer named only Mailbox for the on-prem half - Calendar had the identical defect and
+  was found by reading the pair rather than assuming they had diverged.**
   **Two caveats on the review, both load-bearing for whoever reads it next.** Its auth token was
   revoked mid-run (`refresh_token_invalidated`), so it **never produced a final consolidated
   report** - the findings were recovered from the reasoning trace in `.git/codex-review-out.txt`
@@ -95,20 +99,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-1. **Fix pps-2, then pps-3, then pps-1 - one commit per finding**, reading the finding doc first;
-   each carries its evidence, its predicted failure, and a proposed approach. Every fix needs a
-   guard that FAILS against the current code, and pps-1/pps-2 are page defects, so those guards are
-   source-level tripwires - no bUnit harness exists, no test can render a page. Update the finding
-   doc and the index row to `[x]` in the same commit as the fix.
-2. Bump versions. **Not yet done for any of this work** - the shared helper and the audit `extra`
-   channel are app-wide, so the base app version is owed a bump, and every one of the 15 modules
-   whose gate changed owes its own (Constitution: the two rules fire independently).
-3. Then deploy and run the manual checks. The load-bearing one: **a member of a servicer group
-   actually acting on a protected principal in a module, and the audit record naming the group that
-   permitted it.** Nothing automated proves the capability does anything end to end.
+**Deploy `2.7.0`, then run the manual checks. Nothing else is queued.**
 
-**Do not treat "all 15 modules done" as done.** Three of the fifteen are advertised in the admin
-UI as offering a grant that, on at least one path each, silently does nothing or leaves no record.
+1. **Owner: create the servicer group and configure it** per module in Module Config. The code is
+   complete without it, but the capability grants nothing until a group is named - and that is also
+   the only way to run check 2 below.
+2. Deploy `2.7.0` to dev (`.\tools\deploy-pipeline.ps1 -Dev`, ELEVATED).
+3. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
+   the action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
+   proves the capability works end to end - every guard here is either a source-level tripwire or a
+   decision tested in isolation. Worth doing on a module with a page gate (AD Attribute Editor) and
+   a batch module (Migration or Licensing), since those took different shapes.
+4. Second check, the inverse and just as important: **an operator NOT in the group still gets
+   refused** on the same target, and their refusal is audited.
+
+**A caution that survived this whole work stream and still applies:** a green suite in this repo
+says nothing about what an operator sees. There is no bUnit harness, so no test renders a page -
+and every one of the three review findings lived in a page or a call site, in code whose commit
+message claimed it worked.
 
 The owner decision still outstanding: **which group gets the servicer grant, and who is in it.**
 The owner said they would create it. Not a build input - the code is complete without it - but the
