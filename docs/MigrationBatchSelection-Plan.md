@@ -60,8 +60,19 @@ bar -- the reported off-screen-prompt defect, still live one level down. The sli
 only the bulk cases as needing the top bar, and the narrower note silently won over the ruling.
 **Guards, mutation probes, and a green suite all passed while that half was broken, because none of
 them reads the plan.**
-App version at draft: `2.7.0` (unchanged -- module-scoped change).
-Module: `Migration` (`1.5.0` -> `1.6.0`).
+Module: `Migration` `1.5.0` -> `1.6.0` (round 1) -> **`1.7.0` (round 2)**.
+App version: `2.7.0` at draft; now `2.8.0`, bumped for the favicon replacement, which is unrelated
+to this plan.
+
+**A version error worth recording, caught by the owner from the deployed page.** Round 1 set
+`1.6.0`, then THREE further commits changed Migration behaviour -- `1ef7fae` (mbs-1), `2ff7d7f`
+(the whole round-2 action model), `52eb7e9` (deselect + queued wording) -- and none bumped the
+module again. Dev therefore ran the round-2 code while the catalog still read `1.6.0`, the same
+number as the build tested BEFORE any of it existed. **Two different builds sharing one version is
+worse than a wrong number, because during an incident nothing distinguishes them** -- the identical
+failure recorded in `.agents/state.md` for `2.5.1`. The base app bump to `2.8.0` was made in the
+same window and is what made it hard to see: the sidebar was correct, so the module version looked
+correct too. The two rules fire independently and each needs checking on its own.
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `.agents/repo-guidance.md`, `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 

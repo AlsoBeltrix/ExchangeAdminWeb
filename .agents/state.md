@@ -7,8 +7,16 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Now
 
 - **Migration Status batch selection: ROUND 2 LANDED 2026-08-10 after the owner tested round 1 on
-  dev. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT DEPLOYED; round-2 checks UNRUN.**
-  `docs/MigrationBatchSelection-Plan.md`, decisions D1-D7.
+  dev. Migration `1.5.0` -> `1.6.0` (round 1) -> `1.7.0` (round 2). ON DEV as app `2.8.0`; PROD is
+  still `2.7.0`. Round-2 checks UNRUN.** `docs/MigrationBatchSelection-Plan.md`, decisions D1-D8.
+  **A VERSION ERROR the owner caught from the deployed page, and it is the recurring one.** Round 1
+  set Migration `1.6.0`; three later commits changed Migration behaviour (`1ef7fae`, `2ff7d7f`,
+  `52eb7e9`) and none bumped it again, so dev ran the round-2 code under the same module version as
+  the build tested before any of it existed. **Two builds sharing one version is worse than a wrong
+  number** -- the `2.5.1` failure repeating. What made it hard to see: the base app version WAS
+  correctly bumped to `2.8.0` in the same window for the favicon, so the sidebar read right and the
+  module version looked right by association. **The two versioning rules fire independently; a
+  correct app bump is not evidence about the module.** Fixed to `1.7.0`.
   **Round 1 passed 4 of its manual checks and failed on the ACTION MODEL.** Ticking two batches and
   clicking Resume returned *"No batches to act on. Skipped 2: ... (Completed), ...
   (CompletedWithErrors)."*
