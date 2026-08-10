@@ -431,28 +431,36 @@
                     </div>
                 }
 
-                @if (pendingActionLabel != null)
+                @* The top-of-table confirm bar, for pending actions that name no single row: Clear
+                   Completed and the two bulk selection actions, whose target is "N batch(es)". A
+                   per-ROW action renders this same fragment beneath its own row instead - see
+                   PendingActionNamesALoadedBatch. *@
+                @if (pendingActionLabel != null && !PendingActionNamesALoadedBatch)
                 {
-                    <div class="alert alert-warning d-flex align-items-center gap-2 mb-3">
-                        <strong>@pendingActionLabel</strong> <span class="text-muted">@pendingActionTarget</span>
-                        <div class="input-group input-group-sm" style="width: 220px;">
-                            <input type="text" class="form-control" placeholder="Ticket # (required)"
-                                   @bind="pendingActionTicket" @bind:event="oninput"
-                                   @onkeydown="HandleConfirmKeyDown" />
-                        </div>
-                        <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
-                                disabled="@(string.IsNullOrWhiteSpace(pendingActionTicket) || actionInProgress != null)">
-                            @if (actionInProgress != null)
-                            {
-                                <span class="spinner-border spinner-border-sm"></span>
-                            }
-                            else
-                            {
-                                <span>Confirm</span>
-                            }
+                    @PendingActionConfirm
+                }
+
+                @* Selection toolbar. Sits immediately above the checkboxes it acts on, so the
+                   proximity problem the per-row confirm bar has does not apply here. The buttons
+                   are enabled whenever anything is ticked and never conditioned on eligibility:
+                   under owner ruling D2(a) a mixed or wholly-ineligible selection has a defined,
+                   useful outcome, and disabling would be the D2(b) that was rejected. *@
+                @if (canManage && selectedBatches.Count > 0)
+                {
+                    <div class="alert alert-secondary d-flex align-items-center gap-2 mb-3 py-2">
+                        <strong>@selectedBatches.Count selected</strong>
+                        <button class="btn btn-sm btn-outline-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                @onclick="StageDeleteSelected">
+                            Delete selected
                         </button>
-                        <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPendingAction"
-                                disabled="@(actionInProgress != null)">Cancel</button>
+                        <button class="btn btn-sm btn-outline-success" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                @onclick="StageResumeSelected">
+                            Resume selected
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@(actionInProgress != null)"
+                                @onclick="ClearBatchSelection">
+                            Clear selection
+                        </button>
                     </div>
                 }
 
@@ -486,6 +494,13 @@
                         <table class="table table-hover">
                             <thead>
                                 <tr>
+                                    @if (canManage)
+                                    {
+                                        <th style="width: 2.5rem;">
+                                            <input type="checkbox" class="form-check-input" title="Select all loaded batches"
+                                                   checked="@AllBatchesSelected" @onchange="ToggleSelectAllBatches" />
+                                        </th>
+                                    }
                                     <th role="button" @onclick='() => ToggleBatchSort("Name")'>Batch Name @SortIndicator("Name")</th>
                                     <th role="button" @onclick='() => ToggleBatchSort("Status")'>Status @SortIndicator("Status")</th>
                                     <th role="button" @onclick='() => ToggleBatchSort("Direction")'>Direction @SortIndicator("Direction")</th>
@@ -499,7 +514,17 @@
                             <tbody>
                                 @foreach (var batch in GetSortedBatches())
                                 {
+                                    @* Captured per iteration: the lambda below must close over THIS row's name. *@
+                                    var batchName = batch.BatchName;
                                     <tr class="@(expandedBatch == batch.BatchName && highlightedUser == null ? "table-info" : "")">
+                                        @if (canManage)
+                                        {
+                                            <td>
+                                                <input type="checkbox" class="form-check-input" title="Select for a bulk action"
+                                                       checked="@IsBatchSelected(batchName)"
+                                                       @onchange="e => ToggleBatchSelected(batchName, e.Value is bool v && v)" />
+                                            </td>
+                                        }
                                         <td>
                                             <strong>@batch.BatchName</strong>
                                         </td>
@@ -539,14 +564,17 @@
                                                     Stop
                                                 </button>
                                             }
-                                            @if (canManage && batch.Status.Equals("Stopped", StringComparison.OrdinalIgnoreCase))
+                                            @* Resume and Delete read the planner's predicates, the same definition the bulk
+                                               actions use. Two copies of "which statuses may be deleted" is how a row button
+                                               and a bulk action come to disagree about the same batch. *@
+                                            @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status))
                                             {
                                                 <button class="btn btn-sm btn-outline-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                         @onclick="() => ResumeBatch(batch.BatchName)">
                                                     Resume
                                                 </button>
                                             }
-                                            @if (canManage && (batch.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Stopped", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Corrupted", StringComparison.OrdinalIgnoreCase)))
+                                            @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status))
                                             {
                                                 <button class="btn btn-sm btn-outline-danger me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
                                                         @onclick="() => DeleteBatch(batch.BatchName)">
@@ -584,10 +612,24 @@
                                             }
                                         </td>
                                     </tr>
+                                    @* The ticket field for THIS row's action, rendered directly beneath it.
+                                       It used to live above the table: with 50+ batches in flight, clicking
+                                       Resume on a row near the bottom put the input off-screen while every
+                                       button in the row went disabled, so the only visible feedback was that
+                                       the buttons had stopped working. *@
+                                    @if (pendingActionTarget == batchName && pendingActionLabel != null)
+                                    {
+                                        <tr class="table-warning">
+                                            <td colspan="@(canManage ? 9 : 8)" class="py-2">
+                                                @PendingActionConfirm
+                                            </td>
+                                        </tr>
+                                    }
                                     @if (expandedBatch == batch.BatchName && batchUsers != null)
                                     {
                                         <tr>
-                                            <td colspan="8" class="p-0">
+                                            @* Follows the checkbox column: 8 base columns, 9 when the selection column renders. *@
+                                            <td colspan="@(canManage ? 9 : 8)" class="p-0">
                                                 <div class="bg-light p-3 border-top">
                                                     <div class="row mb-3">
                                                         <div class="col-md-12">
@@ -731,6 +773,32 @@
 </div>
 
 @code {
+    // The ticket-entry confirmation, defined once and rendered in one of two places: beneath the
+    // row whose button was clicked, or above the table for an action that names no single row. Two
+    // copies would drift, and this is the control the operator has to find.
+    private RenderFragment PendingActionConfirm =>
+    @<div class="d-flex align-items-center gap-2 flex-wrap">
+        <strong>@pendingActionLabel</strong> <span class="text-muted">@pendingActionTarget</span>
+        <div class="input-group input-group-sm" style="width: 220px;">
+            <input type="text" class="form-control" placeholder="Ticket # (required)"
+                   @bind="pendingActionTicket" @bind:event="oninput"
+                   @onkeydown="HandleConfirmKeyDown" />
+        </div>
+        <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
+                disabled="@(string.IsNullOrWhiteSpace(pendingActionTicket) || actionInProgress != null)">
+            @if (actionInProgress != null)
+            {
+                <span class="spinner-border spinner-border-sm"></span>
+            }
+            else
+            {
+                <span>Confirm</span>
+            }
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" @onclick="CancelPendingAction"
+                disabled="@(actionInProgress != null)">Cancel</button>
+    </div>;
+
     private int tabIndex = 0;
     private bool isLoading = false;
     private bool isCreating = false;
@@ -782,6 +850,11 @@
     private string? pendingActionLabel;
     private string? pendingActionTarget;
     private Func<string, Task>? pendingActionCallback;
+
+    // Bulk selection on the batches table. Keyed on BatchName, NEVER row index: the table
+    // re-sorts on every header click and reloads after every action, so an index-keyed
+    // selection silently retargets to whatever now occupies that position.
+    private readonly HashSet<string> selectedBatches = new(StringComparer.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -1090,9 +1163,89 @@
         }
         finally
         {
+            PruneSelection();
             isLoadingStatus = false;
             batchesLoaded = true;
         }
+    }
+
+    // A batch that is no longer listed must not stay ticked: acting on a name Exchange no longer
+    // knows produces a failure that reads as a bug in this app. Runs on every reload, including
+    // the failed one - a load that threw leaves migrationBatches as whatever it last held.
+    private void PruneSelection()
+    {
+        var kept = MigrationBatchActionPlanner.PruneSelection(migrationBatches, selectedBatches);
+        selectedBatches.Clear();
+        foreach (var name in kept)
+            selectedBatches.Add(name);
+    }
+
+    // True when the pending action targets one loaded batch, so its confirm bar belongs under that
+    // row. False for Clear Completed and the bulk selection actions, whose target is a count, and
+    // false when the named batch is no longer listed - the bar must never become unreachable
+    // because the row it was attached to disappeared.
+    private bool PendingActionNamesALoadedBatch =>
+        pendingActionTarget != null
+        && migrationBatches?.Any(b => b.BatchName == pendingActionTarget) == true;
+
+    private bool IsBatchSelected(string batchName) => selectedBatches.Contains(batchName);
+
+    private void ToggleBatchSelected(string batchName, bool selected)
+    {
+        if (selected)
+            selectedBatches.Add(batchName);
+        else
+            selectedBatches.Remove(batchName);
+
+        batchActionResult = null;
+    }
+
+    private bool AllBatchesSelected =>
+        migrationBatches is { Count: > 0 }
+        && migrationBatches.All(b => selectedBatches.Contains(b.BatchName));
+
+    private void ToggleSelectAllBatches(ChangeEventArgs e)
+    {
+        selectedBatches.Clear();
+
+        if (e.Value is bool check && check && migrationBatches != null)
+        {
+            // Select-all means every LOADED batch. The search box highlights and jumps; it does
+            // not filter the table, so there are no hidden rows to sweep up unseen.
+            foreach (var batch in migrationBatches)
+                selectedBatches.Add(batch.BatchName);
+        }
+
+        batchActionResult = null;
+    }
+
+    private void ClearBatchSelection()
+    {
+        selectedBatches.Clear();
+        batchActionResult = null;
+    }
+
+    private void StageDeleteSelected() => StageSelectionAction(
+        MigrationBatchAction.Delete, "Delete Selected", DeleteSelectedBatches);
+
+    private void StageResumeSelected() => StageSelectionAction(
+        MigrationBatchAction.Resume, "Resume Selected", ResumeSelectedBatches);
+
+    // The plan is computed at STAGING time so the confirm bar can say how many batches the ticket
+    // is about to cover, and re-computed at execution time inside the callback - the operator can
+    // sit at the ticket field indefinitely, and the table reloads underneath them.
+    private void StageSelectionAction(
+        MigrationBatchAction action,
+        string label,
+        Func<MigrationBatchActionPlan, string, Task> execute)
+    {
+        var staged = MigrationBatchActionPlanner.Plan(migrationBatches, selectedBatches, action);
+
+        StageBatchAction(label, $"{staged.Eligible.Count} batch(es)", ticket =>
+        {
+            var current = MigrationBatchActionPlanner.Plan(migrationBatches, selectedBatches, action);
+            return execute(current, ticket);
+        });
     }
 
     private async Task ToggleBatchDetails(string batchName)
@@ -1304,11 +1457,76 @@
 
     private void StageClearCompleted()
     {
-        var count = migrationBatches?.Count(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0) ?? 0;
-        StageBatchAction("Clear Completed", $"{count} batch(es)", ClearCompletedBatches);
+        var names = CompletedOrEmptyBatchNames();
+        StageBatchAction("Clear Completed", $"{names.Count} batch(es)", ticket => ClearCompletedBatches(names, ticket));
     }
 
-    private async Task ClearCompletedBatches(string ticket)
+    private List<string> CompletedOrEmptyBatchNames() =>
+        migrationBatches?
+            .Where(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0)
+            .Select(b => b.BatchName)
+            .ToList()
+        ?? new List<string>();
+
+    private Task ClearCompletedBatches(IReadOnlyList<string> batchNames, string ticket) =>
+        ExecuteBulkBatchAction(
+            batchNames,
+            skipped: Array.Empty<MigrationBatchSkip>(),
+            action: name => MigrationSvc.RemoveMigrationBatchAsync(name),
+            auditAction: "RemoveMigrationBatch",
+            notificationAction: "Migration_ClearCompleted",
+            verb: "Removed",
+            ticket: ticket);
+
+    private Task DeleteSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
+        ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.RemoveMigrationBatchAsync(name),
+            "RemoveMigrationBatch",
+            "Migration_DeleteSelected",
+            "Removed",
+            ticket);
+
+    private Task ResumeSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
+        ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.StartMigrationBatchAsync(name),
+            "StartMigrationBatch",
+            "Migration_ResumeSelected",
+            "Resumed",
+            ticket);
+
+    /// <summary>
+    /// Runs one action over many batches, aggregating per-batch outcomes.
+    /// </summary>
+    /// <remarks>
+    /// The single bulk executor: Clear Completed and both selection actions route through here, so
+    /// the aggregation rules exist once. Extracted from ClearCompletedBatches, which already had
+    /// them right.
+    ///
+    /// The rules, each load-bearing:
+    /// - Authorization is re-checked here, once, and a denial is audited. Hiding the checkbox
+    ///   column is not a security control.
+    /// - ONE audit event per batch, inside the loop. A run-level event cannot answer which batch
+    ///   was removed, which is the question the audit log exists to answer.
+    /// - Audit-write failures are WARNINGS, never operation failures: an audit failure must not
+    ///   make an already-completed removal look failed.
+    /// - Per-item failures are aggregated; a loop over N items never reports blanket success.
+    /// - Skipped batches (owner ruling D2(a)) are reported but are NOT failures and are NOT
+    ///   audited - no write was attempted, so there is no security event to record.
+    /// - ONE summary admin notification per run. Fifty emails for one operator action is a
+    ///   self-inflicted denial of the mailbox.
+    /// </remarks>
+    private async Task ExecuteBulkBatchAction(
+        IReadOnlyList<string> batchNames,
+        IReadOnlyList<MigrationBatchSkip> skipped,
+        Func<string, Task<PermissionResult>> action,
+        string auditAction,
+        string notificationAction,
+        string verb,
+        string ticket)
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
         if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
@@ -1316,21 +1534,35 @@
             batchActionResult = PermissionResult.Fail("Authorization denied.");
             try
             {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch_Denied", "ClearCompleted", false, ticket, errorDetail: "MigrationManage authorization denied");
+                Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Failed to write audit for RemoveMigrationBatch denial");
+                Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
             }
             return;
         }
 
         if (migrationBatches == null) return;
 
+        var skippedSuffix = MigrationBatchActionPlanner.DescribeSkipped(skipped);
+
+        // Nothing eligible is "nothing to do", not an error (D2(a)). Report the skips and stop
+        // without touching Exchange, writing an audit event, or notifying anyone.
+        if (batchNames.Count == 0)
+        {
+            batchActionResult = new PermissionResult
+            {
+                Success = true,
+                Message = $"No batches to act on.{skippedSuffix}"
+            };
+            return;
+        }
+
         actionInProgress = "clearing";
         isLoadingStatus = true;
         batchActionResult = null;
-        var removed = 0;
+        var succeeded = 0;
         var errors = new List<string>();
         // Audit-write failures are warnings, never operation failures: an audit
         // failure must not make an already-completed removal look failed.
@@ -1338,47 +1570,43 @@
 
         try
         {
-            var toRemove = migrationBatches
-                .Where(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0)
-                .ToList();
-
-            foreach (var batch in toRemove)
+            foreach (var batchName in batchNames)
             {
-                var result = await MigrationSvc.RemoveMigrationBatchAsync(batch.BatchName);
+                var result = await action(batchName);
                 try
                 {
-                    Audit.LogMigrationAction(currentUser, clientIpAddress, "RemoveMigrationBatch", batch.BatchName,
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, auditAction, batchName,
                         result.Success, ticket, errorDetail: result.Success ? null : result.Message);
                 }
                 catch (Exception ex)
                 {
-                    auditWarnings.Add($"{batch.BatchName}: audit logging failed: {ex.Message}");
+                    auditWarnings.Add($"{batchName}: audit logging failed: {ex.Message}");
                 }
 
                 if (result.Success)
-                    removed++;
+                    succeeded++;
                 else
-                    errors.Add($"{batch.BatchName}: {result.Message}");
+                    errors.Add($"{batchName}: {result.Message}");
             }
 
             var warningSuffix = auditWarnings.Count > 0
                 ? $" (warning - {string.Join("; ", auditWarnings)})"
                 : "";
             if (errors.Count == 0)
-                batchActionResult = new PermissionResult { Success = true, Message = $"Removed {removed} completed/empty batch(es).{warningSuffix}" };
+                batchActionResult = new PermissionResult { Success = true, Message = $"{verb} {succeeded} batch(es).{skippedSuffix}{warningSuffix}" };
             else
-                batchActionResult = PermissionResult.Fail($"Removed {removed}, failed {errors.Count}: {string.Join("; ", errors)}{warningSuffix}");
+                batchActionResult = PermissionResult.Fail($"{verb} {succeeded}, failed {errors.Count}: {string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
 
             try
             {
                 await Email.SendAdminNotificationAsync(
-                    currentUser, clientIpAddress, "Migration_ClearCompleted",
-                    $"{removed} batch(es)", "N/A", "Migration",
+                    currentUser, clientIpAddress, notificationAction,
+                    $"{succeeded} batch(es)", "N/A", "Migration",
                     errors.Count == 0, ticket, errors.Any() ? string.Join("; ", errors) : null);
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Failed to send admin notification for Migration_ClearCompleted");
+                Logger.LogWarning(ex, "Failed to send admin notification for {Action}", notificationAction);
             }
 
             var savedResult = batchActionResult;
