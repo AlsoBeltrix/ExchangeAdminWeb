@@ -6,8 +6,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **IN FLIGHT: Migration Status batch selection + inline ticket entry. Plan APPROVED (both
-  decisions ruled), slice 1 of 4 landed.** `docs/MigrationBatchSelection-Plan.md`.
+- **Migration Status batch selection + inline ticket entry: CODE COMPLETE 2026-08-10, all 4 slices
+  landed. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT DEPLOYED; 8 manual checks UNRUN.**
+  `docs/MigrationBatchSelection-Plan.md` Status: Implemented.
   Owner report 2026-08-10: *"the exchange migration status page needs checkboxes on each row to
   allow batch clear/delete and resume. the ticket number entry field for individual items needs to
   be closer to the actual button people hit ... because we routinely have ~50+ in-flight and the
@@ -23,28 +24,50 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   skip is not a failure, skips are not audited (no write attempted), the bulk buttons stay enabled
   whatever the selection, and skipped rows stay ticked. D2(b), disabling the button on a mixed
   selection, was rejected as a return to acting one row at a time.
-  **Slice 1 DONE (`Services/MigrationBatchActionPlanner.cs`, 36 tests):** pure partition of a
-  selection into eligible/skipped, selection pruning across a reload, and the SINGLE definition of
-  which statuses each action permits - the per-row buttons will be re-pointed at it in slice 2,
-  because two copies of "which statuses may be deleted" is how a bulk action and a row button come
-  to disagree about the same batch. Keyed on `BatchName`, never row index: the table re-sorts on
-  every header click, so an index-keyed selection silently retargets.
-  **A mutation probe found a real hole in my own tests and it is the reusable lesson here.**
-  Disabling the membership check in `PruneSelection` entirely left all 34 tests green, because every
-  prune test happened to select every loaded row. That mutant ADDS unticked rows to the selection on
-  the next reload, and the following Delete removes batches the operator never chose. Two tests
-  added for the direction that matters (`NeverAddsABatchThatWasNotSelected`,
-  `EmptySelectionStaysEmpty`); the mutant now fails. **A test that only checks nothing was wrongly
-  REMOVED from a set says nothing about what was wrongly ADDED to it.**
-  **Second trap worth keeping: `Copy-Item` restoring a probe backup carries the BACKUP's timestamp,
-  so MSBuild judged the DLL up to date and kept testing the mutant** - three tests "failed" against
-  correct restored source. Verifying the restore by reading the file was not enough; the build has
-  its own idea of current. Touch the file after any timestamp-preserving restore.
-  **NEXT: slice 2** - checkbox column, select-all, selection toolbar, and
-  `ExecuteBulkBatchAction` EXTRACTED from the existing `ClearCompletedBatches` (which already gets
-  per-item aggregation and audit-failure-as-warning right) rather than written a second time.
-  Then slice 3 (inline confirm under the acting row) and slice 4 (Migration `1.5.0` -> `1.6.0`,
-  no base app bump - nothing shared changes).
+  **Slice 1 (`Services/MigrationBatchActionPlanner.cs`, 36 tests):** pure partition of a selection
+  into eligible/skipped, selection pruning across a reload, and the SINGLE definition of which
+  statuses each action permits - the per-row Resume/Delete buttons now read it too, because two
+  copies of "which statuses may be deleted" is how a bulk action and a row button come to disagree
+  about the same batch. Keyed on `BatchName`, never row index: the table re-sorts on every header
+  click, so an index-keyed selection silently retargets to whatever now occupies that position.
+  **Slice 2 (page):** checkbox column, select-all over loaded batches, selection toolbar, and
+  `ExecuteBulkBatchAction` EXTRACTED from `ClearCompletedBatches` rather than written a second time
+  - that code already had the subtle parts right (one audit event per batch inside the loop;
+  audit-write failures as WARNINGS so an audit failure cannot make a completed removal look failed;
+  one summary notification per run, not fifty). Clear Completed now routes through it, and a guard
+  asserts it still does: if it forks again there are two sets of aggregation rules.
+  **Slice 3:** the ticket confirm bar moved from above the table to directly beneath the acting
+  row, as one `RenderFragment` rendered in two places. The top-of-table position survives for
+  actions naming no single row (Clear Completed, both bulk actions) and for a row that has since
+  disappeared - otherwise the bar becomes unreachable.
+  **Slice 4:** Migration `1.5.0` -> `1.6.0`, README, this file.
+  **Verification: 1642+ passed, 0 failed, build/format/`git diff --check`/ASCII clean. TEN
+  mutations, each confirmed on disk before trusting the verdict and confirmed gone after** -
+  checkbox removed, audit hoisted out of the loop, per-row Delete forking its own status chain,
+  Clear Completed forking its own loop, a stale plan reused at confirm time, pruning dropped from
+  the reload, the inline confirm reverted, the top-of-table fallback deleted. All caught.
+  **Two of my own guards were wrong and only the probe found them - this is the reusable part.**
+  (1) Disabling the membership check in `PruneSelection` left all 34 slice-1 tests GREEN, because
+  every prune test happened to select every loaded row. That mutant ADDS unticked rows to the
+  selection on the next reload, and the following Delete removes batches the operator never chose.
+  **A test that only checks nothing was wrongly REMOVED from a set says nothing about what was
+  wrongly ADDED to it.**
+  (2) `GetBatchRowMarkup` sliced the row markup up to the first
+  `@if (expandedBatch == batch.BatchName && batchUsers != null)` - text that also appears earlier
+  inside the Details button - so the slice stopped short of the markup it covered and reported a
+  real change as missing. Now brace-balanced. **A marker that occurs more than once is not a
+  boundary.**
+  **Environmental trap worth keeping: `Copy-Item` restoring a probe backup carries the BACKUP's
+  timestamp, so MSBuild judged the DLL up to date and kept testing the mutant** - three tests
+  "failed" against correct restored source. Reading the file back to verify the restore was not
+  enough; the build has its own idea of current. Touch the file after any timestamp-preserving
+  restore.
+  **NEXT: deploy and run the plan's 8 manual checks.** Load-bearing: **check 4** - sort the table
+  by a different column while rows are ticked, then act; the batches acted on must be the ones
+  ticked, not the ones now in those positions. That is the defect name-keying exists to prevent and
+  it is invisible to every test. And **check 5** - with 50+ batches loaded, click Resume on a row
+  near the bottom and confirm the ticket field appears beneath it without scrolling, which is the
+  reported complaint and the only thing that proves it fixed.
 
 - **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
   as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586
@@ -138,8 +161,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-**Slice 2 of `docs/MigrationBatchSelection-Plan.md`** - see `## Now`. Everything below is the
-protected-principal stream, which is code-complete and deployed.
+**Deploy and run the 8 manual checks in `docs/MigrationBatchSelection-Plan.md`** - see `## Now`.
+Everything below is the protected-principal stream, which is code-complete and deployed.
 
 **`2.7.0` is deployed to both. Only the servicer group and the manual checks remain.**
 

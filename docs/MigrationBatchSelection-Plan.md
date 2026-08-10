@@ -1,7 +1,27 @@
 # Migration Status: batch selection and ticket-entry proximity -- Plan
 
-Status: **Approved 2026-08-10 -- both decisions ruled, implementation may proceed.** D1 ruled by
-the owner 2026-08-10 ("outer"); D2 ruled 2026-08-10 ("a").
+Status: **Implemented 2026-08-10. NOT DEPLOYED, and the 8 manual checks below have NOT been run --
+no test in this repo can render this page.** D1 ruled by the owner 2026-08-10 ("outer"); D2 ruled
+2026-08-10 ("a").
+
+Two corrections found while implementing, both by mutation probe rather than by the suite:
+
+1. **A prune test that only checked what was removed.** Disabling the membership check in
+   `PruneSelection` entirely left all 34 slice-1 tests green, because every prune test happened to
+   select every loaded row. That mutant ADDS unticked rows to the selection on the next reload, and
+   the following Delete removes batches the operator never chose. Two tests added for that
+   direction. *A test that only checks nothing was wrongly REMOVED from a set says nothing about
+   what was wrongly ADDED to it.*
+2. **A guard whose slice boundary was not a boundary.** `GetBatchRowMarkup` ended the row slice at
+   the first `@if (expandedBatch == batch.BatchName && batchUsers != null)` -- text that also
+   appears earlier, inside the Details button -- so the slice stopped short of the markup it was
+   meant to cover and reported a real change as missing. Now brace-balanced. *A marker that occurs
+   more than once is not a boundary.*
+
+A third, environmental: `Copy-Item` restoring a probe backup carries the BACKUP's timestamp, so
+MSBuild judged the DLL up to date and kept testing the mutant against correct restored source.
+Verifying the restore by reading the file was not enough. Touch the file after any
+timestamp-preserving restore.
 App version at draft: `2.7.0` (unchanged -- module-scoped change).
 Module: `Migration` (`1.5.0` -> `1.6.0`).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,

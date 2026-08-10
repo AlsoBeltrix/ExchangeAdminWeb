@@ -25,6 +25,8 @@ Check migration eligibility and create move batches between Exchange Online and 
 - Checks on-prem mailbox and archive size before cloud migrations
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
+- **Migration Status supports multi-select.** Tick rows to Delete or Resume several batches at once; one ticket covers the run and each batch is audited individually. A selection that mixes statuses is not refused: the eligible batches are acted on and every skipped batch is named with the status that disqualified it. `Clear Completed` remains the all-or-nothing sweep
+- The ticket field for a single-batch action appears directly beneath that batch's row, not at the top of the table
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
 ### Message Analysis (`/message-analysis`)
