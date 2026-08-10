@@ -75,6 +75,9 @@ _not_for_github/
 *.png
 !docs/images/*.png
 !docs/images/*.PNG
+# App icons are shipped assets, not screenshots. wwwroot/favicon.png predates this rule and is
+# tracked; apple-touch-icon.png is its 180px sibling and must ship the same way.
+!wwwroot/*.png
 
 docs/ArchitectureDesignReview*
 docs/CodeReview-*.md

@@ -1,4 +1,4 @@
-﻿@using ExchangeAdminWeb.Services
+@using ExchangeAdminWeb.Services
 @inject IConfiguration Configuration
 <!DOCTYPE html>
 <html lang="en">
@@ -10,7 +10,18 @@
     <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="ExchangeAdminWeb.styles.css" />
-    <link rel="icon" type="image/png" href="favicon.png" />
+    @*
+        The .ico is listed FIRST and carries 16/32/48/64/256. Browsers pick a frame from it by
+        size, and the small frames are a deliberately simplified glyph -- the full card turns to
+        mud below ~48px. The PNG follows for anything that prefers one; apple-touch-icon is the
+        180px home-screen size.
+
+        Paths are relative so they resolve against <base>, which carries the PathBase this
+        instance is deployed under (dev and prod differ).
+    *@
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="favicon.png" sizes="256x256" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     @*
         Theme applied before <body> so there is no flash of the wrong palette.
         This must be inline and synchronous -- an external script or a Blazor
