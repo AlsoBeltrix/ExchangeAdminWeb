@@ -6,9 +6,14 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Migration Status batch selection: ROUND 2 LANDED 2026-08-10 after the owner tested round 1 on
-  dev. Migration `1.5.0` -> `1.6.0` (round 1) -> `1.7.0` (round 2). ON DEV as app `2.8.0`; PROD is
-  still `2.7.0`. Round-2 checks UNRUN.** `docs/MigrationBatchSelection-Plan.md`, decisions D1-D8.
+- **Migration Status batch selection: DONE and ACCEPTED by the owner on dev 2026-08-10** --
+  *"looks fine. ran through a few checks, calling it good."* Two rounds; Migration `1.5.0` ->
+  `1.6.0` -> `1.7.0`. **ON DEV as app `2.8.0`; PROD is still `2.7.0` and carries none of this, nor
+  the favicon.** `docs/MigrationBatchSelection-Plan.md`, decisions D1-D8.
+  **Acceptance, not a completed check list.** Which of the plan's checks were run is unknown; the
+  load-bearing ones (mixed selection per button, `CompletedWithErrors` actionable, deselect and the
+  "queued" wording) are recorded as unverified. Anyone re-opening this should not read the owner's
+  go as evidence those passed.
   **A VERSION ERROR the owner caught from the deployed page, and it is the recurring one.** Round 1
   set Migration `1.6.0`; three later commits changed Migration behaviour (`1ef7fae`, `2ff7d7f`,
   `52eb7e9`) and none bumped it again, so dev ran the round-2 code under the same module version as
@@ -129,12 +134,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   "failed" against correct restored source. Reading the file back to verify the restore was not
   enough; the build has its own idea of current. Touch the file after any timestamp-preserving
   restore.
-  **NEXT: deploy and run the round-2 manual checks** (plan, Manual checks; 1/4/5/5b already PASSED
-  and are not re-run). Load-bearing: **check 2** - each of the three buttons against one mixed
-  selection, which is the round-1 failure restated; **check 8** - a `CompletedWithErrors` batch is
-  fully actionable and is NOT swept by Remove Completed; **check 6** - Delete's confirmation states
-  the per-status breakdown before accepting a ticket, since Delete is the only action that takes
-  in-flight batches.
+  **NEXT: nothing on this work stream.** It is accepted and closed on dev. The only outstanding
+  item is a PROD deploy, which carries this plus the favicon and is the owner's call.
 
 - **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
   as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586
@@ -228,10 +229,14 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-**Deploy and run the 8 manual checks in `docs/MigrationBatchSelection-Plan.md`** - see `## Now`.
-Everything below is the protected-principal stream, which is code-complete and deployed.
+**Migration batch selection is accepted and closed on dev** (see `## Now`); the only thing left on
+it is a prod deploy, owner's call. Everything below is the protected-principal stream, which is
+code-complete and deployed.
 
-**`2.7.0` is deployed to both. Only the servicer group and the manual checks remain.**
+**DEPLOYED VERSIONS DIVERGE: dev is app `2.8.0` (Migration `1.7.0`, new favicon), prod is `2.7.0`.**
+A prod deploy would carry the migration batch-selection work and the favicon together.
+
+**`2.7.0` is on prod. Only the servicer group and its manual checks remain on that stream.**
 
 1. **Owner: create the servicer group and configure it** per module in Module Config
    (Protected principal servicing section, per module). Until then the feature is live and grants
@@ -1027,8 +1032,16 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.7.0`, prod `2.7.0`** -- both verified from the assembly 2026-08-10
-  (`FileVersion 2.7.0.0`, `Product 2.7.0`, both DLLs written 09:35:16). Repo is level with both.
+- **Deployed: dev `2.8.0`, prod `2.7.0`** -- both verified from the assembly 2026-08-10
+  (dev `FileVersion 2.8.0.0` written 13:18:59; prod `FileVersion 2.7.0.0` written 09:35:16). The
+  repo is level with dev.
+  **Dev `2.8.0` adds, over prod:** the Migration Status batch-selection work (Migration module
+  `1.7.0`, owner-accepted on dev) and the replacement favicon. Prod has neither.
+  **The owner found the module-version error on this deploy by reading it off the page:** the app
+  version was correctly `2.8.0` while Migration still said `1.6.0`, three behaviour commits stale.
+  A correct app bump is not evidence about a module bump; the two rules fire independently.
+  **Superseded record, kept for incident tracing: dev and prod both ran `2.7.0` from 09:35:16 on
+  2026-08-10.** The paragraph below describes that build and still applies to prod.
   **This is the first build where protected-principal servicing actually works.** `2.6.0`, which
   both instances ran until now, carried the same feature with all three review findings live: the
   page gate hid the capability in AD Attribute Editor, the undo path allowed overrides with no

@@ -1,10 +1,14 @@
 # Migration Status: batch selection and ticket-entry proximity -- Plan
 
-Status: **Round 1 implemented and reviewed; ROUND 2 IN PROGRESS after the owner exercised it on
-dev.** Round 2 (D3-D6) reworks the three bulk actions and their targets; round 1's checkbox
-mechanics, selection keying and inline ticket placement stand unchanged. NOT DEPLOYED beyond the
-round-1 build the owner tested; the manual checks below are re-issued for round 2.
-D1 ruled 2026-08-10 ("outer"); D2 ruled 2026-08-10 ("a"); D3-D6 ruled 2026-08-10 (see Decisions).
+Status: **Implemented and ACCEPTED by the owner on dev 2026-08-10** (*"looks fine. ran through a few
+checks, calling it good."*). Two rounds: round 1 built the checkbox mechanics, selection keying and
+inline ticket placement; round 2 (D3-D8) reworked the three bulk actions, their targets, the
+wording and the deselection after the owner exercised round 1 on dev. **ON DEV as app `2.8.0`,
+Migration `1.7.0`; PROD is still on `2.7.0` and has none of this.**
+D1-D2 ruled 2026-08-10; D3-D8 ruled 2026-08-10 (see Decisions).
+
+**Acceptance is not the same as the check list having been run** -- see Manual checks for exactly
+what is and is not known to have been exercised.
 
 **Round 1 was tested on dev by the owner and the bulk-action model came back wrong.** Ticking two
 batches and clicking Resume returned *"No batches to act on. Skipped 2: James.Lin@analog.com
@@ -421,6 +425,14 @@ round-2 re-issues and are UNRUN.**
 Round-1 verdicts, owner on dev 2026-08-10: **1 PASS, 4 PASS, 5 PASS, 5b PASS**; 2 FAIL (D3/D4,
 fixed); 3 FAIL on naming (D6, fixed); 7 WITHDRAWN as a bad check; 8 blocked by the same defect as
 2; 9 not runnable.
+
+**Round-2 verdict, owner on dev 2026-08-10, verbatim: *"looks fine. ran through a few checks,
+calling it good."* Recorded as the owner accepting the work, NOT as this list having been executed.**
+Which of the checks below were run is not known, so none is marked PASS on that basis. The load-
+bearing ones -- 2 (each button against one mixed selection), 8 (a `CompletedWithErrors` batch is
+fully actionable and not swept by Remove Completed), 9b (deselection and the "queued" wording) --
+should be treated as unverified by anyone re-opening this work. The owner accepted the feature; the
+evidence base for it is a partial manual pass and a suite that cannot render the page.
 
 1. **PASS (round 1).** Tick three completed batches, enter a ticket, Delete -- all three go, and the
    audit log holds **three** `RemoveMigrationBatch` events naming the three batches, not one.
