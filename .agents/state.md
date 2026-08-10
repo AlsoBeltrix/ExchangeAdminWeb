@@ -6,6 +6,46 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **IN FLIGHT: Migration Status batch selection + inline ticket entry. Plan APPROVED (both
+  decisions ruled), slice 1 of 4 landed.** `docs/MigrationBatchSelection-Plan.md`.
+  Owner report 2026-08-10: *"the exchange migration status page needs checkboxes on each row to
+  allow batch clear/delete and resume. the ticket number entry field for individual items needs to
+  be closer to the actual button people hit ... because we routinely have ~50+ in-flight and the
+  ticket number entry field is buried at the top of the table and UI doesn't make that obvious."*
+  **Two independent defects, both only visible at 50+ rows.** (1) No multi-select anywhere in the
+  status tab - the only bulk affordance is all-or-nothing `Clear Completed`. (2) `StageBatchAction`
+  renders the ticket confirm bar ABOVE the table, so clicking Resume on row 47 puts the input
+  off-screen while that row's buttons all go disabled - the visible feedback is that the buttons
+  stopped working.
+  **Owner rulings, both in the plan's Decisions section (canonical there, not duplicated in
+  `.agents/decisions.md`):** D1 outer Batches table only, no checkboxes on the inner per-user table.
+  D2(a) a bulk action acts on the eligible rows and NAMES every skipped row with its status - a
+  skip is not a failure, skips are not audited (no write attempted), the bulk buttons stay enabled
+  whatever the selection, and skipped rows stay ticked. D2(b), disabling the button on a mixed
+  selection, was rejected as a return to acting one row at a time.
+  **Slice 1 DONE (`Services/MigrationBatchActionPlanner.cs`, 36 tests):** pure partition of a
+  selection into eligible/skipped, selection pruning across a reload, and the SINGLE definition of
+  which statuses each action permits - the per-row buttons will be re-pointed at it in slice 2,
+  because two copies of "which statuses may be deleted" is how a bulk action and a row button come
+  to disagree about the same batch. Keyed on `BatchName`, never row index: the table re-sorts on
+  every header click, so an index-keyed selection silently retargets.
+  **A mutation probe found a real hole in my own tests and it is the reusable lesson here.**
+  Disabling the membership check in `PruneSelection` entirely left all 34 tests green, because every
+  prune test happened to select every loaded row. That mutant ADDS unticked rows to the selection on
+  the next reload, and the following Delete removes batches the operator never chose. Two tests
+  added for the direction that matters (`NeverAddsABatchThatWasNotSelected`,
+  `EmptySelectionStaysEmpty`); the mutant now fails. **A test that only checks nothing was wrongly
+  REMOVED from a set says nothing about what was wrongly ADDED to it.**
+  **Second trap worth keeping: `Copy-Item` restoring a probe backup carries the BACKUP's timestamp,
+  so MSBuild judged the DLL up to date and kept testing the mutant** - three tests "failed" against
+  correct restored source. Verifying the restore by reading the file was not enough; the build has
+  its own idea of current. Touch the file after any timestamp-preserving restore.
+  **NEXT: slice 2** - checkbox column, select-all, selection toolbar, and
+  `ExecuteBulkBatchAction` EXTRACTED from the existing `ClearCompletedBatches` (which already gets
+  per-item aggregation and audit-failure-as-warning right) rather than written a second time.
+  Then slice 3 (inline confirm under the acting row) and slice 4 (Migration `1.5.0` -> `1.6.0`,
+  no base app bump - nothing shared changes).
+
 - **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
   as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586
   passed / 0 failed / 3 skipped, format clean. NO MANUAL CHECK RUN, and NO SERVICER GROUP EXISTS
@@ -97,6 +137,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `AuditExtraChannelTests` found it. That is the most repeatable mistake in this work.
 
 ## Next
+
+**Slice 2 of `docs/MigrationBatchSelection-Plan.md`** - see `## Now`. Everything below is the
+protected-principal stream, which is code-complete and deployed.
 
 **`2.7.0` is deployed to both. Only the servicer group and the manual checks remain.**
 
