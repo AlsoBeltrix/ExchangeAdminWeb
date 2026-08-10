@@ -6,14 +6,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Protected-principal servicing: COMPLETE 2026-08-07 at `80d2759`. All 15 modules, all 3 review
-  findings fixed, versions bumped. App `2.6.0 -> 2.7.0`. Tree clean, 1586 passed / 0 failed / 3
-  skipped, format clean. NOT DEPLOYED; NO MANUAL CHECK RUN - that is the whole of what remains.**
+- **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
+  as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586
+  passed / 0 failed / 3 skipped, format clean. NO MANUAL CHECK RUN, and NO SERVICER GROUP EXISTS
+  YET - so the capability is live and currently grants nothing to anyone.** That is the whole of
+  what remains; see `## Next`.
   Owner: *"all of them. every place where a principal is protected we need to allow a priv
   group to act on them anyway."*
-  **DEPLOY NOTE, load-bearing: dev and prod both run `2.6.0`, which is the build where this work
-  was coded but NOT yet correct** - it carries all three findings below. `2.7.0` is the first
-  version where the capability works end to end. Do not confuse them during an incident.
   **THE THREE FINDINGS, all fixed** - `.agents/review/findings/pps-{1,2,3}.md`, all `[x]` in
   `.agents/review/index.md`. All three were the same shape, which is now this repo's signature
   failure: **the service was right and the PAGE, or the call site, was wrong.**
@@ -99,19 +98,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-**Deploy `2.7.0`, then run the manual checks. Nothing else is queued.**
+**`2.7.0` is deployed to both. Only the servicer group and the manual checks remain.**
 
-1. **Owner: create the servicer group and configure it** per module in Module Config. The code is
-   complete without it, but the capability grants nothing until a group is named - and that is also
-   the only way to run check 2 below.
-2. Deploy `2.7.0` to dev (`.\tools\deploy-pipeline.ps1 -Dev`, ELEVATED).
-3. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
+1. **Owner: create the servicer group and configure it** per module in Module Config
+   (Protected principal servicing section, per module). Until then the feature is live and grants
+   nothing - which is the safe state, but also means nothing has been proven.
+2. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
    the action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
-   proves the capability works end to end - every guard here is either a source-level tripwire or a
-   decision tested in isolation. Worth doing on a module with a page gate (AD Attribute Editor) and
-   a batch module (Migration or Licensing), since those took different shapes.
-4. Second check, the inverse and just as important: **an operator NOT in the group still gets
-   refused** on the same target, and their refusal is audited.
+   proves the capability works end to end - every guard is either a source-level tripwire or a
+   decision tested in isolation. Worth doing on a module with a page gate (AD Attribute Editor,
+   where the operator should also see the override banner) AND a batch module (Migration or
+   Licensing), since those took different implementation shapes.
+3. The inverse, and just as important: **an operator NOT in the group is still refused** on the
+   same target, and the refusal is audited.
+4. Also unverified on a real run: the per-target notes in a batch. A Migration batch mixing a
+   protected-and-serviced target with an ordinary one should produce one note NAMING that target,
+   not a batch-level "something was serviced".
 
 **A caution that survived this whole work stream and still applies:** a green suite in this repo
 says nothing about what an operator sees. There is no bUnit harness, so no test renders a page -
@@ -892,14 +894,18 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   the operator-email resolver, `2.3.31` (`2f0b99c`) the MessageTrace
   export delivery redesign, `2.3.30` (`456e07c`) retired the `Security:ExcludedUsers` appsettings
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
-- **Deployed: dev `2.5.5`, prod `2.5.5`** -- both re-verified from the assembly 2026-08-05
-  (`FileVersion 2.5.5.0`, both DLLs written 2026-08-04 23:52 and byte-identical to each other).
-  Repo is level with both. `wwwroot/app.css` hashes identical across dev, prod and the repo, so
-  the button-state fix and the reworked palettes are confirmed live on both instances rather than
-  a stale file surviving the robocopy mirror.
-  **This supersedes the earlier "dev `2.5.3`, prod `2.5.2`, prod carries the flat first-cut
-  palettes" record, and it falsifies backlog item -0.9 (deploy `2.5.5` to dev): the deploy
-  happened. The eyeball check of a disabled submit button is still unrun.**
+- **Deployed: dev `2.7.0`, prod `2.7.0`** -- both verified from the assembly 2026-08-10
+  (`FileVersion 2.7.0.0`, `Product 2.7.0`, both DLLs written 09:35:16). Repo is level with both.
+  **This is the first build where protected-principal servicing actually works.** `2.6.0`, which
+  both instances ran until now, carried the same feature with all three review findings live: the
+  page gate hid the capability in AD Attribute Editor, the undo path allowed overrides with no
+  audit record, and bulk CSV refused what the single form allowed. **Nothing but the version number
+  distinguishes those two builds, so an incident spanning 2026-08-07 to 2026-08-10 must check which
+  was running.**
+  **The capability grants nothing until a servicer group is configured** per module in Module
+  Config, and no manual check has confirmed it end to end -- see `## Next`.
+  **Supersedes the "dev `2.5.5`, prod `2.5.5`" record below** (2026-08-05, verified from the
+  assembly at the time; its eyeball check of a disabled submit button remains unrun).
   Both instances had been four months behind on `2.3.34` until 2026-08-04 and now carry
   section-access SID storage, the `sidf-1` admin-lockout fix, the full UI redesign, ten themes, the
   module-scoped jobs panel, in-process export retention and the `AdminBulkJobs` page. That clears
