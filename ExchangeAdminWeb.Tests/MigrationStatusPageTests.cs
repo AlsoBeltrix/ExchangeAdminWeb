@@ -70,12 +70,74 @@ public class MigrationStatusPageTests
 
     [Theory]
     [InlineData("StageDeleteSelected", "MigrationBatchAction.Delete")]
+    [InlineData("StageRemoveCompletedSelected", "MigrationBatchAction.RemoveCompleted")]
     [InlineData("StageResumeSelected", "MigrationBatchAction.Resume")]
     public void BulkStagingRoutesThroughThePlanner(string method, string action)
     {
         var body = GetMethodBody(method);
 
         Assert.Contains(action, body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheToolbarOffersAllThreeActionsWithDistinctNames()
+    {
+        // D3: three actions, three targets. And the naming half of the owner's complaint - "Clear
+        // Completed" sat beside "Clear selection" sharing a word, one irreversible and one
+        // harmless. No two buttons in this toolbar may share a leading verb.
+        var toolbar = ExtractBlock(ReadPage(), "@if (canManage && selectedBatches.Count > 0)");
+
+        Assert.Contains("StageDeleteSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageRemoveCompletedSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageResumeSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("Untick all", toolbar, StringComparison.Ordinal);
+        Assert.DoesNotContain("Clear selection", toolbar, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheStandaloneClearCompletedSweepIsGone()
+    {
+        // D6. It removed every completed batch in the table regardless of selection - an
+        // all-or-nothing destructive sweep, which is precisely what the checkbox request replaced.
+        var page = ReadPage();
+
+        Assert.DoesNotContain("StageClearCompleted", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("CompletedOrEmptyBatchNames", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeleteConfirmsWithAPerStatusBreakdown()
+    {
+        // D5: Delete is the only action that accepts in-progress batches, so the operator must see
+        // how many of those they are about to destroy before typing a ticket. One step, in the
+        // ticket bar - the ticket entry IS the confirmation.
+        var body = GetMethodBody("StageDeleteSelected");
+
+        Assert.Contains("This will remove", body, StringComparison.Ordinal);
+        Assert.Contains("MigrationBatchActionPlanner.DescribeSelectionByStatus", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoStatusAllowlistSurvivesInThePageMarkup()
+    {
+        // The defect that caused round 2: every status comparison was an exact match against a
+        // hardcoded list, and CompletedWithErrors was in none of them - so such a batch had no
+        // Delete button, no Resume button, was not swept, and drew the unknown-status badge.
+        //
+        // Scoped to the batch row, where the action buttons live. The batch's OWN status still
+        // drives Complete and Stop, which are not part of this work; what must not come back is a
+        // row-level allowlist deciding Delete or Resume.
+        var row = GetBatchRowMarkup();
+
+        Assert.Contains(
+            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status)",
+            row,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status)",
+            row,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Corrupted\"", row, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -94,15 +156,14 @@ public class MigrationStatusPageTests
     }
 
     [Theory]
-    [InlineData("ClearCompletedBatches")]
     [InlineData("DeleteSelectedBatches")]
+    [InlineData("RemoveCompletedSelectedBatches")]
     [InlineData("ResumeSelectedBatches")]
     public void EveryBulkPathUsesTheOneAggregatingExecutor(string method)
     {
-        // Clear Completed is included deliberately: it is the code the executor was extracted FROM,
-        // and it already got per-item aggregation and audit-failure-as-warning right. If it ever
-        // stops routing through the shared executor, the extraction has been undone and there are
-        // two sets of aggregation rules again.
+        // One set of aggregation rules for all three actions: per-batch audit inside the loop,
+        // audit failures as warnings, per-item failures aggregated, one notification per run. A
+        // fourth path that forked its own loop is how those rules come to differ per button.
         var body = GetMethodBody(method);
 
         Assert.Contains("ExecuteBulkBatchAction", body, StringComparison.Ordinal);
@@ -225,6 +286,7 @@ public class MigrationStatusPageTests
         var toolbar = ExtractBlock(ReadPage(), "@if (canManage && selectedBatches.Count > 0)");
 
         Assert.Contains("StageDeleteSelected", toolbar, StringComparison.Ordinal);
+        Assert.Contains("StageRemoveCompletedSelected", toolbar, StringComparison.Ordinal);
         Assert.Contains("StageResumeSelected", toolbar, StringComparison.Ordinal);
         Assert.DoesNotContain("Applies(", toolbar, StringComparison.Ordinal);
         Assert.DoesNotContain("Eligible.Count == 0", toolbar, StringComparison.Ordinal);
@@ -258,6 +320,32 @@ public class MigrationStatusPageTests
 
         Assert.Contains("pendingActionTarget == user.EmailAddress", userLoop, StringComparison.Ordinal);
         Assert.Contains("@PendingActionConfirm", userLoop, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheReportButtonIsOfferedOnEveryUserRow()
+    {
+        // Owner, on dev: "Report is only a button on subrows in CompletedWithErrors migrations, and
+        // it should be available on every user row." It was gated on Failed / NeedsApproval / a
+        // non-empty ErrorSummary, so it appeared only where the row already looked broken.
+        //
+        // Third status allowlist on this page to hide something the operator wanted, after Delete
+        // and Resume. Report is READ-ONLY - it fetches a diagnostic report and writes nothing - so
+        // there is no case for gating it at all.
+        var userLoop = GetUserRowMarkup();
+
+        Assert.Contains("LoadUserReport", userLoop, StringComparison.Ordinal);
+
+        // Anchored to the Report button's own block, not the file: the surrounding row still has
+        // legitimate status conditions for Complete / Approve / Pause / Resume.
+        var button = ExtractSpan(userLoop, "<button class=\"btn btn-sm btn-outline-danger\"", "</button>");
+        Assert.Contains("LoadUserReport", button, StringComparison.Ordinal);
+
+        var beforeButton = userLoop[..userLoop.IndexOf("LoadUserReport", StringComparison.Ordinal)];
+        var lastConditionalBeforeIt = beforeButton.LastIndexOf("@if (", StringComparison.Ordinal);
+        var lastCloseBeforeIt = beforeButton.LastIndexOf('}');
+        Assert.True(lastCloseBeforeIt > lastConditionalBeforeIt,
+            "the Report button sits inside a conditional; it must render unconditionally for every user row");
     }
 
     [Fact]
@@ -310,6 +398,18 @@ public class MigrationStatusPageTests
     /// <summary>The markup emitted per user row inside an expanded batch.</summary>
     private static string GetUserRowMarkup() =>
         ExtractBlock(ReadPage(), "@foreach (var user in batchUsers)");
+
+    /// <summary>The text from <paramref name="opener"/> through the first <paramref name="closer"/>.</summary>
+    private static string ExtractSpan(string source, string opener, string closer)
+    {
+        var start = source.IndexOf(opener, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"span '{opener}' not found");
+
+        var end = source.IndexOf(closer, start, StringComparison.Ordinal);
+        Assert.True(end > start, $"no '{closer}' after '{opener}'");
+
+        return source[start..(end + closer.Length)];
+    }
 
     /// <summary>
     /// The brace-balanced block introduced by <paramref name="opener"/>, so an assertion can be

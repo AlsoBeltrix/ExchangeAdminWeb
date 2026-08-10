@@ -7,10 +7,13 @@ namespace ExchangeAdminWeb.Services;
 /// </summary>
 public enum MigrationBatchAction
 {
-    /// <summary>Remove-MigrationBatch.</summary>
+    /// <summary>Remove-MigrationBatch against any selected batch, whatever its status.</summary>
     Delete,
 
-    /// <summary>Start-MigrationBatch on a stopped batch.</summary>
+    /// <summary>Remove-MigrationBatch against selected batches whose status is exactly Completed.</summary>
+    RemoveCompleted,
+
+    /// <summary>Start-MigrationBatch against selected batches that are idle but restartable.</summary>
     Resume
 }
 
@@ -44,32 +47,89 @@ public sealed record MigrationBatchActionPlan(
 /// </remarks>
 public static class MigrationBatchActionPlanner
 {
-    // Remove-MigrationBatch is refused by Exchange on a batch that is still running, so the
-    // terminal-ish states are the deletable ones. Mirrors the per-row Delete button's condition.
-    private static readonly string[] DeletableStatuses =
-        ["Completed", "Failed", "Stopped", "Corrupted"];
+    /// <summary>The one status Remove Completed will act on (D3).</summary>
+    private const string CompletedStatus = "Completed";
 
-    // Start-MigrationBatch resumes a stopped batch. A batch that is already syncing has nothing to
-    // resume, and a completed one cannot be restarted.
-    private static readonly string[] ResumableStatuses = ["Stopped"];
+    // Statuses Resume/Retry is NOT offered on (D4). Defined by exclusion, deliberately.
+    //
+    // An allowlist of resumable statuses is what produced this rule: CompletedWithErrors is a real
+    // Exchange status that appeared NOWHERE in this codebase, so a batch in that state could not be
+    // resumed, could not be deleted, was not swept, and rendered with the unknown-status badge. No
+    // test could have caught it - every test used the same status list the code did.
+    //
+    // Exclusion inverts the failure direction. An unanticipated status gets a button and Exchange
+    // refuses it if invalid, which surfaces as that row's own named, aggregated failure. An
+    // allowlist makes the same row silently vanish from the UI.
+    //
+    // Two groups, for two different reasons:
+    //   - actively working: there is nothing to resume, the batch is already moving;
+    //   - Completed: idle, but DONE. Idle-and-restartable is not the same as idle - the distinction
+    //     this rule missed on its first draft.
+    private static readonly string[] NonResumableStatuses =
+        ["Syncing", "Starting", "Stopping", "Completing", "Removing", CompletedStatus];
 
     /// <summary>
     /// True when <paramref name="status"/> permits <paramref name="action"/>. The single definition;
-    /// the page's per-row buttons call this rather than repeating the status list.
+    /// the page's per-row buttons call this rather than repeating the status rules.
     /// </summary>
     public static bool Applies(MigrationBatchAction action, string? status)
     {
-        if (string.IsNullOrWhiteSpace(status))
-            return false;
+        var trimmed = status?.Trim();
 
-        var allowed = action switch
+        return action switch
         {
-            MigrationBatchAction.Delete => DeletableStatuses,
-            MigrationBatchAction.Resume => ResumableStatuses,
-            _ => Array.Empty<string>()
-        };
+            // Delete accepts anything (D3). Exchange is the authority on what it will remove, and a
+            // refusal returns as a per-row failure the executor names. A client-side allowlist here
+            // can only be wrong in the direction that hides a row the operator explicitly ticked.
+            MigrationBatchAction.Delete => true,
 
-        return allowed.Contains(status.Trim(), StringComparer.OrdinalIgnoreCase);
+            // Exactly Completed - never CompletedWithErrors, which is not a batch that finished.
+            MigrationBatchAction.RemoveCompleted =>
+                string.Equals(trimmed, CompletedStatus, StringComparison.OrdinalIgnoreCase),
+
+            // Everything except the working statuses and Completed. A missing status is refused:
+            // we cannot tell whether the batch is mid-flight, and restarting one that is would be
+            // the harmful direction.
+            MigrationBatchAction.Resume =>
+                !string.IsNullOrWhiteSpace(trimmed)
+                && !NonResumableStatuses.Contains(trimmed, StringComparer.OrdinalIgnoreCase),
+
+            _ => false
+        };
+    }
+
+    /// <summary>
+    /// Counts of each status among the selected batches, in table order, for the Delete
+    /// confirmation (D5). Delete's whole point is that it accepts in-progress batches, so the
+    /// operator must see how many of those they are about to destroy before typing a ticket.
+    /// </summary>
+    public static string DescribeSelectionByStatus(
+        IEnumerable<MigrationBatchInfo>? loaded,
+        IEnumerable<string>? selectedNames)
+    {
+        var selected = ToNameSet(selectedNames);
+        if (loaded == null || selected.Count == 0)
+            return "";
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var counts = new List<KeyValuePair<string, int>>();
+
+        foreach (var batch in loaded)
+        {
+            if (batch == null || string.IsNullOrWhiteSpace(batch.BatchName))
+                continue;
+            if (!selected.Contains(batch.BatchName) || !seen.Add(batch.BatchName))
+                continue;
+
+            var status = string.IsNullOrWhiteSpace(batch.Status) ? "Unknown" : batch.Status.Trim();
+            var index = counts.FindIndex(c => string.Equals(c.Key, status, StringComparison.OrdinalIgnoreCase));
+            if (index >= 0)
+                counts[index] = new KeyValuePair<string, int>(counts[index].Key, counts[index].Value + 1);
+            else
+                counts.Add(new KeyValuePair<string, int>(status, 1));
+        }
+
+        return string.Join(", ", counts.Select(c => $"{c.Value} {c.Key}"));
     }
 
     /// <summary>

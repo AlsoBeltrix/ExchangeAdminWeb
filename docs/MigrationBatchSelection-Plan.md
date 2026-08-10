@@ -1,8 +1,36 @@
 # Migration Status: batch selection and ticket-entry proximity -- Plan
 
-Status: **Implemented 2026-08-10. NOT DEPLOYED, and the 8 manual checks below have NOT been run --
-no test in this repo can render this page.** D1 ruled by the owner 2026-08-10 ("outer"); D2 ruled
-2026-08-10 ("a").
+Status: **Round 1 implemented and reviewed; ROUND 2 IN PROGRESS after the owner exercised it on
+dev.** Round 2 (D3-D6) reworks the three bulk actions and their targets; round 1's checkbox
+mechanics, selection keying and inline ticket placement stand unchanged. NOT DEPLOYED beyond the
+round-1 build the owner tested; the manual checks below are re-issued for round 2.
+D1 ruled 2026-08-10 ("outer"); D2 ruled 2026-08-10 ("a"); D3-D6 ruled 2026-08-10 (see Decisions).
+
+**Round 1 was tested on dev by the owner and the bulk-action model came back wrong.** Ticking two
+batches and clicking Resume returned *"No batches to act on. Skipped 2: James.Lin@analog.com
+(Completed), AprilJoy.Balo-Pagdanganan@analog.com (CompletedWithErrors)."* That single message
+exposed four things, three of them defects:
+
+1. **`CompletedWithErrors` is a real Exchange batch status this codebase has never heard of.** It
+   appears nowhere in the source. Every status comparison on the page is an exact match against a
+   hardcoded list, so such a batch could not be deleted, could not be resumed, was not swept by
+   Clear Completed, and rendered with the unknown-status grey badge. **Pre-existing -- round 1 only
+   made it visible**, and made it worse in one way: before, the button simply did not render on
+   those rows, so the operator shrugged; now they tick the row and are told there is nothing to do.
+2. **The action targets were wrong.** Round 1 gave Delete a status allowlist and Resume only
+   `Stopped`. Owner's model, which is now D3: Delete applies to ANYTHING, Remove Completed applies
+   to `Completed` only, Resume/Retry applies to anything idle-but-restartable.
+3. **"Clear Completed" and "Clear selection" sat side by side sharing a word**, one an irreversible
+   all-or-nothing sweep and one harmless. Owner: *"unacceptable."*
+4. Not a defect: D2(a) worked exactly as designed. It named both batches and their statuses instead
+   of failing silently, which is how the status gap became visible at all.
+
+**The lesson worth keeping: an exhaustive-looking status allowlist written from the statuses a
+developer has seen is a silent filter, not a safety rail.** `CompletedWithErrors` was invisible to
+the entire codebase -- to the buttons, the sweep, and the badge colours -- and no test could have
+found it, because every test used the same list of statuses the code did. D4's exclusion-list
+approach exists to make the unseen status the DEFAULT-VISIBLE case rather than the default-hidden
+one.
 
 Two corrections found while implementing, both by mutation probe rather than by the suite:
 
@@ -75,13 +103,8 @@ right tool for a single batch.
 actions unchanged. It gets the (2) fix, because the confirm bar it uses is the same shared one.
 
 **D2 -- what a bulk action does when the selection contains rows the action cannot apply to.
-RULED: (a), act on the eligible rows and name every skipped row** (owner, 2026-08-10: "a"). The two
-bulk actions have different applicable statuses, mirroring the per-row buttons:
-
-| Action | Applies to batch status |
-| --- | --- |
-| Delete (`Remove-MigrationBatch`) | `Completed`, `Failed`, `Stopped`, `Corrupted` |
-| Resume (`Start-MigrationBatch`) | `Stopped` |
+RULED: (a), act on the eligible rows and name every skipped row** (owner, 2026-08-10: "a"). The
+three bulk actions have different targets -- see D3 for the authoritative table.
 
 So a selection of ten will routinely mix. Options:
 
@@ -92,6 +115,68 @@ So a selection of ten will routinely mix. Options:
 - **(b) Rejected. Disable the bulk button whenever the selection contains an ineligible row.**
   Unambiguous, and unusable at 50 rows -- the operator must find and untick the offenders with no
   indication of which they are, which is a return to acting one row at a time.
+
+**D3 -- the three bulk actions and their targets. RULED** (owner, 2026-08-10, verbatim: *"three
+options: 1. Delete 2. Remove Completed 3. Resume/Retry ... each has a different target"*). This
+supersedes round 1's two-action model entirely.
+
+| Button | Acts on | Cmdlet |
+| --- | --- | --- |
+| **Delete** | ANY checked row, whatever its status | `Remove-MigrationBatch` |
+| **Remove Completed** | checked rows with status `Completed` ONLY | `Remove-MigrationBatch` |
+| **Resume/Retry** | checked rows that are idle but restartable (D4) | `Start-MigrationBatch` |
+
+Delete carries **no status list at all** -- Exchange decides what it will accept, and a refusal
+comes back as that row's own per-item failure, which the executor already aggregates and names. A
+client-side allowlist here can only ever be wrong in the direction that hides a row the operator
+explicitly ticked.
+
+Remove Completed is deliberately NOT widened to `CompletedWithErrors`. The owner ruled it
+*"Completed is the only valid target"*; a batch that finished with errors is not a batch that
+finished, and quietly folding it into a bulk removal would destroy the evidence of what went wrong.
+Its non-`Completed` rows are skipped and named per D2(a), not acted on.
+
+**D4 -- how Resume/Retry decides eligibility. RULED: by EXCLUSION** (owner, 2026-08-10: "y").
+Resume/Retry is offered on every status EXCEPT:
+
+- the actively-working ones, which have nothing to resume: `Syncing`, `Starting`, `Stopping`,
+  `Completing`, `Removing`;
+- `Completed`, which is idle but DONE -- a distinction the first draft of this rule missed, and the
+  owner caught: idle-and-restartable is not the same as idle.
+
+So `CompletedWithErrors`, `Stopped`, `Failed`, `Paused`, `Corrupted`, and **any status this
+codebase has not seen** are offered. The rejected alternative was an explicit allowlist of
+resumable statuses; it fails in exactly the way that produced this round of work, by making an
+unanticipated status silently unactionable. Exclusion fails the other way: an unseen status gets a
+button, and Exchange refuses it if invalid -- a visible, named, aggregated refusal rather than an
+invisible one.
+
+**D5 -- the Delete confirmation. RULED: one step, in the ticket bar** (owner, 2026-08-10: "n" to a
+separate confirm step). Delete's confirm bar states *"This will remove N batches"* prominently plus
+a breakdown by status (`3 Completed, 2 Syncing, 1 CompletedWithErrors`), beside the ticket input
+that already gates it. The ticket entry IS the confirmation; a second modal would add a click
+without adding information. The breakdown is the substance of the warning: Delete's whole point is
+that it accepts in-progress batches, so the operator must see how many of those they are about to
+destroy before typing a ticket.
+
+**D7 -- the per-user Report button. RULED: offer it on EVERY user row** (owner, 2026-08-10:
+*"Report is only a button on subrows in CompletedWithErrors migrations, and it should be available
+on every user row."*). It was gated on `Failed` / `NeedsApproval` / a non-empty `ErrorSummary`, so
+it appeared only where the row already looked broken.
+
+**Third status allowlist on this page to hide something the operator wanted**, after Delete and
+Resume, and found the same way: by using the app. Report is READ-ONLY -- it fetches a diagnostic
+report and writes nothing, takes no ticket, and audits nothing -- so there was never a case for
+gating it. The gate is deleted outright rather than widened; widening it would leave the same
+mechanism in place to fail again on the next status nobody predicted.
+
+**D6 -- the standalone "Clear Completed" button. RULED: REMOVE it** (owner, 2026-08-10: "n" to
+keeping it). The top-right sweep that removed every completed batch in the table regardless of
+selection is deleted, along with `CompletedOrEmptyBatchNames`. Its job is now done by **Remove
+Completed** from the selection. Two reasons: it is half of the adjacency problem the owner called
+unacceptable, and an all-or-nothing destructive sweep is precisely what the checkbox request
+existed to replace. Note this drops its `TotalCount == 0` limb -- an empty batch that is not
+`Completed` is no longer swept by anything, and must be Deleted like any other row.
 
 Consequences of (a) that are binding on the implementation:
 
@@ -178,7 +263,11 @@ to read them** rather than keeping their own inline `status.Equals(...)` chains 
 copies of "which statuses may be deleted" is exactly the drift that makes a bulk action and a row
 button disagree about the same batch.
 
-### One aggregating executor, shared with Clear Completed
+### One aggregating executor for all three actions
+
+**Round 2 note:** the standalone `ClearCompletedBatches` sweep described below is GONE (D6); its
+executor survives and now serves Delete, Remove Completed, and Resume/Retry. The extraction
+requirements below are unchanged and still binding on all three.
 
 `ClearCompletedBatches` (`:1311`) already implements per-item aggregation correctly, including the
 subtle part: audit-write failures are collected as *warnings* and never turn a completed removal
@@ -295,26 +384,43 @@ updated to `1.6.0`. Update the assertion, never delete it.
 
 ## Manual checks -- the only real evidence
 
-Nothing automated renders this page. Every check below is load-bearing; 4 and 5 most of all.
+Nothing automated renders this page. **Round-1 results are recorded per item; unmarked items are
+round-2 re-issues and are UNRUN.**
 
-1. Tick three completed batches, enter a ticket, Delete -- all three go, and the audit log holds
-   **three** `RemoveMigrationBatch` events naming the three batches, not one.
-2. Tick a mixed selection (some deletable, some `Syncing`) and Delete -- the deletable ones go, the
-   `Syncing` ones are named on screen with their status, the result does not read as a failure, and
-   the skipped rows are still ticked afterwards.
-3. Select-all, then `Clear selection` -- nothing is acted on, and no audit event is written.
-4. **Sort the table by a different column while rows are ticked, then act.** The batches acted on
-   must be the ones ticked, not the ones now in those positions. This is the defect the name-keyed
-   selection exists to prevent and it is invisible to every test.
-5. **With 50+ batches loaded, scroll to a row near the bottom and click `Resume`.** The ticket field
-   must appear directly beneath that row, on screen, without scrolling. This is the reported
-   complaint; nothing else proves it fixed.
-5b. **The same, one level down (mbs-1):** expand a batch with many users, scroll to a user row low
-   in the inner table, click `Resume` or `Clear`. The ticket field must appear beneath that USER
-   row, not above the outer batches table.
-6. Delete a batch in the Exchange admin center, refresh the page, confirm it is no longer ticked and
-   no longer listed.
-7. `Clear Completed` still works and still removes exactly the completed/empty batches -- the
-   extraction must not have changed it.
-8. An operator without `MigrationManage` sees no checkbox column and no toolbar, and the bulk
-   endpoints refuse if reached anyway.
+Round-1 verdicts, owner on dev 2026-08-10: **1 PASS, 4 PASS, 5 PASS, 5b PASS**; 2 FAIL (D3/D4,
+fixed); 3 FAIL on naming (D6, fixed); 7 WITHDRAWN as a bad check; 8 blocked by the same defect as
+2; 9 not runnable.
+
+1. **PASS (round 1).** Tick three completed batches, enter a ticket, Delete -- all three go, and the
+   audit log holds **three** `RemoveMigrationBatch` events naming the three batches, not one.
+2. **Tick a mixed selection and use each of the three buttons in turn.** Was the round-1 failure.
+   - **Delete** acts on every ticked row whatever its status, and skips nothing.
+   - **Remove Completed** acts only on the `Completed` rows and names the rest as skipped.
+   - **Resume/Retry** acts on `CompletedWithErrors`, `Stopped`, `Failed` etc. and names `Completed`
+     and any in-flight rows as skipped.
+   In each case skipped rows are named with their status, the result does not read as a failure, and
+   they stay ticked.
+3. **The three action buttons and `Untick all` are not confusable.** Was the round-1 failure: "Clear
+   Completed" and "Clear selection" sat adjacent sharing a word. No two buttons share a leading verb,
+   and the destructive Delete is visually distinct (solid, not outline).
+4. **PASS (round 1). Sort the table by a different column while rows are ticked, then act.** The
+   batches acted on must be the ones ticked, not the ones now in those positions. Invisible to every
+   test.
+5. **PASS (round 1). With 50+ batches loaded, scroll to a row near the bottom and click `Resume`.**
+   The ticket field appears directly beneath that row without scrolling.
+5b. **PASS (round 1), one level down (mbs-1):** expand a batch with many users, scroll to a user row
+   low in the inner table, click `Resume` or `Clear`. The ticket field appears beneath that USER row.
+6. **Delete's confirmation states the count and the per-status breakdown** before a ticket is
+   accepted -- e.g. "This will remove 6 batch(es): 3 Completed, 2 Syncing, 1 CompletedWithErrors".
+   The in-flight count is the substance of the warning.
+7. ~~Delete a batch in the Exchange admin center, refresh, confirm it is no longer ticked.~~
+   **WITHDRAWN as a bad check** (owner, 2026-08-10). It presumed a local store of migrations. There
+   is none: `GetMigrationBatchesAsync` runs `Get-MigrationBatch` against Exchange on every load, so
+   there is no cache to go stale. Selection pruning is still guarded by unit test.
+8. **A `CompletedWithErrors` batch is fully actionable.** It offers Delete and Resume/Retry on its
+   own row, is accepted by both bulk actions, is NOT swept by Remove Completed, and no longer draws
+   the grey unknown-status badge. This is the round-2 defect stated as a check.
+9. **The `Report` button appears on EVERY user row** inside an expanded batch, not only on rows that
+   look broken (D7).
+10. An operator without `MigrationManage` sees no checkbox column and no toolbar, and the bulk
+    endpoints refuse if reached anyway. **Not runnable by the owner** as of round 1.

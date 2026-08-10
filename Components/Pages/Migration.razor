@@ -400,15 +400,11 @@
                             </button>
                         </div>
                     </div>
+                    @* The standalone "Clear Completed" sweep was REMOVED (D6): it acted on every
+                       completed batch in the table regardless of selection, and it sat beside
+                       "Clear selection" sharing a word - one irreversible, one harmless. Its job is
+                       now "Remove Completed" in the selection toolbar. *@
                     <div>
-                        @if (canManage && migrationBatches?.Any(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase)
-                            || (b.TotalCount == 0)) == true)
-                        {
-                            <button class="btn btn-sm btn-outline-secondary me-2" disabled="@(actionInProgress != null || pendingActionLabel != null)"
-                                    @onclick="StageClearCompleted">
-                                Clear Completed
-                            </button>
-                        }
                         <button class="btn btn-sm btn-primary" @onclick="LoadMigrationStatus" disabled="@isLoadingStatus">
                             @if (isLoadingStatus)
                             {
@@ -449,17 +445,26 @@
                 {
                     <div class="alert alert-secondary d-flex align-items-center gap-2 mb-3 py-2">
                         <strong>@selectedBatches.Count selected</strong>
-                        <button class="btn btn-sm btn-outline-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                        <button class="btn btn-sm btn-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                title="Removes every selected batch, whatever its status"
                                 @onclick="StageDeleteSelected">
-                            Delete selected
+                            Delete
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                title="Removes only the selected batches whose status is Completed"
+                                @onclick="StageRemoveCompletedSelected">
+                            Remove Completed
                         </button>
                         <button class="btn btn-sm btn-outline-success" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                title="Restarts the selected batches that are idle but restartable"
                                 @onclick="StageResumeSelected">
-                            Resume selected
+                            Resume/Retry
                         </button>
+                        @* Named "Untick all", not "Clear ...": the word "Clear" beside two
+                           destructive buttons is the adjacency the owner rejected. *@
                         <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@(actionInProgress != null)"
                                 @onclick="ClearBatchSelection">
-                            Clear selection
+                            Untick all
                         </button>
                     </div>
                 }
@@ -566,7 +571,9 @@
                                             }
                                             @* Resume and Delete read the planner's predicates, the same definition the bulk
                                                actions use. Two copies of "which statuses may be deleted" is how a row button
-                                               and a bulk action come to disagree about the same batch. *@
+                                               and a bulk action come to disagree about the same batch - and an allowlist
+                                               written from the statuses a developer has seen is how CompletedWithErrors
+                                               became invisible to every button on this page. *@
                                             @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status))
                                             {
                                                 <button class="btn btn-sm btn-outline-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
@@ -574,6 +581,8 @@
                                                     Resume
                                                 </button>
                                             }
+                                            @* Delete is offered on every row, whatever the status (D3): Exchange decides
+                                               what it will remove, and a refusal comes back as this row's own error. *@
                                             @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status))
                                             {
                                                 <button class="btn btn-sm btn-outline-danger me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
@@ -708,23 +717,24 @@
                                                                                             @onclick="() => ClearUser(e)">Clear</button>
                                                                                 }
                                                                             }
-                                                                            @if (s.Equals("Failed", StringComparison.OrdinalIgnoreCase)
-                                                                                || s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase)
-                                                                                || !string.IsNullOrEmpty(user.ErrorSummary))
-                                                                            {
-                                                                                <button class="btn btn-sm btn-outline-danger"
-                                                                                        disabled="@(loadingReport == e)"
-                                                                                        @onclick="() => LoadUserReport(e)">
-                                                                                    @if (loadingReport == e)
-                                                                                    {
-                                                                                        <span class="spinner-border spinner-border-sm"></span>
-                                                                                    }
-                                                                                    else
-                                                                                    {
-                                                                                        <span>Report</span>
-                                                                                    }
-                                                                                </button>
-                                                                            }
+                                                                            @* Report is offered on EVERY user row. It was gated on Failed /
+                                                                               NeedsApproval / a non-empty ErrorSummary, so it appeared only on rows
+                                                                               that already looked broken - and a CompletedWithErrors user, whose
+                                                                               report is the one worth reading, often matched none of those. It is a
+                                                                               read-only diagnostic: nothing is gained by hiding it, and the third
+                                                                               status allowlist on this page to hide something the operator wanted. *@
+                                                                            <button class="btn btn-sm btn-outline-danger"
+                                                                                    disabled="@(loadingReport == e)"
+                                                                                    @onclick="() => LoadUserReport(e)">
+                                                                                @if (loadingReport == e)
+                                                                                {
+                                                                                    <span class="spinner-border spinner-border-sm"></span>
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    <span>Report</span>
+                                                                                }
+                                                                            </button>
                                                                             <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh user status"
                                                                                     disabled="@(loadingBatchUsers != null)"
                                                                                     @onclick="() => RefreshBatchUsers(expandedBatch!)">
@@ -1242,11 +1252,21 @@
         batchActionResult = null;
     }
 
+    // Delete's staged target carries the per-status breakdown (D5): it is the only action that
+    // accepts in-progress batches, so the operator must see how many of those they are about to
+    // destroy before typing a ticket. The other two have a single, obvious target class.
     private void StageDeleteSelected() => StageSelectionAction(
-        MigrationBatchAction.Delete, "Delete Selected", DeleteSelectedBatches);
+        MigrationBatchAction.Delete,
+        "DELETE",
+        DeleteSelectedBatches,
+        staged => $"This will remove {staged.Eligible.Count} batch(es): "
+                  + MigrationBatchActionPlanner.DescribeSelectionByStatus(migrationBatches, selectedBatches));
+
+    private void StageRemoveCompletedSelected() => StageSelectionAction(
+        MigrationBatchAction.RemoveCompleted, "Remove Completed", RemoveCompletedSelectedBatches);
 
     private void StageResumeSelected() => StageSelectionAction(
-        MigrationBatchAction.Resume, "Resume Selected", ResumeSelectedBatches);
+        MigrationBatchAction.Resume, "Resume/Retry", ResumeSelectedBatches);
 
     // The plan is computed at STAGING time so the confirm bar can say how many batches the ticket
     // is about to cover, and re-computed at execution time inside the callback - the operator can
@@ -1254,11 +1274,13 @@
     private void StageSelectionAction(
         MigrationBatchAction action,
         string label,
-        Func<MigrationBatchActionPlan, string, Task> execute)
+        Func<MigrationBatchActionPlan, string, Task> execute,
+        Func<MigrationBatchActionPlan, string>? describeTarget = null)
     {
         var staged = MigrationBatchActionPlanner.Plan(migrationBatches, selectedBatches, action);
+        var target = describeTarget?.Invoke(staged) ?? $"{staged.Eligible.Count} batch(es)";
 
-        StageBatchAction(label, $"{staged.Eligible.Count} batch(es)", ticket =>
+        StageBatchAction(label, target, ticket =>
         {
             var current = MigrationBatchActionPlanner.Plan(migrationBatches, selectedBatches, action);
             return execute(current, ticket);
@@ -1472,29 +1494,6 @@
         }
     }
 
-    private void StageClearCompleted()
-    {
-        var names = CompletedOrEmptyBatchNames();
-        StageBatchAction("Clear Completed", $"{names.Count} batch(es)", ticket => ClearCompletedBatches(names, ticket));
-    }
-
-    private List<string> CompletedOrEmptyBatchNames() =>
-        migrationBatches?
-            .Where(b => b.Status.Equals("Completed", StringComparison.OrdinalIgnoreCase) || b.TotalCount == 0)
-            .Select(b => b.BatchName)
-            .ToList()
-        ?? new List<string>();
-
-    private Task ClearCompletedBatches(IReadOnlyList<string> batchNames, string ticket) =>
-        ExecuteBulkBatchAction(
-            batchNames,
-            skipped: Array.Empty<MigrationBatchSkip>(),
-            action: name => MigrationSvc.RemoveMigrationBatchAsync(name),
-            auditAction: "RemoveMigrationBatch",
-            notificationAction: "Migration_ClearCompleted",
-            verb: "Removed",
-            ticket: ticket);
-
     private Task DeleteSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
         ExecuteBulkBatchAction(
             plan.Eligible,
@@ -1502,6 +1501,16 @@
             name => MigrationSvc.RemoveMigrationBatchAsync(name),
             "RemoveMigrationBatch",
             "Migration_DeleteSelected",
+            "Removed",
+            ticket);
+
+    private Task RemoveCompletedSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
+        ExecuteBulkBatchAction(
+            plan.Eligible,
+            plan.Skipped,
+            name => MigrationSvc.RemoveMigrationBatchAsync(name),
+            "RemoveMigrationBatch",
+            "Migration_RemoveCompleted",
             "Removed",
             ticket);
 

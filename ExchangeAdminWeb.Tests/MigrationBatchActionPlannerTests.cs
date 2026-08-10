@@ -15,63 +15,184 @@ namespace ExchangeAdminWeb.Tests;
 public class MigrationBatchActionPlannerTests
 {
     [Theory]
-    [InlineData("Completed", true)]
-    [InlineData("Failed", true)]
-    [InlineData("Stopped", true)]
-    [InlineData("Corrupted", true)]
-    [InlineData("Syncing", false)]
-    [InlineData("Synced", false)]
-    [InlineData("Starting", false)]
-    [InlineData("NeedsApproval", false)]
-    public void Applies_Delete_MatchesTheTerminalStatuses(string status, bool expected)
+    [InlineData("Completed")]
+    [InlineData("CompletedWithErrors")]
+    [InlineData("Failed")]
+    [InlineData("Stopped")]
+    [InlineData("Corrupted")]
+    [InlineData("Syncing")]
+    [InlineData("Synced")]
+    [InlineData("Starting")]
+    [InlineData("NeedsApproval")]
+    [InlineData("SomeStatusNobodyHasSeenYet")]
+    [InlineData(null)]
+    [InlineData("")]
+    public void Applies_Delete_AcceptsAnyStatusWhatsoever(string? status)
     {
-        Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, status));
+        // D3: Delete carries no status list. Exchange is the authority on what it will remove, and
+        // a refusal returns as that row's own per-item failure, which the executor names. A
+        // client-side allowlist can only be wrong in the direction that hides a row the operator
+        // explicitly ticked - which is exactly what happened to CompletedWithErrors.
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, status));
     }
 
     [Theory]
+    [InlineData("Completed", true)]
+    [InlineData("completed", true)]
+    [InlineData(" Completed ", true)]
+    [InlineData("CompletedWithErrors", false)]
+    [InlineData("Failed", false)]
+    [InlineData("Stopped", false)]
+    [InlineData("Syncing", false)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void Applies_RemoveCompleted_MatchesExactlyCompleted(string? status, bool expected)
+    {
+        // D3, owner: "Completed is the only valid target for Clear Completed." CompletedWithErrors
+        // is deliberately NOT swept - a batch that finished with errors is not a batch that
+        // finished, and folding it into a bulk removal destroys the evidence of what went wrong.
+        Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.RemoveCompleted, status));
+    }
+
+    [Theory]
+    [InlineData("CompletedWithErrors", true)]
     [InlineData("Stopped", true)]
+    [InlineData("Failed", true)]
+    [InlineData("Paused", true)]
+    [InlineData("Corrupted", true)]
+    [InlineData("Synced", true)]
+    [InlineData("NeedsApproval", true)]
     [InlineData("Completed", false)]
     [InlineData("Syncing", false)]
-    [InlineData("Failed", false)]
-    public void Applies_Resume_OnlyMatchesStopped(string status, bool expected)
+    [InlineData("Starting", false)]
+    [InlineData("Stopping", false)]
+    [InlineData("Completing", false)]
+    [InlineData("Removing", false)]
+    public void Applies_Resume_ExcludesTheWorkingStatusesAndCompleted(string status, bool expected)
     {
+        // D4. Two separate reasons for the two excluded groups: the working statuses have nothing
+        // to resume because the batch is already moving; Completed is idle but DONE.
+        // Idle-and-restartable is not the same as idle.
         Assert.Equal(expected, MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, status));
+    }
+
+    [Fact]
+    public void Applies_Resume_OffersAStatusThisCodebaseHasNeverSeen()
+    {
+        // The whole reason D4 is an exclusion list. CompletedWithErrors is a real Exchange status
+        // that appeared NOWHERE in this codebase, so a batch in that state had no buttons at all
+        // and no test could have caught it - every test used the same status list the code did.
+        // An unanticipated status must default to VISIBLE and let Exchange refuse it.
+        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, "QuarantinedPendingReview"));
     }
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void Applies_RefusesAMissingStatus(string? status)
+    public void Applies_Resume_RefusesAMissingStatus(string? status)
     {
-        // Fail closed: a status we could not read is not evidence the action is safe.
-        Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, status));
+        // Fail closed HERE specifically: an unreadable status cannot rule out that the batch is
+        // mid-flight, and restarting one that is, is the harmful direction. Delete has no such
+        // hazard - Exchange refuses a running batch itself.
         Assert.False(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, status));
-    }
-
-    [Fact]
-    public void Applies_IgnoresCaseAndSurroundingWhitespace()
-    {
-        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, " completed "));
-        Assert.True(MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, "STOPPED"));
     }
 
     [Fact]
     public void Plan_SplitsAMixedSelectionIntoEligibleAndSkipped()
     {
         // The normal case at 50+ in-flight batches, and the whole point of owner ruling D2(a).
+        // Uses RemoveCompleted because Delete no longer skips anything.
         var loaded = Batches(
             ("done-1", "Completed"),
             ("running-1", "Syncing"),
             ("dead-1", "Failed"));
 
         var plan = MigrationBatchActionPlanner.Plan(
-            loaded, ["done-1", "running-1", "dead-1"], MigrationBatchAction.Delete);
+            loaded, ["done-1", "running-1", "dead-1"], MigrationBatchAction.RemoveCompleted);
 
-        Assert.Equal(["done-1", "dead-1"], plan.Eligible);
+        Assert.Equal(["done-1"], plan.Eligible);
+        Assert.Equal(2, plan.Skipped.Count);
+        Assert.Contains(plan.Skipped, s => s.BatchName == "running-1" && s.Status == "Syncing");
+        Assert.Contains(plan.Skipped, s => s.BatchName == "dead-1" && s.Status == "Failed");
+    }
+
+    [Fact]
+    public void Plan_Delete_SkipsNothingWhateverTheSelectionHolds()
+    {
+        // The owner's reported failure, inverted into a guard. Ticking two batches and asking to
+        // act returned "No batches to act on. Skipped 2: ... (Completed), ... (CompletedWithErrors)."
+        // Delete must never produce that: every ticked row is a target.
+        var loaded = Batches(
+            ("done-1", "Completed"),
+            ("errored-1", "CompletedWithErrors"),
+            ("running-1", "Syncing"),
+            ("odd-1", "SomethingUnheardOf"));
+
+        var plan = MigrationBatchActionPlanner.Plan(
+            loaded, ["done-1", "errored-1", "running-1", "odd-1"], MigrationBatchAction.Delete);
+
+        Assert.Equal(["done-1", "errored-1", "running-1", "odd-1"], plan.Eligible);
+        Assert.Empty(plan.Skipped);
+    }
+
+    [Fact]
+    public void Plan_Resume_ActsOnCompletedWithErrorsAndSkipsCompleted()
+    {
+        // The exact selection the owner tried on dev. Before D3/D4 this returned nothing to do.
+        var loaded = Batches(
+            ("james", "Completed"),
+            ("apriljoy", "CompletedWithErrors"));
+
+        var plan = MigrationBatchActionPlanner.Plan(
+            loaded, ["james", "apriljoy"], MigrationBatchAction.Resume);
+
+        Assert.Equal(["apriljoy"], plan.Eligible);
         var skip = Assert.Single(plan.Skipped);
-        Assert.Equal("running-1", skip.BatchName);
-        Assert.Equal("Syncing", skip.Status);
+        Assert.Equal("james", skip.BatchName);
+        Assert.Equal("Completed", skip.Status);
+    }
+
+    [Fact]
+    public void Plan_RemoveCompleted_LeavesCompletedWithErrorsAlone()
+    {
+        // The inverse of the guard above, and the one that protects evidence: a bulk "remove the
+        // finished ones" must not quietly destroy the batches that finished BADLY.
+        var loaded = Batches(
+            ("done-1", "Completed"),
+            ("errored-1", "CompletedWithErrors"));
+
+        var plan = MigrationBatchActionPlanner.Plan(
+            loaded, ["done-1", "errored-1"], MigrationBatchAction.RemoveCompleted);
+
+        Assert.Equal(["done-1"], plan.Eligible);
+        Assert.Equal("errored-1", Assert.Single(plan.Skipped).BatchName);
+    }
+
+    [Fact]
+    public void DescribeSelectionByStatus_CountsEachStatusInTableOrder()
+    {
+        // D5: Delete's confirmation must show what the operator is about to destroy, because Delete
+        // is the one action that accepts in-progress batches.
+        var loaded = Batches(
+            ("a", "Completed"),
+            ("b", "Syncing"),
+            ("c", "Completed"),
+            ("d", "CompletedWithErrors"));
+
+        var text = MigrationBatchActionPlanner.DescribeSelectionByStatus(loaded, ["a", "b", "c", "d"]);
+
+        Assert.Equal("2 Completed, 1 Syncing, 1 CompletedWithErrors", text);
+    }
+
+    [Fact]
+    public void DescribeSelectionByStatus_CountsOnlyWhatIsSelected()
+    {
+        var loaded = Batches(("a", "Completed"), ("b", "Syncing"));
+
+        Assert.Equal("1 Syncing", MigrationBatchActionPlanner.DescribeSelectionByStatus(loaded, ["b"]));
+        Assert.Equal("", MigrationBatchActionPlanner.DescribeSelectionByStatus(loaded, []));
+        Assert.Equal("", MigrationBatchActionPlanner.DescribeSelectionByStatus(null, ["a"]));
     }
 
     [Fact]
@@ -138,10 +259,13 @@ public class MigrationBatchActionPlannerTests
     {
         // D2(a): "nothing to do" is not a failure. The planner reports it as skips with no
         // eligible rows, and it is the caller's job not to dress that up as an error.
+        //
+        // Retargeted at RemoveCompleted for round 2: Delete no longer skips anything (D3), so it
+        // can no longer produce this shape at all.
         var loaded = Batches(("running-1", "Syncing"), ("running-2", "Starting"));
 
         var plan = MigrationBatchActionPlanner.Plan(
-            loaded, ["running-1", "running-2"], MigrationBatchAction.Delete);
+            loaded, ["running-1", "running-2"], MigrationBatchAction.RemoveCompleted);
 
         Assert.Empty(plan.Eligible);
         Assert.Equal(2, plan.Skipped.Count);
