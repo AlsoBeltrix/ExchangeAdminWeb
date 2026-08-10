@@ -24,7 +24,7 @@ Verifying the restore by reading the file was not enough. Touch the file after a
 timestamp-preserving restore.
 
 **A `codereview` generation pass over the landed range returned one finding, `mbs-1` (MEDIUM), and
-it was real** -- see `.agents/review/findings/mbs-1.md`, fixed in `1c0d0f9`. D1 below says the inner
+it was real** -- see `.agents/review/findings/mbs-1.md`, fixed in `1ef7fae`. D1 below says the inner
 per-user table "gets the (2) fix, because the confirm bar it uses is the same shared one." The
 implementation delivered the outer half only: `StageUserAction` sets the pending target to an
 EMAIL, which never equals a batch name, so every per-user action fell through to the top-of-table

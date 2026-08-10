@@ -6,9 +6,19 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Migration Status batch selection + inline ticket entry: CODE COMPLETE 2026-08-10, all 4 slices
-  landed. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT DEPLOYED; 8 manual checks UNRUN.**
-  `docs/MigrationBatchSelection-Plan.md` Status: Implemented.
+- **Migration Status batch selection + inline ticket entry: CODE COMPLETE + REVIEWED 2026-08-10,
+  all 4 slices landed plus one review fix. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT
+  DEPLOYED; 9 manual checks UNRUN.** `docs/MigrationBatchSelection-Plan.md` Status: Implemented.
+  **A `codereview` generation pass over `c6abcdf..e70dfb2` returned ONE finding, `mbs-1` (MEDIUM),
+  and it was real** (`.agents/review/findings/mbs-1.md`, fixed `1ef7fae`). The slice-3 inline
+  confirm matched on a BATCH NAME; `StageUserAction` sets the pending target to an EMAIL, so every
+  per-user action inside an expanded batch still prompted at the top of the outer table - the
+  reported defect, live one level down. **The plan's D1 said the inner table gets that fix; the
+  slice-3 note listed only the bulk cases, and I built to the note.** When a ruling and a later
+  implementation note disagree, the ruling wins and the note is the thing to correct.
+  **What makes this worth recording: 23 guards, ten mutation probes, and 1645 green tests all
+  passed while that half was broken, because none of them reads the plan.** The reviewer found it
+  by treating D1 as a claim to check against the code - the same move that found pps-1.
   Owner report 2026-08-10: *"the exchange migration status page needs checkboxes on each row to
   allow batch clear/delete and resume. the ticket number entry field for individual items needs to
   be closer to the actual button people hit ... because we routinely have ~50+ in-flight and the
