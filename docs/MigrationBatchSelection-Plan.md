@@ -3,8 +3,8 @@
 Status: **Implemented and ACCEPTED by the owner on dev 2026-08-10** (*"looks fine. ran through a few
 checks, calling it good."*). Two rounds: round 1 built the checkbox mechanics, selection keying and
 inline ticket placement; round 2 (D3-D8) reworked the three bulk actions, their targets, the
-wording and the deselection after the owner exercised round 1 on dev. **ON DEV as app `2.8.0`,
-Migration `1.7.0`; PROD is still on `2.7.0` and has none of this.**
+wording and the deselection after the owner exercised round 1 on dev. **DEPLOYED TO DEV AND PROD
+2026-08-10 as app `2.8.0`, Migration `1.7.0`**, verified from both assemblies.
 D1-D2 ruled 2026-08-10; D3-D8 ruled 2026-08-10 (see Decisions).
 
 **Acceptance is not the same as the check list having been run** -- see Manual checks for exactly
