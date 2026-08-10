@@ -159,6 +159,26 @@ without adding information. The breakdown is the substance of the warning: Delet
 that it accepts in-progress batches, so the operator must see how many of those they are about to
 destroy before typing a ticket.
 
+**D8 -- what happens to the selection after an action, and what the result says. RULED** (owner,
+2026-08-10, on dev: *"I selected two, clicked remove completed, and it says it removed but didn't
+deselect. removal isn't instant and the message is unclear since the 'removed' entry is still
+there. it should say queued for removal, and it should deselect after an action is taken."*).
+
+Two defects in one report:
+
+1. **Deselection.** Round 1 relied on `PruneSelection` alone, which only drops batches that have
+   LEFT the table. `Remove-MigrationBatch` is asynchronous: the batch sits at status `Removing` for
+   some time, so it is still listed and stays ticked. A ticked row over in-flight work invites a
+   second click on a batch already being removed. **Batches Exchange ACCEPTED are now deselected;
+   batches that FAILED stay ticked** (nothing was queued, retrying is the likely next move), and
+   skipped rows stay ticked per D2(a). A blanket `Clear()` is wrong for exactly that reason.
+2. **Wording.** "Removed 1 batch(es)" rendered over a row the operator could still see. The cmdlets
+   return when Exchange ACCEPTS the request, not when the work is done. Bulk verbs are now "Queued
+   removal of" / "Queued restart of", plus a sentence saying Exchange finishes in the background and
+   Refresh follows it. **The same lie was in `MigrationService` for the SINGLE-row path**
+   (`'{batch}' removed.` / `started.` / `stopped.`) and is fixed there too -- fixing only the bulk
+   wording would have left it on the row that reported it.
+
 **D7 -- the per-user Report button. RULED: offer it on EVERY user row** (owner, 2026-08-10:
 *"Report is only a button on subrows in CompletedWithErrors migrations, and it should be available
 on every user row."*). It was gated on `Failed` / `NeedsApproval` / a non-empty `ErrorSummary`, so
@@ -422,5 +442,8 @@ fixed); 3 FAIL on naming (D6, fixed); 7 WITHDRAWN as a bad check; 8 blocked by t
    the grey unknown-status badge. This is the round-2 defect stated as a check.
 9. **The `Report` button appears on EVERY user row** inside an expanded batch, not only on rows that
    look broken (D7).
+9b. **After any bulk action, the batches Exchange accepted are unticked** and the message says
+   "Queued removal of N batch(es)", never "Removed" (D8). Rows that FAILED stay ticked. The single-
+   row buttons say "queued for removal" too.
 10. An operator without `MigrationManage` sees no checkbox column and no toolbar, and the bulk
     endpoints refuse if reached anyway. **Not runnable by the owner** as of round 1.

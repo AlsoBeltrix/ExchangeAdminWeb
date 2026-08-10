@@ -782,6 +782,10 @@ https://admin.exchange.microsoft.com/#/migration";
         }, () => ($"Migration user {emailAddress} removed.", (string?)null), allowRetry: true);
     }
 
+    // These three cmdlets return when Exchange ACCEPTS the request, not when the work is done: the
+    // batch then sits at Removing / Stopping / Starting for anything from seconds to minutes. The
+    // messages say "queued" for that reason - reporting "removed" over a row the operator can still
+    // see on screen reads as a broken app, and it was.
     public Task<PermissionResult> RemoveMigrationBatchAsync(string batchName)
     {
         return RunAsync((ps, tracker) =>
@@ -791,7 +795,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' removed.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued for removal.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> StopMigrationBatchAsync(string batchName)
@@ -803,7 +807,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' stopped.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued to stop.", (string?)null), allowRetry: true);
     }
 
     public Task<PermissionResult> StartMigrationBatchAsync(string batchName)
@@ -815,7 +819,7 @@ https://admin.exchange.microsoft.com/#/migration";
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
             Invoke(ps, tracker);
-        }, () => ($"Migration batch '{batchName}' started.", (string?)null), allowRetry: true);
+        }, () => ($"Migration batch '{batchName}' queued to start.", (string?)null), allowRetry: true);
     }
 
     private async Task<(double mailboxGB, double archiveGB)?> GetCloudMailboxSizeAsync(string emailAddress)

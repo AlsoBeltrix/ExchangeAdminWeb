@@ -1494,6 +1494,9 @@
         }
     }
 
+    // The verbs say QUEUED, not done. Remove-MigrationBatch and Start-MigrationBatch return when
+    // Exchange ACCEPTS the request; the batch then sits at status Removing or Starting for a while.
+    // Saying "Removed 1 batch(es)" over a row that is visibly still there reads as a broken app.
     private Task DeleteSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
         ExecuteBulkBatchAction(
             plan.Eligible,
@@ -1501,7 +1504,7 @@
             name => MigrationSvc.RemoveMigrationBatchAsync(name),
             "RemoveMigrationBatch",
             "Migration_DeleteSelected",
-            "Removed",
+            "Queued removal of",
             ticket);
 
     private Task RemoveCompletedSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
@@ -1511,7 +1514,7 @@
             name => MigrationSvc.RemoveMigrationBatchAsync(name),
             "RemoveMigrationBatch",
             "Migration_RemoveCompleted",
-            "Removed",
+            "Queued removal of",
             ticket);
 
     private Task ResumeSelectedBatches(MigrationBatchActionPlan plan, string ticket) =>
@@ -1521,7 +1524,7 @@
             name => MigrationSvc.StartMigrationBatchAsync(name),
             "StartMigrationBatch",
             "Migration_ResumeSelected",
-            "Resumed",
+            "Queued restart of",
             ticket);
 
     /// <summary>
@@ -1589,6 +1592,8 @@
         isLoadingStatus = true;
         batchActionResult = null;
         var succeeded = 0;
+        // Names Exchange accepted the request for, so they can be deselected after the run.
+        var accepted = new List<string>();
         var errors = new List<string>();
         // Audit-write failures are warnings, never operation failures: an audit
         // failure must not make an already-completed removal look failed.
@@ -1610,18 +1615,31 @@
                 }
 
                 if (result.Success)
+                {
                     succeeded++;
+                    accepted.Add(batchName);
+                }
                 else
+                {
                     errors.Add($"{batchName}: {result.Message}");
+                }
             }
+
+            // Every batch Exchange ACCEPTED is deselected, whatever happens next: leaving it ticked
+            // invites a second click on work already in flight, and the row stays visible for
+            // several refreshes because removal is asynchronous. Batches that FAILED stay ticked -
+            // nothing was queued for them, and retrying is the likely next move. Skipped rows also
+            // stay ticked (D2(a)), so the operator can pick a different action for exactly them.
+            foreach (var name in accepted)
+                selectedBatches.Remove(name);
 
             var warningSuffix = auditWarnings.Count > 0
                 ? $" (warning - {string.Join("; ", auditWarnings)})"
                 : "";
             if (errors.Count == 0)
-                batchActionResult = new PermissionResult { Success = true, Message = $"{verb} {succeeded} batch(es).{skippedSuffix}{warningSuffix}" };
+                batchActionResult = new PermissionResult { Success = true, Message = $"{verb} {succeeded} batch(es). Exchange processes this in the background - use Refresh to follow it.{skippedSuffix}{warningSuffix}" };
             else
-                batchActionResult = PermissionResult.Fail($"{verb} {succeeded}, failed {errors.Count}: {string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
+                batchActionResult = PermissionResult.Fail($"{verb} {succeeded} batch(es); {errors.Count} refused: {string.Join("; ", errors)}{skippedSuffix}{warningSuffix}");
 
             try
             {

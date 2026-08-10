@@ -212,6 +212,86 @@ public class MigrationStatusPageTests
         Assert.Contains("auditWarnings", body, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("RemoveMigrationBatchAsync", "queued for removal")]
+    [InlineData("StopMigrationBatchAsync", "queued to stop")]
+    [InlineData("StartMigrationBatchAsync", "queued to start")]
+    public void SingleBatchServiceMessagesAlsoSayQueued(string method, string expected)
+    {
+        // The per-row buttons carry the service's own message straight to the operator, so fixing
+        // only the bulk wording would leave the same lie on the row that reported it. Guarded here
+        // rather than in a service test because the string is a lambda passed to RunAsync, which
+        // needs a live EXO session to invoke.
+        var source = ReadServiceSource("MigrationService.cs");
+
+        var start = source.IndexOf($"public Task<PermissionResult> {method}(", StringComparison.Ordinal);
+        Assert.True(start > 0, $"{method} not found");
+
+        var end = source.IndexOf("\n    public ", start + 1, StringComparison.Ordinal);
+        var body = end > start ? source[start..end] : source[start..];
+
+        Assert.Contains(expected, body, StringComparison.Ordinal);
+        Assert.DoesNotContain("' removed.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("' started.", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("' stopped.", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AcceptedBatchesAreDeselectedAfterTheRun()
+    {
+        // Owner, on dev: selected two, clicked Remove Completed, "it says it removed but didn't
+        // deselect". Pruning alone cannot do this - it only drops batches that have LEFT the table,
+        // and removal is asynchronous, so the row is still listed at status Removing and stays
+        // ticked. A ticked row over in-flight work invites a second click on the same batch.
+        var body = GetMethodBody("ExecuteBulkBatchAction");
+
+        Assert.Contains("selectedBatches.Remove(name)", body, StringComparison.Ordinal);
+
+        // Only the accepted ones. A blanket Clear() would also drop the failures and the skips,
+        // which are exactly the rows the operator needs to still have selected.
+        Assert.DoesNotContain("selectedBatches.Clear()", body, StringComparison.Ordinal);
+        Assert.Contains("accepted.Add(batchName)", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FailedBatchesStaySelected()
+    {
+        // The counterweight. A batch Exchange refused had nothing queued for it, so retrying is the
+        // likely next move and unticking it would make the operator find it again among 50 rows.
+        // Guarded by placement: the add sits on the success branch, beside the counter.
+        var body = GetMethodBody("ExecuteBulkBatchAction");
+
+        var accept = body.IndexOf("accepted.Add(batchName)", StringComparison.Ordinal);
+        var error = body.IndexOf("errors.Add(", StringComparison.Ordinal);
+        Assert.True(accept > 0 && error > 0, "expected both branches in the bulk executor");
+        Assert.True(accept < error, "the accepted-list add must sit on the success branch, before the error branch");
+    }
+
+    [Theory]
+    [InlineData("DeleteSelectedBatches")]
+    [InlineData("RemoveCompletedSelectedBatches")]
+    [InlineData("ResumeSelectedBatches")]
+    public void BulkResultsSayQueuedNotDone(string method)
+    {
+        // Remove-MigrationBatch and Start-MigrationBatch return when Exchange ACCEPTS the request.
+        // The batch then sits at Removing or Starting for a while, so "Removed 1 batch(es)" renders
+        // over a row the operator can still see - which reads as the app being broken.
+        var body = GetMethodBody(method);
+
+        Assert.Contains("Queued", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Removed\"", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"Resumed\"", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheResultExplainsThatExchangeFinishesInTheBackground()
+    {
+        // "Queued" alone still leaves the operator wondering why the row is still there.
+        var body = GetMethodBody("ExecuteBulkBatchAction");
+
+        Assert.Contains("background", body, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void SkippedBatchesAreReportedAndAreNotFailures()
     {
@@ -437,6 +517,15 @@ public class MigrationStatusPageTests
 
     private static string ReadPage() =>
         File.ReadAllText(Path.Combine(GetPagesDirectory(), "Migration.razor"));
+
+    private static string ReadServiceSource(string fileName)
+    {
+        var pages = new DirectoryInfo(GetPagesDirectory());
+        var repoRoot = pages.Parent?.Parent
+            ?? throw new DirectoryNotFoundException("could not walk up from Components/Pages");
+
+        return File.ReadAllText(Path.Combine(repoRoot.FullName, "Services", fileName));
+    }
 
     private static string GetMethodBody(string methodName) =>
         GetMemberSource($@"private\s+(async\s+)?[A-Za-z][^\r\n=]*?\b{Regex.Escape(methodName)}\s*\(", methodName);

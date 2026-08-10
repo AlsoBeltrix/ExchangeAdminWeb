@@ -37,6 +37,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   "Clear selection" sharing a word; owner: *"unacceptable."* Buttons are now Delete / Remove
   Completed / Resume-Retry / Untick all -- no two share a leading verb.
   **D7: Report is offered on every user row**, not only rows that already look broken.
+  **D8, from a second dev pass: the selection did not clear after an action, and the result claimed
+  work that had not happened.** *"it says it removed but didn't deselect. removal isn't instant and
+  the message is unclear since the 'removed' entry is still there."*
+  (a) `PruneSelection` only drops batches that have LEFT the table, and removal is asynchronous -
+  the batch sits at `Removing` and stays ticked, inviting a second click on work already in flight.
+  Batches Exchange ACCEPTED are now deselected; ones that FAILED stay ticked, because nothing was
+  queued for them and retrying is the likely next move. A blanket `Clear()` would have taken the
+  failures and the skips with it, which are the rows the operator still needs.
+  (b) **The cmdlets return when Exchange ACCEPTS the request, not when the work is done**, so
+  "Removed 1 batch(es)" rendered over a row still visible on screen. Verbs are now "Queued removal
+  of" / "Queued restart of" plus a line saying Exchange finishes in the background. **The same lie
+  lived in `MigrationService` for the single-row path** and is fixed there too - fixing only the
+  bulk wording would have left it on the row that reported it.
+  **The pattern across D3-D8 is one thing: this page kept ASSERTING states it had not verified** -
+  that a status list was exhaustive, that a queued removal was a completed one. Both are the same
+  error in different clothes, and both were found by an operator using the app.
   **What round 1 got right and should not be re-litigated:** checkbox mechanics, `BatchName`-keyed
   selection surviving a re-sort, the inline ticket field beneath both batch and user rows, and the
   single aggregating executor (per-batch audit inside the loop, audit failures as warnings, one
