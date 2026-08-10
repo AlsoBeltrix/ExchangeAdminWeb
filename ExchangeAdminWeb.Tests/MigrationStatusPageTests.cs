@@ -245,34 +245,53 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
-    public void TheConfirmBarIsDefinedOnceAndRenderedInBothPlaces()
+    public void ThePerUserTicketFieldRendersInsideTheUserLoop()
     {
-        // Two copies of the control the operator has to find would drift. One RenderFragment, two
-        // render sites: under the acting row, and above the table for an action naming no row.
+        // mbs-1. StageUserAction sets pendingActionTarget to an EMAIL, which never equals a batch
+        // name - so before the fix every per-user action fell through to the top-of-table bar,
+        // reproducing the reported off-screen prompt one level down, inside an expanded batch.
+        //
+        // Anchored inside the user loop specifically: the batch-row confirm added in slice 3 would
+        // have satisfied a page-wide match while this half stayed broken, which is precisely the
+        // state being fixed.
+        var userLoop = GetUserRowMarkup();
+
+        Assert.Contains("pendingActionTarget == user.EmailAddress", userLoop, StringComparison.Ordinal);
+        Assert.Contains("@PendingActionConfirm", userLoop, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheConfirmBarIsDefinedOnceAndRenderedInEveryPlace()
+    {
+        // Two copies of the control the operator has to find would drift. One RenderFragment,
+        // three render sites: under the acting batch row, under the acting user row, and above the
+        // table for an action naming no row at all.
         var page = ReadPage();
 
         var declarations = Regex.Matches(page, @"private RenderFragment PendingActionConfirm").Count;
         Assert.Equal(1, declarations);
 
         var uses = Regex.Matches(page, @"@PendingActionConfirm").Count;
-        Assert.True(uses >= 2, $"expected the fragment to be rendered in both places, found {uses}");
+        Assert.True(uses >= 3, $"expected the fragment at all three render sites, found {uses}");
     }
 
     [Fact]
     public void ActionsThatNameNoRowKeepTheTopOfTableBar()
     {
         // Clear Completed and the two bulk actions target "N batch(es)", which matches no row. The
-        // counterweight to the guard above: the move must not have made their confirm bar
-        // unreachable. Same reasoning covers a per-row action whose batch has since disappeared.
+        // counterweight to the two guards above: the move must not have made their confirm bar
+        // unreachable. Same reasoning covers a per-row action whose row has since disappeared.
         var page = ReadPage();
 
         Assert.Contains(
-            "@if (pendingActionLabel != null && !PendingActionNamesALoadedBatch)",
+            "@if (pendingActionLabel != null && !PendingActionNamesALoadedRow)",
             page,
             StringComparison.Ordinal);
 
-        var body = GetMemberBody("PendingActionNamesALoadedBatch");
+        // Both row kinds, or the half that is not tested is the half that regresses.
+        var body = GetMemberBody("PendingActionNamesALoadedRow");
         Assert.Contains("migrationBatches?.Any(", body, StringComparison.Ordinal);
+        Assert.Contains("batchUsers?.Any(", body, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -287,6 +306,10 @@ public class MigrationStatusPageTests
     /// </remarks>
     private static string GetBatchRowMarkup() =>
         ExtractBlock(ReadPage(), "@foreach (var batch in GetSortedBatches())");
+
+    /// <summary>The markup emitted per user row inside an expanded batch.</summary>
+    private static string GetUserRowMarkup() =>
+        ExtractBlock(ReadPage(), "@foreach (var user in batchUsers)");
 
     /// <summary>
     /// The brace-balanced block introduced by <paramref name="opener"/>, so an assertion can be

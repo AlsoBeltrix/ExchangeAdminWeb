@@ -431,11 +431,11 @@
                     </div>
                 }
 
-                @* The top-of-table confirm bar, for pending actions that name no single row: Clear
+                @* The top-of-table confirm bar, for pending actions that name no rendered row: Clear
                    Completed and the two bulk selection actions, whose target is "N batch(es)". A
-                   per-ROW action renders this same fragment beneath its own row instead - see
-                   PendingActionNamesALoadedBatch. *@
-                @if (pendingActionLabel != null && !PendingActionNamesALoadedBatch)
+                   per-ROW action - batch or user - renders this same fragment beneath its own row
+                   instead; see PendingActionNamesALoadedRow. *@
+                @if (pendingActionLabel != null && !PendingActionNamesALoadedRow)
                 {
                     @PendingActionConfirm
                 }
@@ -736,6 +736,17 @@
                                                                             }
                                                                         </td>
                                                                     </tr>
+                                                                    @* The ticket field for THIS user's action, beneath the user row - the
+                                                                       same placement the batch rows get. Missing until mbs-1, which left
+                                                                       every per-user action prompting at the top of the OUTER table. *@
+                                                                    @if (pendingActionTarget == user.EmailAddress && pendingActionLabel != null)
+                                                                    {
+                                                                        <tr class="table-warning">
+                                                                            <td colspan="6" class="py-2">
+                                                                                @PendingActionConfirm
+                                                                            </td>
+                                                                        </tr>
+                                                                    }
                                                                     @if (reportUser == user.EmailAddress && userReport != null)
                                                                     {
                                                                         <tr>
@@ -1180,13 +1191,19 @@
             selectedBatches.Add(name);
     }
 
-    // True when the pending action targets one loaded batch, so its confirm bar belongs under that
-    // row. False for Clear Completed and the bulk selection actions, whose target is a count, and
-    // false when the named batch is no longer listed - the bar must never become unreachable
-    // because the row it was attached to disappeared.
-    private bool PendingActionNamesALoadedBatch =>
+    // True when the pending action targets one row that is currently rendered - a batch row, or a
+    // user row inside the expanded batch - so its confirm bar belongs under that row. False for
+    // Clear Completed and the bulk selection actions, whose target is a count, and false when the
+    // named row is no longer listed: the bar must never become unreachable because the row it was
+    // attached to disappeared.
+    //
+    // The user half was missing until mbs-1: StageUserAction sets the target to an EMAIL, which
+    // never equals a batch name, so every per-user action fell through to the top-of-table bar -
+    // the same off-screen prompt this work stream exists to remove, one level down.
+    private bool PendingActionNamesALoadedRow =>
         pendingActionTarget != null
-        && migrationBatches?.Any(b => b.BatchName == pendingActionTarget) == true;
+        && (migrationBatches?.Any(b => b.BatchName == pendingActionTarget) == true
+            || batchUsers?.Any(u => u.EmailAddress == pendingActionTarget) == true);
 
     private bool IsBatchSelected(string batchName) => selectedBatches.Contains(batchName);
 

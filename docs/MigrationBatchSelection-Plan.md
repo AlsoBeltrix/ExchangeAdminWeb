@@ -22,6 +22,16 @@ A third, environmental: `Copy-Item` restoring a probe backup carries the BACKUP'
 MSBuild judged the DLL up to date and kept testing the mutant against correct restored source.
 Verifying the restore by reading the file was not enough. Touch the file after any
 timestamp-preserving restore.
+
+**A `codereview` generation pass over the landed range returned one finding, `mbs-1` (MEDIUM), and
+it was real** -- see `.agents/review/findings/mbs-1.md`, fixed in `1c0d0f9`. D1 below says the inner
+per-user table "gets the (2) fix, because the confirm bar it uses is the same shared one." The
+implementation delivered the outer half only: `StageUserAction` sets the pending target to an
+EMAIL, which never equals a batch name, so every per-user action fell through to the top-of-table
+bar -- the reported off-screen-prompt defect, still live one level down. The slice-3 note listed
+only the bulk cases as needing the top bar, and the narrower note silently won over the ruling.
+**Guards, mutation probes, and a green suite all passed while that half was broken, because none of
+them reads the plan.**
 App version at draft: `2.7.0` (unchanged -- module-scoped change).
 Module: `Migration` (`1.5.0` -> `1.6.0`).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
@@ -299,6 +309,9 @@ Nothing automated renders this page. Every check below is load-bearing; 4 and 5 
 5. **With 50+ batches loaded, scroll to a row near the bottom and click `Resume`.** The ticket field
    must appear directly beneath that row, on screen, without scrolling. This is the reported
    complaint; nothing else proves it fixed.
+5b. **The same, one level down (mbs-1):** expand a batch with many users, scroll to a user row low
+   in the inner table, click `Resume` or `Clear`. The ticket field must appear beneath that USER
+   row, not above the outer batches table.
 6. Delete a batch in the Exchange admin center, refresh the page, confirm it is no longer ticked and
    no longer listed.
 7. `Clear Completed` still works and still removes exactly the completed/empty batches -- the
