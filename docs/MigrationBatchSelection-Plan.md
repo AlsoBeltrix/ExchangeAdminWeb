@@ -1,6 +1,7 @@
 # Migration Status: batch selection and ticket-entry proximity -- Plan
 
-Status: **Draft -- awaiting owner ruling on D2.** D1 ruled by the owner 2026-08-10 ("outer").
+Status: **Approved 2026-08-10 -- both decisions ruled, implementation may proceed.** D1 ruled by
+the owner 2026-08-10 ("outer"); D2 ruled 2026-08-10 ("a").
 App version at draft: `2.7.0` (unchanged -- module-scoped change).
 Module: `Migration` (`1.5.0` -> `1.6.0`).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
@@ -44,7 +45,8 @@ right tool for a single batch.
 actions unchanged. It gets the (2) fix, because the confirm bar it uses is the same shared one.
 
 **D2 -- what a bulk action does when the selection contains rows the action cannot apply to.
-OPEN.** The two bulk actions have different applicable statuses, mirroring the per-row buttons:
+RULED: (a), act on the eligible rows and name every skipped row** (owner, 2026-08-10: "a"). The two
+bulk actions have different applicable statuses, mirroring the per-row buttons:
 
 | Action | Applies to batch status |
 | --- | --- |
@@ -53,16 +55,31 @@ OPEN.** The two bulk actions have different applicable statuses, mirroring the p
 
 So a selection of ten will routinely mix. Options:
 
-- **(a) Act on the eligible rows, report every skipped row by name and status.** The operator sees
-  "Deleted 7, skipped 3 (BATCH-12 Syncing, ...)". Recommended: it never silently drops a row the
+- **(a) RULED. Act on the eligible rows, report every skipped row by name and status.** The
+  operator sees "Deleted 7, skipped 3 (BATCH-12 Syncing, ...)". It never silently drops a row the
   operator ticked, which is the repo's success-aggregation failure class stated in
   `.agents/repo-guidance.md`, and it keeps a 50-row selection usable without re-ticking.
-- **(b) Disable the bulk button whenever the selection contains an ineligible row.** Unambiguous,
-  and unusable at 50 rows -- the operator must find and untick the offenders with no indication of
-  which they are.
+- **(b) Rejected. Disable the bulk button whenever the selection contains an ineligible row.**
+  Unambiguous, and unusable at 50 rows -- the operator must find and untick the offenders with no
+  indication of which they are, which is a return to acting one row at a time.
 
-The implementer must not choose. Work proceeds on everything D2 does not touch; the bulk executor's
-skip-reporting is the only part gated.
+Consequences of (a) that are binding on the implementation:
+
+- **A skipped row is not a failure.** The result is a success when every eligible row succeeded,
+  whatever was skipped -- a selection can be entirely ineligible and that is still not an error, it
+  is "nothing to do". Skips are reported alongside the outcome, never folded into the failure count.
+- **Every skipped row is named with its status.** A count alone ("skipped 3") does not tell the
+  operator which three, so it cannot be acted on. This is the same reasoning that made Migration's
+  protected-principal notes per-target rather than batch-level.
+- **Skips are not audited.** No write was attempted, so there is no security event to record; the
+  audit log holds one event per row actually acted on. Recorded here so a reviewer does not read the
+  absence as a missing audit call.
+- **The bulk buttons are enabled whenever anything is selected**, not conditioned on eligibility.
+  Under (a) the ineligible case has a defined, useful outcome, so disabling would be the (b) that
+  was rejected.
+- **The selection is not cleared for skipped rows.** After the run, rows that were acted on are gone
+  from the reloaded table and prune out of the selection; rows that were skipped are still loaded
+  and stay ticked, so the operator can pick a different action for exactly them.
 
 ## Non-goals
 
@@ -159,7 +176,8 @@ extracted and each of which must survive the extraction:
 - **Per-item failures aggregated**, never blanket success.
 - **One summary admin notification per run**, matching `:1372-1382`. Fifty notifications for one
   operator action is a self-inflicted denial of the mailbox.
-- **Skipped rows named in the result message** (shape settled by D2).
+- **Skipped rows named with their status in the result message, and never counted as failures**
+  (D2(a)).
 
 ### Markup
 
@@ -251,8 +269,9 @@ Nothing automated renders this page. Every check below is load-bearing; 4 and 5 
 
 1. Tick three completed batches, enter a ticket, Delete -- all three go, and the audit log holds
    **three** `RemoveMigrationBatch` events naming the three batches, not one.
-2. Tick a mixed selection (some deletable, some `Syncing`) and Delete -- behaviour matches the D2
-   ruling, and the skipped rows are named on screen.
+2. Tick a mixed selection (some deletable, some `Syncing`) and Delete -- the deletable ones go, the
+   `Syncing` ones are named on screen with their status, the result does not read as a failure, and
+   the skipped rows are still ticked afterwards.
 3. Select-all, then `Clear selection` -- nothing is acted on, and no audit event is written.
 4. **Sort the table by a different column while rows are ticked, then act.** The batches acted on
    must be the ones ticked, not the ones now in those positions. This is the defect the name-keyed
