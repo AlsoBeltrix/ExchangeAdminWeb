@@ -6,19 +6,52 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **Migration Status batch selection + inline ticket entry: CODE COMPLETE + REVIEWED 2026-08-10,
-  all 4 slices landed plus one review fix. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT
-  DEPLOYED; 9 manual checks UNRUN.** `docs/MigrationBatchSelection-Plan.md` Status: Implemented.
-  **A `codereview` generation pass over `c6abcdf..e70dfb2` returned ONE finding, `mbs-1` (MEDIUM),
-  and it was real** (`.agents/review/findings/mbs-1.md`, fixed `1ef7fae`). The slice-3 inline
-  confirm matched on a BATCH NAME; `StageUserAction` sets the pending target to an EMAIL, so every
-  per-user action inside an expanded batch still prompted at the top of the outer table - the
-  reported defect, live one level down. **The plan's D1 said the inner table gets that fix; the
-  slice-3 note listed only the bulk cases, and I built to the note.** When a ruling and a later
-  implementation note disagree, the ruling wins and the note is the thing to correct.
-  **What makes this worth recording: 23 guards, ten mutation probes, and 1645 green tests all
-  passed while that half was broken, because none of them reads the plan.** The reviewer found it
-  by treating D1 as a claim to check against the code - the same move that found pps-1.
+- **Migration Status batch selection: ROUND 2 LANDED 2026-08-10 after the owner tested round 1 on
+  dev. Migration `1.5.0` -> `1.6.0`, no base app bump. NOT DEPLOYED; round-2 checks UNRUN.**
+  `docs/MigrationBatchSelection-Plan.md`, decisions D1-D7.
+  **Round 1 passed 4 of its manual checks and failed on the ACTION MODEL.** Ticking two batches and
+  clicking Resume returned *"No batches to act on. Skipped 2: ... (Completed), ...
+  (CompletedWithErrors)."*
+  **`CompletedWithErrors` is a real Exchange batch status that appeared NOWHERE in this codebase.**
+  Every status comparison on the page was an exact match against a hardcoded list, so such a batch
+  could not be deleted, could not be resumed, was not swept by Clear Completed, and drew the
+  unknown-status grey badge. **Pre-existing; the checkboxes only made it visible** - and made it
+  worse in one way, since the operator now ticks a row and is told there is nothing to do, where
+  before the button simply never rendered.
+  **THE LESSON, and it generalises past this page: an exhaustive-looking status allowlist written
+  from the statuses a developer has seen is a silent filter, not a safety rail.** No test could have
+  caught it -- every test used the same status list the code did. It appeared THREE times in this
+  one page (Delete, Resume, and the per-user Report button), each hiding something the operator
+  wanted, and all three were found by using the app, not by review or tests.
+  **Owner's action model (D3), which replaced mine:** Delete acts on ANYTHING ticked (Exchange
+  decides; a refusal is that row's own named failure); Remove Completed acts on exactly `Completed`,
+  never `CompletedWithErrors` -- *"a batch that finished with errors is not a batch that finished"*,
+  and sweeping it destroys the evidence; Resume/Retry acts on anything idle but restartable.
+  **D4: Resume eligibility is defined by EXCLUSION** -- everything except the working statuses
+  (`Syncing`, `Starting`, `Stopping`, `Completing`, `Removing`) and `Completed`. That inversion is
+  the fix's substance: an unanticipated status now defaults to VISIBLE and lets Exchange refuse it,
+  rather than silently vanishing from the UI. **`Completed` had to be excluded explicitly -- the
+  first draft of this rule excluded only the working statuses, and the owner caught it:
+  idle-and-restartable is not the same as idle.**
+  **D6: the standalone Clear Completed sweep is REMOVED.** All-or-nothing destruction sitting beside
+  "Clear selection" sharing a word; owner: *"unacceptable."* Buttons are now Delete / Remove
+  Completed / Resume-Retry / Untick all -- no two share a leading verb.
+  **D7: Report is offered on every user row**, not only rows that already look broken.
+  **What round 1 got right and should not be re-litigated:** checkbox mechanics, `BatchName`-keyed
+  selection surviving a re-sort, the inline ticket field beneath both batch and user rows, and the
+  single aggregating executor (per-batch audit inside the loop, audit failures as warnings, one
+  notification per run). Checks 1, 4, 5 and 5b all PASSED on dev.
+  **Also withdrawn: manual check 7** ("delete a batch in EAC, refresh, confirm it de-ticks"). It
+  presumed a local store of migrations; `GetMigrationBatchesAsync` runs `Get-MigrationBatch` against
+  Exchange on every load, so there is no cache to go stale. I wrote it on a caching reflex that does
+  not apply here.
+  **`mbs-1` (MEDIUM, `1ef7fae`) was found by a `codereview` pass over round 1** and is closed:
+  per-user actions prompted for the ticket at the top of the table because the inline confirm
+  matched a BATCH NAME while `StageUserAction` sets an EMAIL. The plan's D1 covered that case and
+  the implementation delivered only the outer half. **23 guards, ten mutation probes and 1645 green
+  tests all passed while it was broken, because none of them reads the plan.**
+  Detail in `.agents/review/findings/mbs-1.md`; the rule it earns is that when an owner ruling and
+  a later implementation note disagree, the ruling wins and the note is what gets corrected.
   Owner report 2026-08-10: *"the exchange migration status page needs checkboxes on each row to
   allow batch clear/delete and resume. the ticket number entry field for individual items needs to
   be closer to the actual button people hit ... because we routinely have ~50+ in-flight and the
@@ -72,12 +105,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   "failed" against correct restored source. Reading the file back to verify the restore was not
   enough; the build has its own idea of current. Touch the file after any timestamp-preserving
   restore.
-  **NEXT: deploy and run the plan's 8 manual checks.** Load-bearing: **check 4** - sort the table
-  by a different column while rows are ticked, then act; the batches acted on must be the ones
-  ticked, not the ones now in those positions. That is the defect name-keying exists to prevent and
-  it is invisible to every test. And **check 5** - with 50+ batches loaded, click Resume on a row
-  near the bottom and confirm the ticket field appears beneath it without scrolling, which is the
-  reported complaint and the only thing that proves it fixed.
+  **NEXT: deploy and run the round-2 manual checks** (plan, Manual checks; 1/4/5/5b already PASSED
+  and are not re-run). Load-bearing: **check 2** - each of the three buttons against one mixed
+  selection, which is the round-1 failure restated; **check 8** - a `CompletedWithErrors` batch is
+  fully actionable and is NOT swept by Remove Completed; **check 6** - Delete's confirmation states
+  the per-status breakdown before accepting a ticket, since Delete is the only action that takes
+  in-flight batches.
 
 - **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
   as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586

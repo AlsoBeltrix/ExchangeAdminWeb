@@ -25,8 +25,12 @@ Check migration eligibility and create move batches between Exchange Online and 
 - Checks on-prem mailbox and archive size before cloud migrations
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
-- **Migration Status supports multi-select.** Tick rows to Delete or Resume several batches at once; one ticket covers the run and each batch is audited individually. A selection that mixes statuses is not refused: the eligible batches are acted on and every skipped batch is named with the status that disqualified it. `Clear Completed` remains the all-or-nothing sweep
-- The ticket field for a single-batch action appears directly beneath that batch's row, not at the top of the table
+- **Migration Status supports multi-select, with three bulk actions that have three different targets.** One ticket covers the run and each batch is audited individually. A selection that mixes statuses is never refused: the eligible batches are acted on and every skipped batch is named with the status that disqualified it
+  - **Delete** removes every selected batch whatever its status. Exchange decides what it will accept; a refusal comes back as that batch's own reported failure. The confirmation states the count and a per-status breakdown before the ticket is accepted, because this is the only action that takes in-flight batches
+  - **Remove Completed** removes only the selected batches whose status is exactly `Completed`. `CompletedWithErrors` is deliberately excluded -- a batch that finished with errors is not a batch that finished, and sweeping it would destroy the evidence
+  - **Resume/Retry** restarts the selected batches that are idle but restartable. Defined by exclusion rather than an allowlist: everything except the actively-working statuses and `Completed`, so a batch status this app has not seen before still gets a button and Exchange refuses it if invalid
+- The ticket field for a single-batch or single-user action appears directly beneath that row, not at the top of the table
+- The per-user `Report` button is available on every user row, not only rows that already look broken
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
 ### Message Analysis (`/message-analysis`)
