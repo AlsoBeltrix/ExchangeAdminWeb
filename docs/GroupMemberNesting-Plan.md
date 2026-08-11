@@ -225,6 +225,25 @@ and would change a shipped workflow the owner did not ask about.
   `-Filter "... -eq '...'"` strings (`:278`, `:329`) with bound `-LDAPFilter` values
   escaped through `AdOwnershipFilter.EscapeLdapFilterValue`. Keep the existing
   exactly-one-match refusal.
+- **The protection gate must be re-pointed, or S1 never fires here (gmn-1).**
+  `CheckProtectedAsync` (`GroupManagementService.cs:56-95`) gates on
+  `ResolveWithExchangeFallbackAsync` (`:63`), whose AD path
+  (`ProtectedPrincipalService.ResolveViaActiveDirectory`, `:419-464`) is a `Get-ADUser`
+  over `(|(userPrincipalName=..)(mail=..)(sAMAccountName=..))`. A group matches nothing,
+  returns null (`:444`), status `NotFound`, and the `if (resolved != null)` block
+  (`:72-92`) is skipped straight to allow. **S1 fixes a method the group target never
+  reaches.**
+  Restructure so this module follows the shape `SelfServiceGroupService` already uses
+  (`:378-399`): resolve the member ONCE to an AD object, build a
+  `ResolvedDirectoryPrincipal` for a user OR a group, and call
+  `ProtectedPrincipalService.CheckAsync` on that resolved principal. The single
+  resolution then feeds both the protection check and the write, so the object that
+  clears the gate is provably the object written.
+  Keep the Exchange fallback for USER members - it closes a real alias bypass
+  (`GroupManagementService.cs:43-47`) and `GroupManagementServiceTests`
+  `AddMemberAsync_ResolvesThroughTheExchangeFallback_NotAdAlone` pins it. Groups bypass
+  the fallback (an on-prem group has no Exchange identity to canonicalise); a group that
+  fails to resolve is REFUSED, never allowed through as not-found.
 - **Read-back.** Both writes gain the post-write membership reconciliation the
   self-service module already has (`SelfServiceGroupService.cs:498-514`): confirm the
   end state by reading membership back, and report an unconfirmed write as a failure. Do
@@ -292,6 +311,9 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
 - AC13: A protected group is refused in AD Group Management unless the operator holds
   `ProtectedServicer:GroupManagement`, in which case the write proceeds and the audit
   event's `extra` names the authorising group.
+- AC14: A GROUP member reaches `ProtectedPrincipalService.CheckAsync` in AD Group
+  Management - it is never dropped as an unresolved identity before the gate (gmn-1).
+  A group that cannot be resolved is refused, not allowed.
 
 ## Verification
 
@@ -301,7 +323,10 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
 - `git diff --check HEAD`; ASCII check over changed `.cs`
 - New unit tests: `GroupMemberClassifier` group removability; the add-path group probe
   message selection; the exactly-one resolution rule in S1; the cycle/self-nest guard as
-  a pure predicate.
+  a pure predicate; a GROUP member reaching `CheckAsync` in `GroupManagementService`
+  (gmn-1) - a scripted `ProtectedPrincipalService` asserting the gate was consulted, since
+  a test that only checks the write was refused passes for the wrong reason when the
+  target was silently dropped.
 - Non-vacuity per slice: revert the fix, confirm the new test fails, restore, confirm
   green. Verify the revert actually landed on disk before trusting either verdict, and
   touch the file after any timestamp-preserving restore (`.agents/state.md`, the
