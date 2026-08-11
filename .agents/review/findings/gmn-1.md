@@ -1,9 +1,9 @@
 # gmn-1: GroupManagement group writes would still skip the protected-principal check
 
 **Severity**: HIGH — the plan's own AC13 would be unmet, and a group nested under a protected group could be added or removed with no refusal and no servicer audit.
-**Status**: Open
+**Status**: Verified
 **Branch**: —
-**Commit**: (filled in after commit)
+**Commit**: `8fb5118` (plan revision)
 
 ## Evidence
 

@@ -1,9 +1,9 @@
 # gmn-3: The admin picker would discard the selected object's stable identity
 
 **Severity**: MEDIUM — a cross-domain or duplicate-named group chosen in the UI is not necessarily the group written.
-**Status**: Open
+**Status**: Verified
 **Branch**: —
-**Commit**: (filled in after commit)
+**Commit**: `c7897d1` (plan revision)
 
 ## Evidence
 

@@ -6,6 +6,54 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **NESTED GROUP MEMBERSHIP: PLAN DRAFTED AND REVIEWED, NO CODE WRITTEN.**
+  `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
+  Owner report 2026-08-11: *"group self-management module needs to handle nested groups.
+  when trying to add a group to a group, nothing resolves."*
+  **Not a defect - `SelfServiceGroups` is user-only in four places by construction**
+  (typeahead `ObjectKind="User"`; `AdOwnershipFilter.cs:97` `objectCategory=person`;
+  `IsMemberOfGroup` on `Get-ADUser`; `GroupMemberClassifier` removable=user-only). The
+  operator saw *"did not match exactly one user"*, which reads as a typo rather than a
+  scope limit.
+  **Owner rulings D1-D5, all in the plan (canonical there):** self-service NEVER adds a
+  group (ITSD ticket instead) and says so up front; it MAY remove one behind a warning
+  that re-adding needs a ticket; `GroupManagement`, being admin-audienced, gets full
+  group add/remove; the shared protection blind spot is closed rather than worked around;
+  the servicer override for `GroupManagement` needs no code.
+  **The find that made this more than a UX change: `ProtectedPrincipalService.cs:747`
+  runs `Get-ADUser` to ask whether a target sits inside a protected group.** Hand it a
+  group DN and AD returns zero rows with no error, which `:761` records as "no match" -
+  a silent ALLOW, not a fail-closed refusal. Harmless today because nothing can target a
+  group; live the moment the admin module can. **This is the repo's fail-closed rule
+  inverted in a shared file, and it was found by reading the call, not by any test.**
+  **D5 corrects a premise in the owner's own request.** The servicer override for
+  `GroupManagement` already exists - `GroupManagementService.cs:16,84` and
+  `ModuleConfig.razor:655`. What is missing is a granted group, which is a Module Config
+  action, not code. No module has a `ProtectedServicer:GroupManagement` row today.
+  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `618235e..074bfdb`:
+  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
+  `.agents/review/findings/gmn-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`.
+  **All three were the same shape and it is worth naming: a correct goal wired to a
+  mechanism that cannot reach it.** gmn-1 (HIGH): S1 made the protection check
+  group-aware, but `GroupManagementService.CheckProtectedAsync` filters the group out one
+  call earlier via a user-only resolver, so the fix landed below the layer that drops the
+  target - AC13 would have failed with every S1 test green. gmn-2 (HIGH): the cycle
+  guard's LDAP filter asked the MIRROR of its own stated question, so it would refuse
+  legitimate adds and allow real cycles, and it sat in the page while the write is in the
+  service - the exact page-only shape `GroupManagementService.cs:36-38` records this
+  module already shipping and being bypassed. gmn-3 (MEDIUM): the picker returned a bare
+  sAMAccountName while group search is deliberately forest-wide, so a chosen WINROOT group
+  could resolve to its ANALOG namesake.
+  **None of the three would have been caught by implementing the plan faithfully - a
+  faithful implementation is what produces them.** Reviewing the plan before writing code
+  is what made them cheap.
+  **NEXT: owner ruling on OQ1** - when a GROUP is removed from a security group, the
+  affected-user notification has no correct recipient (a mail-enabled group's address
+  mails every member; suppressing it leaves the people who lost access untold). The plan
+  assumes SUPPRESS. Every slice except S4's notification behaviour can proceed without it.
+  Versions when the work lands: app `2.8.1` -> `2.9.0` (shared service),
+  `SelfServiceGroups` `1.3.0` -> `1.4.0`, `GroupManagement` `2.2.0` -> `2.3.0`.
+
 - **Migration Status batch selection: DONE, ACCEPTED, and DEPLOYED TO BOTH 2026-08-10** --
   *"looks fine. ran through a few checks, calling it good."* Two rounds; Migration `1.5.0` ->
   `1.6.0` -> `1.7.0`. **Dev and prod both run app `2.8.0`** (verified from both assemblies).

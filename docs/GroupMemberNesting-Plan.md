@@ -1,9 +1,20 @@
 # Nested Group Membership - Self-Service Refusal, Admin Support
 
-Status: Draft, pending owner ruling on OQ1 (affected-user notification for a group
-member). Owner rulings D1-D5 below are given; work may proceed behind them. Covers two
-modules (`SelfServiceGroups`, `GroupManagement`) and one shared service
+Status: Draft, pending owner ruling on OQ1 (affected-user notification when the removed
+member is a group). Owner rulings D1-D5 below are given; every slice except S4's
+notification behaviour may proceed behind them. Covers two modules
+(`SelfServiceGroups`, `GroupManagement`) and one shared service
 (`ProtectedPrincipalService`).
+
+Reviewed as a plan by openreview `codex`
+(`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
+`618235e..074bfdb`: verdict `acceptable_with_changes`, three findings, all admitted and
+all folded in - `gmn-1` (HIGH, `8fb5118`), `gmn-2` (HIGH, `c414619`), `gmn-3` (MEDIUM,
+`c7897d1`). Records in `.agents/review/findings/gmn-*.md`. **The revisions are load-bearing
+and are not optional polish:** as first written this plan would have shipped group writes
+that skip the protection gate, a cycle guard that refuses legitimate adds while allowing
+real cycles, and a picker that can write a different group from the one chosen. Implement
+from the current text, not from the pre-review shape.
 
 ## Problem
 

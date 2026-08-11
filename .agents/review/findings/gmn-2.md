@@ -1,9 +1,9 @@
 # gmn-2: The cycle guard tests the wrong direction and sits in the page slice
 
 **Severity**: HIGH — as specified it refuses legitimate adds, misses the cycle it exists to catch, and is bypassable by any non-page caller.
-**Status**: Open
+**Status**: Verified
 **Branch**: —
-**Commit**: (filled in after commit)
+**Commit**: `c414619` (plan revision)
 
 ## Evidence
 
