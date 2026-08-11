@@ -139,9 +139,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 - **Protected-principal servicing: CODE COMPLETE at `80d2759`, DEPLOYED to dev and prod 2026-08-10
   as `2.7.0` (verified from both assemblies). All 15 modules, all 3 review findings fixed. 1586
-  passed / 0 failed / 3 skipped, format clean. NO MANUAL CHECK RUN, and NO SERVICER GROUP EXISTS
-  YET - so the capability is live and currently grants nothing to anyone.** That is the whole of
-  what remains; see `## Next`.
+  passed / 0 failed / 3 skipped, format clean. THE SERVICER GROUP NOW EXISTS AND IS CONFIGURED -
+  `ANALOG\ExchangeWebAdminsExecSupport` (SID `S-1-5-21-8915387-325452579-1788637320-710891`),
+  granted on dev and prod identically for `ProtectedServicer:MailboxPermissions`,
+  `ProtectedServicer:CalendarPermissions` and `ProtectedServicer:OutOfOffice`. NO MANUAL CHECK RUN,
+  so the capability is configured but unproven end to end.** That is the whole of what remains;
+  see `## Next`.
   Owner: *"all of them. every place where a principal is protected we need to allow a priv
   group to act on them anyway."*
   **THE THREE FINDINGS, all fixed** - `.agents/review/findings/pps-{1,2,3}.md`, all `[x]` in
@@ -233,11 +236,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 Migration `1.7.0` (see `## Now`). Nothing outstanding on it.
 
 **Dev and prod are level at `2.8.0`.** Everything below is the protected-principal stream, which is
-code-complete and deployed; only the servicer group and its manual checks remain on it.
+code-complete, deployed, and now configured; only its manual checks remain on it.
 
-1. **Owner: create the servicer group and configure it** per module in Module Config
-   (Protected principal servicing section, per module). Until then the feature is live and grants
-   nothing - which is the safe state, but also means nothing has been proven.
+**The servicer group is `ANALOG\ExchangeWebAdminsExecSupport`** (SID
+`S-1-5-21-8915387-325452579-1788637320-710891`), read from the live `section_access` table in both
+`config/exchangeadmin.db` files on 2026-08-11. It holds three `ProtectedServicer:` grants -
+`MailboxPermissions`, `CalendarPermissions`, `OutOfOffice` - plus ordinary module access to
+`MailboxPermissions` and `OutOfOffice`. The other nine servicer-capable module ids
+(`ADAttributeEditor`, `EmergencyDisable`, `MfaReset`, `Comms10k`, `GroupManagement`,
+`M365GroupManagement`, `LicensingUpdates`, `Migration`, `SelfServiceGroups`) have no
+`ProtectedServicer:` row anywhere; recorded as scope, not oversight.
+
+1. **Owner: the group has the CalendarPermissions servicer grant but no CalendarPermissions module
+   grant.** A member who is not also in `ExchangeWebAdmins` or `ExchangeWebPerms` cannot open that
+   page, so that servicer grant is unreachable. Either add the module grant or drop the servicer
+   row - as configured it is a grant that nobody can use. Group membership was not checkable from
+   the app host (no AD cmdlets), so whether any member is affected is unverified.
 2. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
    the action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
    proves the capability works end to end - every guard is either a source-level tripwire or a
@@ -255,9 +269,10 @@ says nothing about what an operator sees. There is no bUnit harness, so no test 
 and every one of the three review findings lived in a page or a call site, in code whose commit
 message claimed it worked.
 
-The owner decision still outstanding: **which group gets the servicer grant, and who is in it.**
-The owner said they would create it. Not a build input - the code is complete without it - but the
-capability grants nothing until a group is configured per module in Module Config.
+The owner decision that WAS outstanding - which group gets the servicer grant - is settled:
+`ANALOG\ExchangeWebAdminsExecSupport`, on three modules, live in both config databases. What is
+still unknown is **who is in it**, which is an AD question this host cannot answer, and whether the
+capability works for a real member, which is check 2 above.
 
 ## Blockers
 
