@@ -251,10 +251,27 @@ and would change a shipped workflow the owner did not ask about.
 - **Remove button.** `GroupManagement.razor:120` passes the member's objectGUID, not
   `member.Email`.
 - **Add control.** Replace `RecipientAutocomplete` (`:89`) with
-  `ADIdentityAutocomplete ObjectKind="Any" ReturnValueKind="SAM"`. This changes the
-  existing user-add control on an admin page: the suggestion source moves from Exchange
-  recipients to AD objects, which is correct for a cmdlet chain that writes to on-prem AD
-  and currently rejects any cloud-only recipient the picker offers.
+  `ADIdentityAutocomplete ObjectKind="Any"`. This changes the existing user-add control on
+  an admin page: the suggestion source moves from Exchange recipients to AD objects, which
+  is correct for a cmdlet chain that writes to on-prem AD and currently rejects any
+  cloud-only recipient the picker offers.
+  **The selection must carry the object's DN, not its sAMAccountName (gmn-3).** Group
+  search is deliberately forest-wide (`Services/ADDirectorySearchService.cs:485-494`: a
+  local-domain-only query made WINROOT groups unreachable; a global-catalog query returns
+  both domains, measured 18 ANALOG + 7 WINROOT for one term), so the dropdown can offer
+  two same-named groups from different domains. `ReturnValueKind="SAM"` returns only
+  `SamAccountName` (`ADIdentityAutocomplete.razor:173`) and would hand the service a
+  string that distinguishes neither.
+  Bind `OnResultSelected` (`:96`, raised at `:164-165`) and hold the whole
+  `ADSearchResult` in page state - `DistinguishedName`, `ObjectType` and `DnsDomain` -
+  passing the DN to the service as the write target. `ReturnValueKind="DN"` (`:174`) is
+  the simpler alternative but puts a DN in the visible textbox; prefer
+  `OnResultSelected` with a display value in the box and the DN held beside it.
+  **A typed value that was never selected from the dropdown has no DN.** Clear the held
+  selection on every keystroke (`ValueChanged` fires on typed input, `OnResultSelected`
+  does not), and route typed input through the service's exact class-aware resolver with
+  its exactly-one-match refusal. A stale DN from a previous selection surviving a retype
+  would write to whatever was picked before.
 - **Nesting guards. These live in `GroupManagementService.AddMemberAsync`, immediately
   before `Add-ADGroupMember` - NOT in the page (gmn-2).** `GroupManagementService.cs:36-38`
   records that this module already shipped a page-only protection check which was bypassed
@@ -329,6 +346,9 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
 - AC11c: The self-nest and cycle guards refuse when called directly on
   `GroupManagementService`, with no page involved.
 - AC12: An AD scope refusal is surfaced with AD's own message, not a generic failure.
+- AC12b: A group selected from the dropdown is the group written, including when two
+  domains hold a group of the same name (gmn-3). Retyping after a selection discards the
+  held DN rather than writing the previously picked object.
 - AC13: A protected group is refused in AD Group Management unless the operator holds
   `ProtectedServicer:GroupManagement`, in which case the write proceeds and the audit
   event's `extra` names the authorising group.
@@ -358,7 +378,9 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
   plainly which manual checks were not run.
 - Manual checks, dev: AC2 with a real group name; AC5/AC6 on a real nested group; AC7
   against a group nested under a configured protected group; AC10 and AC11 on the admin
-  page; AC13 with a member of the servicer group.
+  page; AC13 with a member of the servicer group; AC12b against a WINROOT group whose
+  name also exists in ANALOG - the cross-domain case is unreachable from any test, since
+  the forest search needs a live global catalog.
 
 ## Versioning
 
