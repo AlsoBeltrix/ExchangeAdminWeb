@@ -240,7 +240,7 @@ code-complete, deployed, and now configured; only its manual checks remain on it
 
 **The servicer group is `ANALOG\ExchangeWebAdminsExecSupport`** (SID
 `S-1-5-21-8915387-325452579-1788637320-710891`), read from the live `section_access` table in both
-`config/exchangeadmin.db` files on 2026-08-11. It holds three `ProtectedServicer:` grants -
+`config/exchangeadmin.db` files on 2026-08-11. It holds three `ProtectedServicer:` grants - <!-- lint: allow (owner ruled leave-it, 2026-08-11: untracked environment database file) -->
 `MailboxPermissions`, `CalendarPermissions`, `OutOfOffice` - and, after the owner closed the gap
 below on 2026-08-11, the matching module grants for all three plus `CalendarPermissionsOnPrem` and
 `MailboxPermissionsOnPrem`. Re-read from both live stores after the change: every servicer grant
