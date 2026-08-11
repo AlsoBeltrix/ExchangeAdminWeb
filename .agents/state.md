@@ -252,6 +252,13 @@ code-complete, deployed, and now configured; only its manual checks remain on it
    page, so that servicer grant is unreachable. Either add the module grant or drop the servicer
    row - as configured it is a grant that nobody can use. Group membership was not checkable from
    the app host (no AD cmdlets), so whether any member is affected is unverified.
+   **The owner ruled 2026-08-11 that the gap itself is a UI problem, not a config one: a servicer
+   grant conveying no module access must be visible where the grant is made.** Done in `46c8257`
+   (app `2.8.1`, NOT YET DEPLOYED) - Module Config now states it in the standing warning, flags each
+   affected row with a "no module access" badge, and raises a callout when any row is flagged. The
+   check compares stored SIDs and does not expand nested membership, so it can flag a group that
+   reaches the module through another; the wording is conditional for that reason, and every
+   genuinely stranded grant is still flagged.
 2. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
    the action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
    proves the capability works end to end - every guard is either a source-level tripwire or a
@@ -1046,7 +1053,10 @@ current state, and are not maintained. Read the `Deployed:` entry, never them.
   fallback and `2.3.29` (`3eac48a`) was the app-wide log-root fail-fast change.
 - **Deployed: dev `2.8.0`, prod `2.8.0`** -- both verified from the assembly 2026-08-10
   (`FileVersion 2.8.0.0`, `Product 2.8.0`, both DLLs written 14:29:33; `favicon.ico` 21497 bytes on
-  both, matching the repo). Repo and both remotes are level at `aa4cf09`.
+  both, matching the repo). Re-verified unchanged 2026-08-11.
+  **`2.8.1` is committed and NOT DEPLOYED** (`46c8257`): Module Config now says a servicer grant
+  conveys no module access and flags any servicer group lacking the module's own grant. Neither
+  instance has it.
   **`2.8.0` carries, over `2.7.0`:** the Migration Status batch-selection work (Migration module
   `1.7.0` -- three bulk actions with distinct targets, no status allowlists, inline ticket entry,
   deselect-on-accept, queued-not-done wording) and the replacement favicon.
