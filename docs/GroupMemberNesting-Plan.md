@@ -158,6 +158,20 @@ The `1.2.840.113556.1.4.1941` (LDAP_MATCHING_RULE_IN_CHAIN) filter at `:748` alr
 evaluates nested membership for any object class; only the cmdlet in front of it is
 wrong.
 
+**A protected group must also match AS ITSELF, not only through its members (owner,
+2026-08-11).** The `Groups` list is a MEMBERSHIP rule - "everyone inside this group is
+protected" - and nothing compares the target's own DN against the protected group's DN.
+In-chain ancestry does not include self, so `Domain Admins` listed as a protected group
+is not a protected TARGET: with S1's cmdlet fix alone it would still be freely nestable
+anywhere. Add a self-match inside the same loop: after `ResolveProtectedGroupDn`
+(`:737`), if the resolved group DN equals the target DN (ordinal-ignore-case), record
+`Group:<protectedGroup>` and skip the in-chain query for that entry. This costs one
+string comparison against a DN already in hand.
+
+Note what this does NOT cover, deliberately: it protects a group as the object being
+MOVED, not as the container being written INTO. The destination-group gap is a separate
+pre-existing hole with its own plan - see `docs/ProtectedGroupWriteTarget-Plan.md`.
+
 Constructing a `ResolvedDirectoryPrincipal` for a group: `UserPrincipalName` is a
 non-nullable `string` (`:13`) and a group has none. Pass `string.Empty`, never the
 group's name - `MatchesIdentity` (`:581`) skips null-or-empty candidates, so an empty UPN
@@ -378,6 +392,9 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
 - AC14: A GROUP member reaches `ProtectedPrincipalService.CheckAsync` in AD Group
   Management - it is never dropped as an unresolved identity before the gate (gmn-1).
   A group that cannot be resolved is refused, not allowed.
+- AC14b: A group that IS a configured protected group is refused as a member, not only
+  groups nested beneath one. Both cases are asserted; the self-match and the in-chain
+  match are separate code paths and a test for one says nothing about the other.
 
 ## Verification
 
