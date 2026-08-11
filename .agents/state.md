@@ -58,44 +58,50 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Versions when the work lands: app `2.8.1` -> `2.9.0` (shared service),
   `SelfServiceGroups` `1.3.0` -> `1.4.0`, `GroupManagement` `2.2.0` -> `2.3.0`.
 
-- **PROTECTED GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO
-  CODE.** `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`).
+- **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER
+  GO, NO CODE.** `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
+  scope narrowed after).
   **Found by the owner reading the nesting plan, and it is the larger hole of the two.**
-  **Every group module protection-checks the MEMBER being added or removed and never the
+  **The group modules protection-check the MEMBER being added or removed and never the
   GROUP being written into.** Protection stops you touching a protected person and does
-  nothing to stop you granting an ordinary person protected access. Four instances:
-  on-prem membership (`GroupManagementService.cs:253,304` - the page delegates and
-  pre-checks nothing by design, `GroupManagement.razor:271-276`); M365 membership AND
-  OWNERSHIP (`M365GroupManagementService.cs:255,276`); **M365 `UpdateGroupAsync:125` and
-  `DeleteGroupAsync:143`, which have NO protection gate of any kind - a protected M365
-  group can be renamed or deleted outright behind a ticket number**; and self-service,
-  where the group is gated on DACL ownership only.
+  nothing to stop you granting an ordinary person protected access. **An operator with
+  `GroupManagementOnPrem` can add any unprotected account to `Domain Admins`** with
+  `Domain Admins` listed as protected and no gate firing
+  (`GroupManagementService.cs:253,304`; the page delegates and pre-checks nothing by
+  design, `GroupManagement.razor:271-276`). Self-service has the same shape, gated on DACL
+  ownership only.
+  **SCOPE IS ON-PREM ONLY. Owner, 2026-08-11: *"we're not touching the cloud groups
+  module."*** An earlier draft covered `M365GroupManagement`; **that was scope I added
+  unasked** while surveying which modules shared the defect, and the owner removed it -
+  *"who's talking about o365 groups and why? that wasn't part of my prompt."* **The rule
+  it earns: a survey that finds more instances of a defect is not authorization to fix
+  them.** Report them and let the owner choose. It cost a third of a review pass and a
+  plan section that had to be cut.
+  **UNSCHEDULED, NOT IN ANY PLAN, recorded so it is not lost: a protected M365 group can
+  be renamed or DELETED outright.** `M365GroupManagementService.UpdateGroupAsync:125` and
+  `DeleteGroupAsync:143` have no protection gate of any kind; the page gates on a ticket
+  number only (`M365GroupManagement.razor:286`). Adding an OWNER to a protected M365 group
+  is ungated too (`:255,276`). **And it cannot be fixed by config alone: an M365 group
+  cannot be marked protected at all** - both admin pickers are AD-only
+  (`AdminSettings.razor:144,172`) and `AddValidatedAsync:660` refuses anything
+  `ADSearch.ValidateExists` cannot resolve. Nobody is working this.
   **Hard dependency on the nesting plan's S1.** Without the group-aware check and the DN
   self-match, every gate this plan adds returns "not protected" for a group and the whole
-  change is inert while appearing to work. AC8 pins it: reverting S1 must make a test here
+  change is inert while appearing to work. AC6 pins it: reverting S1 must make a test here
   fail.
   **openreview `codex` over `2eedaa9..503c1a8`: `acceptable_with_changes`, two findings,
-  both admitted** - `.agents/review/findings/pgwt-{1,2}.md`.
-  **pgwt-1 (HIGH) is the one worth carrying forward: the plan claimed M365 coverage that
-  no operator could ever configure.** Both admin pickers are AD-only and
-  `AddValidatedAsync` refuses anything `ADSearch.ValidateExists` cannot resolve, so a
-  cloud-only M365 group is **refused by the UI** - AC5 was unfalsifiable in production.
-  Second time this repo has nearly shipped an unreachable capability after
-  `ProtectedPrincipalBreakGlass`; the tell both times was a plan asserting coverage without
-  naming the stored representation an operator actually produces.
-  pgwt-2 (MEDIUM): the plan reused a DN-only resolver, and `CheckPatternMatches:612-613`
-  returns at its first line when `SamAccountName` is empty - so a group protected by
-  `adm-*` would read as unprotected with every `Groups`-list test green.
-  **The review's recommendation mattered more than its findings: settle the target
-  identity model BEFORE implementation.** That turned out to have the same answer as the
-  plan's own lockout risk, so one design choice closed both. **T0: a separate Protected
-  Targets list that reinterprets nothing already stored.** Re-reading the existing `Groups`
-  list as target protection would make every broadly-listed group unmanageable the moment
-  the build deploys - the `sidf-1` shape - and would still leave M365 groups
-  inexpressible. AC10 is the anti-lockout criterion.
-  **NEXT: owner go, and then OQ3 first** - whether an Entra-capable group picker exists or
-  must be built. If it must be built, this ships on-prem-only with AC4/AC5 explicitly
-  deferred, never stubbed.
+  both admitted** - `.agents/review/findings/pgwt-{1,2}.md`. pgwt-1 (HIGH) was entirely
+  about M365 and is **mooted by the scope cut**; its record is kept because the gap is real
+  and unowned, and the criterion it earned survives as AC7. pgwt-2 (MEDIUM) applies
+  unchanged: the plan reused a DN-only resolver, and `CheckPatternMatches:612-613` returns
+  at its first line when `SamAccountName` is empty - so a group protected by `adm-*` would
+  read as unprotected with every `Groups`-list test green.
+  **The review's recommendation mattered more than its findings: settle the target identity
+  model BEFORE implementation.** **T0: a separate Protected Targets list that reinterprets
+  nothing already stored.** Re-reading the existing `Groups` list as target protection would
+  make every broadly-listed group unmanageable the moment the build deploys - the `sidf-1`
+  shape. AC8 is the anti-lockout criterion.
+  **NEXT: owner go.** No open question in the plan.
 
 - **Migration Status batch selection: DONE, ACCEPTED, and DEPLOYED TO BOTH 2026-08-10** --
   *"looks fine. ran through a few checks, calling it good."* Two rounds; Migration `1.5.0` ->

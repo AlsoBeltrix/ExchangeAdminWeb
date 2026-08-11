@@ -1,9 +1,18 @@
 # pgwt-1: An M365 group cannot be marked protected at all, so its new gates would guard nothing
 
 **Severity**: HIGH — AC5 would pass on fixtures while being unreachable in production; the plan's own non-goal forbids the fix.
-**Status**: Verified
+**Status**: Verified, then MOOTED BY SCOPE (owner, 2026-08-11: "we're not touching the cloud groups module")
 **Branch**: —
-**Commit**: `7c5f8a6` (plan revision)
+**Commit**: `7c5f8a6` (plan revision), scope narrowed in the commit that followed
+
+> **Read this first.** The M365 half of the plan this finding was written against no longer
+> exists: the owner ruled `M365GroupManagement` out of scope, and it was scope the agent had
+> added unasked in the first place. The defect described below is therefore no longer
+> reachable through any planned work. **The record is kept, not deleted, for two reasons.**
+> The gap it documents is real and still live in the product - an M365 group cannot be marked
+> protected, so any future M365 protection work starts from here. And the criterion it earned
+> survived the scope cut as AC7: the new on-prem target list also needs an admin input, and
+> "a capability nobody can configure" is not a cloud-specific failure.
 
 ## Evidence
 
