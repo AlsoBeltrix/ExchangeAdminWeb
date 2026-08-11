@@ -1,8 +1,20 @@
 # Protected Groups As Write Targets
 
-Status: Draft, pending owner ruling on OQ1 (whether the `Groups` protection list also
-protects the group object itself as a write target). Depends on
-`docs/GroupMemberNesting-Plan.md` S1 having landed.
+Status: Draft, pending owner go. No open question - the identity-model fork that was OQ1
+is resolved in Design (T0) and the reasoning is recorded there for the owner to reverse if
+they disagree. Depends on `docs/GroupMemberNesting-Plan.md` S1 having landed.
+
+Reviewed as a plan by openreview `codex`
+(`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
+`2eedaa9..503c1a8`: verdict `acceptable_with_changes`, two findings, both admitted and
+both folded in - `pgwt-1` (HIGH), `pgwt-2` (MEDIUM), records in
+`.agents/review/findings/pgwt-*.md`.
+
+**The review changed this plan's shape, not just its details.** Its recommendation was to
+settle the target identity model BEFORE implementation rather than leave it as an open
+question, because the first draft required M365 target gates while forbidding any change
+to the configuration surface - and that surface cannot express an M365 group at all. That
+constraint and the lockout risk in the original OQ1 have the same answer, which is T0.
 
 ## Problem
 
@@ -46,6 +58,53 @@ the dependency with a test that fails if S1 is reverted.
 
 ## Design
 
+### T0. The target identity model: a separate Protected Targets list
+
+**A new list, stored beside the existing four rule kinds, never reinterpreting them.**
+Everything else in this plan depends on this choice, so the reasoning is recorded in full.
+
+Three options were live. Reinterpreting the existing `Groups` list as target protection
+(a) is the smallest change and the most dangerous: that list means "everyone inside this
+group is protected", and an administrator may well have listed a large staff or licensing
+group purely to protect its members. Re-reading it as target protection makes every such
+group unmanageable through the app the moment the build deploys, and the symptom is an
+operator refused a routine change with no visible cause - the `sidf-1` shape, where a
+change near this code locked every admin out of the page needed to repair it. Restricting
+target protection to the direct/OU/pattern rules (b) avoids that but leaves no way to say
+"this group is protected" other than listing it as a direct identity, in a field the UI
+labels and validates as a USER.
+
+(c), the separate list, is chosen because it is the only option that also solves pgwt-1.
+**A cloud-only M365 group cannot be entered into the protected-principals store at all
+today** - both admin inputs are AD-only pickers
+(`Components/Pages/AdminSettings.razor:144,172`) and typed values route through
+`AddValidatedAsync` (`:639-670`), which calls `ADSearch.ValidateExists` (`:660`) and
+REFUSES anything AD cannot resolve. So M365 target gates built on the existing store would
+guard objects no operator can mark protected: registered, consumed, unit-tested, and
+unreachable - exactly the `ProtectedPrincipalBreakGlass` failure this repo has already paid
+for once.
+
+The new list therefore:
+
+- stores an immutable id plus a display label, accepting on-prem groups (objectGUID) AND
+  Entra groups (object id), so both module families can express a protected target;
+- is matched only when the question is "may this object be WRITTEN TO", never when the
+  question is "is this principal protected" - the two are separate rule sets and must not
+  bleed;
+- changes the meaning of nothing already stored, so deploying this plan cannot lock anyone
+  out of a group they manage today;
+- joins the existing read-modify-write save path rather than adding a second one.
+  `SaveSectionAccess` -> `SaveAll` -> `ClearAndInsert` REPLACES the whole store; a second
+  save path silently destroys authorization state, whose only symptom is a team quietly
+  losing access.
+
+**First implementation question, unresolved and flagged rather than assumed:** the admin
+picker needs to offer Entra groups, and `ADDirectorySearchService` is AD-only. Whether an
+existing Graph-backed picker can be reused, or one must be built, is the first thing to
+establish - and if it must be built, that is its own plan and this one ships on-prem-only
+first with the M365 half explicitly deferred. Do not stub it and do not silently narrow
+the acceptance criteria to match what was easy.
+
 ### T1. A shared target gate
 
 `Services/ProtectedPrincipalServicing.cs` already owns the servicer half of every gate
@@ -62,10 +121,17 @@ overridden; it travels in the audit event's `extra`, never `errorDetail`.
 
 ### T2. Call sites
 
-- `GroupManagementService`: resolve the target group once - the module already resolves it
-  for the write (`ResolveAdGroupIdentity`, `:368-391`) - and gate on that same resolution.
-  One resolution feeding both the check and the write, so the object cleared is the object
-  written.
+- `GroupManagementService`: resolve the target group once and gate on that resolution, so
+  the object cleared is the object written.
+  **`ResolveAdGroupIdentity` (`:368-391`) is NOT sufficient for the gate (pgwt-2).** It
+  returns a bare DN string (`:385-386`), and a principal carrying only a DN reaches just
+  two of the four rules: `CheckOuMatches` and the `Groups` in-chain rule both key on DN,
+  `MatchesIdentity` (`:581-598`) loses its `SamAccountName` / `ObjectGuid` /
+  `PrimarySmtpAddress` comparisons, and `CheckPatternMatches` (`:610-620`) **returns at its
+  first line** when `SamAccountName` is empty - so every pattern rule is skipped in
+  silence. Resolve into a full snapshot instead: `DistinguishedName`, `SamAccountName`,
+  `ObjectGuid`, `mail`, `Name`. The DN from that snapshot is what the write uses.
+  A DN is enough to WRITE to a group and is not enough to ASK whether it is protected.
 - `M365GroupManagementService`: gate `AddDirectoryObjectAsync` and
   `RemoveDirectoryObjectAsync` on `groupId`, and give `UpdateGroupAsync` /
   `DeleteGroupAsync` a gate they currently lack entirely. Graph returns an object id, not
@@ -85,7 +151,9 @@ themselves. The servicer override is the intended route for both.
 
 ## Non-goals
 
-- No change to what the protected-principals config stores or how it is edited.
+- No change to the MEANING of the four existing rule kinds (`Users`, `Groups`,
+  `OrganizationalUnits`, `SamAccountNamePatterns`). T0 adds a list beside them; it
+  reinterprets none of them, and nothing already stored changes behaviour.
 - No new module, no new permission, no change to section access.
 - Conference Rooms, Mailbox/Calendar Permissions, and the other servicer-capable modules
   are out of scope: their write target is a mailbox and is already validated
@@ -108,6 +176,16 @@ themselves. The servicer override is the intended route for both.
 - AC8: Reverting `GroupMemberNesting-Plan.md` S1 makes at least one test here FAIL. The
   dependency is real, and a green suite over an inert gate is the failure mode this
   criterion exists to catch.
+- AC9: An operator can mark a group as a protected TARGET from the admin page and see it
+  take effect (pgwt-1). Proven through the stored representation the UI produces, never a
+  hand-built fixture - a fixture that bypasses the store is what would hide an
+  unconfigurable capability.
+- AC10: Nothing already in the protected-principals store changes behaviour. A group
+  listed under `Groups` today is still manageable tomorrow unless it is ALSO added to the
+  new target list. This is the anti-lockout criterion and is load-bearing.
+- AC11: A target protected by a sAMAccountName PATTERN is refused, not only one matched by
+  the target list or an OU (pgwt-2). Asserted separately, because a DN-only principal
+  satisfies the DN rules and silently skips the pattern rule.
 
 ## Verification
 
@@ -118,6 +196,11 @@ themselves. The servicer override is the intended route for both.
   still pass, restore. Confirm each revert landed on disk before trusting the verdict.
 - **The existing protection suites must pass UNMODIFIED.** Editing one to accommodate a
   target gate means a refusal quietly became an allow; that is a stop.
+- Coverage must include a target matched by PATTERN and a target matched by OU, not only
+  one matched by the new target list (pgwt-2). Three rules need identifiers a DN does not
+  carry, and the DN path is the one that passes by accident.
+- At least one test drives the admin save path and reads the value back through the store
+  (pgwt-1), rather than constructing a principal directly.
 - Manual, dev: add to a protected group and be refused; repeat as a servicer-group member
   and succeed with the note in the audit record; delete a protected M365 group and be
   refused.
@@ -131,22 +214,15 @@ themselves. The servicer override is the intended route for both.
 
 ## Open questions
 
-- **OQ1 (owner ruling required before any code).** Should a group listed in the
-  protected-principals `Groups` list be protected AS A WRITE TARGET, or only as a
-  membership rule for the people inside it?
-  **This is the whole risk of the plan.** That list's current meaning is "everyone inside
-  this group is protected", and administrators may well have listed broad groups - a
-  large staff group, a licensing group - purely to protect the people in them. Reading the
-  same list as target protection would make every one of those groups unmanageable through
-  the app overnight, and the symptom is an operator being refused a routine change with no
-  obvious cause. `sidf-1` is the precedent: a change near this code locked every admin out
-  of the page needed to repair it.
-  Options: (a) any matching rule protects the target, simplest and strictest; (b) target
-  protection uses only the direct-identity, OU and pattern rules, treating the `Groups`
-  list as members-only; (c) a separate list for protected TARGETS, no reinterpretation of
-  existing config, at the cost of another thing to configure.
-  Whichever is chosen, the live config in both `config/exchangeadmin.db` files must be read
-  and every group that would newly become unmanageable listed BEFORE deploy, not after.
+- OQ1 is resolved in T0 (separate Protected Targets list). Recorded as a design choice
+  with its reasoning rather than left open, because the reinterpretation options carry a
+  lockout risk this plan should not hand to an implementer as a coin-flip. The owner can
+  reverse it; if they do, the live config in both `config/exchangeadmin.db` files must be
+  read and every group that would newly become unmanageable listed BEFORE deploy.
 - OQ2: whether a protected group should also be undeletable in on-prem AD. This app has no
   on-prem group delete, so the question is theoretical today; it is recorded so a future
   delete feature does not ship without it.
+- OQ3 (implementation, not owner): whether an Entra-capable group picker already exists or
+  must be built. If it must be built, this plan ships on-prem-only and the M365 half is
+  deferred to its own plan, with AC4 and AC5 explicitly marked deferred rather than
+  quietly dropped.
