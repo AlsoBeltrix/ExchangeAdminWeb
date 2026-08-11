@@ -241,8 +241,11 @@ code-complete, deployed, and now configured; only its manual checks remain on it
 **The servicer group is `ANALOG\ExchangeWebAdminsExecSupport`** (SID
 `S-1-5-21-8915387-325452579-1788637320-710891`), read from the live `section_access` table in both
 `config/exchangeadmin.db` files on 2026-08-11. It holds three `ProtectedServicer:` grants -
-`MailboxPermissions`, `CalendarPermissions`, `OutOfOffice` - plus ordinary module access to
-`MailboxPermissions` and `OutOfOffice`. The other nine servicer-capable module ids
+`MailboxPermissions`, `CalendarPermissions`, `OutOfOffice` - and, after the owner closed the gap
+below on 2026-08-11, the matching module grants for all three plus `CalendarPermissionsOnPrem` and
+`MailboxPermissionsOnPrem`. Re-read from both live stores after the change: every servicer grant
+now has its module grant behind it, identically on dev and prod. The other nine servicer-capable
+module ids
 (`ADAttributeEditor`, `EmergencyDisable`, `MfaReset`, `Comms10k`, `GroupManagement`,
 `M365GroupManagement`, `LicensingUpdates`, `Migration`, `SelfServiceGroups`) have no
 `ProtectedServicer:` row anywhere; recorded as scope, not oversight.
@@ -256,16 +259,23 @@ code-complete, deployed, and now configured; only its manual checks remain on it
    grant conveying no module access must be visible where the grant is made.** Done in `46c8257`
    (app `2.8.1`, deployed to both 2026-08-11) - Module Config now states it in the standing warning,
    flags each affected row with a "no module access" badge, and raises a callout when any row is
-   flagged. The Calendar Permissions row for this group is what it will flag. The
+   flagged. The
    check compares stored SIDs and does not expand nested membership, so it can flag a group that
    reaches the module through another; the wording is conditional for that reason, and every
    genuinely stranded grant is still flagged.
-2. **The load-bearing manual check: a member of the servicer group acts on a protected principal,
-   the action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
+   **The config gap that prompted it is CLOSED** (owner, 2026-08-11): Exec Support now holds
+   `CalendarPermissions`, and the on-prem pair as well. Nothing should be badged today - which also
+   means the badge has never been seen firing on a real row, so its rendering is unproven.
+2. **DEFERRED to real prod use by the owner, 2026-08-11 - not a task anyone is waiting on. The
+   load-bearing manual check: a member of the servicer group acts on a protected principal, the
+   action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
    proves the capability works end to end - every guard is either a source-level tripwire or a
    decision tested in isolation. Worth doing on a module with a page gate (AD Attribute Editor,
    where the operator should also see the override banner) AND a batch module (Migration or
    Licensing), since those took different implementation shapes.
+   **What deferring costs, so a later reader can weigh it:** the first real exercise of this
+   capability will be someone doing actual work under time pressure, and if the chain is broken they
+   meet a refusal then, not in a test. That is the owner's accepted trade, not an oversight.
 3. The inverse, and just as important: **an operator NOT in the group is still refused** on the
    same target, and the refusal is audited.
 4. Also unverified on a real run: the per-target notes in a batch. A Migration batch mixing a
@@ -278,9 +288,13 @@ and every one of the three review findings lived in a page or a call site, in co
 message claimed it worked.
 
 The owner decision that WAS outstanding - which group gets the servicer grant - is settled:
-`ANALOG\ExchangeWebAdminsExecSupport`, on three modules, live in both config databases. What is
-still unknown is **who is in it**, which is an AD question this host cannot answer, and whether the
-capability works for a real member, which is check 2 above.
+`ANALOG\ExchangeWebAdminsExecSupport`, on three modules, live in both config databases, each with
+its module grant behind it. What is still unknown is **who is in it**, which is an AD question this
+host cannot answer, and whether the capability works for a real member - check 2, deferred to prod
+use.
+
+**With that, nothing on this work stream is waiting on anyone.** Checks 2-4 are deferred by owner
+decision, not queued. Treat the stream as closed unless a real prod run turns something up.
 
 ## Blockers
 
