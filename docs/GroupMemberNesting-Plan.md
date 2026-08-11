@@ -1,10 +1,8 @@
 # Nested Group Membership - Self-Service Refusal, Admin Support
 
-Status: Draft, pending owner ruling on OQ1 (affected-user notification when the removed
-member is a group). Owner rulings D1-D5 below are given; every slice except S4's
-notification behaviour may proceed behind them. Covers two modules
-(`SelfServiceGroups`, `GroupManagement`) and one shared service
-(`ProtectedPrincipalService`).
+Status: Approved (owner, 2026-08-11). Rulings D1-D6 below are complete; no open owner
+decision. Covers two modules (`SelfServiceGroups`, `GroupManagement`) and one shared
+service (`ProtectedPrincipalService`).
 
 Reviewed as a plan by openreview `codex`
 (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
@@ -104,6 +102,16 @@ group targets reachable, so this must close in the same change.
   ITSD message.
 - **D4 (2026-08-11): AD Group Management supports adding AND removing group members.**
   It is admin-audienced; nesting is a legitimate admin operation there.
+- **D6 (2026-08-11): a group member is notified on the SAME rule as a user member.**
+  Owner: *"same as for users."* No special case and no new code -
+  `MembershipChangeResult.NotifyAffectedUser`
+  (`Services/SelfServiceGroups/MembershipChangeResult.cs:39-43`) already states the whole
+  rule: notify when the write succeeded, membership actually changed, the target is a
+  security group, and an address is known. For a group member the address is the group's
+  `mail` attribute, populated from the same single resolution the write used; a group with
+  no `mail` gets no notification, exactly as a user with no `mail` gets none. Implementers
+  must NOT add a class check to that predicate - the address either exists or it does not,
+  and that is already the gate.
 - **D5 (2026-08-11): the servicer override applies to GroupManagement.** No code is
   required - `GroupManagementService.cs:16` sets `ServicerModuleId = "GroupManagement"`,
   `:84` calls `ProtectedPrincipalServicing.NoteFor`, and
@@ -360,6 +368,10 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
 - AC12b: A group selected from the dropdown is the group written, including when two
   domains hold a group of the same name (gmn-3). Retyping after a selection discards the
   held DN rather than writing the previously picked object.
+- AC15: Removing a mail-enabled group from a security group sends the affected-member
+  notification to the group's address; removing a group with no `mail` sends none (D6).
+  `NotifyAffectedUser` is unchanged - proven by the existing predicate tests still passing
+  unmodified.
 - AC13: A protected group is refused in AD Group Management unless the operator holds
   `ProtectedServicer:GroupManagement`, in which case the write proceeds and the audit
   event's `extra` names the authorising group.
@@ -405,14 +417,7 @@ Both module rules fire independently of the base rule.
 
 ## Open questions
 
-- **OQ1 (owner ruling required before S4 ships).** When a GROUP is removed from a
-  security group, the affected-user notification
-  (`Email.SendGroupMembershipUserNotificationAsync`, gated by
-  `MembershipChangeResult.NotifyAffectedUser`) has no correct recipient. A mail-enabled
-  group's address would mail every member; suppressing it means the people who lost
-  access are not told. This plan assumes SUPPRESS - the admin notification still fires
-  and the audit record is written - because mailing an entire group about an
-  administrative nesting change is the larger harm. Not yet ruled.
+- OQ1 is CLOSED, see D6.
 - OQ2: whether the S5 picker swap on the admin page should also apply to the group
   SEARCH box (`GroupManagement.razor:35`), which is a plain input. Out of scope here;
   raise separately if the admin page work continues.

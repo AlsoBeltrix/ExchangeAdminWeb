@@ -47,10 +47,14 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **None of the three would have been caught by implementing the plan faithfully - a
   faithful implementation is what produces them.** Reviewing the plan before writing code
   is what made them cheap.
-  **NEXT: owner ruling on OQ1** - when a GROUP is removed from a security group, the
-  affected-user notification has no correct recipient (a mail-enabled group's address
-  mails every member; suppressing it leaves the people who lost access untold). The plan
-  assumes SUPPRESS. Every slice except S4's notification behaviour can proceed without it.
+  **D6 closed the last open question and the plan is APPROVED.** Owner: *"same as for
+  users"* - a group member notifies on the existing `NotifyAffectedUser` predicate with no
+  class check added; the group's `mail` is the address, and no `mail` means no
+  notification, exactly as for a user. **I had raised this as a fork with a recommendation;
+  the owner's response was that it was ceremonial and did not need their focus.** The
+  reusable rule: where an existing predicate already answers the question, applying it is
+  the work - a fork is only warranted when the options genuinely diverge.
+  **NEXT: implement, starting at S1.** No owner decision outstanding.
   Versions when the work lands: app `2.8.1` -> `2.9.0` (shared service),
   `SelfServiceGroups` `1.3.0` -> `1.4.0`, `GroupManagement` `2.2.0` -> `2.3.0`.
 
