@@ -255,13 +255,27 @@ and would change a shipped workflow the owner did not ask about.
   existing user-add control on an admin page: the suggestion source moves from Exchange
   recipients to AD objects, which is correct for a cmdlet chain that writes to on-prem AD
   and currently rejects any cloud-only recipient the picker offers.
-- **Nesting guards, before the write:**
-  - refuse a group as a member of itself (compare resolved DNs);
-  - refuse when the TARGET group is already a member, directly or transitively, of the
-    group being added - the cycle case. Test with
-    `Get-ADGroup -LDAPFilter (&(distinguishedName=<candidate>)(memberOf:1.2.840.113556.1.4.1941:=<target>))`.
-    AD does not reliably refuse every cycle across scopes, and a cycle is not repairable
-    from this page.
+- **Nesting guards. These live in `GroupManagementService.AddMemberAsync`, immediately
+  before `Add-ADGroupMember` - NOT in the page (gmn-2).** `GroupManagementService.cs:36-38`
+  records that this module already shipped a page-only protection check which was bypassed
+  by identity format and by any non-page caller; a guard in the Razor file repeats that
+  defect exactly ("UI hiding is not security", Constitution). Let TARGET be the group
+  being edited and CANDIDATE the group being added to it:
+  - **Self-nest:** refuse when `CANDIDATE.DistinguishedName` equals
+    `TARGET.DistinguishedName` (ordinal-ignore-case on the resolved DNs, never on typed
+    names).
+  - **Cycle:** refuse when TARGET is already a member, directly or transitively, of
+    CANDIDATE - because adding CANDIDATE under TARGET would then close a loop. The
+    subject of the query is TARGET and the group searched is CANDIDATE:
+    `Get-ADGroup -LDAPFilter (&(distinguishedName=<TARGET>)(memberOf:1.2.840.113556.1.4.1941:=<CANDIDATE>))`.
+    **Do not invert these.** The mirror query
+    `(&(distinguishedName=<CANDIDATE>)(memberOf:...:=<TARGET>))` answers a DIFFERENT
+    question - whether CANDIDATE is already inside TARGET - which is the benign
+    already-a-member case and must be treated as an idempotent no-op, never as a cycle.
+    AD does not reliably refuse every cycle across group scopes, and a cycle is not
+    repairable from this page.
+  - **Fail closed:** an error or unreadable result from either query refuses the add. An
+    unanswerable cycle question is not a "no".
   - surface AD's own scope refusals verbatim (a Global group cannot contain a group from
     another domain; Domain Local and Universal have their own rules). Do not pre-empt
     them with a local rule that will drift from AD's.
@@ -281,9 +295,11 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
    change, inline removal warning.
 5. **S5a** - `GroupManagement` member listing: kind, objectGUID, no per-member
    `Get-ADUser`.
-6. **S5b** - `GroupManagement` writes: LDAP-escaped class-agnostic resolution, read-back
-   reconciliation, objectGUID-keyed remove.
-7. **S5c** - `GroupManagement` page: picker swap, Kind column, nesting guards.
+6. **S5b** - `GroupManagement` writes: LDAP-escaped class-agnostic resolution,
+   resolve-once-then-`CheckAsync` protection gate (gmn-1), self-nest and cycle guards in
+   the SERVICE (gmn-2), read-back reconciliation, objectGUID-keyed remove.
+7. **S5c** - `GroupManagement` page: picker swap, Kind column. No authorization or
+   nesting logic lands here; the page only surfaces what the service decided.
 8. **S6** - Versions, README, `.agents/state.md`.
 
 ## Acceptance criteria
@@ -307,6 +323,11 @@ Each is one commit, in order. S1 and S2 land before anything that can target a g
   "Group" and a working Remove button.
 - AC10: An admin can add a group as a member; the write is read back and confirmed.
 - AC11: Adding a group to itself, or creating a cycle, is refused with a named reason.
+- AC11b: Adding a group that is ALREADY a member succeeds as an idempotent no-op - it is
+  not misreported as a cycle (gmn-2). Both directions are asserted, because a
+  single-direction test passes against the inverted filter.
+- AC11c: The self-nest and cycle guards refuse when called directly on
+  `GroupManagementService`, with no page involved.
 - AC12: An AD scope refusal is surfaced with AD's own message, not a generic failure.
 - AC13: A protected group is refused in AD Group Management unless the operator holds
   `ProtectedServicer:GroupManagement`, in which case the write proceeds and the audit
