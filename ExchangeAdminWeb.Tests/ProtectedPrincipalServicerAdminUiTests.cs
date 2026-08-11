@@ -248,6 +248,85 @@ public sealed class ProtectedPrincipalServicerAdminUiTests : IDisposable
         Assert.Contains("Members may act on protected principals in this module", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void TheEditor_SaysTheGrantDoesNotConveyModuleAccess()
+    {
+        // The separation is deliberate, but stating only that servicing is "separate from module
+        // access" leaves the CONSEQUENCE to the reader. Found live on 2026-08-11:
+        // ANALOG\ExchangeWebAdminsExecSupport held ProtectedServicer:CalendarPermissions with no
+        // CalendarPermissions grant, so the page's [Authorize] policy stopped its members before
+        // any gate consulted the grant. The admin who made that grant had no way to see it.
+        var source = ReadPage();
+
+        Assert.Contains("It does not grant access to the module", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheEditor_FlagsAServicerGroupThatHasNoDirectModuleGrant()
+    {
+        // A standing sentence is not enough on its own: it tells an admin the rule but not whether
+        // they have broken it. The per-row marker is what turns the rule into the actual state of
+        // this module, so it is the part worth pinning.
+        var source = ReadPage();
+
+        Assert.Contains("ServicerGroupLacksDirectModuleAccess", source, StringComparison.Ordinal);
+        Assert.Contains("no module access", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNoModuleAccessCheck_ComparesAgainstTheMainPermissionGrantList()
+    {
+        // Pins WHAT the check reads. Comparing against anything but the main permission's own grant
+        // list - a hardcoded alias, the granular list, the servicer list itself - would either flag
+        // every row or none, and a marker that is always on is one admins learn to ignore.
+        var source = ReadPage();
+
+        var body = ExtractMethod(source, "private bool ServicerGroupLacksDirectModuleAccess");
+
+        Assert.Contains("module.MainPermission.PolicyAlias", body, StringComparison.Ordinal);
+        Assert.Contains("accessState.TryGetValue", body, StringComparison.Ordinal);
+
+        // Fail-safe direction: an unreadable or absent grant list must FLAG, never stay silent.
+        // Silence there would hide exactly the misconfiguration the marker exists to surface.
+        Assert.Contains("|| !moduleGroups.Contains", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheNoModuleAccessWarning_StaysConditionalAboutNestedMembership()
+    {
+        // The check compares stored SIDs without expanding nested membership, so a flagged group may
+        // still reach the module through a group that IS listed. The wording must stay conditional:
+        // an admin who finds the warning wrong once will discount it forever after, and the marker
+        // then protects nobody. This guards the honesty of the claim, not its presence.
+        var source = ReadPage();
+
+        Assert.Contains("Unless their members reach", source, StringComparison.Ordinal);
+        Assert.Contains("no direct", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns a brace-balanced method body, so a marker appearing later in the file cannot end the
+    /// slice early and report a real change as missing.
+    /// </summary>
+    private static string ExtractMethod(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"'{signature}' is no longer in ModuleConfig.razor");
+
+        var open = source.IndexOf('{', start);
+        Assert.True(open > 0, $"no body found for '{signature}'");
+
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}' && --depth == 0)
+                return source[start..(i + 1)];
+        }
+
+        throw new InvalidOperationException($"unbalanced braces after '{signature}'");
+    }
+
     private static string ReadPage() =>
         File.ReadAllText(Path.Combine(GetPagesDirectory(), "ModuleConfig.razor"));
 

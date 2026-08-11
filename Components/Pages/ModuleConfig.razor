@@ -251,8 +251,29 @@
                                 any other module. Actions are audited normally, and record which group
                                 authorised them. With no group listed, no one can service protected
                                 principals here.
+                                <strong>It does not grant access to the module.</strong> A group listed
+                                only here still cannot open @module.DisplayName, so the grant never comes
+                                into play - it needs @module.MainPermission.PolicyAlias above as well.
                             </small>
                         </div>
+
+                        @* Names the gap on the row it applies to rather than leaving the sentence above
+                           to be applied by the reader. The check is deliberately about the DIRECT grant:
+                           membership is nested, so a group absent from the list above may still reach the
+                           module through one that is present. Hence "not granted directly" and a warning
+                           tone, not an assertion that the grant is dead - overclaiming here would train
+                           admins to dismiss it. *@
+                        @if (servicerGroups.Any(ServicerGroupLacksDirectModuleAccess))
+                        {
+                            <div class="alert alert-danger py-2 mb-2">
+                                <small>
+                                    <strong>Marked groups below have no direct @module.MainPermission.PolicyAlias grant.</strong>
+                                    Unless their members reach @module.DisplayName through another group
+                                    listed above, they cannot open it, and this servicing grant does
+                                    nothing for them. Add them above, or remove them here.
+                                </small>
+                            </div>
+                        }
                         <table class="adm-tbl">
                             <thead>
                                 <tr>
@@ -272,7 +293,14 @@
                                     var sgc = group;
                                     <tr>
                                         <td class="adm-dom">@DomainOf(sgc)</td>
-                                        <td class="adm-grp">@BareNameOf(sgc)</td>
+                                        <td class="adm-grp">
+                                            @BareNameOf(sgc)
+                                            @if (ServicerGroupLacksDirectModuleAccess(sgc))
+                                            {
+                                                <span class="badge bg-danger ms-1" style="font-size: 0.62rem;"
+                                                      title="This group has no direct @module.MainPermission.PolicyAlias grant, so unless its members reach the module through another group they cannot open it and this servicing grant does nothing.">no module access</span>
+                                            }
+                                        </td>
                                         <td class="adm-sid">@sgc</td>
                                         <td class="adm-act">
                                             <button class="adm-rm" type="button" @onclick="() => RemoveAccessGroup(servicerAlias, sgc)">Remove</button>
@@ -668,6 +696,30 @@
         var shown = DisplayNameFor(groupValue);
         var slash = shown.IndexOf('\\');
         return slash > 0 ? shown[..slash] : "-";
+    }
+
+    /// <summary>
+    /// True when a servicer group holds no DIRECT grant on the module's main permission.
+    /// </summary>
+    /// <remarks>
+    /// The servicer key is a separate section-access key, so granting it conveys no module access:
+    /// a group listed only under servicing is stopped by the page's own [Authorize] policy before
+    /// any protection gate consults the grant. Found live on 2026-08-11, where
+    /// ANALOG\ExchangeWebAdminsExecSupport held ProtectedServicer:CalendarPermissions with no
+    /// CalendarPermissions grant.
+    ///
+    /// DIRECT is the whole caveat. Group membership nests, and this page compares stored SIDs
+    /// without expanding either list, so a group missing from the main permission may still reach
+    /// the module through one that is present. That makes a false positive possible and a false
+    /// negative not: every genuinely stranded grant is flagged. The wording it drives must stay
+    /// conditional for that reason - an admin who finds the warning wrong once will ignore it after.
+    /// </remarks>
+    private bool ServicerGroupLacksDirectModuleAccess(string groupValue)
+    {
+        if (module == null) return false;
+
+        return !accessState.TryGetValue(module.MainPermission.PolicyAlias, out var moduleGroups)
+            || !moduleGroups.Contains(groupValue, StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>The group name without its domain prefix, for the Group column.</summary>
