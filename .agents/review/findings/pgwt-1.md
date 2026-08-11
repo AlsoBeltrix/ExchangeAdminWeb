@@ -3,7 +3,7 @@
 **Severity**: HIGH — AC5 would pass on fixtures while being unreachable in production; the plan's own non-goal forbids the fix.
 **Status**: Verified
 **Branch**: —
-**Commit**: `<pending>` (plan revision)
+**Commit**: `7c5f8a6` (plan revision)
 
 ## Evidence
 

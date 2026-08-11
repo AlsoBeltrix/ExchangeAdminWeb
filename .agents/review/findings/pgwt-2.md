@@ -3,7 +3,7 @@
 **Severity**: MEDIUM — a group protected by sAMAccountName pattern or object GUID reads as unprotected, with the DN-path tests green.
 **Status**: Verified
 **Branch**: —
-**Commit**: `<pending>` (plan revision)
+**Commit**: `7c5f8a6` (plan revision)
 
 ## Evidence
 
