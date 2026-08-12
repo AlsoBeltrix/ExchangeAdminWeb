@@ -329,6 +329,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
+**THE ONE LIVE ITEM: two group plans are written, reviewed, and waiting on an owner go.
+No code has been written for either.** As of `dfce0dc`; tree clean, nothing pushed.
+
+1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
+   Start at S1 (make the protection check see group targets, plus the DN self-match).
+   S1 and S2 must land before any slice that can target a group.
+2. `docs/ProtectedGroupWriteTarget-Plan.md` - **Draft, awaiting go.** Depends on the
+   nesting plan's S1; its AC6 fails if S1 is reverted, deliberately.
+
+Both are docs-only so far. **Six commits sit unpushed on `master`** (`074bfdb` through
+`dfce0dc`): the two plans, three gmn-* plan revisions, two pgwt-* records, and the state
+and index updates. Push policy is ask-first and the owner has not been asked.
+
+**Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
+current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean
+through it. The `refresh_token ... revoked` line on stderr is documented noise on the
+API-key path and did not affect either run (exit 0, `capability_ok: true` both times).
+
 **Migration batch selection is DONE, accepted, and deployed to both** as app `2.8.0` /
 Migration `1.7.0` (see `## Now`). Nothing outstanding on it.
 
@@ -395,7 +413,12 @@ decision, not queued. Treat the stream as closed unless a real prod run turns so
 
 ## Blockers
 
-None live. The work is paused mid-stream, not stuck.
+None live. Both group plans are waiting on an owner go, which is a gate, not a blocker.
+
+**Stale line, flagged not fixed (handoff is not the hygiene pass):** the `Deployed:`
+paragraph immediately below still says dev and prod run `2.5.5` as of 2026-08-05, while
+`## Now` records both at `2.8.1` deployed 2026-08-11. `## Now` is right. Reconcile on the
+next `catchup`.
 
 **Deployed versions are owned by the single `Deployed:` entry below** -- as of 2026-08-05, dev and
 prod both run `2.5.5`. The per-work-stream `NOT DEPLOYED` / `ON DEV` / `not on prod` notes inside
