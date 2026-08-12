@@ -177,6 +177,10 @@ Notes binding on the implementer:
   Spec naming table. Register it in S1 even if D1 defers the write phase: the alias is
   inert without a page control behind it, and adding it later is a second config change
   the operator has to make.
+- **Adding the descriptor fails two existing tests until they are updated in the same
+  commit.** `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs:16` (module count 25 -> 26) and
+  `:109` (alias count 34 -> 36; this module adds two aliases). See S4 for the detail and
+  for why those assertions must not be weakened.
 - If D1 defers remediation, keep the granular permission but say so in the
   `Description`, so the Module Config page does not present a grant with nothing behind it
   -- that is the exact shape flagged in `.agents/state.md` (servicer grant with no module
@@ -280,11 +284,22 @@ this summary.**
 **Test seam.** `MfaResetService` builds its `GraphTokenClient` internally, which is why
 `MfaResetServiceConfigTests` can only reach configuration. Do better here: add an
 `internal` constructor taking `Func<Task<GraphTokenClient?>>` alongside the public DI
-constructor, so tests drive the full parse and truncation logic through
-`GraphTokenClientTests.StubHandler` (`ExchangeAdminWeb.Tests/GraphTokenClientTests.cs:12-35`).
-The project already exposes internals to the test assembly and already uses this
-seam shape in three services (see the servicer work in `.agents/state.md`). The public
-constructor and DI registration must be unchanged by the seam.
+constructor, so tests can drive the full parse, filter and truncation logic against a
+canned Graph response. The project already exposes internals to the test assembly and
+already uses this seam shape in three services (see the servicer work in
+`.agents/state.md`). The public constructor and DI registration must be unchanged by the
+seam.
+
+**The HTTP stub must be declared locally; it cannot be borrowed.**
+`GraphTokenClientTests.StubHandler` is the right SHAPE to copy -- it serves a canned token
+for `login.microsoftonline.com` and a settable response for every Graph call -- but it is
+`private sealed` (`ExchangeAdminWeb.Tests/GraphTokenClientTests.cs:12`) and is therefore
+not reachable from another test class. Referencing it does not compile.
+
+Declare an equivalent private handler inside `RiskyUsersServiceTests`. Do NOT promote the
+existing one to `internal` or hoist it into a shared helper as part of this work: that
+edits a test file this module does not own, for a second consumer, and the duplication is
+about fifteen lines. If a third consumer ever appears, extracting it is that change's job.
 
 ### S3. Read page (`Components/Pages/RiskyUsers.razor`)
 
@@ -325,9 +340,10 @@ updated (local time), and flags for `isProcessing` / `isDeleted`. Row expander s
    Actions: `RiskyUsers_List`, `RiskyUsers_History`. No `EmailService` call on the read
    path until D2 is ruled.
 
-### S4. Read-phase tests (`ExchangeAdminWeb.Tests/RiskyUsersServiceTests.cs`)
+### S4. Read-phase tests
 
-Behavioural, over the internal seam and `StubHandler`:
+New file `ExchangeAdminWeb.Tests/RiskyUsersServiceTests.cs`, behavioural, over the
+internal seam and a locally declared HTTP stub:
 
 - 403 / 404 / 429 / 500 each produce a FAILURE, never an empty success.
 - 200 with `"value": []` produces an empty success -- the inverse of the above, and the
@@ -342,11 +358,23 @@ Behavioural, over the internal seam and `StubHandler`:
 - The sort comparator orders `high` above `medium` above `low`, and places an
   unrecognised level last without throwing.
 
-Plus catalog tests in `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs` matching the
-existing pattern (`Catalog_HasBlockedSendersModule`,
+**Catalog tests belong to S1, not S4, because adding the descriptor BREAKS two existing
+assertions and the S1 commit must be green.** `ModuleCatalogTests.cs:16` asserts
+`Assert.Equal(25, _catalog.GetAll().Count)` and `:109` asserts
+`Assert.Equal(34, aliases.Count)`. Adding this module with one granular permission makes
+those 26 and 36. Update both in the S1 commit, with the comment on `:16` ("25 modules
+(24 operational + 1 config-only)") corrected to match -- a count comment that disagrees
+with its assertion is how the next person adds a module and trusts the wrong number.
+
+Then add descriptor-specific tests in the same file, matching the existing pattern
+(`Catalog_HasBlockedSendersModule`,
 `Catalog_BlockedSenders_MainPermissionIsFailClosed`): the descriptor exists, both
-permissions are `FailClosed`, the module is disabled by default, and the granular alias
-is `RiskyUsersRemediate`.
+permissions are `FailClosed`, the module is disabled by default, and both
+`RiskyUsers` and `RiskyUsersRemediate` appear in the configurable alias list.
+
+Note that these two count assertions are a deliberate tripwire, not incidental
+brittleness: they force any module addition to be a conscious edit. Do not weaken them
+into a range or a `>=`.
 
 ### S4a. OPTIONAL, and a base app version bump if taken -- nextLink paging
 

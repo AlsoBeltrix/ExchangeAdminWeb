@@ -4,7 +4,7 @@
 fails `dotnet build`, defeating the per-slice revertibility the slicing exists for.
 **Status**: Verified
 **Branch**: --
-**Commit**: (this commit) -- plan revision
+**Commit**: `c1fc12d` (plan revision)
 
 ## Evidence
 
