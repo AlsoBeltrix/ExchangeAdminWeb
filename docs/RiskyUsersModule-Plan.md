@@ -1,10 +1,10 @@
 # Risky Users Module (Microsoft Entra ID Protection)
 
-Status: Draft, awaiting owner go. D1 (remediation phase in scope) and D2 (read alerting)
-are OPEN and are named in `## Owner decisions`. Slices S1-S4 depend on neither and are
-implementable behind a go on the read phase alone. S5-S7 are gated on D1. **D2 is a
-pre-ship gate: S7 cannot close and no phase may be marked `Implemented` until D2 is
-ruled and built.**
+Status: Scope settled, awaiting a go to implement. **D1 is RULED (owner, 2026-08-12):
+the full module including remediation is in scope -- S5-S7 are live, not deferred.** D2
+(read alerting) remains open and is a PRE-SHIP GATE, not a start gate: S7 cannot close
+and no phase may be marked `Implemented` until D2 is ruled and built. No code has been
+written; implementation waits on its own go.
 
 New module `RiskyUsers`. No base app version bump (Constitution, Deployment And
 Versioning: adding a module is not a shared-infrastructure change) unless S4a is taken,
@@ -23,7 +23,7 @@ unrelated reasons.
 ## Purpose
 
 Surface Microsoft Entra ID Protection risky users inside ExchangeAdminWeb so an operator
-can triage them without an Entra portal sign-in, and (phase 2, gated on D1) act on the
+can triage them without an Entra portal sign-in, and (phase 2, D1 ruled in scope) act on the
 risk state: dismiss, confirm safe, confirm compromised.
 
 ## External prerequisites
@@ -41,9 +41,9 @@ is settled.
 2. **A dedicated Entra app registration**, admin-consented, with application permissions.
    NOT yet created; this is the remaining blocker before S2.
    - `IdentityRiskyUser.Read.All` -- required for the read phase (S2-S4).
-   - `IdentityRiskyUser.ReadWrite.All` -- required for the write phase (S5-S7) only.
-     This is the least-privileged permission for all three actions; Microsoft lists no
-     lower one.
+   - `IdentityRiskyUser.ReadWrite.All` -- REQUIRED, not conditional: D1 is ruled and the
+     write phase is in scope. This is the least-privileged permission for all three
+     actions; Microsoft lists no lower one, so there is no narrower grant to ask for.
    - `IdentityRiskEvent.Read.All` -- ONLY if risk detections are added later. Out of
      scope here (see `## Non-goals`).
    A matching Delinea Secret Server record must exist holding the three fields
@@ -88,17 +88,31 @@ with no per-user result. See S5 for why this module still calls them one user at
 
 ## Owner decisions
 
-### D1 -- OPEN. Is the remediation phase in scope now?
+### D1 -- RULED (owner, 2026-08-12): remediation IS in scope.
 
-Read phase (S1-S4) lists and inspects risky users. Write phase (S5-S7) adds dismiss,
-confirm safe, confirm compromised. The write phase needs the wider Graph consent, the
-full ticket + confirmation + protected-principal + audit + notification stack, and is
-where the real risk sits: dismissing risk on a genuinely compromised account is a
-security regression that this app would be the instrument of.
+Owner, verbatim: *"yes, manage means manage, not read-only view."*
 
-Implement S1-S4 only until D1 is ruled. If D1 lands as read-only, mark S5-S7
-`Deferred` in this file rather than deleting them, and drop
-`IdentityRiskyUser.ReadWrite.All` from the app registration ask.
+The full module ships: read phase (S1-S4) lists and inspects risky users, write phase
+(S5-S7) adds dismiss, confirm safe, and confirm compromised. **S5-S7 are live slices, not
+deferred**, and `IdentityRiskyUser.ReadWrite.All` is a required application permission,
+not a conditional one.
+
+The recommendation this plan originally carried -- read-only first, remediation as a
+later `1.1.0` -- was declined. Do not re-propose it as a sequencing idea: the owner's word
+"manage" was in the original request and was reaffirmed when offered the narrower option.
+Slice ORDER is unchanged (S1-S4 still land before S5-S7, because the write UI attaches to
+rendered rows), but shipping the read phase alone as a finished deliverable is not the
+plan.
+
+What that ruling buys, so it is not re-litigated: the write phase needs the wider Graph
+consent and the full ticket + confirmation + protected-principal + audit + notification
+stack, and dismissing risk on a genuinely compromised account is a security regression
+this app would be the instrument of. Those costs are accepted, not overlooked. They are
+why S6 is the most heavily specified slice in this plan.
+
+**Versioning consequence.** If S1-S7 land as one work stream before anything deploys, the
+module ships once as `1.0.0`. If the read phase reaches dev first and remediation follows,
+remediation is `1.1.0` -- two builds must never share one version number.
 
 ### D2 -- OPEN. Do reads on this module alert administrators?
 
@@ -188,17 +202,15 @@ Notes binding on the implementer:
   unconfigured `section_access` store must deny, never fall back to the legacy app-wide
   `Security:AllowedGroups`).
 - The granular alias is `RiskyUsersRemediate` -- parent Id + permission name, per the
-  Spec naming table. Register it in S1 even if D1 defers the write phase: the alias is
-  inert without a page control behind it, and adding it later is a second config change
-  the operator has to make.
+  Spec naming table. It is registered in S1 and has real controls behind it in S6.
 - **Adding the descriptor fails two existing tests until they are updated in the same
   commit.** `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs:16` (module count 25 -> 26) and
   `:109` (alias count 34 -> 36; this module adds two aliases). See S4 for the detail and
   for why those assertions must not be weakened.
-- If D1 defers remediation, keep the granular permission but say so in the
-  `Description`, so the Module Config page does not present a grant with nothing behind it
-  -- that is the exact shape flagged in `.agents/state.md` (servicer grant with no module
-  access) and now badged by Module Config.
+- Both aliases must be granted for an operator to remediate: the granular policy layers
+  ON TOP of the main one (Spec, Authorization Layering), so `RiskyUsersRemediate` alone
+  conveys nothing. Module Config now badges a grant with no module access behind it; do
+  not create that shape here.
 
 ### S2. Service read path (`Services/RiskyUsersService.cs`)
 
@@ -403,7 +415,7 @@ visible, which is sufficient. Take S4a only if a real tenant is found to hold mo
 500 risky users and the operators say the cap blocks them -- and then as its own plan,
 because it is not a Risky Users change.
 
-### S5. Write path -- GATED ON D1 (`Services/RiskyUsersService.cs`)
+### S5. Write path (`Services/RiskyUsersService.cs`) -- LIVE, D1 ruled
 
 ```csharp
 public async Task<RiskyUserActionResult> ApplyActionAsync(string userId, RiskyUserAction action)
@@ -431,7 +443,7 @@ it; do not block on it. Do not invent a client-side eligibility allowlist over
 This is D4 of `docs/MigrationBatchSelection-Plan.md` applied here: eligibility defined by
 exclusion, so an unanticipated state defaults to visible rather than silently vanishing.
 
-### S6. Write UI and gates -- GATED ON D1 (`Components/Pages/RiskyUsers.razor`)
+### S6. Write UI and gates (`Components/Pages/RiskyUsers.razor`) -- LIVE, D1 ruled
 
 Per-row action buttons, each requiring in order, and each failing closed:
 
@@ -498,7 +510,7 @@ that is `pps-3`, and a guard already forbids the shape across `Services/` and
 No `ProtectedServicer:RiskyUsers` row will exist in either config store on first deploy.
 That is scope, not oversight -- record it, do not create it.
 
-### S7. Docs and version -- GATED ON D1 for the remediation half
+### S7. Docs and version
 
 - `README.md`: new `### Risky Users (/risky-users)` section between
   `### Emergency Disable` and `### DHCP Authorization`, stating the P2 requirement, the
@@ -524,8 +536,8 @@ Commit one at a time; each is independently revertible and each closes its own p
 | S3 | `RiskyUsers.razor` read UI | go on read phase |
 | S4 | `RiskyUsersServiceTests` | go on read phase |
 | S4a | `GraphTokenClient` nextLink paging | do not take; separate plan |
-| S5 | Service write path, one call per user | D1 |
-| S6 | Page write UI, ticket, protection, servicer, audit, notify | D1 |
+| S5 | Service write path, one call per user | D1 ruled -- live |
+| S6 | Page write UI, ticket, protection, servicer, audit, notify | D1 ruled -- live |
 | S7 | README, this file, `.agents/state.md`, module version | with the last slice taken |
 
 S1 before S2 before S3. S4 may be written alongside S2. S5 must not begin before S3 is
@@ -567,7 +579,7 @@ Read phase:
   later edit cannot add one silently; a debounced shape asserts both the first-send and
   the suppressed-resend.
 
-Write phase (D1 only):
+Write phase (live -- D1 ruled in scope):
 
 - **AC10.** Acting on three rows produces three separate Graph calls and three separately
   named per-row outcomes. A refusal on row 2 does not mark rows 1 and 3 failed, and does
@@ -624,7 +636,7 @@ Manual checks, to be run on dev and each recorded as run or not run:
 3. A real query returning rows -> table populated, badges correct, history expander works.
 4. A filter matching nothing -> AC2, distinguishable from check 2.
 5. Two queries in succession -> AC3; the first verdict does not linger.
-6. (D1) A per-row action end to end -> Graph accepts, audit event written with ticket,
+6. A per-row action end to end -> Graph accepts, audit event written with ticket,
    admin notification received.
 7. (D2, required before the read phase ships) The ruled alerting behaviour observed on a
    real query -- an alert arrives, or demonstrably none is sent, matching the ruling.
@@ -640,7 +652,7 @@ Manual checks, to be run on dev and each recorded as run or not run:
 
 ## Open questions
 
-- **D1** -- is the remediation phase in scope now? Blocks S5-S7 only.
+- **D1** -- RULED 2026-08-12: remediation is in scope, S5-S7 are live. Closed.
 - **D2** -- do reads alert administrators? Does not block S1-S4, but IS a pre-ship gate:
   S7 cannot close and the read phase cannot be marked `Implemented` until it is ruled and
   the ruled shape is built. Audit-only is the development-time default, not the shipped

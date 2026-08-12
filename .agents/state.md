@@ -25,11 +25,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **All endpoints are v1.0**, so `GraphTokenClient`'s hardcoded base URL
   (`Services/GraphTokenClient.cs:16`) needs no change and no NuGet package is added.
   Verified against Microsoft Learn 2026-08-12, not from memory.
-  **TWO OWNER DECISIONS OPEN.** **D1: is the remediation phase in scope now?** Read-only
-  triage (S1-S4) versus read plus dismiss / confirm safe / confirm compromised (S5-S7).
-  The recommendation in the plan is read-only first: it is the half that does not depend
-  on solving cloud-only protection, and dismissing risk on a genuinely compromised
-  account is the dangerous direction. **D2: do reads alert administrators?** This is the
+  **D1 IS RULED (owner, 2026-08-12): remediation IS in scope.** *"yes, manage means
+  manage, not read-only view."* S5-S7 are live slices, and
+  `IdentityRiskyUser.ReadWrite.All` is a required permission rather than a conditional
+  one. **My read-only-first recommendation was offered twice and declined twice** - the
+  word "manage" was in the original request and was reaffirmed when the narrower option
+  was put explicitly. Slice ORDER is unchanged (S1-S4 before S5-S7, because the write UI
+  attaches to rendered rows); what changed is that shipping the read phase alone is not a
+  finished deliverable. Do not re-propose the split.
+  **D2 REMAINS OPEN: do reads alert administrators?** This is the
   first module in the repo that meets the Constitution's security-response read-alerting
   clause (`docs/ProjectConstitution.md:79`) on its face; `.agents/decisions.md`
   2026-06-30 classified every existing module's reads as non-alerting on reasoning that
@@ -66,11 +70,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   tests the change BREAKS.
   **All three would have been paid for during implementation, not before it.** Two of
   them are compile and test failures on the very first commit.
-  **NEXT: owner ruling on D1.** D2 is a pre-ship gate, not a start gate. The app
-  registration is the only external item still outstanding. The plan is implementable
-  from its current text once D1 lands.
-  Versions when the work lands: new module `RiskyUsers 1.0.0`; base app version
-  UNCHANGED (adding a module does not bump it).
+  **NEXT: a go to implement, starting at S1.** No owner decision blocks the start - D1 is
+  ruled and D2 is a pre-ship gate, not a start gate. Two things are outstanding but
+  neither stops S1-S4: the app registration plus its Delinea secret (blocks S2's first
+  live call, not the code), and D2 (blocks marking anything `Implemented`).
+  Versions when the work lands: new module `RiskyUsers 1.0.0` if S1-S7 land before any
+  deploy, else `1.1.0` for the remediation half; base app version UNCHANGED (adding a
+  module does not bump it).
 
 - **NESTED GROUP MEMBERSHIP: PLAN DRAFTED AND REVIEWED, NO CODE WRITTEN.**
   `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
@@ -403,8 +409,9 @@ written for any of them.** As of `a00f250`; tree clean.
    S1 and S2 must land before any slice that can target a group.
 2. `docs/ProtectedGroupWriteTarget-Plan.md` - **Draft, awaiting go.** Depends on the
    nesting plan's S1; its AC6 fails if S1 is reverted, deliberately.
-3. `docs/RiskyUsersModule-Plan.md` - **Draft, awaiting go.** New module, independent of
-   1 and 2. Two owner decisions open, D1 and D2; see the entry in `## Now`.
+3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
+   module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
+   pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
 
 All three are docs-only so far.
 
