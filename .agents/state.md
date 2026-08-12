@@ -338,9 +338,11 @@ No code has been written for either.** As of `dfce0dc`; tree clean, nothing push
 2. `docs/ProtectedGroupWriteTarget-Plan.md` - **Draft, awaiting go.** Depends on the
    nesting plan's S1; its AC6 fails if S1 is reverted, deliberately.
 
-Both are docs-only so far. **Six commits sit unpushed on `master`** (`074bfdb` through
-`dfce0dc`): the two plans, three gmn-* plan revisions, two pgwt-* records, and the state
-and index updates. Push policy is ask-first and the owner has not been asked.
+Both are docs-only so far. **Twelve commits sit unpushed on `master`** (`074bfdb` through
+`ea304a7`, counted against BOTH remotes - `origin` and `github` are level with each other
+and twelve behind): the two plans, the gmn-* and pgwt-* plan revisions, the five review
+records, and the state and index updates. Push policy is ask-first and the owner has not
+been asked.
 
 **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
 current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean
