@@ -2,7 +2,9 @@
 
 Status: Draft, awaiting owner go. D1 (remediation phase in scope) and D2 (read alerting)
 are OPEN and are named in `## Owner decisions`. Slices S1-S4 depend on neither and are
-implementable behind a go on the read phase alone; S5-S7 are gated on D1.
+implementable behind a go on the read phase alone. S5-S7 are gated on D1. **D2 is a
+pre-ship gate: S7 cannot close and no phase may be marked `Implemented` until D2 is
+ruled and built.**
 
 New module `RiskyUsers`. No base app version bump (Constitution, Deployment And
 Versioning: adding a module is not a shared-infrastructure change) unless S4a is taken,
@@ -105,10 +107,21 @@ Options, one line each:
 - Alert once per operator session or per N minutes. Honours intent without the volume;
   needs a debounce that nothing in the repo currently has, so it is new shared code.
 
-Until D2 is ruled, implement audit-only (`AuditService.LogModuleAction`) and DO NOT wire
-`EmailService` into the read path. Audit-only is the reversible default: adding an alert
-later is additive, whereas shipping an unwanted alert stream trains operators to ignore
-notifications from this app.
+**D2 is a PRE-SHIP GATE, not an open question that ships unanswered.** During S1-S4
+development, implement audit-only (`AuditService.LogModuleAction`) and do not wire
+`EmailService` into the read path -- audit-only is the reversible default, since adding an
+alert later is additive whereas an unwanted alert stream trains operators to ignore
+notifications from this app. But the read phase MUST NOT be marked `Implemented`, and S7
+MUST NOT close, until D2 is ruled and the ruled shape is implemented with AC17 and manual
+check 7 satisfied.
+
+The distinction matters because "audit-only is the interim default" and "audit-only is what
+ships" are one line apart. This module is the first in the repo that meets the
+security-response clause on its face; deploying it with the clause unhonoured and the
+question still marked open is how a governance gap becomes permanent. If the owner rules
+"alert on nothing", that is a ruling and the clause is honoured by an explicit
+classification -- which is what the Constitution asks for. What is not permitted is
+shipping with no ruling at all.
 
 ## Non-goals
 
@@ -492,6 +505,12 @@ Read phase:
 - **AC8.** Every query writes an audit event on both the success and the failure path.
 - **AC9.** With no `section_access` rows for `RiskyUsers`, the page denies -- it does not
   fall back to `Security:AllowedGroups`.
+- **AC17.** GATED ON D2, and the read phase cannot ship without it. Whichever alerting
+  shape D2 rules, a test asserts it: "alert on every read" asserts `EmailService` is
+  called once per query and that a send failure does not change the rendered result;
+  "alert on nothing" asserts `EmailService` is NOT reachable from the read path, so a
+  later edit cannot add one silently; a debounced shape asserts both the first-send and
+  the suppressed-resend.
 
 Write phase (D1 only):
 
@@ -552,6 +571,8 @@ Manual checks, to be run on dev and each recorded as run or not run:
 5. Two queries in succession -> AC3; the first verdict does not linger.
 6. (D1) A per-row action end to end -> Graph accepts, audit event written with ticket,
    admin notification received.
+7. (D2, required before the read phase ships) The ruled alerting behaviour observed on a
+   real query -- an alert arrives, or demonstrably none is sent, matching the ruling.
 
 ## Versioning
 
@@ -565,8 +586,10 @@ Manual checks, to be run on dev and each recorded as run or not run:
 ## Open questions
 
 - **D1** -- is the remediation phase in scope now? Blocks S5-S7 only.
-- **D2** -- do reads alert administrators? Blocks nothing; audit-only is the interim
-  default and is additive to change later.
+- **D2** -- do reads alert administrators? Does not block S1-S4, but IS a pre-ship gate:
+  S7 cannot close and the read phase cannot be marked `Implemented` until it is ruled and
+  the ruled shape is built. Audit-only is the development-time default, not the shipped
+  answer.
 - **Does `ProtectedPrincipalService.CheckAsync` consult `EntraObjectId`?** Not verified at
   the time of writing. Determine during S6 by reading the method, and record the answer
   here either way. If it does not, S6 still populates the field, and the gap is recorded
