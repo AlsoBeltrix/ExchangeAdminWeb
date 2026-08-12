@@ -401,8 +401,31 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
+**WORK IS PAUSED UNTIL 2026-09-01. Owner, 2026-08-12: the August AI budget is ~90%
+spent, so no implementation happens this month and the plans must be ready to start
+cold on 1 September.** Treat that date as the restart, not a deadline. A session opening
+before then should answer questions and change nothing.
+
+**What "ready to go" means here, and all of it is FREE of AI budget** - three items, all
+owner-side, none of them needing an agent:
+
+1. **A go on `docs/ProtectedGroupWriteTarget-Plan.md`.** It is Draft with no open
+   question in it; it needs the word, nothing else.
+2. **A D2 ruling on `docs/RiskyUsersModule-Plan.md`** - do risky-user reads alert
+   administrators? Three options are written out in that plan's `## Owner decisions`.
+   It is a pre-ship gate, so leaving it unruled would stall the work at the very end
+   rather than the start.
+3. **The Risky Users Entra app registration** plus its Delinea secret
+   (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
+   first live Graph call. S1-S4 can be built and tested without it.
+
+With those three done, all three plans are cold-startable on 1 September with no
+conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
+`docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1), and
+`docs/RiskyUsersModule-Plan.md` at its S1 independently of both.
+
 **THREE plans are written, reviewed, and waiting on an owner go. No code has been
-written for any of them.** As of `a00f250`; tree clean.
+written for any of them.** As of `c1a4d7f`; tree clean.
 
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
