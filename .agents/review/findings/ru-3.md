@@ -4,7 +4,7 @@
 compile; and the S1 commit fails two existing tests that the plan never mentioned.
 **Status**: Verified
 **Branch**: --
-**Commit**: (this commit) -- plan revision
+**Commit**: `a00f250` (plan revision)
 
 ## Evidence
 

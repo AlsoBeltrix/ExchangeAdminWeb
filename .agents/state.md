@@ -6,6 +6,69 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **RISKY USERS MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
+  `docs/RiskyUsersModule-Plan.md` (`a2c4c77`, revised through `a00f250`).
+  Owner request 2026-08-12: *"explore adding a module to this app that can managed Risky
+  Users in Azure"*, then *"plan it, review the plan with codex, and add it to the list of
+  things to implement."*
+  New module `RiskyUsers`, Entra ID Protection via Graph v1.0. Independent of the two
+  group plans - no shared code, no ordering constraint either way.
+  **Two external prerequisites, both hard blockers, neither of them code.** (1)
+  **Microsoft Entra ID P2** - Microsoft states it on the resource page and every action
+  page; without it the endpoints error rather than return an empty list, so an
+  unlicensed tenant produces a module that looks built and does nothing. (2) A
+  **dedicated app registration** with `IdentityRiskyUser.Read.All` (plus
+  `.ReadWrite.All` only if D1 takes the write phase), admin-consented, and its own
+  Delinea secret. Neither has been verified for this tenant.
+  **All endpoints are v1.0**, so `GraphTokenClient`'s hardcoded base URL
+  (`Services/GraphTokenClient.cs:16`) needs no change and no NuGet package is added.
+  Verified against Microsoft Learn 2026-08-12, not from memory.
+  **TWO OWNER DECISIONS OPEN.** **D1: is the remediation phase in scope now?** Read-only
+  triage (S1-S4) versus read plus dismiss / confirm safe / confirm compromised (S5-S7).
+  The recommendation in the plan is read-only first: it is the half that does not depend
+  on solving cloud-only protection, and dismissing risk on a genuinely compromised
+  account is the dangerous direction. **D2: do reads alert administrators?** This is the
+  first module in the repo that meets the Constitution's security-response read-alerting
+  clause (`docs/ProjectConstitution.md:79`) on its face; `.agents/decisions.md`
+  2026-06-30 classified every existing module's reads as non-alerting on reasoning that
+  does not transfer here. **D2 is a pre-ship gate, not a blocker on starting** - S1-S4
+  proceed audit-only, but nothing may be marked `Implemented` until it is ruled.
+  **The design constraint that shaped the plan: risky users are CLOUD identities.** The
+  repo's group, OU and SamAccountName protection rules all evaluate from an on-prem DN
+  and structurally cannot match a cloud-only principal (Constitution, Protected
+  Principals, final bullet). `MfaReset` hit this exactly - its catalog comment records
+  that before `1.2.0` an AD-only lookup reported every cloud-only user as "no AD object"
+  and skipped the check, leaving protection "close to inert" in a Graph module whose
+  normal input is a cloud identity. The write phase must use the `MfaReset.razor:262-364`
+  two-branch shape, and can improve on it: `riskyUser.id` IS the Entra object id, which
+  `MfaReset` never has.
+  **Two API-shape traps the plan pins.** The three action endpoints take `userIds` as an
+  ARRAY and return one bare `204` for the whole batch with no per-user body - Known
+  Failure Class 2 written into the API itself, so this module calls them one user per
+  request. And `GraphTokenClient` prepends a base URL to a relative path while
+  `@odata.nextLink` is ABSOLUTE, so lists past the 500 cap are unreachable; the plan
+  makes truncation visible rather than teaching the shared client to page, because that
+  would be a base-app-version change to a file two other modules use.
+  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `d877294..a2c4c77`:
+  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
+  `.agents/review/findings/ru-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`.
+  **ru-1 (HIGH) is the one worth reading: the plan argued correctly that this module
+  meets the alerting clause, then listed D2 as "Blocks nothing".** An interim default and
+  a shipped answer one line apart in the same document. D2 is now a pre-ship gate carried
+  in three places. ru-2 (MEDIUM): S1 registered `AddSingleton<RiskyUsersService>()` while
+  S2 introduced the type, so the first commit would fail CS0246 - a slice boundary drawn
+  on conceptual grouping instead of compilation order. ru-3 (MEDIUM): the test plan
+  pointed at `GraphTokenClientTests.StubHandler`, which is `private sealed`, and never
+  mentioned that the descriptor breaks the hardcoded module and alias counts at
+  `ModuleCatalogTests.cs:16,109` - the plan reasoned about tests to ADD and not about
+  tests the change BREAKS.
+  **All three would have been paid for during implementation, not before it.** Two of
+  them are compile and test failures on the very first commit.
+  **NEXT: owner rulings on D1 and D2, and confirmation of the P2 licence.** Nothing else
+  is outstanding; the plan is implementable from its current text once D1 lands.
+  Versions when the work lands: new module `RiskyUsers 1.0.0`; base app version
+  UNCHANGED (adding a module does not bump it).
+
 - **NESTED GROUP MEMBERSHIP: PLAN DRAFTED AND REVIEWED, NO CODE WRITTEN.**
   `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
   Owner report 2026-08-11: *"group self-management module needs to handle nested groups.
@@ -329,20 +392,25 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-**THE ONE LIVE ITEM: two group plans are written, reviewed, and waiting on an owner go.
-No code has been written for either.** As of `dfce0dc`; tree clean, nothing pushed.
+**THREE plans are written, reviewed, and waiting on an owner go. No code has been
+written for any of them.** As of `a00f250`; tree clean.
 
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
    S1 and S2 must land before any slice that can target a group.
 2. `docs/ProtectedGroupWriteTarget-Plan.md` - **Draft, awaiting go.** Depends on the
    nesting plan's S1; its AC6 fails if S1 is reverted, deliberately.
+3. `docs/RiskyUsersModule-Plan.md` - **Draft, awaiting go.** New module, independent of
+   1 and 2. Two owner decisions open, D1 and D2; see the entry in `## Now`.
 
-Both are docs-only so far. **Twelve commits sit unpushed on `master`** (`074bfdb` through
-`ea304a7`, counted against BOTH remotes - `origin` and `github` are level with each other
-and twelve behind): the two plans, the gmn-* and pgwt-* plan revisions, the five review
-records, and the state and index updates. Push policy is ask-first and the owner has not
-been asked.
+All three are docs-only so far.
+
+**The unpushed count recorded here was stale and is corrected.** The previous text said
+twelve commits sat unpushed on both remotes. Measured 2026-08-12: `origin` and `github`
+are both at `d877294` and level with each other, so everything through `d877294` HAS
+been pushed. What is genuinely unpushed is this session's Risky Users work - `a2c4c77`
+(the plan) through `a00f250` (the ru-3 revision), five commits. Push policy is ask-first
+and the owner has not been asked.
 
 **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
 current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean

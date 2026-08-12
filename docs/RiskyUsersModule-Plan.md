@@ -10,6 +10,16 @@ New module `RiskyUsers`. No base app version bump (Constitution, Deployment And
 Versioning: adding a module is not a shared-infrastructure change) unless S4a is taken,
 which changes `Services/GraphTokenClient.cs` and therefore does bump it.
 
+Reviewed as a plan by openreview `codex`
+(`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
+`d877294..a2c4c77`: verdict `acceptable_with_changes`, three findings, all admitted and
+all folded in -- `ru-1` (HIGH, `89e64ad`), `ru-2` (MEDIUM, `c1fc12d`), `ru-3` (MEDIUM,
+`a00f250`). Records in `.agents/review/findings/ru-*.md`. **Implement from the current
+text, not the pre-review shape:** as first written this plan permitted shipping the read
+phase with the security-response alerting clause unhonoured and unruled, and its first
+two slices would have failed `dotnet build` and `dotnet test` respectively, for three
+unrelated reasons.
+
 ## Purpose
 
 Surface Microsoft Entra ID Protection risky users inside ExchangeAdminWeb so an operator
