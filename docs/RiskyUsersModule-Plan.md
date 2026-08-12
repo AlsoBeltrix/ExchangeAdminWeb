@@ -185,10 +185,15 @@ Notes binding on the implementer:
 ### S2. Service read path (`Services/RiskyUsersService.cs`)
 
 Constructor mirrors `MfaResetService` exactly: `ILogger<RiskyUsersService>`,
-`ModuleConfigService`, `DelineaService`, `IHttpClientFactory`. Registered
-`AddSingleton<RiskyUsersService>()` in `Program.cs` beside the other Graph services
-(`Program.cs:113`, `:127`). It holds no per-request state; the `GraphTokenClient` is
-constructed per operation from the named client `"MicrosoftGraph"` (`Program.cs:104`).
+`ModuleConfigService`, `DelineaService`, `IHttpClientFactory`.
+
+**Registration belongs to THIS slice, not S1.** Add
+`builder.Services.AddSingleton<RiskyUsersService>();` in `Program.cs` beside the other
+Graph services (`Program.cs:113`, `:127`) in the same commit that introduces the type --
+a registration committed ahead of the type it names does not compile. Singleton is
+correct and matches both Graph services: it holds no per-request state, and the
+`GraphTokenClient` is constructed per operation from the named client `"MicrosoftGraph"`
+(`Program.cs:104`).
 
 ```csharp
 private async Task<GraphTokenClient?> GetGraphClientAsync()   // copy of MfaResetService:20-36,
@@ -472,8 +477,8 @@ Commit one at a time; each is independently revertible and each closes its own p
 
 | Slice | Content | Gate |
 |---|---|---|
-| S1 | Catalog descriptor + `Program.cs` DI + catalog tests | go on read phase |
-| S2 | `RiskyUsersService` read path + models + internal seam | go on read phase |
+| S1 | Catalog descriptor + catalog test updates. NO `Program.cs` change | go on read phase |
+| S2 | `RiskyUsersService` read path + models + internal seam + `Program.cs` DI | go on read phase |
 | S3 | `RiskyUsers.razor` read UI | go on read phase |
 | S4 | `RiskyUsersServiceTests` | go on read phase |
 | S4a | `GraphTokenClient` nextLink paging | do not take; separate plan |
@@ -483,6 +488,14 @@ Commit one at a time; each is independently revertible and each closes its own p
 
 S1 before S2 before S3. S4 may be written alongside S2. S5 must not begin before S3 is
 green: the write UI attaches to rendered rows that do not exist until then.
+
+**Every slice must build and test green on its own commit.** That is why the
+`Program.cs` DI registration lives in S2 and not S1: registering
+`AddSingleton<RiskyUsersService>()` before the type exists fails `dotnet build` at the
+S1 commit, and a slice that does not build is not revertible in the way per-slice
+commits exist to provide. The descriptor in S1 has no code dependency -- it is data in a
+list -- so S1 stands alone. Verify this rather than assume it: build at the S1 commit
+before starting S2.
 
 ## Acceptance criteria
 
