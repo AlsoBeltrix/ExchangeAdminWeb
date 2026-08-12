@@ -28,14 +28,18 @@ risk state: dismiss, confirm safe, confirm compromised.
 
 ## External prerequisites
 
-Both are outside the codebase and both are hard blockers. Do not begin S2 until each is
-confirmed; a build that compiles against an unlicensed or unconsented tenant looks
-correct and returns nothing.
+Both are outside the codebase. Item 2 is a hard blocker and is not yet satisfied; item 1
+is settled.
 
-1. **Microsoft Entra ID P2.** The `riskyUsers` API requires it -- Microsoft states this on
-   both the resource page and every action page. Without P2 the endpoints return an error,
-   not an empty list. Confirm the tenant licence before S2.
-2. **A dedicated Entra app registration**, admin-consented, with application permissions:
+1. **Microsoft Entra ID P2. SATISFIED -- owner-confirmed 2026-08-12.** The `riskyUsers`
+   API requires it (Microsoft states this on the resource page and on every action page):
+   without P2 the endpoints error rather than return an empty list. The owner confirmed
+   the tenant has risky users to manage, which is what the module was requested for.
+   Recorded so no later reader re-opens it as an unknown. **Do not raise this again as a
+   prerequisite to verify** -- the request for the module is itself the evidence, and
+   asking was a wasted round.
+2. **A dedicated Entra app registration**, admin-consented, with application permissions.
+   NOT yet created; this is the remaining blocker before S2.
    - `IdentityRiskyUser.Read.All` -- required for the read phase (S2-S4).
    - `IdentityRiskyUser.ReadWrite.All` -- required for the write phase (S5-S7) only.
      This is the least-privileged permission for all three actions; Microsoft lists no

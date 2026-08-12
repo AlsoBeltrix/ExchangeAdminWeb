@@ -13,13 +13,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   things to implement."*
   New module `RiskyUsers`, Entra ID Protection via Graph v1.0. Independent of the two
   group plans - no shared code, no ordering constraint either way.
-  **Two external prerequisites, both hard blockers, neither of them code.** (1)
-  **Microsoft Entra ID P2** - Microsoft states it on the resource page and every action
-  page; without it the endpoints error rather than return an empty list, so an
-  unlicensed tenant produces a module that looks built and does nothing. (2) A
-  **dedicated app registration** with `IdentityRiskyUser.Read.All` (plus
-  `.ReadWrite.All` only if D1 takes the write phase), admin-consented, and its own
-  Delinea secret. Neither has been verified for this tenant.
+  **Two external prerequisites, neither of them code. One is settled, one is not.**
+  (1) **Microsoft Entra ID P2 - SATISFIED, owner-confirmed 2026-08-12.** The API requires
+  it and errors without it. **I raised it as a thing to verify and the owner's answer was
+  that asking was the mistake: *"that's why I asked module. if we didn't have risky users
+  to manage, I wouldn't building manage risky users module."*** The request for the
+  module was itself the evidence. Do not re-open this. (2) A **dedicated app
+  registration** with `IdentityRiskyUser.Read.All` (plus `.ReadWrite.All` only if D1
+  takes the write phase), admin-consented, and its own Delinea secret. **This one is
+  genuinely outstanding** and blocks S2.
   **All endpoints are v1.0**, so `GraphTokenClient`'s hardcoded base URL
   (`Services/GraphTokenClient.cs:16`) needs no change and no NuGet package is added.
   Verified against Microsoft Learn 2026-08-12, not from memory.
@@ -64,8 +66,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   tests the change BREAKS.
   **All three would have been paid for during implementation, not before it.** Two of
   them are compile and test failures on the very first commit.
-  **NEXT: owner rulings on D1 and D2, and confirmation of the P2 licence.** Nothing else
-  is outstanding; the plan is implementable from its current text once D1 lands.
+  **NEXT: owner ruling on D1.** D2 is a pre-ship gate, not a start gate. The app
+  registration is the only external item still outstanding. The plan is implementable
+  from its current text once D1 lands.
   Versions when the work lands: new module `RiskyUsers 1.0.0`; base app version
   UNCHANGED (adding a module does not bump it).
 
