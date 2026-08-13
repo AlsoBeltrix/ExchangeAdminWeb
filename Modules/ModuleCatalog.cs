@@ -180,7 +180,7 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.7.0",
+            Version = "1.7.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
@@ -190,7 +190,7 @@ public sealed class ModuleCatalog
                 new("OnPremTargetDeliveryDomain", "On-Prem Target Domain", "e.g. contoso.com"),
                 new("OnPremTargetDatabases", "On-Prem Target Databases", "Comma-separated target mailbox databases. Exchange distributes mailboxes across all listed databases in each move-back batch."),
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by migration eligibility checks", Required: false),
-                new("CloudQuotaGB", "Cloud Quota (GB)", "Max mailbox size for cloud migration", DefaultValue: "100"),
+                new("CloudQuotaGB", "Cloud Quota (GB)", "Max size for cloud migration, applied to the primary mailbox and the archive separately. Combined size is not checked.", DefaultValue: "99"),
                 new("ExcludedADGroups", "Excluded AD Groups", "Comma-separated AD groups excluded from cloud migration", Required: false)
             ]
         },

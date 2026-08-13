@@ -9,8 +9,16 @@ public class MigrationEligibilityResult
     public double MailboxSizeGB { get; set; }
     public double ArchiveSizeGB { get; set; }
     public double TotalSizeGB => MailboxSizeGB + ArchiveSizeGB;
-    public long CloudQuotaGB { get; set; } = 100;
-    public bool ExceedsQuota => TotalSizeGB > CloudQuotaGB;
+
+    /// <summary>
+    /// Per-mailbox size limit. The primary mailbox and the archive are each checked
+    /// against this on their own; their combined size is not a migration criterion.
+    /// </summary>
+    public long CloudQuotaGB { get; set; } = 99;
+
+    public bool MailboxExceedsQuota => MailboxSizeGB > CloudQuotaGB;
+    public bool ArchiveExceedsQuota => ArchiveSizeGB > CloudQuotaGB;
+    public bool ExceedsQuota => MailboxExceedsQuota || ArchiveExceedsQuota;
     internal bool NeedsAdGroupCheck { get; set; }
 
     /// <summary>

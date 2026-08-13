@@ -6,6 +6,51 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **MIGRATION SIZE CHECK: FIXED 2026-08-13, COMMITTED, NOT PUSHED, NOT DEPLOYED.**
+  Migration `1.7.0` -> `1.7.1`. No base app bump (module-scoped behaviour only).
+  Owner: *"it blocks users whose combined mail + archive size > 100GB, but that's wrong.
+  both can be up to 99GB. not combined."* Then: *"fix the size check to be per mailbox,
+  not total archive+primary. each mailbox needs to be 99gb or less. combined can be
+  whatever."*
+  **The rule now lives in ONE place** - `MigrationEligibilityResult.MailboxExceedsQuota` /
+  `ArchiveExceedsQuota` / `ExceedsQuota` in `Models/MigrationModels.cs`. The service sets the
+  sizes and reads those properties rather than doing its own arithmetic, so the page badge and
+  the eligibility verdict cannot drift apart. `CloudQuotaGB` default is now `99` in BOTH places
+  that carried `100` (`ModuleCatalog.cs` DefaultValue and the `MigrationService.cs:35` fallback).
+  **A STORED CONFIG VALUE STILL WINS AND WAS NOT CHECKED.** If dev or prod has `CloudQuotaGB`
+  set in `config/exchangeadmin.db`, it overrides the new default and a stored `100` would allow <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
+  a 100 GB mailbox. Read it on both hosts and set it to 99 if present.
+  **9 new tests in `MigrationQuotaTests.cs`, proven non-vacuous**: reverting the model to the
+  combined rule fails 6 of the 9; restored, all 9 pass. 1701 passed / 0 failed / 3 skipped
+  (pre-existing AD skips), build + format + `git diff --check` + ASCII clean.
+  **What this fix deliberately did NOT touch, because the go named the size check only:** the
+  size-lookup failure path at `MigrationService.cs:185-189,201-208` still marks a user
+  **Ineligible** when the on-prem size cannot be read. Since size is not a criterion in the
+  source script at all, that is arguably a second invented block - an on-prem connection hiccup
+  currently reads to the operator as "this user cannot migrate". Unraised as work; owner's call.
+  **Provenance finding worth keeping: the size gate has no basis in the source script.**
+  `D:\source\scripts\Exchange\CheckMigrationElligibility.ps1` checks five things - migration in
+  progress, already a cloud mailbox, `SEC_ITAR_USERS` membership, not-a-cloud-mailbox on
+  move-back, and `AuxArchive` on move-back. All five are implemented. There is NO size check in
+  it, and no plan or decision in this repo ever asked for one; it appears in
+  `docs/MigrationEligibilityProtectedFlag-Plan.md:48` as an already-existing fact. The owner
+  kept the gate and corrected its arithmetic rather than removing it.
+  **The one check the script has that the module does not: an on-prem AD account precondition.**
+  The script wraps its whole body in `if ($ntid.SamAccountName)` after a `Get-Recipient`, so a
+  mail contact, mail user, distribution group or cloud-only object gets no verdict at all. The
+  module has no `Get-Recipient` and no SamAccountName gate - it uses the address it is given -
+  so those objects receive a normal Eligible/Ineligible answer. Recorded, not worked.
+  **Also recorded, not worked: `ExchangeServiceBase.cs:605-609` looks the user up in AD by
+  `UserPrincipalName -eq <the email address typed in>`, where the script used SamAccountName.**
+  Where a UPN differs from the primary SMTP address the lookup returns nobody, `:614` returns,
+  and the excluded-group check is silently skipped for that person - a fail-open on the only
+  compliance-motivated rule in the script. The owner confirmed 2026-08-13 that ITAR users ARE
+  currently excluded, which is consistent with this: it works for everyone whose UPN matches
+  their email and silently misses everyone else. Unproven either way. To settle it, run the
+  eligibility check on a `SEC_ITAR_USERS` member whose UPN is not their primary SMTP address.
+  **NEXT: nothing on this stream.** Deploy is the owner's call and carries the earlier
+  Migration/favicon work with it.
+
 - **RISKY USERS MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
   `docs/RiskyUsersModule-Plan.md` (`a2c4c77`, revised through `a00f250`).
   Owner request 2026-08-12: *"explore adding a module to this app that can managed Risky
@@ -405,6 +450,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 spent, so no implementation happens this month and the plans must be ready to start
 cold on 1 September.** Treat that date as the restart, not a deadline. A session opening
 before then should answer questions and change nothing.
+
+**One exception has already been taken, by the owner, 2026-08-13: the Migration size-check
+fix in `## Now`.** The pause governs the three queued PLANS; a direct owner instruction to
+fix a live defect overrides it. The pause is not a reason to refuse owner-directed work, and
+it is not authorization to start the queued plans early either.
 
 **What "ready to go" means here, and all of it is FREE of AI budget** - three items, all
 owner-side, none of them needing an agent:

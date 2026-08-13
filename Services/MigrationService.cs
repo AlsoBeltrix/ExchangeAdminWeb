@@ -32,7 +32,7 @@ public class MigrationService : ExchangeServiceBase
     private string _hybridEndpoint => MigrationConfig("HybridEndpoint", "Migration:HybridEndpoint", "hybrid1");
     private string _cloudTargetDomain => MigrationConfig("CloudTargetDeliveryDomain", "Migration:CloudTargetDeliveryDomain");
     private string _onPremTargetDomain => MigrationConfig("OnPremTargetDeliveryDomain", "Migration:OnPremTargetDeliveryDomain");
-    private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "100"), out var v) ? v : 100;
+    private long _cloudQuotaGB => long.TryParse(MigrationConfig("CloudQuotaGB", "Migration:CloudQuotaGB", "99"), out var v) ? v : 99;
     private string[] _excludedADGroups
     {
         get
@@ -171,15 +171,23 @@ public class MigrationService : ExchangeServiceBase
                     if (sizeResult is not null)
                     {
                         var (mailboxGB, archiveGB) = sizeResult.Value;
-                        var totalGB = mailboxGB + archiveGB;
                         result.MailboxSizeGB = mailboxGB;
                         result.ArchiveSizeGB = archiveGB;
                         result.CloudQuotaGB = _cloudQuotaGB;
 
-                        if (totalGB > _cloudQuotaGB)
+                        // The primary mailbox and the archive are each capped at the per-mailbox
+                        // limit on their own. Their combined size is not a migration criterion,
+                        // so a user with a large mailbox AND a large archive stays eligible.
+                        if (result.MailboxExceedsQuota)
                         {
                             result.Status = MigrationStatus.Ineligible;
-                            result.IneligibilityReasons.Add($"Mailbox + archive size ({totalGB:F2} GB) exceeds cloud quota ({_cloudQuotaGB} GB)");
+                            result.IneligibilityReasons.Add($"Primary mailbox size ({mailboxGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
+                        }
+
+                        if (result.ArchiveExceedsQuota)
+                        {
+                            result.Status = MigrationStatus.Ineligible;
+                            result.IneligibilityReasons.Add($"Archive size ({archiveGB:F2} GB) exceeds the per-mailbox limit ({_cloudQuotaGB} GB)");
                         }
                     }
                     else

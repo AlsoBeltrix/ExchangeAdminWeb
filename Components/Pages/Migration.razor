@@ -127,9 +127,13 @@
                                 | <strong>Total:</strong> @singleResult.TotalSizeGB.ToString("F2") GB
                             </p>
                         }
-                        @if (singleResult.ExceedsQuota)
+                        @if (singleResult.MailboxExceedsQuota)
                         {
-                            <p class="mb-0 text-warning"><strong>Mailbox + archive (@singleResult.TotalSizeGB.ToString("F2") GB) exceeds @singleResult.CloudQuotaGB GB cloud quota</strong></p>
+                            <p class="mb-0 text-warning"><strong>Mailbox (@singleResult.MailboxSizeGB.ToString("F2") GB) exceeds the @singleResult.CloudQuotaGB GB per-mailbox limit</strong></p>
+                        }
+                        @if (singleResult.ArchiveExceedsQuota)
+                        {
+                            <p class="mb-0 text-warning"><strong>Archive (@singleResult.ArchiveSizeGB.ToString("F2") GB) exceeds the @singleResult.CloudQuotaGB GB per-mailbox limit</strong></p>
                         }
                     </div>
 
@@ -283,16 +287,17 @@
                                             }
                                         </td>
                                         <td style="text-align: right;">
-                                            @if (item.ExceedsQuota)
+                                            @if (item.MailboxSizeGB > 0 || item.ArchiveSizeGB > 0)
                                             {
-                                                <span class="text-warning">@item.TotalSizeGB.ToString("F2") (exceeds quota)</span>
-                                            }
-                                            else if (item.MailboxSizeGB > 0)
-                                            {
-                                                <span>@item.MailboxSizeGB.ToString("F2")</span>
+                                                <span class="@(item.MailboxExceedsQuota ? "text-warning" : null)">@item.MailboxSizeGB.ToString("F2")</span>
                                                 @if (item.ArchiveSizeGB > 0)
                                                 {
-                                                    <text> + @item.ArchiveSizeGB.ToString("F2") archive</text>
+                                                    <text> + </text>
+                                                    <span class="@(item.ArchiveExceedsQuota ? "text-warning" : null)">@item.ArchiveSizeGB.ToString("F2") archive</span>
+                                                }
+                                                @if (item.ExceedsQuota)
+                                                {
+                                                    <text> (exceeds limit)</text>
                                                 }
                                             }
                                         </td>

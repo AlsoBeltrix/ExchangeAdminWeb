@@ -22,7 +22,7 @@ ASP.NET Core 10 Blazor Server application for Exchange Online administration, ma
 Check migration eligibility and create move batches between Exchange Online and on-premises Exchange.
 
 - Validates current mailbox location before eligibility decisions
-- Checks on-prem mailbox and archive size before cloud migrations
+- Checks on-prem mailbox and archive size before cloud migrations. The `CloudQuotaGB` limit applies to the primary mailbox and the archive separately; their combined size is not a criterion
 - Move-back batches pass all configured databases from `OnPremTargetDatabases` in the Migration module config to Exchange for distribution
 - Built-in move-back database defaults match the approved 2019 database list; no DAG lookup or space balancing is performed
 - **Migration Status supports multi-select, with three bulk actions that have three different targets.** One ticket covers the run and each batch is audited individually. A selection that mixes statuses is never refused: the eligible batches are acted on and every skipped batch is named with the status that disqualified it
