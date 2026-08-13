@@ -6,8 +6,16 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **MIGRATION SIZE CHECK: FIXED 2026-08-13, COMMITTED, NOT PUSHED, NOT DEPLOYED.**
-  Migration `1.7.0` -> `1.7.1`. No base app bump (module-scoped behaviour only).
+- **MIGRATION SIZE CHECK: FIXED, PUSHED AND DEPLOYED 2026-08-13** (`b4029c6`; both remotes
+  verified at that sha). Migration `1.7.0` -> `1.7.1`. No base app bump (module-scoped
+  behaviour only).
+  **WHICH ENVIRONMENTS was not stated by the owner and is NOT recorded here** - do not assume
+  both. **And the app version is unchanged at `2.8.1`, so the sidebar cannot tell this build
+  from the previous one**; the only way to confirm which host carries the fix is the Migration
+  module version reading `1.7.1` in Module Config, or the deployed DLL's timestamp.
+  **The deploy also carried everything else that was unpushed**, including the Migration batch
+  selection and favicon work already on both hosts and the five Risky Users PLAN commits
+  (docs only, no code).
   Owner: *"it blocks users whose combined mail + archive size > 100GB, but that's wrong.
   both can be up to 99GB. not combined."* Then: *"fix the size check to be per mailbox,
   not total archive+primary. each mailbox needs to be 99gb or less. combined can be
@@ -488,12 +496,11 @@ written for any of them.** As of `c1a4d7f`; tree clean.
 
 All three are docs-only so far.
 
-**The unpushed count recorded here was stale and is corrected.** The previous text said
-twelve commits sat unpushed on both remotes. Measured 2026-08-12: `origin` and `github`
-are both at `d877294` and level with each other, so everything through `d877294` HAS
-been pushed. What is genuinely unpushed is this session's Risky Users work - `a2c4c77`
-(the plan) through `a00f250` (the ru-3 revision), five commits. Push policy is ask-first
-and the owner has not been asked.
+**NOTHING IS UNPUSHED. Measured 2026-08-13: `origin` and `github` are both at `b4029c6`,
+level with each other and with local `master`.** The owner pushed 2026-08-13, which took
+the five Risky Users plan commits (`a2c4c77` through `a00f250`, docs only) along with the
+Migration size-check fix. The earlier note about twelve, then five, unpushed commits is
+resolved and should not be re-derived.
 
 **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
 current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean
