@@ -587,11 +587,28 @@ review was ever obtained.
 Live backlog only. Items need an approved plan before code unless noted.
 
 **-1. Make the remaining uncovered lines testable** (owner: *"make it work"*, 2026-08-05).
-   Details, the per-file split and the risk constraints are in `## Blockers`. No plan needed -- the
-   owner ruled it directly. This is the next code task.
-   **`SectionAccessGroupDirectory` is DONE (`6642587`).** Next: `PermissionValidator` (46%), then
-   `ProtectedPrincipalService` (63%) -- both on live request paths, both credential-carrying, so
-   they are the harder half. Copy the `ISectionAccessDirectoryCommands` shape.
+   **NO LONGER "the next code task" - resolved by the owner 2026-08-14 into two halves with
+   different fates.** The item predated the four-plan queue and the pause and was never
+   re-prioritised against them; the `drift` sweep flagged the contradiction.
+   `SectionAccessGroupDirectory` is DONE (`6642587`, via `docs/CoverageRatchetRepair-Plan.md`).
+   The remaining two files split cleanly, and the split is the ruling:
+
+   **(a) `ProtectedPrincipalService` (63%) - ROLLED INTO THE QUEUED PLANS. Not separate work.**
+   All four queued plans modify and test it (verified 2026-08-14 by reading each plan), and
+   `docs/GroupMemberNesting-Plan.md` S1 changes this exact file at `:747`. Doing a standalone
+   coverage refactor first would collide with S1 rather than help it. Coverage rises as a
+   by-product; **after those plans land, re-measure on a GREEN CI run and raise the ratchet** -
+   a one-line diff, per the instructions inside `.agents/review/coverage-floor.txt`.
+
+   **(b) `PermissionValidator` (46%) - the real remaining gap, and nothing in the queue closes
+   it.** No queued plan touches the file, and it is one of the paths the coverage floor gates
+   (`tools/Test-CoverageFloor.ps1:72`). It is credential-carrying and on a live request path, so
+   the work is the `ISectionAccessDirectoryCommands` seam extraction again.
+   **Not small, and it needs its own plan** - `docs/ProjectConstitution.md` requires a written
+   plan for authorization changes, and this is the authorization core. Queued **behind** the four
+   plans; it is not "next" and must not be re-labelled as such without an owner ruling.
+   Not startable on the August remainder: the comparable `SectionAccessGroupDirectory` work
+   landed on 2026-08-05, a $395 day.
 
 **-0.9. Eyeball a disabled submit button on dev** (accent, not blue). No plan needed -- it is the
    verification step for work already landed. **The deploy half is done:** both instances are
