@@ -1,6 +1,9 @@
 # Intune Device Management Module - Plan
 
 Status: Draft - awaiting owner go to implement. D1 ruled 2026-08-14. D2 and D3 open.
+Reviewed: openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback)
+over `b868e5c..6aef9e3`: `acceptable_with_changes`, three findings, all admitted and folded in
+(`.agents/review/findings/idm-{1,2,3}.md`), plus one material change adopted outside intake.
 
 Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
 device details, and deleting"*.
