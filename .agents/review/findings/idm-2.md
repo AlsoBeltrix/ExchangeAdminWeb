@@ -3,7 +3,7 @@
 **Severity**: HIGH - the most destructive action in the module is specified by an assumption about Graph's default behaviour that nothing in the plan or the repo establishes.
 **Status**: Verified
 **Branch**: - (default-branch mode)
-**Commit**: `<filled in below>`
+**Commit**: `f5946b2`
 
 ## Evidence
 

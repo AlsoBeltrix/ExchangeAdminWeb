@@ -3,7 +3,7 @@
 **Severity**: HIGH - the plan mandates tests and an operator-facing behaviour that the named shared client cannot deliver, so implementation must either fail those tests, silently weaken them, or make an unplanned shared-infrastructure change.
 **Status**: Verified
 **Branch**: - (default-branch mode)
-**Commit**: `<filled in below>`
+**Commit**: `89ea0d4`
 
 ## Evidence
 

@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - the capability would pass its tests and be unreachable in the product, the exact failure this repo has already shipped twice.
 **Status**: Verified
 **Branch**: - (default-branch mode)
-**Commit**: `<filled in below>`
+**Commit**: `28f848c`
 
 ## Evidence
 
