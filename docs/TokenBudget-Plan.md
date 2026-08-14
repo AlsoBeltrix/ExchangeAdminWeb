@@ -360,9 +360,24 @@ Design points that are not obvious and must not be re-litigated during implement
 
   **Not adopted yet, because three things are unverified** - and this plan has already been wrong
   three times by inferring past its evidence:
-  1. **Does this machine's traffic actually traverse it?** `ANTHROPIC_BASE_URL` is
-     `https://api.portkey.ai` here, which points straight at the gateway rather than at a local
-     proxy. Either headroom sits elsewhere in the chain or this box is not proxied.
+  1. **ANSWERED 2026-08-14: by design yes; currently disabled because it broke.** The owner
+     re-enabled headroom during this session and Claude Code immediately returned
+     `API Error: API returned an empty or malformed response (HTTP 200)` on three consecutive
+     requests, each after 28-53s; removing it restored service. Two transitions, consistent, so
+     headroom is implicated rather than the gateway.
+     **The confound worth testing before blaming the version:** the session was at **~756K tokens
+     of context** throughout. A proxy that handles ordinary requests can still fail buffering or
+     compressing a body that size, which would make this a request-size bug rather than a broken
+     build - a materially different upstream report. **Re-test by enabling it in a FRESH session
+     at small context.** If it works there, the trigger is size.
+     Config for the retest: headroom listens on `8787` (`docker-compose.yml`), so
+     `ANTHROPIC_BASE_URL` becomes a local `:8787` base URL forwarding to the gateway; it is
+     currently `https://api.portkey.ai` in `~/.claude/settings.json`.
+     **Consequence for the baseline either way: headroom telemetry has a hole covering every
+     window in which it was bypassed**, so it cannot be the sole source for an August baseline.
+     Local transcripts covered those windows and headroom did not - complementary blind spots,
+     which argues for keeping the transcript reader as a cross-check even if headroom becomes
+     primary.
   2. **Does it see the other dev boxes?** That is the whole reason it would beat transcripts.
   3. **Does it see the reviewer harnesses** (codex to Azure via Portkey), or only Anthropic
      traffic?
