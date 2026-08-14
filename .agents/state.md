@@ -42,16 +42,31 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the module sets. A ticked box on a deployment with user notifications off must say so on
   screen and in the audit, or the control is decorative - the unreachable-capability shape from
   the other direction.
-  **S4 and S6 were widened by this ruling AFTER the codex review, so those two sections are
-  unreviewed.**
-  **D3 is open with a default of out-of-scope: should delete also remove the Entra ID device
-  object?** Needs `Device.ReadWrite.All` and a third gate. The owner asked for Intune devices;
-  adding this unasked is the `pgwt-1` scope error, so the default stands until ruled.
+  **S4, S5 and S6, the fourth policy alias and the `Device.ReadWrite.All` prerequisite all
+  postdate the codex review. Those parts are UNREVIEWED** - the review covered `b868e5c..6aef9e3`
+  and both rulings landed after it.
+  **D3 IS RULED (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
+  *"yes, add it as an option."* New slice S5, own granular permission
+  `IntuneDevicesEntraDelete`, checkbox beside each Intune action plus a standalone action,
+  defaulted off. **Its own permission rather than riding `IntuneDevicesPrivileged` because
+  `Device.ReadWrite.All` is a DIRECTORY scope covering every device object in the tenant** - the
+  widest grant in the module, and not an Intune scope at all.
+  **The trap in that slice, verified against Learn before it was written:**
+  `managedDevice.azureADDeviceId` is the Entra **`deviceId`**, not the directory **object id**,
+  and `DELETE /devices/{id}` wants the object id - Learn's own `device: get` example shows both
+  GUIDs on one device. The path form would 404 against a device that is present and fine. The
+  plan pins the alternate-key form `DELETE /devices(deviceId='...')`, which takes what the
+  module has. This is the same class as the three review findings and was caught the same way.
+  **Ordering pinned as Known Failure Class 2:** the Intune action runs first, `azureADDeviceId`
+  is captured BEFORE it (a deleted Intune record cannot be read for it afterwards), and the two
+  outcomes are reported and audited separately. The half-finished case is the one an operator
+  must be able to see.
   **One external prerequisite, not code: a dedicated Entra app registration** with
-  `DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All` and `.PrivilegedOperations.All`,
-  admin-consented, plus its own Delinea secret. **Do not collapse the three scopes** - an app
-  registration that never receives `PrivilegedOperations.All` cannot wipe a machine even if the
-  code is wrong, and that is the point of the split.
+  `DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All` and -
+  after D3 - `Device.ReadWrite.All`, admin-consented, plus its own Delinea secret. **Do not
+  collapse the four scopes** - an app registration that never receives
+  `PrivilegedOperations.All` cannot wipe a machine even if the code is wrong, and one without
+  `Device.ReadWrite.All` cannot touch the directory. That is the point of the split.
   **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `b868e5c..6aef9e3`:
   `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
   `.agents/review/findings/idm-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`. A fourth
@@ -548,9 +563,10 @@ owner-side, none of them needing an agent:
    (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
    first live Graph call. S1-S4 can be built and tested without it.
 4. **The Intune Devices Entra app registration** plus its Delinea secret
-   (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All` and
-   `.PrivilegedOperations.All`, admin-consented). Blocks the first live Graph call, not the
-   build. Keep the three scopes distinct.
+   (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All`
+   and `Device.ReadWrite.All`, admin-consented). Blocks the first live Graph call, not the
+   build. Keep the four scopes distinct. The fourth is a directory scope, wider than the other
+   three, and is the one to weigh before consenting.
 
 With those four done, all four plans are cold-startable on 1 September with no
 conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
@@ -569,9 +585,9 @@ written for any of them.** As of `b681185`; tree clean.
 3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
    module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
    pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
-4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go.** New module,
-   independent of 1-3. D1 and D2 ruled; D3 open with a working default, so nothing gates the
-   start. Start at S0. See the entry in `## Now`.
+4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go. D1, D2 and D3 all
+   ruled; no owner decision is outstanding.** New module, independent of 1-3. Start at S0.
+   See the entry in `## Now`.
 
 All four are docs-only so far.
 
