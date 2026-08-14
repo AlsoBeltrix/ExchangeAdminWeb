@@ -317,6 +317,17 @@ Design points that are not obvious and must not be re-litigated during implement
   written into a repository file becomes durable truth - this is the `idm-2` failure class from
   today's review, where an unverified inference was stated as fact. The tool prints the rate
   table it used and the words "estimated, first-party rates" alongside any total.
+- **`-Calibration <factor>`, and it is not optional decoration.** Measured 2026-08-14: over one
+  observed interval this plan's own model predicted **$88.87** against a reported budget movement
+  of **$49.72** - roughly **1.8x too high**. Partner pricing is the likely cause, with some
+  contribution from transcript-flush lag at the measurement boundary. One noisy sample is not a
+  calibration constant, which is exactly why the factor is a parameter with a default of `1.0`
+  rather than a number baked into the rate table. Record observed budget movements against tool
+  runs in `.agents/token-log.md`; when several intervals agree, set the factor and note the
+  evidence beside it.
+  **The direction matters more than the magnitude: real spend is LOWER than this plan says.**
+  Every dollar figure in this document is therefore a ceiling, and the August total in particular
+  should not be requoted as fact.
 - **ASCII only.** CI fails on non-ASCII in any tracked `.ps1`/`.psm1`.
 - **Reads outside the repository.** The transcript root is outside the working tree and contains
   full conversation transcripts. The tool reads token counts only and must never print, copy or
@@ -386,8 +397,14 @@ in this plan's slice list; L1 points at it and that is the whole integration.
 
 ## Acceptance criteria
 
-- AC1 `Get-TokenUsage.ps1` reproduces the August figures in this document from the real
-  transcripts, within rounding.
+- AC1 `Get-TokenUsage.ps1` reproduces the **token counts** in this document from the real
+  transcripts, within rounding. **Deliberately not the dollar figures** - an earlier revision
+  made reproducing this plan's own cost estimates the criterion, which would have tested the tool
+  against a model already measured to be ~1.8x high rather than against reality. Tokens are
+  observed; cost is inferred, and the inference is what needs calibrating.
+- AC1b Over at least three intervals where a reported budget movement is known, the tool's
+  calibrated estimate tracks the movement. Until that holds, `-Calibration` stays at `1.0` and
+  every printed cost is read as a ceiling.
 - AC2 The same run against a fixture tree produces exactly the fixture's expected numbers.
 - AC3 Every printed cost is accompanied by the rate table used and an explicit estimate
   qualifier. No bare dollar figure reaches stdout or any written file.
