@@ -24,10 +24,26 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   three actions - Microsoft's own guidance is to remove it as a separate step.
   **All endpoints are v1.0**, verified against Microsoft Learn 2026-08-14, so
   `GraphTokenClient`'s hardcoded base URL needs no change and no NuGet package is added.
-  **D2 REMAINS OPEN and is a pre-ship gate, not a start gate: does the device's primary user
-  get an email when their machine is retired or wiped?** No existing predicate settles it - the
-  Constitution's affected-user rule fires on a permissions or access change, and a wipe is
-  neither. Three options are written out in the plan's `## Owner decisions`.
+  **D2 IS RULED (owner, 2026-08-14) and the ruling is a standing design rule for this module,
+  not just an answer:** *"anything that can be an option should be an option. do not build in
+  restraints. make email the user an option."* **All three fixed alternatives I offered were
+  rejected as written, because each hardcoded one answer.** Notifying the primary user is now
+  three config fields (one per action) setting a deployment default, plus a per-action checkbox
+  the operator can change at the moment of acting, plus an audit record of what actually
+  happened. Defaults: off for delete, on for retire and wipe.
+  **The same ruling reopened something the plan had closed off unasked one revision earlier.**
+  `idm-2`'s fix pinned the wipe flags to a fixed body and put operator choice out of scope -
+  exactly the built-in restraint the owner removed. Every parameter Graph accepts on `wipe` is
+  now an operator control. The half of `idm-2` that survives is the half that was right: the
+  body is always explicit and asserted, defaults are a full reset, and the audit names the exact
+  flag set so a `keepUserData` wipe and a full reset are distinguishable afterwards.
+  **The trap this ruling creates, pinned in the plan:** `EmailService` gates every affected-user
+  send on an app-wide `_notifyUsers` switch (`EmailService.cs:176-180`) which outranks anything
+  the module sets. A ticked box on a deployment with user notifications off must say so on
+  screen and in the audit, or the control is decorative - the unreachable-capability shape from
+  the other direction.
+  **S4 and S6 were widened by this ruling AFTER the codex review, so those two sections are
+  unreviewed.**
   **D3 is open with a default of out-of-scope: should delete also remove the Entra ID device
   object?** Needs `Device.ReadWrite.All` and a third gate. The owner asked for Intune devices;
   adding this unasked is the `pgwt-1` scope error, so the default stands until ruled.
@@ -55,10 +71,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   withdrew the cost argument D2 had been resting on. D2 had been framed to the owner as "no
   email is cheaper because it avoids a base bump"; after S0 that is simply untrue, and D2 is
   now a question about what the affected person should be told and nothing else.
-  **NEXT: a D2 ruling, then a go to implement, starting at S0.** D1 is ruled and D3 has a
-  working default, so nothing else blocks a start. Versions when the work lands: new module
-  `IntuneDevices 1.0.0`, and the **base app version DOES bump** (S0 touches shared
-  infrastructure) - the one case where adding a module coincides with a shared change.
+  **NEXT: a go to implement, starting at S0.** No owner decision blocks the start - D1 and D2
+  are ruled and D3 has a working default. Versions when the work lands: new module
+  `IntuneDevices 1.0.0`, and the **base app version DOES bump** (S0 touches `GraphTokenClient`
+  and S6 touches `EmailService`) - the one case so far where adding a module coincides with a
+  shared change, so both versioning rules fire on the same work.
 
 - **MIGRATION SIZE CHECK: FIXED, PUSHED AND DEPLOYED 2026-08-13** (`b4029c6`; both remotes
   verified at that sha). Migration `1.7.0` -> `1.7.1`. No base app bump (module-scoped
@@ -530,17 +547,12 @@ owner-side, none of them needing an agent:
 3. **The Risky Users Entra app registration** plus its Delinea secret
    (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
    first live Graph call. S1-S4 can be built and tested without it.
-4. **A D2 ruling on `docs/IntuneDeviceManagement-Plan.md`** - does the device's primary user
-   get an email when their machine is retired or wiped? Three options are written out in that
-   plan's `## Owner decisions`. Pre-ship gate, so leaving it unruled stalls the work at the end
-   rather than the start. D3 (the Entra ID device object) has a working default and needs no
-   ruling to start.
-5. **The Intune Devices Entra app registration** plus its Delinea secret
+4. **The Intune Devices Entra app registration** plus its Delinea secret
    (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All` and
    `.PrivilegedOperations.All`, admin-consented). Blocks the first live Graph call, not the
    build. Keep the three scopes distinct.
 
-With those five done, all four plans are cold-startable on 1 September with no
+With those four done, all four plans are cold-startable on 1 September with no
 conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
 `docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1),
 `docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
@@ -557,9 +569,9 @@ written for any of them.** As of `b681185`; tree clean.
 3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
    module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
    pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
-4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a D2 ruling and a go.**
-   New module, independent of 1-3. D1 ruled (three actions, two permission tiers); D2 open and
-   a pre-ship gate; D3 open with a working default. Start at S0. See the entry in `## Now`.
+4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go.** New module,
+   independent of 1-3. D1 and D2 ruled; D3 open with a working default, so nothing gates the
+   start. Start at S0. See the entry in `## Now`.
 
 All four are docs-only so far.
 
