@@ -1,11 +1,12 @@
 # Intune Device Management Module - Plan
 
-Status: Draft - awaiting owner go to implement. D1 and D2 ruled 2026-08-14. D3 open, with a
-working default, so it does not gate a start.
+Status: Draft - awaiting owner go to implement. D1, D2 and D3 all ruled 2026-08-14. No owner
+decision is outstanding.
 Reviewed: openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback)
 over `b868e5c..6aef9e3`: `acceptable_with_changes`, three findings, all admitted and folded in
 (`.agents/review/findings/idm-{1,2,3}.md`), plus one material change adopted outside intake.
-**The D2 ruling landed after that review and widened S4 and S6; those sections are unreviewed.**
+**The D2 and D3 rulings landed after that review and added or widened S4, S5 and S6. Those three
+slices, the fourth policy alias, and the `Device.ReadWrite.All` prerequisite are unreviewed.**
 
 Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
 device details, and deleting"*.
@@ -24,6 +25,8 @@ New module `IntuneDevices`. Microsoft Graph v1.0 Intune device management. Indep
 4. Wipe behaviour is operator-selectable, with full-reset defaults (D2 principle; see S4).
 5. Whether the device's primary user is emailed is operator-selectable per action, with an
    admin-set default per action (D2).
+6. Removing the device's **Entra ID** object, behind its own permission, offered beside each
+   action and standalone (D3).
 
 **A standing design rule for this module, from the owner, 2026-08-14: *"anything that can be an
 option should be an option. do not build in restraints."*** Where Graph exposes a choice, this
@@ -38,10 +41,6 @@ option.
 Named here so a later reader does not have to re-derive the boundary. None of these are
 defects; they are unbuilt.
 
-- The Microsoft Entra ID device object. Deleting, retiring or wiping in Intune does **not**
-  remove it - Microsoft's own guidance is to remove it as a separate step
-  (`https://learn.microsoft.com/en-us/intune/intune-service/remote-actions/devices-wipe`,
-  section "Remove a device from Microsoft Entra ID"). See D3.
 - Every other Intune remote action (sync, restart, remote lock, fresh start, Autopilot
   reset, locate device, recovery-password rotation, defender scan).
 - Bulk / multi-select action across many devices. One device per action.
@@ -111,19 +110,30 @@ and on a lost or stolen device whoever holds it may read it.
 
 **This ruling is why S6 is a required slice rather than a conditional one.**
 
-### D3 - OPEN, default is out of scope: the Entra ID device object
+### D3 - RULED 2026-08-14: the Entra ID device object can be removed too, as an option
 
-Deleting an Intune record leaves the Entra ID device object behind. An operator who deletes
-a device here and expects it gone from the tenant will be wrong.
+Owner: *"yes, add it as an option."*
 
-1. **Leave it (default, and what this plan builds).** Page text says plainly that the Entra
-   ID record survives and where to remove it.
-2. **Offer a separate "also remove from Entra ID" action.** Needs `Device.ReadWrite.All`
-   added to the same app registration, a third gate, and its own audit action.
+No Intune action removes the Entra ID device object - Microsoft's own guidance is to remove it
+as a separate step. An operator who deletes here and expects the device gone from the tenant
+would otherwise be wrong, and would have to finish the job in another portal.
 
-The owner asked for "intune devices"; adding Entra device deletion unasked is the scope
-error recorded in `.agents/state.md` for `docs/ProtectedGroupWriteTarget-Plan.md`. Default
-stands unless the owner rules otherwise.
+Built as S5: `Device.ReadWrite.All` on the same app registration, its own granular permission
+`IntuneDevicesEntraDelete`, a checkbox offered beside each of the three Intune actions and a
+standalone action on the detail panel, defaulted from `RemoveEntraObjectByDefault` (off).
+
+**Two things about this decision that are not like the other three actions, and both are why it
+gets its own permission rather than riding `IntuneDevicesPrivileged`:**
+
+1. `Device.ReadWrite.All` is a **directory** scope, not an Intune one. It confers write access
+   over every device object in the tenant, including devices this module would never show
+   because they are not Intune-managed. It is the widest grant in the module by some way.
+2. The blast radius differs in kind. Wiping a device destroys data on one machine; removing its
+   directory object affects how that machine authenticates, and it is the step conditional-access
+   and compliance reporting notice.
+
+Neither is an argument against the ruling - the owner asked for it knowing the module manages
+devices. They are the reasons the permission is separable and the default is off.
 
 ## Read-alerting classification
 
@@ -150,12 +160,15 @@ Neither is code. Both block the first live call, not the build.
    `docs/AdminModuleSpec.md` "For Graph API modules". Application permissions, admin
    consented:
    - `DeviceManagementManagedDevices.Read.All` - search and detail.
-   - `DeviceManagementManagedDevices.ReadWrite.All` - delete.
+   - `DeviceManagementManagedDevices.ReadWrite.All` - delete the Intune record.
    - `DeviceManagementManagedDevices.PrivilegedOperations.All` - retire and wipe.
+   - `Device.ReadWrite.All` - remove the Entra ID device object (D3). **This one is not an
+     Intune scope**: it is directory write access covering every device object in the tenant,
+     which is a wider grant than the three above and worth weighing separately.
 
-   The three are distinct and the split is the point: an app registration that never gets
-   `PrivilegedOperations.All` cannot wipe a machine even if the code is wrong. Do not
-   collapse them.
+   The four are distinct and the split is the point: an app registration that never gets
+   `PrivilegedOperations.All` cannot wipe a machine even if the code is wrong, and one that
+   never gets `Device.ReadWrite.All` cannot touch the directory. Do not collapse them.
 
 2. **An active Intune licence on the tenant.** The Graph Intune API errors without one. As
    with `docs/RiskyUsersModule-Plan.md` D-prerequisite-1, the request for the module is the
@@ -174,6 +187,13 @@ needs no change and no NuGet package is added.
 | Delete | `DELETE /deviceManagement/managedDevices/{managedDeviceId}` | 204 | `...ManagedDevices.ReadWrite.All` |
 | Retire | `POST /deviceManagement/managedDevices/{managedDeviceId}/retire` | 204 | `...ManagedDevices.PrivilegedOperations.All` |
 | Wipe | `POST /deviceManagement/managedDevices/{managedDeviceId}/wipe` | 204 | `...ManagedDevices.PrivilegedOperations.All` |
+| Remove Entra object | `DELETE /devices(deviceId='{azureADDeviceId}')` | 204 | `Device.ReadWrite.All` |
+
+**The Entra row uses the alternate-key form on purpose.** `DELETE /devices/{id}` also exists and
+takes the directory **object id**; `managedDevice.azureADDeviceId` is the **`deviceId`**, a
+different GUID on the same device. Learn's `device: get` example shows both on one object
+(`id: 000005c3-b7a6-...`, `deviceId: 6fa60d52-01e7-...`). Using the path form with an
+`azureADDeviceId` returns 404 for a device that is present and fine.
 
 **Delete and retire take no request body; wipe does, and the two Learn pages differ on this
 deliberately.** Retire: "Do not supply a request body for this method." Wipe: "In the request
@@ -346,7 +366,8 @@ new()
     MainPermission = new("Access", "IntuneDevices", FailClosed: true),
     GranularPermissions = [
         new("Delete", "IntuneDevicesDelete", FailClosed: true),
-        new("Privileged", "IntuneDevicesPrivileged", FailClosed: true)
+        new("Privileged", "IntuneDevicesPrivileged", FailClosed: true),
+        new("EntraDelete", "IntuneDevicesEntraDelete", FailClosed: true)
     ],
     ConfigFields = [
         new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
@@ -362,7 +383,10 @@ new()
             Required: false, DefaultValue: "true"),
         new("NotifyUserOnWipe", "Email User On Wipe",
             "Default for the per-action checkbox: email the device's primary user when the device is factory reset. Suppressed app-wide if user notifications are disabled.",
-            Required: false, DefaultValue: "true")
+            Required: false, DefaultValue: "true"),
+        new("RemoveEntraObjectByDefault", "Also Remove Entra ID Object By Default",
+            "Default for the 'also remove the Entra ID device record' checkbox offered beside each action. Off by default: it is a second, separately permissioned deletion against a different object.",
+            Required: false, DefaultValue: "false")
     ]
 }
 ```
@@ -443,7 +467,10 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 - Read auditing via `Audit.LogLookupAction`.
 - **Test guards this slice breaks, and they are the point of naming it:**
   `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs:16` asserts 25 modules (becomes 26) and `:109`
-  asserts 34 configurable aliases (becomes 37, since all three aliases arrive together here).
+  asserts 34 configurable aliases (becomes 38, since all four aliases arrive together here -
+  the descriptor declares them all in S2 even though `IntuneDevicesEntraDelete` is not consumed
+  until S5, because a policy alias is data in a list and creates no compile dependency; that is
+  the `ru-2` rule, which forbids registering a *type* early, not a string).
   Also check `Catalog_ConfigureAuthorizationPolicies_GeneratesExpectedPolicies`
   (`ModuleCatalogTests.cs:112` onward) - if its expected-policy array is exhaustive it needs the
   three new aliases too. Verify before assuming either way.
@@ -509,17 +536,40 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   captioned with a bare "Remove" - `D6` in `docs/MigrationBatchSelection-Plan.md`.
 - Audit actions `IntuneDevices_Retire` and `IntuneDevices_Wipe`.
 
-### S5 - documentation and version
+### S5 - Entra ID device object removal, behind `IntuneDevicesEntraDelete` (D3)
 
-- `docs/IntuneDeviceManagement.md` in the shape of `docs/BitLockerRecovery.md`: purpose,
-  operators, permissions table, config table, credentials, audit actions, fail-closed table,
-  manual validation, rollback, and an explicit "not in this MVP" list matching Out of scope
-  above.
-- README section.
-- `.agents/state.md` entry.
-- Module version `1.0.0` in the descriptor, **and the base app version bumped** for S0's shared
-  change. Both rules fire; see Versioning.
-- S5 runs after S6, not before it - the module doc has to describe the notification options.
+- `RemoveEntraDeviceAsync` on the service, over S0's `DeleteWithStatusAsync`.
+- **Address the object by the alternate key, never by path id:**
+  `DELETE /devices(deviceId='{azureADDeviceId}')`. This is the trap in this slice and it is
+  silent if you get it wrong - `managedDevice.azureADDeviceId` holds the Entra **`deviceId`**,
+  while `DELETE /devices/{id}` expects the directory **object id**, and the two are different
+  GUIDs on the same device (Learn's own `device: get` example returns
+  `id: 000005c3-...` alongside `deviceId: 6fa60d52-...`). Passing the former to the latter's
+  form yields a 404 against a real, still-present device. Both forms are documented in v1.0; only
+  the alternate-key one takes what this module has.
+- Offered as a **checkbox alongside each of the three Intune actions**, defaulted from the
+  `RemoveEntraObjectByDefault` config field, and also runnable on its own from the detail panel -
+  the Entra record often outlives the Intune one, so an operator cleaning up needs it without a
+  second Intune action.
+- **Order and reporting: the Intune action runs first, the Entra removal second, and the two
+  results are reported independently.** Never a blanket success - this is Known Failure Class 2
+  in `.agents/repo-guidance.md`, and the half-finished case ("Intune record deleted; the Entra ID
+  object could not be removed: <reason>") is the one an operator must be able to see and retry.
+  `azureADDeviceId` is captured from the device detail **before** the Intune action, because
+  after a successful delete there is nothing left to read it from.
+- **A device that is not Entra-joined has no usable `azureADDeviceId`** (absent, empty, or the
+  all-zero GUID). The checkbox is then not offered, with the reason stated - not offered-and-
+  silently-skipped.
+- Same gate chain as S3 and S4: granular authorization re-checked in the handler (T6), the
+  protected-principal two-branch check on the device's primary user (T4), servicer support (T5),
+  ticket, audit on success and on every refusal, admin notification.
+- Its **own** granular permission rather than riding `IntuneDevicesPrivileged`. It acts on a
+  different object, in a different Graph scope, and an operator entitled to wipe a phone is not
+  automatically entitled to remove directory records. More separable permissions is the D2
+  principle applied to authorization.
+- Audit action `IntuneDevices_EntraDelete`, target the device name plus the `deviceId` used.
+- T3 and AC11 change conditionally here: when the Entra object was removed too, the result must
+  no longer claim it survives.
 
 ### S6 - affected-user notification (required; D2)
 
@@ -536,6 +586,19 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 - Notification failure is caught and logged and never changes the reported result of the device
   action (`docs/ProjectConstitution.md`, Notifications). The device is already wiped by then.
 
+### S7 - documentation and version
+
+- `docs/IntuneDeviceManagement.md` in the shape of `docs/BitLockerRecovery.md`: purpose,
+  operators, permissions table, config table, credentials, audit actions, fail-closed table,
+  manual validation, rollback, and an explicit "not in this MVP" list matching Out of scope
+  above.
+- README section.
+- `.agents/state.md` entry.
+- Module version `1.0.0` in the descriptor, **and the base app version bumped** for the shared
+  changes in S0 and S6. Both versioning rules fire; see Versioning.
+- Last slice deliberately: the module doc has to describe the notification and Entra options,
+  which do not exist until S5 and S6 land.
+
 ## Acceptance criteria
 
 - AC1 A user in no section-access group for `IntuneDevices` is denied at `/intune-devices` by
@@ -544,7 +607,9 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   cannot delete - proven at the handler, not by the button being hidden.
 - AC3 A user with `IntuneDevicesDelete` but not `IntuneDevicesPrivileged` can delete and cannot
   retire or wipe.
-- AC4 With no section access configured for any of the three aliases, all three deny. Fail
+- AC3b A user with `IntuneDevicesPrivileged` but not `IntuneDevicesEntraDelete` can wipe and
+  cannot remove the Entra ID object, and is not offered the checkbox.
+- AC4 With no section access configured for any of the four aliases, all four deny. Fail
   closed.
 - AC5 A Graph 403 on search renders as an error naming that the request failed, never as an
   empty device list.
@@ -563,8 +628,9 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 - AC10 A device read successfully with an empty `userPrincipalName` is actionable; a device
   whose read failed is not.
 - AC11 Retire and wipe results say "queued" and state that the device acts at its next
-  check-in. Delete says the Intune record is gone and that company data and the Entra ID object
-  remain.
+  check-in. Delete says the Intune record is gone and that company data remains on the device.
+  The claim that the Entra ID object survives is made only when it actually does - when the
+  Entra removal ran and succeeded, the result says so instead.
 - AC12 `activationLockBypassCode` is excluded at the request boundary by `$select` and has no
   property on `IntuneDevice` to land in, so it appears nowhere in the page, audit record,
   notification or log. Both barriers are asserted; either alone is one edit away from failing.
@@ -591,6 +657,12 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 - AC21 The audit event for a wipe names the exact flag set used, so a `keepUserData: true` wipe
   and a full reset are distinguishable afterwards. `macOsUnlockCode` appears as `(set)` /
   `(not set)`, never its value.
+- AC22 The Entra removal addresses `/devices(deviceId='...')`. A test asserts the request URL;
+  building the path form from `azureADDeviceId` must fail it.
+- AC23 An Intune action that succeeds followed by an Entra removal that fails reports both
+  outcomes separately and is not recorded as a plain success. Each writes its own audit event.
+- AC24 A device with no usable `azureADDeviceId` is not offered the Entra checkbox, and the
+  reason is on screen - the option is never offered-and-silently-skipped.
 
 ## Test plan
 
@@ -623,6 +695,12 @@ New file `ExchangeAdminWeb.Tests/IntuneDeviceServiceTests.cs` with a slice-local
   suppressed cases are distinguishable from the sent case.
 - Audit payload for a wipe carries the flag set, and `macOsUnlockCode` is rendered `(set)` /
   `(not set)`. A test asserts the PIN's literal value appears in no audit field.
+- Entra removal: the request URL is `/devices(deviceId='<guid>')` and not `/devices/<guid>`;
+  204, 403, 404 and 5xx are distinct outcomes; an absent, empty or all-zero `azureADDeviceId`
+  is refused before any request is made.
+- Combined action outcomes: Intune success + Entra success; Intune success + Entra failure;
+  Intune failure (Entra step must not run, because the operator's intent was conditional on the
+  first succeeding). Each case reports both steps and is never collapsed to one verdict.
 - `GetGraphClientAsync`: unset secret id; non-numeric secret id; secret present but missing
   `Client Secret`; each returns null and the caller reports unavailable.
 
@@ -684,6 +762,15 @@ a page. The manual checks below are the only evidence for those.
 12. Point the secret at an app registration lacking `PrivilegedOperations.All`; confirm wipe
     reports a permission failure rather than a silent success.
 13. Sign in as a user outside every group; confirm `/intune-devices` denies by direct URL.
+14. Without `IntuneDevicesEntraDelete`, confirm the Entra checkbox is not offered and the
+    handler refuses if invoked directly. Grant it, then delete a scrap device with the box
+    ticked and confirm the Entra ID object is actually gone from the tenant - check the portal,
+    not just the module's message.
+15. Repeat 14 against an app registration without `Device.ReadWrite.All`: the Intune record must
+    be deleted, the Entra step must report its own failure with a reason, and the result must
+    not read as a plain success. This is the half-finished case and it is the one worth seeing.
+16. Find a device that is Intune-managed but not Entra-joined; confirm the checkbox is absent
+    with the reason stated rather than silently doing nothing.
 
 ## Rollback
 
