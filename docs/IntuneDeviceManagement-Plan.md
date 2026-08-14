@@ -251,6 +251,32 @@ absent field on a failed request, both of which are unavailable data and fail cl
 this distinction wrong in either direction and you either strand every shared device or open
 a hole.
 
+### T4b - the secret is excluded at the HTTP boundary, not just at the renderer
+
+`activationLockBypassCode` is returned by `GET /deviceManagement/managedDevices` unless the
+request narrows the fields. "Do not render it" leaves it in the response body, in memory, and in
+anything that later logs a response for diagnosis.
+
+Both reads therefore send an explicit `$select` naming exactly the fields the page uses (the list
+under Verified API surface, which does not include it), and `IntuneDevice` has no property to
+hold it. Two independent barriers, because the renderer is the one this repo has watched fail:
+`blr-1` is a module that carefully kept recovery keys out of the audit log on one path and wrote
+one there from another.
+
+`$select` also bounds the response size on a tenant with thousands of devices, which is the
+second reason to do it and not the first.
+
+### T4c - search input goes into an OData literal and must be escaped
+
+A `$filter` clause is built as `deviceName eq '<value>'`. A device name or serial containing a
+single quote - `O'Brien-Laptop` is an ordinary asset-tag shape - terminates the literal early and
+the request fails or, worse, changes meaning. OData escapes an embedded single quote by doubling
+it; the whole value is then `Uri.EscapeDataString`d as a query parameter.
+
+This is the structured-parser rule from `docs/ProjectConstitution.md` (Code Change Discipline)
+applied to a query language rather than a shell. Tests cover a value containing `'`, one
+containing `&` and `#`, an empty value, and an overlong value.
+
 ### T5 - the page gate is part of the authorization decision
 
 `pps-2` in `.agents/state.md`: a page that hides the write UI at lookup time, without
@@ -363,7 +389,9 @@ other modules use it. See Versioning.
   `MfaResetService.cs:20-37` but reading `IntuneDevices` / `GraphDelineaSecretId`, never
   another module's config; `IsAvailable`; `SearchDevicesAsync`; `GetDeviceAsync`. Reads use
   `GetWithStatusAsync` (T7). `$top` from `SearchResultLimit`, capped at 500. `@odata.nextLink`
-  present sets `Truncated` (T1).
+  present sets `Truncated` (T1). Both reads send an explicit `$select` naming only the fields the
+  page uses, so `activationLockBypassCode` never enters a response (T4b), and search values are
+  OData-escaped before they reach a `$filter` clause (T4c).
 - Register in `Program.cs` beside `builder.Services.AddSingleton<MfaResetService>();` (line
   113), using the `"MicrosoftGraph"` named client (line 104).
 - Tests with a slice-local stub `HttpMessageHandler`. **Do not reference
@@ -491,7 +519,11 @@ unpicking edits from the others.
 - AC11 Retire and wipe results say "queued" and state that the device acts at its next
   check-in. Delete says the Intune record is gone and that company data and the Entra ID object
   remain.
-- AC12 `activationLockBypassCode` appears nowhere in the page, audit record, notification or log.
+- AC12 `activationLockBypassCode` is excluded at the request boundary by `$select` and has no
+  property on `IntuneDevice` to land in, so it appears nowhere in the page, audit record,
+  notification or log. Both barriers are asserted; either alone is one edit away from failing.
+- AC17 A device name or serial containing a single quote is searchable and produces a well-formed
+  request.
 - AC13 Every action writes an audit event on success and on failure, and an administrator
   notification on every one. An audit or notification failure is logged and does not make a
   completed action report as failed.
@@ -516,6 +548,11 @@ New file `ExchangeAdminWeb.Tests/IntuneDeviceServiceTests.cs` with a slice-local
 - Search: success; 403; 429; 500; empty collection; response with `@odata.nextLink` sets
   `Truncated`; `$top` clamped at 500 and defaulted at 50.
 - Detail: success; 404; malformed JSON.
+- Query construction: the request URL carries `$select`, and that `$select` does not name
+  `activationLockBypassCode`; a search value containing `'` is doubled and escaped; values
+  containing `&` and `#`, an empty value, and an overlong value each produce a well-formed URL.
+- A response that nonetheless contains `activationLockBypassCode` (a `$select` regression, or a
+  tenant returning it anyway) does not surface it: `IntuneDevice` has nowhere to put it.
 - Delete / retire / wipe: 204 success; 403; 404; 5xx - each mapped to a distinct reported
   outcome, never a blanket success.
 - Wipe body: the serialized request body equals `{"keepEnrollmentData":false,"keepUserData":false}`.
