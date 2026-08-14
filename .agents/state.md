@@ -15,8 +15,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   owner-dispatched third harness. Owner's principle - *"minimum model for reliable work, complex
   model for checking"* - matched the measured cost shape (implementation 98% of tokens, review
   2%) and was adopted.
-  **D2 OPEN and it is about THIS FILE:** how far to reduce `state.md`, currently 138 KB
-  (~51,800 tokens) and roughly 18% of every request in every session. Three options in the plan.
+  **D2 WITHDRAWN - `.agents/playbooks/drift.md` already owns it.** Reducing this file (138 KB,
+  ~51,800 tokens, roughly 18% of every request) is the sweep's first checklist item, and it
+  rotates `## Now` entries **verbatim** to `docs/history/state-archive.md` rather than
+  rewriting them. Invoke with `playbook drift`, or `catchup` which offers it. It was put to the
+  owner as a decision in error - the owner caught it. **A push-status paragraph was deleted from
+  this file at the same time**, per the same playbook's 2026-07-11 deleted-on-sight ruling.
   **Measured baselines worth not re-deriving** (2026-08-14, this project, August):
   7,876 requests, 394K mean context, ~$2,311 at Opus rates; cost split cache-read 65% /
   cache-write 29% / output 6% / input 0.3%. A cache re-prime at 280K context costs ~$1.75 and
@@ -615,23 +619,10 @@ written for any of them.** Tree clean.
 
 All four are docs-only so far.
 
-**PUSHED 2026-08-14. Both `origin` and `github` were taken from `b4029c6` to `a0a300d` and
-verified at that sha by reading the remotes themselves, not this clone's tracking refs.** The 16
-commits were the Intune Devices plan, its five review findings, both openreview passes and this
-file. No code among them. `master` is the only local branch, so nothing else was carrying work.
-
-**Anything committed after `a0a300d` is unpushed until someone pushes again** - including the
-commit that wrote this paragraph. That phrasing is deliberate and is the second half of `idm-4`:
-a state file cannot truthfully assert its own push status, because committing the assertion
-falsifies it. Check with `git ls-remote origin master` against `git rev-parse HEAD`; do not trust
-a recorded count or a recorded "nothing outstanding".
-
-*No commit count is recorded here on purpose.* An exact count in a committed file is stale the
-moment the next commit lands, including the one that writes the count - this line previously said
-"seven" and was wrong five commits later.
-
-The 2026-08-13 line that said nothing was unpushed was true when written; the owner's push that
-day did clear the twelve-then-five backlog, and that older count should still not be re-derived.
+*Push status is deliberately not recorded here.* Git owns it and sessions check it live
+(`git ls-remote origin master` against `git rev-parse HEAD`) - `.agents/playbooks/drift.md`,
+2026-07-11 ruling. Successive revisions of this paragraph recorded a count, then a sha, each
+stale within hours; the rule is that the fact does not belong in a state file at all.
 
 **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
 current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean

@@ -1,7 +1,8 @@
 # Token-Budgeted Implementation - Plan
 
-Status: Draft - awaiting owner go to implement. D1 ruled 2026-08-14 (delegated to the agent by
-the owner). D2 remains open. Intended for use from 2026-09-01, when the current work pause lifts.
+Status: Draft - awaiting owner go to implement. D1 ruled and D2 withdrawn, both 2026-08-14. **No
+owner decision is outstanding.** Intended for use from 2026-09-01, when the current work pause
+lifts.
 
 Owner request 2026-08-14: *"let's make an implementation plan that is token-budget friendly.
 I will use that next month and see how it does. add something that tracks token usage as part
@@ -111,11 +112,26 @@ It is also, by its own admission, carrying history: it still contains a `Deploye
 from 2026-08-05 that its own Blockers section flags as stale, alongside fully-resolved work
 streams whose detail belongs in the plan and decision documents.
 
-**Target: `state.md` under 10K tokens.** Resolved work streams move to their plan documents;
-`state.md` keeps only what `AGENTS.md` says it is for - current versions, in-flight work, next
-actions, blockers, and open gaps.
+**This repository already has a playbook for it, and this plan should not reinvent one.**
+`.agents/playbooks/drift.md` is the isolated state-hygiene sweep, reached either through
+`catchup` (which offers it as step 0 and runs it in a throwaway agent, so the main context pays
+one summary line) or directly on the owner's words `playbook drift`.
 
-**This is D2 and it is not free of risk.** See Owner decisions.
+Its checklist is the mechanism this lever needs, and its first item is the reduction:
+
+> Rotate landed or superseded `## Now` entries in `state.md` verbatim to
+> `docs/history/state-archive.md` (create on first use).
+
+**Verbatim rotation, not summarisation** - which answers the risk this plan would otherwise have
+had to carry. Nothing is lost; it moves to an archive a cold session can read on demand instead
+of paying for it on every request. The playbook also handles the adjacent decay: `as of <commit>`
+on volatile facts, counts pointed at rather than copied, and push-state lines deleted on sight.
+
+So the action here is **run the existing playbook**, not design a bespoke trim. It needs no slice
+in this plan and no owner decision beyond the word that invokes it.
+
+**Target for the sweep: `state.md` under 10K tokens.** That is the measurable outcome; the
+playbook is the method.
 
 ### L2 - Do not let the cache expire (largest surprise)
 
@@ -357,9 +373,16 @@ form, plus the one-line-per-slice logging rule folded into the existing paperwor
 Deliberately last: the protocol references the tool, and a protocol whose measurement does not
 yet exist is the belief this plan was written to avoid.
 
-### S5 - state.md reduction (exists only if D2 rules for it)
+### No S5 - the state.md reduction is not a slice here
 
-Separate slice, separate commit, because it is the one change here that can lose information.
+An earlier revision of this plan carried a bespoke `state.md` reduction slice gated on an owner
+decision. **Both were wrong: `.agents/playbooks/drift.md` already owns this**, and `state.md`
+itself said so - *"Reconcile on the next `catchup`"* - in the same paragraph this plan quoted as
+evidence of the problem.
+
+The action is `playbook drift` (or `catchup`, which offers it). It runs in a throwaway agent,
+commits once, and turns contested items into flags rather than changes. Nothing about it belongs
+in this plan's slice list; L1 points at it and that is the whole integration.
 
 ## Acceptance criteria
 
@@ -377,9 +400,10 @@ Separate slice, separate commit, because it is the one change here that can lose
 - AC8 A run over a single day completes in under 30 seconds on the real tree.
 - AC9 September's first three slices each append one line to `.agents/token-log.md` in the same
   commit that lands the slice.
-- AC10 If D2 rules for reduction: `state.md` is under 10K tokens, and every fact removed is
-  present in a plan or decision document. Proven by naming the destination for each removed
-  section in the commit message.
+- AC10 After `playbook drift` has run: `state.md` is under 10K tokens and
+  `docs/history/state-archive.md` contains the rotated entries verbatim. Not an acceptance
+  criterion of this plan's slices - recorded here as the measurable outcome of the sweep, which
+  is invoked separately.
 
 ## Verification
 
@@ -442,7 +466,34 @@ phase-based split in L4c gets the saving without the per-slice decision.
 
 Review stays at full strength regardless (L6). The revert trigger in L4c is the safety valve.
 
-### D2 - OPEN: how far to reduce `state.md`?
+### D2 - WITHDRAWN 2026-08-14: the playbook already owns it
+
+Owner: *"isn't this something we have a playbook for?"* - and it is.
+`.agents/playbooks/drift.md`, reached via `catchup` or `playbook drift`.
+
+**This should never have been put to the owner.** An existing playbook answered it, `state.md`
+carried a note saying so (*"Reconcile on the next `catchup`"*), and this plan quoted the very
+paragraph containing that note while treating the question as open. Presenting settled process as
+a fresh decision costs the owner exactly the attention the governance is designed to protect.
+
+The playbook is also better than the option set below. D2's option 1 proposed moving detail into
+plan documents and carried a real risk of losing cold-start context; `drift` rotates entries
+**verbatim** into `docs/history/state-archive.md`, so the information moves rather than being
+rewritten. The mitigation this plan would have had to invent already exists and is stronger.
+
+Two things were corrected on discovering this:
+
+- **A push-status paragraph was deleted from `state.md`.** `drift.md` records a 2026-07-11 ruling
+  that push status is never recorded in state files - git owns it, sessions check it live - and
+  that any such line is *deleted on sight, not refreshed*. Earlier in the same session that wrote
+  this plan, finding `idm-4` "fixed" that paragraph by removing its brittle commit count while
+  keeping the paragraph. That fixed the symptom and preserved the violation.
+- **L1 and the slice list were rewritten** to point at the playbook instead of specifying a
+  bespoke trim.
+
+The options recorded below are kept only as the reasoning that was superseded.
+
+#### Superseded option set
 
 The largest single lever, and the only proposal here that can destroy information.
 
