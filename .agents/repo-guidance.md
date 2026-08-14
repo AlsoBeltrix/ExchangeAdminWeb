@@ -7,9 +7,11 @@
 ExchangeAdminWeb is an ASP.NET Core 10 Blazor Server app (`net10.0-windows`) for
 Exchange Online / Microsoft Graph / on-prem Active Directory administration. It
 uses a descriptor-based module architecture: each admin capability is a module
-registered in `Modules/ModuleCatalog.cs`. The current app version lives in
-`<VersionPrefix>` in `ExchangeAdminWeb.csproj`; the live module count and current
-work are tracked in `.agents/state.md`, not here.
+registered in `Modules/ModuleCatalog.cs`, which is also where the live module count is
+counted from - never copied into a state or guidance file, per the `.agents/playbooks/drift.md`
+checklist rule that a count another file owns is pointed to, not duplicated. The current app
+version lives in `<VersionPrefix>` in `ExchangeAdminWeb.csproj`. Current work is tracked in
+`.agents/state.md`, not here.
 
 ## Authority Order
 
