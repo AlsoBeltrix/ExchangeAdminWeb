@@ -9,7 +9,8 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
-- **codex** (`codex-cli 0.146.0` as of 2026-08-05, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
+- **codex** (`codex-cli 0.147.0`, re-probed 2026-08-14; was recorded as `0.146.0` as of
+  2026-08-05, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
   `@azure-openai-eus2-global/gpt-5.5-dzs`; the **full prefixed slug must be passed to `--model`**
   (stripping the `@.../` prefix causes an `Either x-portkey-config or x-portkey-provider` failure).
@@ -34,6 +35,13 @@ _First recorded 2026-07-21._
 - `deploy.ps1` / `deploy-pipeline.ps1 -Dev` must run in **Windows PowerShell 5.1** on this box
   (the `WebAdministration` IIS provider does not load under PowerShell 7). Dev app root:
   `D:\inetpub\ExchangeAdminWebDev`.
-- `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup).
+- `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup). Re-verified
+  2026-08-14 at
+  `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`.
+
+### Test tooling
+
+_Re-probed 2026-08-14._ Pester `6.0.1` and PSScriptAnalyzer `1.25.0` are installed; the
+PowerShell suites run under `pwsh` (`C:\Program Files\PowerShell\7\pwsh.exe`), not 5.1.
 - harness-cli: codex.ps1 (recorded 2026-07-27, refresh offer)
 - harness-cli: codex.cmd (recorded 2026-07-27, refresh offer)
