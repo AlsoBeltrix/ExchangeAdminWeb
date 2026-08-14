@@ -401,6 +401,17 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   button), confirmation step, then in the handler: granular authorization re-check (T6),
   protected-principal check with the two-branch shape and servicer support (T4, T5),
   `Audit.LogModuleAction` on success and on every refusal, `Email.SendAdminNotificationAsync`.
+- **Add `"IntuneDevices"` to `ModulesWithProtectedPrincipalServicing`
+  (`Components/Pages/ModuleConfig.razor:650-657`) in this same commit.** That set is hardcoded,
+  and `:849-853` renders the `ProtectedServicer:` editor only for members of it - so without
+  this line no operator can ever grant `ProtectedServicer:IntuneDevices`, while every test that
+  seeds `section_access` directly still passes. The list's own comment at `:648` states the
+  rule: add the module here in the same commit that adds its `Evaluate` call, never before.
+  This repo has shipped the unreachable-capability defect twice (`ppsvc-1`, `pgwt-1`); the rule
+  it earned is that a capability is not implemented until the person meant to use it can reach it.
+- A source-level tripwire asserts the pairing holds: if a gate in `IntuneDevices.razor` calls the
+  servicing helper, the module id must be in that set. Removing the id must fail a test by name,
+  not merely make a manual step awkward.
 - Result wording per T3.
 - Audit action name `IntuneDevices_Delete`, category `IntuneDevices`, target the device name
   plus its `id`.
@@ -469,7 +480,10 @@ unpicking edits from the others.
   each refusal is audited with the matched rules.
 - AC8 The same device, acted on by a member of a group holding
   `ProtectedServicer:IntuneDevices`, succeeds, shows the override banner, and writes an audit
-  record naming the authorising group and the rules overridden.
+  record naming the authorising group and the rules overridden. **The grant must be made through
+  the module's own Module Config page, not seeded into `section_access` by a test.** A seeded row
+  proves the gate reads the key; only the page proves an operator can create it, and that is the
+  half this repo has twice shipped broken.
 - AC9 A protection check that is `Unavailable`, `Ambiguous`, `CheckFailed`, or that throws,
   refuses. Fail closed outranks servicing - there is no known refusal to override.
 - AC10 A device read successfully with an empty `userPrincipalName` is actionable; a device
@@ -550,8 +564,11 @@ a page. The manual checks below are the only evidence for those.
 8. Wipe a scrap device; confirm the type-the-name confirmation is required.
 9. Add the primary user of a test device to the protected user rows; confirm all three refuse
    and the audit names the matched rules.
-10. Repeat 9 as a member of the servicer group; confirm success, the banner, and the audit note
-    naming the group.
+10. On the module's Module Config page, confirm the `ProtectedServicer:IntuneDevices` editor is
+    offered at all, and grant it to a test group there - do not write the row by hand. Then
+    repeat 9 as a member of that group; confirm success, the banner, and the audit note naming
+    the group. Confirm afterwards that the module's ordinary grants survived the save, since
+    that page writes the whole section-access store back.
 11. Clear `GraphDelineaSecretId`; confirm the module reports unavailable rather than empty.
 12. Point the secret at an app registration lacking `PrivilegedOperations.All`; confirm wipe
     reports a permission failure rather than a silent success.
