@@ -1,9 +1,11 @@
 # Intune Device Management Module - Plan
 
-Status: Draft - awaiting owner go to implement. D1 ruled 2026-08-14. D2 and D3 open.
+Status: Draft - awaiting owner go to implement. D1 and D2 ruled 2026-08-14. D3 open, with a
+working default, so it does not gate a start.
 Reviewed: openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback)
 over `b868e5c..6aef9e3`: `acceptable_with_changes`, three findings, all admitted and folded in
 (`.agents/review/findings/idm-{1,2,3}.md`), plus one material change adopted outside intake.
+**The D2 ruling landed after that review and widened S4 and S6; those sections are unreviewed.**
 
 Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
 device details, and deleting"*.
@@ -19,6 +21,17 @@ New module `IntuneDevices`. Microsoft Graph v1.0 Intune device management. Indep
 3. Three destructive actions, at two permission tiers (D1):
    - Tier 1: **Delete** the Intune management record.
    - Tier 2: **Retire** (remove company data) and **Wipe** (factory reset).
+4. Wipe behaviour is operator-selectable, with full-reset defaults (D2 principle; see S4).
+5. Whether the device's primary user is emailed is operator-selectable per action, with an
+   admin-set default per action (D2).
+
+**A standing design rule for this module, from the owner, 2026-08-14: *"anything that can be an
+option should be an option. do not build in restraints."*** Where Graph exposes a choice, this
+module surfaces it rather than hardcoding one branch. The constraint that survives is on
+**defaults**, not on availability: a default must be the safe, least-surprising reading of the
+button's own label, and every non-default choice must be visible on screen at the moment of
+acting and recorded in the audit event. An option nobody can see they selected is worse than no
+option.
 
 ## Out of scope
 
@@ -31,21 +44,18 @@ defects; they are unbuilt.
   section "Remove a device from Microsoft Entra ID"). See D3.
 - Every other Intune remote action (sync, restart, remote lock, fresh start, Autopilot
   reset, locate device, recovery-password rotation, defender scan).
-- Operator-chosen wipe options. `wipe` accepts `keepEnrollmentData`, `keepUserData`,
-  `macOsUnlockCode`, `obliterationBehavior` and `persistEsimDataPlan`. This module sends a fixed
-  body pinning the first two to `false` (see S4) and does not offer the operator any choice.
-  Surfacing the flags is a later change.
+- Bulk / multi-select action across many devices. One device per action.
 
-  **An earlier revision said the module would send no body "which is a full factory reset". That
-  was an inference stated as a verified fact and is withdrawn** - the Learn page for `wipe` says
-  "in the request body, supply JSON representation of the parameters", while the page for
-  `retire` says "do not supply a request body". What Graph does with an absent `wipe` body is
-  unknown, and a default of `keepUserData: true` on any platform would leave data on a machine
-  the operator was told had been wiped. The fixed explicit body removes the dependency on that
-  unknown instead of resolving it.
+**Wipe options were on this list and are not any more** (D2 principle, owner 2026-08-14). Two
+earlier revisions got this wrong in opposite directions and both are recorded because the pair
+is the lesson: the first said the module would send no body "which is a full factory reset" - an
+inference stated as verified fact, withdrawn under `idm-2`; the second pinned the flags to a
+fixed body and put operator choice out of scope, which is exactly the built-in restraint the
+owner then removed. What survives from `idm-2` is the part that was right: **the body is always
+explicit and always asserted by a test.** What changes is that its values are chosen by the
+operator, with full-reset defaults. See S4.
 - Windows Autopilot deregistration.
 - Device configuration, compliance policy or app assignment.
-- Bulk / multi-select action across many devices. One device per action.
 
 ## Owner decisions
 
@@ -61,39 +71,45 @@ permission levels."*
 This is the `AccountLockoutRemediation` shape (main `Access` plus granular `Logoff`,
 `ModuleCatalog.cs:387-390`), with two granular permissions instead of one.
 
-### D2 - OPEN: does the device's primary user get notified?
+### D2 - RULED 2026-08-14: notifying the primary user is an option, not a fixed rule
 
-The Constitution requires an **administrator** notification on every mutating action
-(`docs/ProjectConstitution.md`, Notifications). That is not in question and the plan
-implements it.
+Owner: *"anything that can be an option should be an option. do not build in restraints. make
+email the user an option."*
 
-The separate affected-user rule fires on "any change to a user's permissions or access". A
-device wipe is not literally a permissions or access change, so no existing predicate
-settles this - unlike `docs/GroupMemberNesting-Plan.md` D6, where one did. Options:
+The three fixed alternatives that were offered here (never / retire and wipe only / always) are
+all **rejected as written**, because each hardcodes one answer. The ruling is that the module
+chooses none of them and lets the deployment choose:
 
-1. **No affected-user email.** Admin notification and audit only. No shared-file change; the
-   base app version stays put.
-2. **Email the primary user on Retire and Wipe only.** They lose a working device; Delete
-   changes nothing they can see.
-3. **Email the primary user on all three.**
+- **Three config fields, one per action** - `NotifyUserOnDelete`, `NotifyUserOnRetire`,
+  `NotifyUserOnWipe`. These set the deployment's default.
+- **A per-action checkbox on the page**, initialised from the matching config field, which the
+  operator may change before confirming. The lost-or-stolen case is the reason it must be
+  changeable at the moment of acting and not only in config.
+- **The audit event records what actually happened** - notified, or not notified and why (config
+  default, operator unticked, no address on the device, or suppressed app-wide). "Was the user
+  told?" is an audit question, and a silent no is indistinguishable from a failure.
 
-Cost of 2 or 3: `EmailService` has no device-shaped notification. The nearest existing
-methods are mailbox/calendar/group specific (`SendUserNotificationAsync:169`,
-`SendGroupMembershipUserNotificationAsync`), so a new one is needed.
+Defaults, per the standing rule in Scope - safe and least-surprising, not restrictive:
+`NotifyUserOnDelete` **false** (nothing changes on the user's device, so a mail would confuse),
+`NotifyUserOnRetire` **true**, `NotifyUserOnWipe` **true**.
 
-**An earlier revision of this plan priced that as a base app version bump and used it as an
-argument for option 1. That argument is withdrawn** - S0 already bumps the base version for
-`GraphTokenClient`, so options 2 and 3 add a second shared-file change under the same single
-bump and cost no version consequence at all. D2 is a question about what the affected person
-should be told, and nothing else.
+**One interaction that must not be missed, or the option is a lie.** `EmailService` gates every
+affected-user send on an app-wide `_notifyUsers` switch (`EmailService.cs:176-180`). It wins over
+anything this module sets. An operator who ticks the box on a deployment where user
+notifications are off must be told nothing was sent - both on screen and in the audit event -
+rather than being shown a ticked box and left to assume.
 
-Second-order point for whoever rules it: on a Wipe the email may reach a mailbox the user
-can now only open on another device, and on a lost/stolen device the mail may be readable by
-whoever has it. That argues for a terse body naming the device and the ticket, and no
-detail.
+Constitution position, unchanged either way: the **administrator** notification on every mutating
+action is mandatory and is not configurable (`docs/ProjectConstitution.md`, Notifications). Only
+the affected-user mail is an option. The Constitution's affected-user rule fires on a permissions
+or access change and a device action is neither, so making it configurable does not weaken a rule
+that was never binding here.
 
-**D2 is a pre-ship gate, not a start gate.** S1 through S4 proceed with admin notification
-only; nothing is marked `Implemented` until D2 is ruled and, if 2 or 3 wins, S6 exists.
+Body content, since the mail may be read by the wrong person: name the device, the action and the
+ticket, and nothing else. On a wipe it may reach a mailbox the user can now only open elsewhere,
+and on a lost or stolen device whoever holds it may read it.
+
+**This ruling is why S6 is a required slice rather than a conditional one.**
 
 ### D3 - OPEN, default is out of scope: the Entra ID device object
 
@@ -337,7 +353,16 @@ new()
             "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
         new("SearchResultLimit", "Search Result Limit",
             "Devices returned per search. Defaults to 50, capped at 500.",
-            Required: false, DefaultValue: "50")
+            Required: false, DefaultValue: "50"),
+        new("NotifyUserOnDelete", "Email User On Delete",
+            "Default for the per-action checkbox: email the device's primary user when its Intune record is deleted. Nothing changes on the device, so this defaults off.",
+            Required: false, DefaultValue: "false"),
+        new("NotifyUserOnRetire", "Email User On Retire",
+            "Default for the per-action checkbox: email the device's primary user when company data is removed from the device.",
+            Required: false, DefaultValue: "true"),
+        new("NotifyUserOnWipe", "Email User On Wipe",
+            "Default for the per-action checkbox: email the device's primary user when the device is factory reset. Suppressed app-wide if user notifications are disabled.",
+            Required: false, DefaultValue: "true")
     ]
 }
 ```
@@ -451,20 +476,31 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 
 - `RetireDeviceAsync` and `WipeDeviceAsync`, both over S0's `PostNoContentWithStatusAsync`, with
   the same distinct-outcome reporting as S3.
-- **Retire sends no body. Wipe sends exactly this, always:**
+- **Retire sends no body, ever.** Learn is explicit that it takes none, and a test asserts the
+  request body is absent so a shared helper cannot quietly give it one.
+- **Wipe always sends an explicit body, and every parameter Graph accepts is an operator
+  option** (D2 principle). The wipe panel offers:
 
-  ```json
-  { "keepEnrollmentData": false, "keepUserData": false }
-  ```
+  | Control | Parameter | Default | Note |
+  | --- | --- | --- | --- |
+  | Keep user data | `keepUserData` | `false` | Ticking it contradicts the button's own label, so the panel says so inline |
+  | Keep enrollment state | `keepEnrollmentData` | `false` | Device stays enrolled after the reset |
+  | macOS recovery PIN | `macOsUnlockCode` | empty | Six digits. Shown for macOS devices; **displayed back once after a successful queue, because the operator must give it to the device owner and it is not retrievable afterwards** |
+  | macOS obliteration behaviour | `obliterationBehavior` | unset | `default` / `doNotObliterate` / `obliterateWithWarning` / `alwaysObliterate` |
+  | Keep eSIM data plan | `persistEsimDataPlan` | `false` | iOS/iPadOS eSIM |
 
-  Those two flags are what decide whether the reset is full, so they are stated rather than
-  defaulted. The other three parameters are omitted deliberately and for named reasons:
-  `macOsUnlockCode` is a per-device recovery PIN the operator would have to supply and record,
-  which is its own feature; `obliterationBehavior` and `persistEsimDataPlan` are
-  platform-specific and belong with the wipe-options work listed as out of scope. Omitting them
-  accepts Graph's defaults for behaviour that does not change whether data survives.
-- A service test asserts the serialized body byte for byte. The intent is pinned by an assertion,
-  not by this paragraph - which is the whole difference from the revision this replaces.
+  `keepUserData` and `keepEnrollmentData` are **always** serialized, at their chosen values, so
+  the reset semantics are never left to a Graph default - that is the surviving half of `idm-2`.
+  The other three are included only when the operator sets them, since sending
+  `macOsUnlockCode: ""` or an obliteration behaviour to a Windows device is meaningless.
+- **The audit event records the exact flag set used**, not merely "wipe". A wipe with
+  `keepUserData: true` and a full reset are different acts and an audit trail that renders them
+  identically cannot answer the only question anyone will ask afterwards.
+  `macOsUnlockCode` is a device-unlock secret and is recorded as `(set)` or `(not set)`, never
+  its value - the `activationLockBypassCode` rule (T4b) applied to an operator-supplied secret
+  rather than a returned one.
+- A service test asserts the serialized body for the defaults and for each non-default
+  combination. The intent is pinned by assertions, not by this table.
 - Same gate chain as S3 against the second alias.
 - Wipe requires typing the device name to confirm. Retire uses the ordinary confirm. The
   asymmetry is deliberate: retire is recoverable by re-enrolling, wipe destroys the machine's
@@ -481,17 +517,24 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   above.
 - README section.
 - `.agents/state.md` entry.
-- Module version `1.0.0` in the descriptor. **Base app version unchanged** - adding a module is
-  not a shared-infrastructure change (`docs/ProjectConstitution.md`, Deployment And Versioning;
-  `.agents/decisions.md` 2026-07-21).
-- Mark this plan `Implemented` only after D2 is ruled.
+- Module version `1.0.0` in the descriptor, **and the base app version bumped** for S0's shared
+  change. Both rules fire; see Versioning.
+- S5 runs after S6, not before it - the module doc has to describe the notification options.
 
-### S6 - affected-user notification (exists only if D2 rules 2 or 3)
+### S6 - affected-user notification (required; D2)
 
-New `EmailService` method and its call sites. No additional version consequence - S0 has already
-bumped the base app version. Kept as its own slice because it is the only part of the work whose
-existence depends on an unruled decision, so a D2 of option 1 simply deletes a slice rather than
-unpicking edits from the others.
+- A device-shaped method on `EmailService`, alongside the existing
+  `SendUserNotificationAsync:169` and `SendGroupMembershipUserNotificationAsync` rather than
+  overloading either: their subjects and bodies are mailbox and group specific. It honours the
+  same app-wide `_notifyUsers` gate (`EmailService.cs:176-180`) and **returns whether it
+  actually sent**, so the caller can record a suppressed send instead of assuming one happened.
+- The three config fields, the per-action checkbox seeded from them, and the operator override.
+- The audit event's notification outcome, with its reason when nothing was sent.
+- A visible on-screen statement when the app-wide switch suppressed a send the operator asked
+  for. Without it the checkbox is a control that silently does nothing, which is the
+  unreachable-capability shape from the other direction.
+- Notification failure is caught and logged and never changes the reported result of the device
+  action (`docs/ProjectConstitution.md`, Notifications). The device is already wiped by then.
 
 ## Acceptance criteria
 
@@ -525,8 +568,6 @@ unpicking edits from the others.
 - AC12 `activationLockBypassCode` is excluded at the request boundary by `$select` and has no
   property on `IntuneDevice` to land in, so it appears nowhere in the page, audit record,
   notification or log. Both barriers are asserted; either alone is one edit away from failing.
-- AC17 A device name or serial containing a single quote is searchable and produces a well-formed
-  request.
 - AC13 Every action writes an audit event on success and on failure, and an administrator
   notification on every one. An audit or notification failure is logged and does not make a
   completed action report as failed.
@@ -535,8 +576,21 @@ unpicking edits from the others.
 - AC15 Delete, retire and wipe report 403, 404 and 5xx as three distinct outcomes carrying the
   sanitized Graph error. Reverting either S0 helper to its bool-returning equivalent must fail
   the service tests that distinguish them - if it does not, the distinction was never tested.
-- AC16 Wipe sends `{"keepEnrollmentData":false,"keepUserData":false}` and a test asserts that
-  exact body; retire sends none. The full-reset intent is carried by an assertion, not by prose.
+- AC16 Wipe always serializes `keepUserData` and `keepEnrollmentData` explicitly, at whatever
+  values the operator chose, defaulting both to `false`; the optional three appear only when set;
+  retire sends no body at all. Asserted per combination, not described.
+- AC17 A device name or serial containing a single quote is searchable and produces a well-formed
+  request.
+- AC18 The per-action "email the user" checkbox defaults from the module's config field for that
+  action, and the operator's change at the moment of acting is what takes effect.
+- AC19 With user notifications disabled app-wide, ticking the box sends nothing, says so on
+  screen, and records the suppression and its reason in the audit event. A suppressed send is
+  never reported as a send.
+- AC20 A device with no primary user address offers no notification and records why - it does not
+  fail the action, and it does not silently look like a successful send.
+- AC21 The audit event for a wipe names the exact flag set used, so a `keepUserData: true` wipe
+  and a full reset are distinguishable afterwards. `macOsUnlockCode` appears as `(set)` /
+  `(not set)`, never its value.
 
 ## Test plan
 
@@ -558,9 +612,17 @@ New file `ExchangeAdminWeb.Tests/IntuneDeviceServiceTests.cs` with a slice-local
   tenant returning it anyway) does not surface it: `IntuneDevice` has nowhere to put it.
 - Delete / retire / wipe: 204 success; 403; 404; 5xx - each mapped to a distinct reported
   outcome, never a blanket success.
-- Wipe body: the serialized request body equals `{"keepEnrollmentData":false,"keepUserData":false}`.
-  Flipping either flag to `true` must fail this test. Retire sends no body at all, asserted
-  separately - the two must not converge on one helper that quietly gives retire a body.
+- Wipe body, one case per combination: both flags default (`false`/`false`); `keepUserData` on;
+  `keepEnrollmentData` on; a macOS PIN set; an obliteration behaviour set; `persistEsimDataPlan`
+  on. Each asserts the serialized body, and the unset optional three must be **absent** rather
+  than present-and-null. Retire sends no body at all, asserted separately - the two must not
+  converge on one helper that quietly gives retire a body.
+- Notification decision, as a pure function so it is testable without a mail server: config
+  default on/off per action, operator override in both directions, no primary-user address, and
+  the app-wide `_notifyUsers` switch off. Each returns a distinct outcome with a reason, and the
+  suppressed cases are distinguishable from the sent case.
+- Audit payload for a wipe carries the flag set, and `macOsUnlockCode` is rendered `(set)` /
+  `(not set)`. A test asserts the PIN's literal value appears in no audit field.
 - `GetGraphClientAsync`: unset secret id; non-numeric secret id; secret present but missing
   `Client Secret`; each returns null and the caller reports unavailable.
 
@@ -601,7 +663,16 @@ a page. The manual checks below are the only evidence for those.
 6. Confirm Retire and Wipe still refuse (AC3).
 7. Grant `IntuneDevicesPrivileged`; retire a scrap device; confirm the wording says queued and
    the device shows `retirePending`.
-8. Wipe a scrap device; confirm the type-the-name confirmation is required.
+8. Wipe a scrap device; confirm the type-the-name confirmation is required, that the wipe options
+   are all present and default to a full reset, and that the audit event names the flag set used.
+   Repeat with "keep user data" ticked and confirm the two runs are distinguishable in the audit
+   log. On a macOS device, confirm the recovery PIN is shown back once after queuing and appears
+   nowhere in the audit record.
+8b. Set `NotifyUserOnWipe` false in module config; confirm the checkbox now starts unticked, tick
+   it anyway, and confirm the user is emailed - the operator override is the point of the control.
+8c. Disable user notifications app-wide; repeat 8b and confirm the page says nothing was sent and
+   the audit event records the suppression. This is the check that proves the checkbox is not
+   decorative.
 9. Add the primary user of a test device to the protected user rows; confirm all three refuse
    and the audit names the matched rules.
 10. On the module's Module Config page, confirm the `ProtectedServicer:IntuneDevices` editor is
@@ -629,5 +700,5 @@ here - that is a property of the API, not of the rollback.
 - The two rules fire independently. A correct base bump for S0 is not evidence about the module
   version, and vice versa - `.agents/state.md` records the `2.5.1` and Migration `1.6.0` failures,
   both of which were one rule firing and the other being assumed to have.
-- If D2 rules option 2 or 3, S6 also touches `EmailService`. That is a second shared change under
+- S6 also touches `EmailService`, which is shared as well. That is a second shared change under
   the same single base bump, not a second bump.
