@@ -28,9 +28,18 @@ defects; they are unbuilt.
   section "Remove a device from Microsoft Entra ID"). See D3.
 - Every other Intune remote action (sync, restart, remote lock, fresh start, Autopilot
   reset, locate device, recovery-password rotation, defender scan).
-- Wipe option flags. `wipe` accepts `keepEnrollmentData`, `keepUserData`, `macOsUnlockCode`,
-  `obliterationBehavior` and `persistEsimDataPlan`. This module sends **no body**, which is
-  a full factory reset. Exposing the flags is a later change.
+- Operator-chosen wipe options. `wipe` accepts `keepEnrollmentData`, `keepUserData`,
+  `macOsUnlockCode`, `obliterationBehavior` and `persistEsimDataPlan`. This module sends a fixed
+  body pinning the first two to `false` (see S4) and does not offer the operator any choice.
+  Surfacing the flags is a later change.
+
+  **An earlier revision said the module would send no body "which is a full factory reset". That
+  was an inference stated as a verified fact and is withdrawn** - the Learn page for `wipe` says
+  "in the request body, supply JSON representation of the parameters", while the page for
+  `retire` says "do not supply a request body". What Graph does with an absent `wipe` body is
+  unknown, and a default of `keepUserData: true` on any platform would leave data on a machine
+  the operator was told had been wiped. The fixed explicit body removes the dependency on that
+  unknown instead of resolving it.
 - Windows Autopilot deregistration.
 - Device configuration, compliance policy or app assignment.
 - Bulk / multi-select action across many devices. One device per action.
@@ -147,7 +156,10 @@ needs no change and no NuGet package is added.
 | Retire | `POST /deviceManagement/managedDevices/{managedDeviceId}/retire` | 204 | `...ManagedDevices.PrivilegedOperations.All` |
 | Wipe | `POST /deviceManagement/managedDevices/{managedDeviceId}/wipe` | 204 | `...ManagedDevices.PrivilegedOperations.All` |
 
-Retire and Delete take no request body. Wipe takes an optional body; this module sends none.
+**Delete and retire take no request body; wipe does, and the two Learn pages differ on this
+deliberately.** Retire: "Do not supply a request body for this method." Wipe: "In the request
+body, supply JSON representation of the parameters." Do not treat the three actions as
+interchangeable in shape - S4 specifies wipe's body exactly.
 
 Fields the detail view uses, all present on `managedDevice` in v1.0: `id`, `deviceName`,
 `managedDeviceName`, `userPrincipalName`, `userDisplayName`, `userId`, `operatingSystem`,
@@ -397,6 +409,20 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 
 - `RetireDeviceAsync` and `WipeDeviceAsync`, both over S0's `PostNoContentWithStatusAsync`, with
   the same distinct-outcome reporting as S3.
+- **Retire sends no body. Wipe sends exactly this, always:**
+
+  ```json
+  { "keepEnrollmentData": false, "keepUserData": false }
+  ```
+
+  Those two flags are what decide whether the reset is full, so they are stated rather than
+  defaulted. The other three parameters are omitted deliberately and for named reasons:
+  `macOsUnlockCode` is a per-device recovery PIN the operator would have to supply and record,
+  which is its own feature; `obliterationBehavior` and `persistEsimDataPlan` are
+  platform-specific and belong with the wipe-options work listed as out of scope. Omitting them
+  accepts Graph's defaults for behaviour that does not change whether data survives.
+- A service test asserts the serialized body byte for byte. The intent is pinned by an assertion,
+  not by this paragraph - which is the whole difference from the revision this replaces.
 - Same gate chain as S3 against the second alias.
 - Wipe requires typing the device name to confirm. Retire uses the ordinary confirm. The
   asymmetry is deliberate: retire is recoverable by re-enrolling, wipe destroys the machine's
@@ -460,6 +486,8 @@ unpicking edits from the others.
 - AC15 Delete, retire and wipe report 403, 404 and 5xx as three distinct outcomes carrying the
   sanitized Graph error. Reverting either S0 helper to its bool-returning equivalent must fail
   the service tests that distinguish them - if it does not, the distinction was never tested.
+- AC16 Wipe sends `{"keepEnrollmentData":false,"keepUserData":false}` and a test asserts that
+  exact body; retire sends none. The full-reset intent is carried by an assertion, not by prose.
 
 ## Test plan
 
@@ -476,6 +504,9 @@ New file `ExchangeAdminWeb.Tests/IntuneDeviceServiceTests.cs` with a slice-local
 - Detail: success; 404; malformed JSON.
 - Delete / retire / wipe: 204 success; 403; 404; 5xx - each mapped to a distinct reported
   outcome, never a blanket success.
+- Wipe body: the serialized request body equals `{"keepEnrollmentData":false,"keepUserData":false}`.
+  Flipping either flag to `true` must fail this test. Retire sends no body at all, asserted
+  separately - the two must not converge on one helper that quietly gives retire a body.
 - `GetGraphClientAsync`: unset secret id; non-numeric secret id; secret present but missing
   `Client Secret`; each returns null and the caller reports unavailable.
 
