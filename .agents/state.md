@@ -6,6 +6,60 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
+  `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `b681185`).
+  Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
+  device details, and deleting"*, then *"review the plan with codex"*.
+  New module `IntuneDevices`, Microsoft Graph v1.0 Intune device management. Independent of
+  the three plans below - no shared code, no ordering constraint.
+  **D1 IS RULED (owner, 2026-08-14): all three destructive actions, at two permission tiers.**
+  *"options for all of the above with different permission levels for 1 and 2+3. Two permission
+  levels."* Delete the Intune record sits behind `IntuneDevicesDelete`; Retire and Wipe share
+  `IntuneDevicesPrivileged`; read sits behind the main `IntuneDevices` permission. All three
+  fail closed. **I asked this one before drafting because it decides which Graph permissions
+  the app registration needs**, and those are three genuinely distinct scopes.
+  **The distinction the question existed to surface, and it is the operator-facing one:**
+  Intune "Delete" removes the management record only. Company data stays on the device until it
+  next checks in, and if it never checks in, forever. The Entra ID device object survives all
+  three actions - Microsoft's own guidance is to remove it as a separate step.
+  **All endpoints are v1.0**, verified against Microsoft Learn 2026-08-14, so
+  `GraphTokenClient`'s hardcoded base URL needs no change and no NuGet package is added.
+  **D2 REMAINS OPEN and is a pre-ship gate, not a start gate: does the device's primary user
+  get an email when their machine is retired or wiped?** No existing predicate settles it - the
+  Constitution's affected-user rule fires on a permissions or access change, and a wipe is
+  neither. Three options are written out in the plan's `## Owner decisions`.
+  **D3 is open with a default of out-of-scope: should delete also remove the Entra ID device
+  object?** Needs `Device.ReadWrite.All` and a third gate. The owner asked for Intune devices;
+  adding this unasked is the `pgwt-1` scope error, so the default stands until ruled.
+  **One external prerequisite, not code: a dedicated Entra app registration** with
+  `DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All` and `.PrivilegedOperations.All`,
+  admin-consented, plus its own Delinea secret. **Do not collapse the three scopes** - an app
+  registration that never receives `PrivilegedOperations.All` cannot wipe a machine even if the
+  code is wrong, and that is the point of the split.
+  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `b868e5c..6aef9e3`:
+  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
+  `.agents/review/findings/idm-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`. A fourth
+  material change (`$select` at the request boundary, OData escaping) was adopted outside
+  intake as correctness inside scope.
+  **All three findings were the plan asserting something about code it had not read.** idm-1
+  (HIGH): `DeleteAsync` and `PostNoContentAsync` return a bare bool, so the plan's required
+  "403 vs 404 vs 5xx are distinct outcomes" was unwritable against the client it named.
+  idm-2 (HIGH): the plan said wipe sends no body "which is a full factory reset" - an inference
+  stated as verified fact, on the one action that destroys a machine. idm-3 (MEDIUM): AC8
+  required a `ProtectedServicer:IntuneDevices` grant that no operator could ever create,
+  because `ModuleConfig.razor:650-657` is a hardcoded list this module was not on.
+  **idm-3 is the THIRD time this repo has nearly shipped a capability its operators could not
+  reach**, after `ppsvc-1` and `pgwt-1`.
+  **idm-1 changed a different decision, which is the part worth carrying forward.** Its fix
+  adds slice S0 to `GraphTokenClient`, so **the base app version now bumps** - and that
+  withdrew the cost argument D2 had been resting on. D2 had been framed to the owner as "no
+  email is cheaper because it avoids a base bump"; after S0 that is simply untrue, and D2 is
+  now a question about what the affected person should be told and nothing else.
+  **NEXT: a D2 ruling, then a go to implement, starting at S0.** D1 is ruled and D3 has a
+  working default, so nothing else blocks a start. Versions when the work lands: new module
+  `IntuneDevices 1.0.0`, and the **base app version DOES bump** (S0 touches shared
+  infrastructure) - the one case where adding a module coincides with a shared change.
+
 - **MIGRATION SIZE CHECK: FIXED, PUSHED AND DEPLOYED 2026-08-13** (`b4029c6`; both remotes
   verified at that sha). Migration `1.7.0` -> `1.7.1`. No base app bump (module-scoped
   behaviour only).
@@ -476,14 +530,24 @@ owner-side, none of them needing an agent:
 3. **The Risky Users Entra app registration** plus its Delinea secret
    (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
    first live Graph call. S1-S4 can be built and tested without it.
+4. **A D2 ruling on `docs/IntuneDeviceManagement-Plan.md`** - does the device's primary user
+   get an email when their machine is retired or wiped? Three options are written out in that
+   plan's `## Owner decisions`. Pre-ship gate, so leaving it unruled stalls the work at the end
+   rather than the start. D3 (the Entra ID device object) has a working default and needs no
+   ruling to start.
+5. **The Intune Devices Entra app registration** plus its Delinea secret
+   (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All` and
+   `.PrivilegedOperations.All`, admin-consented). Blocks the first live Graph call, not the
+   build. Keep the three scopes distinct.
 
-With those three done, all three plans are cold-startable on 1 September with no
+With those five done, all four plans are cold-startable on 1 September with no
 conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
-`docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1), and
-`docs/RiskyUsersModule-Plan.md` at its S1 independently of both.
+`docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1),
+`docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
+the last two independent of everything else and of each other.
 
-**THREE plans are written, reviewed, and waiting on an owner go. No code has been
-written for any of them.** As of `c1a4d7f`; tree clean.
+**FOUR plans are written, reviewed, and waiting on an owner go. No code has been
+written for any of them.** As of `b681185`; tree clean.
 
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
@@ -493,14 +557,18 @@ written for any of them.** As of `c1a4d7f`; tree clean.
 3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
    module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
    pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
+4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a D2 ruling and a go.**
+   New module, independent of 1-3. D1 ruled (three actions, two permission tiers); D2 open and
+   a pre-ship gate; D3 open with a working default. Start at S0. See the entry in `## Now`.
 
-All three are docs-only so far.
+All four are docs-only so far.
 
-**NOTHING IS UNPUSHED. Measured 2026-08-13: `origin` and `github` are both at `b4029c6`,
-level with each other and with local `master`.** The owner pushed 2026-08-13, which took
-the five Risky Users plan commits (`a2c4c77` through `a00f250`, docs only) along with the
-Migration size-check fix. The earlier note about twelve, then five, unpushed commits is
-resolved and should not be re-derived.
+**SEVEN COMMITS ARE UNPUSHED, all docs-only. Measured 2026-08-14: `origin` and `github` are
+both at `b4029c6`, level with each other; local `master` is at `b681185`.** The seven are
+`b868e5c` (state) plus the six Intune plan and review commits `6aef9e3..b681185`. No code is
+among them. Pushing is the owner's call.
+The 2026-08-13 line that said nothing was unpushed was true when written; the owner's push that
+day did clear the twelve-then-five backlog, and that older count should still not be re-derived.
 
 **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` is a
 current cache hit for `codex-cli 0.147.0`; both openreview passes this session ran clean
