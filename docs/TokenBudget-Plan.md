@@ -1,7 +1,7 @@
 # Token-Budgeted Implementation - Plan
 
-Status: Draft - awaiting owner go. D1 and D2 are open and both are owner decisions.
-Intended for use from 2026-09-01, when the current work pause lifts.
+Status: Draft - awaiting owner go to implement. D1 ruled 2026-08-14 (delegated to the agent by
+the owner). D2 remains open. Intended for use from 2026-09-01, when the current work pause lifts.
 
 Owner request 2026-08-14: *"let's make an implementation plan that is token-budget friendly.
 I will use that next month and see how it does. add something that tracks token usage as part
@@ -148,24 +148,90 @@ that do not cost correctness:
 
 ### L4 - Model tier per phase
 
-Rebilling August's exact token mix at other rates:
+Verified against the live model overview on 2026-08-14. **The owner holds API keys for every
+Claude model except Fable, plus GPT-5.5 and Gemini.** Rebilling August's exact token mix:
 
-| Model | August cost | vs Opus 5 |
+| Model | Context | Price /MTok | August cost | vs Opus 5 | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| Claude Opus 5 | 1M | $5 / $25 | $2,310.86 | - | Viable |
+| Claude Sonnet 5 | 1M | $2 / $10 | $924.35 | **40%** | Viable |
+| Claude Sonnet 4.6 | 1M | $3 / $15 | $1,386.51 | 60% | **Dominated** |
+| Claude Opus 4.8 / 4.7 / 4.6 | 1M | $5 / $25 | $2,310.86 | 100% | **Dominated** |
+| Claude Haiku 4.5 | 200K | $1 / $5 | $462.17 | 20% | **Disqualified** |
+
+**The list collapses to exactly two live options, and that is the useful finding.**
+
+- **Haiku 4.5 is disqualified on a hard constraint, not on judgment.** 200K context, and
+  **72.3% of August's requests exceeded it**; the mean request is roughly twice its entire
+  window. Recorded so it is not re-proposed.
+- **Sonnet 4.6 is strictly dominated by Sonnet 5** - it costs *more* ($3/$15 against $2/$10)
+  and is the older model.
+- **Every older Opus is strictly dominated by Opus 5** - all priced identically at $5/$25,
+  all less capable.
+
+So there is no fine-grained tier ladder to tune. The choice is Sonnet 5 or Opus 5, per phase.
+
+*Correction on the record:* an earlier revision of this plan priced Sonnet 5 at $3/$15 with an
+introductory $2/$10 expiring 2026-08-31, and warned that September would cost 1.5x more. The
+live documentation shows **$2/$10 as the standing rate with no expiry noted**. The cached figure
+was stale; September runs at the 40% column. The pricing page remains the authority, and these
+are first-party rates against a Portkey-routed deployment - still estimates.
+
+### L4b - Do not starve the cheaper model
+
+This follows from the cost composition and is counterintuitive enough to state plainly:
+**output is 6% of cost, and thinking rides in output, so reasoning effort is nearly free in this
+workload.**
+
+At Sonnet 5 rates, today's entire 299K output tokens cost about $3. Doubling the thinking budget
+costs a few dollars a day; carrying context costs tens. **Effort is not a meaningful cost lever
+here - context and request count are.**
+
+The conclusion: buy the cheaper model *and run it at high or extra-high effort*. Do not do the
+intuitive thing of economising on both. Anthropic's guidance is `xhigh` for the hardest coding
+and agentic work, and Sonnet 5 defaults to `high` on Claude Code - so the default is already
+reasonable and `xhigh` is affordable on the hard slices. This is how most of the capability gap
+gets bought back for almost nothing.
+
+### L4c - The model assignment (D1, ruled)
+
+The owner's stated principle - *"minimum model for reliable work, complex model for checking"* -
+matches the measured cost shape exactly: implementation is 98% of tokens, review is 2%. Put the
+cheap model where the volume is and the strong model where the judgment is.
+
+| Phase | Model | Why |
 | --- | --- | --- |
-| Claude Opus 5 | $2,310.86 | - |
-| Claude Sonnet 5 (introductory rates, through 2026-08-31) | $924.35 | 40% |
-| Claude Sonnet 5 (standard rates, from 2026-09-01) | $1,386.51 | 60% |
-| Claude Haiku 4.5 | $462.17 | **not viable - see below** |
+| **Planning** | Claude Opus 5 | Lowest volume, highest leverage. Today's plan review found three real defects *in a plan* before any code existed; a defect here multiplies across every slice. |
+| **Implementation** | **Claude Sonnet 5 @ `high`, `xhigh` on hard slices** | 40% of Opus cost, 1M context, and the plans are written to be executed by exactly this - see below. |
+| **Deterministic gates** | none (model-independent) | Build, `dotnet test` (1,701 tests), format, `Test-AsciiOnly.ps1`, mutation probes. Free, and the reason a cheaper implementer is safe here. |
+| **Adversarial review** | codex / GPT-5.5 @ xhigh | Cross-vendor independence. 1.9% of tokens - keep it at full strength (L6). |
+| **Escalation / adjudication** | Claude Opus 5 | See the escalation-ladder note below. |
+| **Contested findings** | Gemini, owner-dispatched only | Third harness, per the `codereview` playbook's optional-adjudicator knob. Never self-dispatched. |
 
-**Haiku 4.5 is ruled out on a hard constraint, not on judgment.** Its context window is 200K and
-**72.3% of August's requests exceeded it**; the mean request is roughly twice the entire window.
-This is recorded so it is not re-proposed.
+**Why Sonnet 5 is defensible for implementation specifically here.** The four queued plans are
+unusually specified - exact file paths, line numbers, acceptance criteria, slice boundaries drawn
+on compilation order - and `.agents/playbooks/plan.md` *requires* a plan be
+*"implementable by a completely cold, less-capable agent than the one that wrote it"*. The
+repository's own governance anticipates this choice. Behind the plans sit 1,701 tests, CI, the
+ASCII gate and the mutation-probe discipline.
 
-Sonnet 5 has a 1M context window and fits. Note the timing: **the introductory rate expires
-2026-08-31**, the day before this plan is intended to be used, so September runs at the 60%
-column, not the 40% one.
+**The genuine risk, stated plainly.** Every one of today's five review findings was of the form
+*the plan asserted something about code it had not read*. That is precisely the failure a less
+capable implementer makes more of, not less. The mitigations are the deterministic gates, review
+kept at full strength, and the revert trigger below - not optimism.
 
-This is D1. See Owner decisions.
+**A capability gain that comes free with the change.** Today the implementer and the reviewer are
+both frontier-tier, which is why `.agents/review/harnesses.local.json` records codex's frontier
+grade as `fallback`: escalation cannot buy a stronger adjudicator, so it halts to the owner
+instead. Moving implementation to Sonnet 5 makes **Opus 5 a genuinely stronger adjudicator than
+the implementer for the first time**, restoring a real escalation ladder. The cheaper implementer
+does not weaken review - it is what makes escalation mean something again.
+
+**Revert trigger, measured not felt.** Track admitted findings per landed slice in
+`.agents/review/index.md`. If Sonnet-implemented slices produce materially more admitted findings
+than the August baseline, or any CRITICAL/HIGH finding of a kind the deterministic gates should
+have caught, move implementation back to Opus 5 and record why in `.agents/decisions.md`. The
+cost saving is not worth a defect in an authorization path.
 
 ### L5 - One slice, one session
 
@@ -343,22 +409,38 @@ both directions.
 
 ## Owner decisions
 
-### D1 - OPEN: which model implements the September slices?
+### D1 - RULED 2026-08-14, delegated to the agent by the owner
 
-1. **Claude Sonnet 5.** ~60% of Opus cost on the same token profile from 1 September
-   (introductory pricing ends 2026-08-31). The queued plans are unusually well specified - exact
-   file paths, line numbers, acceptance criteria, slice boundaries drawn on compilation order -
-   and `.agents/playbooks/plan.md` requires plans be *"implementable by a completely cold,
-   less-capable agent than the one that wrote it"*. Behind them sit 1,701 tests, CI, the ASCII
-   gate and the mutation-probe discipline. The repository's governance anticipates this choice.
-2. **Claude Opus 5.** No change. Today's five review findings were all of the form "the plan
-   asserted something about code it had not read", which is the failure a less capable
-   implementer makes more of, not less.
-3. **Split by phase.** Sonnet for mechanical slices, Opus for the ones touching authorization or
-   protected principals. Note the cost: switching model discards the prompt cache, so a split
-   must fall on session boundaries, never mid-slice.
+Owner: *"that's what I'm asking you. I have API keys for all the Claude models except Fable,
+GPT-5.5, and Gemini. Pricing tiers I'm not sure about, but model capability is the driver here.
+Minimum model for reliable work, complex model for checking. IF that makes sense. relying on you
+to plan this. research models if needed."*
 
-Whichever is chosen, review stays at full strength (L6).
+**The principle holds and is adopted.** It matches the measured cost shape: implementation is
+98% of tokens, review is 2%.
+
+The ruling is the assignment table in **L4c**, with L4 and L4b as its evidence. In short:
+Opus 5 plans, Sonnet 5 at `high`/`xhigh` implements, the deterministic gates catch mechanics,
+codex/GPT-5.5 reviews, Opus 5 adjudicates escalations, Gemini stays in reserve as an
+owner-dispatched third harness for contested findings.
+
+**Three findings shaped it, none of which were obvious before measuring:**
+
+1. The model list collapses to two. Haiku is context-disqualified; Sonnet 4.6 and every older
+   Opus are strictly dominated on price *and* capability. There is no ladder to tune.
+2. Effort is nearly free in this cost profile, so the cheap model runs at high effort rather
+   than being economised twice (L4b).
+3. Moving implementation down a tier *upgrades* review, by making Opus 5 a genuinely stronger
+   adjudicator than the implementer for the first time.
+
+**A split-by-slice variant was considered and rejected.** Routing only "mechanical" slices to
+Sonnet sounds prudent, but nearly the whole queue is authorization-adjacent - `GroupMemberNesting`
+is protection checks end to end, `ProtectedGroupWriteTarget` is entirely authorization, and both
+new modules carry protected-principal gates. Most slices would route to Opus anyway, capturing
+little saving while adding a per-slice judgment call and a cache-discarding switch. The
+phase-based split in L4c gets the saving without the per-slice decision.
+
+Review stays at full strength regardless (L6). The revert trigger in L4c is the safety valve.
 
 ### D2 - OPEN: how far to reduce `state.md`?
 
