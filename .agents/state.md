@@ -596,16 +596,20 @@ written for any of them.** Tree clean.
 
 All four are docs-only so far.
 
-**UNPUSHED WORK, all docs-only. Measured 2026-08-14: `origin` and `github` are both at
-`b4029c6`, level with each other. Everything on local `master` after `b4029c6` is unpushed** -
-`b868e5c` (state) plus the Intune plan and review commits that follow it. No code is among them.
-Pushing is the owner's call.
+**PUSHED 2026-08-14. Both `origin` and `github` were taken from `b4029c6` to `a0a300d` and
+verified at that sha by reading the remotes themselves, not this clone's tracking refs.** The 16
+commits were the Intune Devices plan, its five review findings, both openreview passes and this
+file. No code among them. `master` is the only local branch, so nothing else was carrying work.
+
+**Anything committed after `a0a300d` is unpushed until someone pushes again** - including the
+commit that wrote this paragraph. That phrasing is deliberate and is the second half of `idm-4`:
+a state file cannot truthfully assert its own push status, because committing the assertion
+falsifies it. Check with `git ls-remote origin master` against `git rev-parse HEAD`; do not trust
+a recorded count or a recorded "nothing outstanding".
 
 *No commit count is recorded here on purpose.* An exact count in a committed file is stale the
 moment the next commit lands, including the one that writes the count - this line previously said
-"seven" and was wrong five commits later. The remote SHA plus "everything after it" is the same
-fact and cannot rot. Re-derive the count with `git rev-list --count b4029c6..HEAD` if a number is
-needed.
+"seven" and was wrong five commits later.
 
 The 2026-08-13 line that said nothing was unpushed was true when written; the owner's push that
 day did clear the twelve-then-five backlog, and that older count should still not be re-derived.
