@@ -1,0 +1,382 @@
+# Token-Budgeted Implementation - Plan
+
+Status: Draft - awaiting owner go. D1 and D2 are open and both are owner decisions.
+Intended for use from 2026-09-01, when the current work pause lifts.
+
+Owner request 2026-08-14: *"let's make an implementation plan that is token-budget friendly.
+I will use that next month and see how it does. add something that tracks token usage as part
+of the implementation so we can track."*
+
+Two deliverables, one plan:
+
+1. A **working protocol** for implementing the queued plans at materially lower token cost,
+   derived from measured session data rather than from general advice. Its durable home once
+   implemented is a new section in `.agents/repo-guidance.md`.
+2. A **measurement tool** (`tools/Get-TokenUsage.ps1`) plus a committed baseline and a
+   per-slice log, so the protocol's effect is observed rather than assumed.
+
+Deliverable 2 exists because of deliverable 1: a cost-reduction protocol with no measurement
+is a belief. The tool is what makes September comparable to August.
+
+## Measured baseline
+
+All figures below were measured on 2026-08-14 from the Claude Code session transcripts for this
+project (`C:\Users\mcoelho\.claude\projects\D--source-ExchangeAdminWeb\*.jsonl`). They are this
+repository's own numbers, not published benchmarks.
+
+**August 2026, this project only** (the month's total spend was roughly twice this - other
+projects account for the rest):
+
+| Measure | Value |
+| --- | --- |
+| Requests | 7,876 |
+| Mean context per request | 394,283 tokens |
+| Largest single request | 954,008 tokens |
+| Requests over 200K context | 5,693 (72.3%) |
+| Input tokens | 1,444,721 |
+| Cache-write tokens | 106,963,204 |
+| Cache-read tokens | 2,993,850,720 |
+| Output tokens | 5,527,623 |
+| Estimated cost | $2,310.86 |
+
+**Cost composition, August** - this is the part that determines which levers matter:
+
+| Component | Share of cost | Share of tokens |
+| --- | --- | --- |
+| Cache read | 65% | 96% |
+| Cache write | 29% | 3.4% |
+| Output | 6% | 0.2% |
+| Fresh input | 0.3% | 0.05% |
+
+**A single day, 2026-08-14** (one plan drafted, two independent reviews, findings folded in):
+
+| Measure | Value |
+| --- | --- |
+| Requests | 297 |
+| Mean context | 280,102 tokens |
+| Cache-read | 70,764,256 tokens -> $35.38 |
+| Cache-write | 4,875,589 tokens -> $30.47 |
+| Output | 299,472 tokens -> $7.49 |
+| Estimated cost | $73.49 |
+
+Rates used throughout: Claude Opus 5 first-party - $5.00/M input, $25.00/M output, cache read
+$0.50/M, cache write (5-minute TTL) $6.25/M. **These are Anthropic list rates and this
+deployment routes through a Portkey gateway to Vertex/Bedrock, which are separately priced.
+Every figure in this plan is therefore an estimate, and the tool must say so wherever it prints
+one.**
+
+## The cost model, in one line
+
+    cost ~= SUM over requests of ( context_tokens x cache_read_rate )
+          + SUM over re-primes of ( context_tokens x cache_write_rate )
+          + ( output_tokens x output_rate )
+
+Everything below follows from it. **At the August mean of 394K context, each request costs about
+20 cents before it does anything useful**; at today's 280K, about 14 cents. Output is a rounding
+error. The two variables worth attacking are **context size** and **number of requests**, and
+the third, **re-primes**, is the one that was invisible until measured.
+
+### The finding that reorders the priorities
+
+**Cache writes were 41% of today's cost while being 6% of the tokens.** A cache write costs
+12.5x a cache read, so every re-prime of a 280K context costs about **$1.75**. Today's
+4.88M cache-write tokens are roughly **17 full re-primes**.
+
+The prompt cache has a **5-minute TTL**. Any gap longer than that - stepping away, waiting on a
+long-running background task, a slow review - expires the prefix, and the next turn pays a full
+re-prime. Several of today's re-primes are directly attributable to sitting idle while the two
+codex reviews ran, each of which took minutes.
+
+That means the two reviews cost more than their 1.9% share of input tokens suggests: the token
+share is real, but the idle time they caused is billed separately as cache writes.
+
+## Levers, ranked by measured impact
+
+### L1 - Shrink the always-loaded prefix (largest single lever)
+
+Every request in a session carries the governance and state files. Current sizes:
+
+| File | Size | Approx tokens |
+| --- | --- | --- |
+| `.agents/state.md` | 138 KB | ~51,800 |
+| `.agents/decisions.md` | 64.6 KB | ~24,000 |
+| `.agents/repo-guidance.md` | 9.2 KB | ~3,400 |
+| `AGENTS.md` + `CLAUDE.md` | ~6 KB | ~2,200 |
+
+`state.md` alone is roughly **18% of a 280K request**, carried on nearly every turn of every
+session. At the measured rate it costs on the order of **$6 to $8 per working day just to be
+present**, before anything reads it deliberately.
+
+It is also, by its own admission, carrying history: it still contains a `Deployed:` paragraph
+from 2026-08-05 that its own Blockers section flags as stale, alongside fully-resolved work
+streams whose detail belongs in the plan and decision documents.
+
+**Target: `state.md` under 10K tokens.** Resolved work streams move to their plan documents;
+`state.md` keeps only what `AGENTS.md` says it is for - current versions, in-flight work, next
+actions, blockers, and open gaps.
+
+**This is D2 and it is not free of risk.** See Owner decisions.
+
+### L2 - Do not let the cache expire (largest surprise)
+
+At $1.75 per re-prime, TTL discipline is worth more than most editing habits.
+
+- **Work in sustained bursts.** A session with 17 idle gaps pays about $30 for the gaps alone.
+- **When dispatching a long background task** (a codex review, a long build), either do other
+  work in the same session while it runs, or accept the re-prime knowingly. Do not sit idle.
+- **Do not switch models mid-session.** The cache is model-scoped; a switch discards it
+  entirely and re-primes from zero. Switch at session boundaries only (relevant to D1).
+- Prefer one long session per slice over several short ones: each fresh session pays a cold
+  prime regardless.
+
+### L3 - Fewer requests
+
+297 requests in a day at ~14 cents of carried context each is ~$42 before any work. Reductions
+that do not cost correctness:
+
+- **Batch independent tool calls into one message.** Two greps and a read that do not depend on
+  each other are one turn, not three.
+- **Do not re-read a file already in context.** The transcript is the cache; re-reading pays
+  twice.
+- **Do not verify an edit by reading the file back.** `Edit` and `Write` fail loudly; a
+  successful return is the verification.
+- **Read the range, not the file.** The queued plans cite exact line numbers - use `offset`
+  and `limit`, or `Grep` with context, rather than pulling a 2,000-line file for 30 lines.
+- **Delegate wide searches to a subagent** when the answer is small and the search is broad: the
+  subagent's context is discarded, and only its conclusion enters the main context. Do not
+  delegate a single-file read - the subagent's own prime costs more than the read.
+
+### L4 - Model tier per phase
+
+Rebilling August's exact token mix at other rates:
+
+| Model | August cost | vs Opus 5 |
+| --- | --- | --- |
+| Claude Opus 5 | $2,310.86 | - |
+| Claude Sonnet 5 (introductory rates, through 2026-08-31) | $924.35 | 40% |
+| Claude Sonnet 5 (standard rates, from 2026-09-01) | $1,386.51 | 60% |
+| Claude Haiku 4.5 | $462.17 | **not viable - see below** |
+
+**Haiku 4.5 is ruled out on a hard constraint, not on judgment.** Its context window is 200K and
+**72.3% of August's requests exceeded it**; the mean request is roughly twice the entire window.
+This is recorded so it is not re-proposed.
+
+Sonnet 5 has a 1M context window and fits. Note the timing: **the introductory rate expires
+2026-08-31**, the day before this plan is intended to be used, so September runs at the 60%
+column, not the 40% one.
+
+This is D1. See Owner decisions.
+
+### L5 - One slice, one session
+
+Each slice in the queued plans is sized to be independently committable. Size sessions to match:
+start a session, land one slice, close it. Two reasons, both measured:
+
+- Context grows monotonically within a session, so late turns in a long session are the most
+  expensive turns in it. Today's mean was 280K; the tool will report the distribution so this
+  can be seen rather than assumed.
+- A session that outgrows the context window triggers compaction, which is a summarization pass
+  over the whole accumulated context - paid at output rates on top of everything else.
+
+### L6 - Keep review at full strength
+
+Measured today: the two codex review dispatches were **1.9% of the session's input tokens and
+7.3% of its output**. Reviews are one-shot against a large context; implementation is hundreds
+of turns each re-carrying a large context. Two dispatches against 297 turns.
+
+**Adversarial review is the cheapest quality lever available and must not be cut for budget
+reasons.** Five real defects surfaced today for roughly 2% of the tokens. The saving lives
+almost entirely in the implementation phase; taking it out of review would trade most of the
+value for almost none of the cost.
+
+The only review-related cost worth managing is the idle-gap re-prime named in L2.
+
+## Deliverable 2: the measurement tool
+
+### `tools/Get-TokenUsage.ps1`
+
+Modelled on `tools/Test-CoverageFloor.ps1`, which is this repo's existing precedent for a
+read-only measurement script with a committed baseline (`.agents/review/coverage-floor.txt`) and
+Pester coverage (`tests/ps/CoverageFloor.Tests.ps1`).
+
+Parameters:
+
+| Parameter | Purpose |
+| --- | --- |
+| `-TranscriptRoot` | Directory of Claude Code `*.jsonl` transcripts. Defaults to the path recorded in `.agents/machines.md`; machine-specific, so never hardcoded in the script body. |
+| `-Since` / `-Until` | Date bounds, inclusive. Default: the current month. |
+| `-GroupBy` | `Day` (default), `Session`, or `Total`. |
+| `-Model` | Rate table selector: `opus-5` (default), `sonnet-5`, `sonnet-5-intro`, `haiku-4-5`. |
+| `-Baseline` | Path to the committed baseline; prints a delta column against it. |
+| `-AsJson` | Machine-readable output for the per-slice log. |
+
+Reported per group: requests, input, cache-write, cache-read and output tokens, mean and maximum
+context, count of requests over 200K, and estimated cost.
+
+Design points that are not obvious and must not be re-litigated during implementation:
+
+- **Parsing.** A full `ConvertFrom-Json` on every line of ~100 MB of transcripts is far too slow.
+  A pure regex extraction is fast but fragile. The tool does both: a cheap substring filter
+  (`-notmatch '"output_tokens"'`) to skip the ~99% of lines that carry no usage, then a real
+  `ConvertFrom-Json` on the survivors. This was measured during planning - the filter is the
+  expensive part, and the surviving line count is in the low thousands per month.
+- **Streaming read.** `[System.IO.File]::ReadLines` line by line, never `Get-Content -Raw` on a
+  100 MB tree.
+- **No `-PlanOnly`.** `.agents/repo-guidance.md` Architectural Invariant 4 requires every
+  ops-script step to support `-PlanOnly` via `Invoke-PlanOrAction` / `Write-Plan`. That invariant
+  governs steps with side effects; this script performs none - it reads transcripts and prints.
+  Adding a dry-run flag to a read-only reporter would be a flag that does nothing. **Recorded as
+  a deliberate, reasoned exemption rather than an oversight**, because a reviewer should
+  otherwise flag it. Note also that `Write-Plan` and `Invoke-PlanOrAction` are defined locally
+  inside `Install-ExchangeAdminWeb.ps1` and `promote-dev-to-prod.ps1` - there is no shared module
+  to import even if the flag were wanted.
+- **Cost is labelled an estimate at every print site.** Rates are Anthropic first-party; this
+  deployment bills through Portkey to Vertex/Bedrock at partner rates. A bare dollar figure
+  written into a repository file becomes durable truth - this is the `idm-2` failure class from
+  today's review, where an unverified inference was stated as fact. The tool prints the rate
+  table it used and the words "estimated, first-party rates" alongside any total.
+- **ASCII only.** CI fails on non-ASCII in any tracked `.ps1`/`.psm1`.
+- **Reads outside the repository.** The transcript root is outside the working tree and contains
+  full conversation transcripts. The tool reads token counts only and must never print, copy or
+  summarise transcript content - only the numeric `usage` fields.
+
+### `.agents/token-baseline.json`
+
+August 2026 measured figures, committed once, in the shape the tool emits with `-AsJson
+-GroupBy Total`. This is what September is compared against. Mirrors the role of
+`.agents/review/coverage-floor.txt`.
+
+### `.agents/token-log.md`
+
+One appended line per landed slice:
+
+    2026-09-02  GroupMemberNesting S1  sonnet-5  reqs 41  mean-ctx 96K  est $8.10
+
+**Appended as part of the existing paperwork motion.** `AGENTS.md` already requires that each
+slice be committed and its paperwork closed in the same motion; this adds one line to that
+motion. It is not a separate ritual and must not become one.
+
+## Slices
+
+Each slice is one commit and must build and test green on its own.
+
+### S1 - the tool
+
+`tools/Get-TokenUsage.ps1` per the design above. No baseline, no log, no protocol changes yet -
+the tool stands alone and is useful on its own.
+
+### S2 - Pester coverage
+
+`tests/ps/TokenUsage.Tests.ps1`, following `tests/ps/CoverageFloor.Tests.ps1`.
+
+Fixture-driven, with a small synthetic `*.jsonl` tree created in the test's temp directory:
+**the tests must not read the real transcript root**, which is machine-specific, mutable, and
+absent on CI. Cases: a known token mix produces the known cost for each rate table; day
+grouping; session grouping; the over-200K counter; a malformed line is skipped rather than
+throwing; an empty directory reports zero rather than dividing by zero; `-AsJson` round-trips.
+
+Prove non-vacuity per the repo standard: change a rate in the table, confirm the cost assertion
+fails, restore, confirm green.
+
+### S3 - baseline and log
+
+`.agents/token-baseline.json` generated from August, and `.agents/token-log.md` created with its
+header and the first entry. Both committed.
+
+### S4 - the protocol
+
+A new **Token Budget** section in `.agents/repo-guidance.md` carrying L1 through L6 in condensed
+form, plus the one-line-per-slice logging rule folded into the existing paperwork expectation.
+
+Deliberately last: the protocol references the tool, and a protocol whose measurement does not
+yet exist is the belief this plan was written to avoid.
+
+### S5 - state.md reduction (exists only if D2 rules for it)
+
+Separate slice, separate commit, because it is the one change here that can lose information.
+
+## Acceptance criteria
+
+- AC1 `Get-TokenUsage.ps1` reproduces the August figures in this document from the real
+  transcripts, within rounding.
+- AC2 The same run against a fixture tree produces exactly the fixture's expected numbers.
+- AC3 Every printed cost is accompanied by the rate table used and an explicit estimate
+  qualifier. No bare dollar figure reaches stdout or any written file.
+- AC4 The tool never emits transcript content - only numeric usage fields, dates, and session
+  identifiers. Asserted by a test that feeds a fixture containing a recognisable sentinel string
+  and greps the entire output for it.
+- AC5 Pester passes on a machine with no transcript root present.
+- AC6 `Invoke-ScriptAnalyzer -Path . -Recurse` clean; `tools/Test-AsciiOnly.ps1` clean.
+- AC7 The baseline file is valid JSON, matches `-AsJson -GroupBy Total`, and is diffable.
+- AC8 A run over a single day completes in under 30 seconds on the real tree.
+- AC9 September's first three slices each append one line to `.agents/token-log.md` in the same
+  commit that lands the slice.
+- AC10 If D2 rules for reduction: `state.md` is under 10K tokens, and every fact removed is
+  present in a plan or decision document. Proven by naming the destination for each removed
+  section in the commit message.
+
+## Verification
+
+`Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` per
+`.agents/repo-guidance.md`. No C# changes, so no `dotnet` build is required - state that
+explicitly at completion rather than implying the full suite ran.
+
+## Versioning
+
+**No version bump of any kind.** No module behaviour changes and no shared application code is
+touched; `tools/` and `.agents/` are outside both versioning rules
+(`docs/ProjectConstitution.md`, Deployment And Versioning). Recorded because this repository has
+twice shipped a wrong version by assuming a rule fired when it did not - the discipline runs in
+both directions.
+
+## What this plan does not claim
+
+- **It does not promise a percentage.** The levers are ranked by measured cost composition, but
+  the achieved saving depends on how the work actually goes. The tool exists precisely so the
+  answer is measured in September rather than asserted here.
+- **It does not reduce review.** See L6.
+- **It does not change what gets built.** The four queued plans are unaffected; this changes how
+  they are executed, not what they deliver.
+- **It is itself not free.** Writing this plan cost tokens, and the measurement runs that produced
+  its numbers cost more. The baseline was worth buying once; re-deriving it every session would
+  defeat the purpose, which is why S3 commits it.
+
+## Owner decisions
+
+### D1 - OPEN: which model implements the September slices?
+
+1. **Claude Sonnet 5.** ~60% of Opus cost on the same token profile from 1 September
+   (introductory pricing ends 2026-08-31). The queued plans are unusually well specified - exact
+   file paths, line numbers, acceptance criteria, slice boundaries drawn on compilation order -
+   and `.agents/playbooks/plan.md` requires plans be *"implementable by a completely cold,
+   less-capable agent than the one that wrote it"*. Behind them sit 1,701 tests, CI, the ASCII
+   gate and the mutation-probe discipline. The repository's governance anticipates this choice.
+2. **Claude Opus 5.** No change. Today's five review findings were all of the form "the plan
+   asserted something about code it had not read", which is the failure a less capable
+   implementer makes more of, not less.
+3. **Split by phase.** Sonnet for mechanical slices, Opus for the ones touching authorization or
+   protected principals. Note the cost: switching model discards the prompt cache, so a split
+   must fall on session boundaries, never mid-slice.
+
+Whichever is chosen, review stays at full strength (L6).
+
+### D2 - OPEN: how far to reduce `state.md`?
+
+The largest single lever, and the only proposal here that can destroy information.
+
+1. **Reduce to under 10K tokens.** Resolved work streams move to their plan documents; `state.md`
+   keeps current versions, in-flight work, next actions, blockers and open gaps - what `AGENTS.md`
+   says it is for. Saves roughly 15% of every request in every future session.
+2. **Trim only what is provably stale** - the `2.5.5` `Deployed:` paragraph its own Blockers
+   section already flags, and nothing else. Small saving, no risk.
+3. **Leave it.** Accept ~$6 to $8 per working day.
+
+**The risk in option 1 is specific and worth stating plainly.** The pause to 2026-09-01 exists so
+the queued plans are startable cold with no conversation, and `state.md` is the file a cold
+session reads to achieve that. Reducing it is reducing exactly the artifact the pause was
+protecting. The mitigation is that the detail moves rather than disappears - into plan documents
+that a cold session reads anyway once it picks up a plan - but the mitigation must actually be
+performed, which is what AC10 checks.
+
+Not proposed: any automatic or scheduled trimming. A file that prunes itself is a file that loses
+something nobody noticed.
