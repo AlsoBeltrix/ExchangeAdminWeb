@@ -3,7 +3,7 @@
 **Severity**: LOW - traceability only; no behaviour is affected, but the review trail cannot answer which revision closed which finding.
 **Status**: Verified
 **Branch**: - (default-branch mode)
-**Commit**: `d0f7a4e`
+**Commit**: `365c7fb`
 
 ## Evidence
 
@@ -55,6 +55,14 @@ None. Verified per file with `git log`.
 Nothing structural stops this recurring; the template invites it by placing the field before the
 commit exists. Not worth a mechanism for two records, recorded here so a third occurrence is
 recognised as a pattern rather than an accident.
+
+**And it recurred immediately, in this record.** The first draft of this file filled its own
+`Commit` field with `d0f7a4e` - a SHA that never existed, written before the commit was made.
+That is a worse instance of the defect than the one being fixed: a placeholder is visibly
+unfinished, whereas an invented SHA looks like a record and resolves to nothing. Corrected to
+`365c7fb` in a follow-up commit. The rule this actually earns is narrower than "remember to
+backfill": **never write a SHA you have not read back from `git`** - leave the field visibly
+empty until the commit exists.
 
 ## Reviewer comments
 
