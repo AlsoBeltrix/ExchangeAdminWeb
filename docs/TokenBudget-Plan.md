@@ -268,9 +268,11 @@ of turns each re-carrying a large context. Two dispatches against 297 turns.
 
 **Scope that claim carefully - and an earlier revision of this plan did not.** The 1.9% figure is
 **tokens inside the Claude Code harness**. The reviewer runs on a different harness billing
-through the gateway, so *none* of its spend appears in that measurement. The month-scale
-reconciliation above found ~$915 of budget use invisible to Claude Code transcripts, and
-reviewer dispatches are the leading candidate for the bulk of it.
+through the gateway, so *none* of its spend appears in that measurement.
+
+**An earlier revision guessed that reviewer dispatches were the bulk of the ~$915 gap. That guess
+is withdrawn** - the owner confirmed this is not the only dev box, so Claude Code work elsewhere
+is the simpler and likelier explanation. Reviewer spend remains unquantified, not large.
 
 **So "review is 2% of cost" may be wrong by an order of magnitude in dollars, and is unproven
 either way.** What survives is narrower and still decisive: review consumes a negligible share of
@@ -330,23 +332,62 @@ Design points that are not obvious and must not be re-litigated during implement
   written into a repository file becomes durable truth - this is the `idm-2` failure class from
   today's review, where an unverified inference was stated as fact. The tool prints the rate
   table it used and the words "estimated, first-party rates" alongside any total.
-- **`-Calibration <factor>`, defaulting to `1.0`.** Set it only from agreeing multi-interval
-  evidence recorded in `.agents/token-log.md`, never from a single observation - see the
-  correction below for why that rule exists.
-- **The tool measures Claude Code transcripts and nothing else. This is its most important
-  limitation and it must be printed with every total.** Measured 2026-08-14 across **all**
-  project transcript directories for August: 14,448 requests, **$3,901 at list rates**, against
-  **$4,816.26** reported budget use. The gap is **~$915, about 19% of the month, and it is
-  invisible to this tool** - the reviewer harnesses (codex/GPT-5.5, any Gemini) bill through the
-  gateway and write no Claude Code transcript. A run of this tool is a floor on spend, not a
-  measure of it.
-  **Correction, recorded because the mistake is instructive.** An earlier revision of this plan
-  concluded from **one** interval that the model ran 1.8x *high* and wrote that into the design.
-  The month-scale sample says the opposite - it runs ~19% *low*. The single interval was almost
-  certainly transcript-flush lag at the measurement boundary: the "before" snapshot missed turns
-  not yet written to disk, inflating the computed delta. **n=1 was never a calibration**, and the
-  plan said so in the same breath as acting on it anyway. The defaulting-to-`1.0` rule above is
-  what survives; the 1.8x figure is withdrawn.
+- **No calibration against the reported budget. The tool is a relative instrument, and that is a
+  design decision, not a shortcoming.**
+
+  **What it measures exactly:** token counts, from this machine's Claude Code transcripts. Those
+  are observed facts and the tool reports them without qualification.
+
+  **What it estimates:** cost, at Anthropic list rates, against a Portkey-routed deployment. An
+  estimate, always labelled, never written into a durable file as a bare figure.
+
+  **What it cannot measure from transcripts alone, and must say so:** anything outside this
+  machine's Claude Code transcripts - **other dev boxes**, the reviewer harnesses billing through
+  the gateway, and any other account-wide draw. Measured 2026-08-14 across every local project
+  directory for August: 14,448 requests, $3,901 at list rates, against $4,816.26 reported. The
+  ~$915 difference is **expected and unattributable from transcripts**; the owner confirmed this
+  is not the only dev box.
+
+  **A better source probably exists and should be evaluated before S1 is written: the headroom
+  proxy** (`D:\source\headroom`, and the `mcp__headroom__*` tools). Owner, 2026-08-14: *"I route
+  all traffic through the headroom proxy on this server, so that's a more accurate source if it's
+  capturing everything."* Evidence found for the capability, 2026-08-14:
+  `sql/create_proxy_telemetry_v2.sql` defines per-request proxy telemetry;
+  `sql/create_dashboard_summary.sql` backs a savings/history dashboard; the `headroom_workspace`
+  docker volume is documented as persisting "dashboard savings/history, logs, config, memory
+  state, session stats"; and `headroom_stats` already reports lifetime counters far larger than
+  this machine's transcripts (6.01B cache-read tokens).
+
+  **Not adopted yet, because three things are unverified** - and this plan has already been wrong
+  three times by inferring past its evidence:
+  1. **Does this machine's traffic actually traverse it?** `ANTHROPIC_BASE_URL` is
+     `https://api.portkey.ai` here, which points straight at the gateway rather than at a local
+     proxy. Either headroom sits elsewhere in the chain or this box is not proxied.
+  2. **Does it see the other dev boxes?** That is the whole reason it would beat transcripts.
+  3. **Does it see the reviewer harnesses** (codex to Azure via Portkey), or only Anthropic
+     traffic?
+
+  If all three resolve favourably, the telemetry table replaces transcript parsing as S1's data
+  source and this tool becomes an absolute instrument rather than a relative one. **Resolving
+  them is a prerequisite task for S1, not a slice of it.**
+
+  **Therefore: do not reconcile this tool's output against the account budget figure.** A
+  per-machine measurement compared to an account-wide total cannot converge, and an attempt to
+  force it would produce a calibration constant that is really an artefact of how much work
+  happened elsewhere that month.
+
+  **The plan does not need absolute accuracy - it needs consistency.** Every question it exists to
+  answer is a ratio measured on one machine: did September cost less than August, did Sonnet cost
+  less than Opus, did the `drift` sweep reduce mean context. **Ratios survive an unknown constant
+  multiplier**, so an uncalibrated estimate answers all of them correctly as long as it is
+  computed the same way on both sides of the comparison.
+
+  **Correction, recorded because the sequence is instructive.** This plan reached three different
+  conclusions about its own cost model in one session: 1.8x too high (from a single interval),
+  then ~19% too low (from the local month), then neither - the local figure is simply incomplete,
+  because a whole class of spend happens off this machine. Each revision was a confident inference
+  from a partial view. The fix is not a better constant; it is to **stop inferring the
+  unmeasurable and scope the instrument to what it can see.**
 - **ASCII only.** CI fails on non-ASCII in any tracked `.ps1`/`.psm1`.
 - **Reads outside the repository.** The transcript root is outside the working tree and contains
   full conversation transcripts. The tool reads token counts only and must never print, copy or
@@ -421,13 +462,13 @@ in this plan's slice list; L1 points at it and that is the whole integration.
   made reproducing this plan's own cost estimates the criterion, which would have tested the tool
   against a model already measured to be ~1.8x high rather than against reality. Tokens are
   observed; cost is inferred, and the inference is what needs calibrating.
-- AC1b Over at least three intervals where a reported budget movement is known, the tool's
-  calibrated estimate tracks the movement. Until that holds, `-Calibration` stays at `1.0`.
-  Intervals shorter than a day are not admissible evidence: transcript-flush lag at the boundary
-  produced the withdrawn 1.8x figure.
-- AC1c Every total states that it covers Claude Code transcripts only and excludes reviewer-
-  harness spend, which bills through the gateway and writes no transcript. A printed total that
-  reads as whole-budget spend fails this criterion.
+- AC1b The tool is **not** validated against the account budget figure, and no acceptance
+  criterion asks it to be. A per-machine measurement cannot converge on an account-wide total.
+  What is asserted instead: **the same inputs produce the same output**, so two runs are
+  comparable. That is the property every question in this plan actually needs.
+- AC1c Every total states its scope in the output - which source it read, which machine, and that
+  it excludes anything not routed through that source. A printed total that could be mistaken for
+  whole-account spend fails this criterion, whichever data source S1 ends up using.
 - AC2 The same run against a fixture tree produces exactly the fixture's expected numbers.
 - AC3 Every printed cost is accompanied by the rate table used and an explicit estimate
   qualifier. No bare dollar figure reaches stdout or any written file.
