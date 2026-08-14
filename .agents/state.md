@@ -7,7 +7,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Now
 
 - **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
-  `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `b681185`).
+  `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's
+  own last content revision; commits after it touch this file and the review records, not the
+  plan).
   Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
   device details, and deleting"*, then *"review the plan with codex"*.
   New module `IntuneDevices`, Microsoft Graph v1.0 Intune device management. Independent of
@@ -575,7 +577,7 @@ conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
 the last two independent of everything else and of each other.
 
 **FOUR plans are written, reviewed, and waiting on an owner go. No code has been
-written for any of them.** As of `b681185`; tree clean.
+written for any of them.** Tree clean.
 
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
@@ -591,10 +593,17 @@ written for any of them.** As of `b681185`; tree clean.
 
 All four are docs-only so far.
 
-**SEVEN COMMITS ARE UNPUSHED, all docs-only. Measured 2026-08-14: `origin` and `github` are
-both at `b4029c6`, level with each other; local `master` is at `b681185`.** The seven are
-`b868e5c` (state) plus the six Intune plan and review commits `6aef9e3..b681185`. No code is
-among them. Pushing is the owner's call.
+**UNPUSHED WORK, all docs-only. Measured 2026-08-14: `origin` and `github` are both at
+`b4029c6`, level with each other. Everything on local `master` after `b4029c6` is unpushed** -
+`b868e5c` (state) plus the Intune plan and review commits that follow it. No code is among them.
+Pushing is the owner's call.
+
+*No commit count is recorded here on purpose.* An exact count in a committed file is stale the
+moment the next commit lands, including the one that writes the count - this line previously said
+"seven" and was wrong five commits later. The remote SHA plus "everything after it" is the same
+fact and cannot rot. Re-derive the count with `git rev-list --count b4029c6..HEAD` if a number is
+needed.
+
 The 2026-08-13 line that said nothing was unpushed was true when written; the owner's push that
 day did clear the twelve-then-five backlog, and that older count should still not be re-derived.
 
