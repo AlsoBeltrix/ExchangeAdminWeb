@@ -6,6 +6,25 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **TOKEN BUDGET: PLAN DRAFTED, D1 RULED, AWAITING OWNER GO. NO CODE.**
+  `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
+  token-budget-friendly implementation approach for September, with usage tracking built in.
+  Canonical detail is in the plan; do not duplicate it here.
+  **D1 RULED (owner delegated the choice to the agent):** Opus 5 plans and adjudicates,
+  **Sonnet 5 at `high`/`xhigh` implements**, codex/GPT-5.5 reviews, Gemini reserved as an
+  owner-dispatched third harness. Owner's principle - *"minimum model for reliable work, complex
+  model for checking"* - matched the measured cost shape (implementation 98% of tokens, review
+  2%) and was adopted.
+  **D2 OPEN and it is about THIS FILE:** how far to reduce `state.md`, currently 138 KB
+  (~51,800 tokens) and roughly 18% of every request in every session. Three options in the plan.
+  **Measured baselines worth not re-deriving** (2026-08-14, this project, August):
+  7,876 requests, 394K mean context, ~$2,311 at Opus rates; cost split cache-read 65% /
+  cache-write 29% / output 6% / input 0.3%. A cache re-prime at 280K context costs ~$1.75 and
+  the TTL is 5 minutes, so idle gaps are billed. Reviews were 1.9% of input tokens.
+  **Haiku 4.5 is permanently disqualified** - 200K context, 72.3% of requests exceed it. Do not
+  re-propose. Sonnet 4.6 and every older Opus are strictly dominated on price and capability.
+  **NEXT: a D2 ruling, then a go to implement S1.**
+
 - **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
   `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's
   own last content revision; commits after it touch this file and the review records, not the
