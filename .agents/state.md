@@ -383,7 +383,7 @@ conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
 `docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
 the last two independent of everything else and of each other.
 
-**FOUR plans are written, reviewed, and waiting on an owner go. No code has been
+**FIVE plans are written, reviewed, and waiting on an owner go. No code has been
 written for any of them.**
 
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
@@ -397,8 +397,12 @@ written for any of them.**
 4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go. D1, D2 and D3 all
    ruled; no owner decision is outstanding.** New module, independent of 1-3. Start at S0.
    See the entry in `## Now`.
+5. `docs/TokenBudget-Plan.md` - **Draft, awaiting a go. D1 ruled, D2 withdrawn; no owner
+   decision is outstanding.** Not a feature: how the other four get implemented, plus
+   `tools/Get-TokenUsage.ps1` and a tracked baseline. Independent of 1-4 and worth landing
+   first, since it changes what the others cost. Start at S1. See the entry in `## Now`.
 
-All four are docs-only so far.
+All five are docs-only so far.
 
 *Push status is deliberately not recorded here.* Git owns it and sessions check it live
 (`git ls-remote origin master` against `git rev-parse HEAD`) - `.agents/playbooks/drift.md`,
