@@ -3,7 +3,7 @@
 **Severity**: MEDIUM - `state.md` is the repo's designated current-state entry point, so a wrong anchor there misdirects the next cold session rather than one reader.
 **Status**: Verified
 **Branch**: - (default-branch mode)
-**Commit**: `<not yet committed - filled from git after the fix lands>`
+**Commit**: `cd4959e`
 
 ## Evidence
 

@@ -44,9 +44,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the module sets. A ticked box on a deployment with user notifications off must say so on
   screen and in the audit, or the control is decorative - the unreachable-capability shape from
   the other direction.
-  **S4, S5 and S6, the fourth policy alias and the `Device.ReadWrite.All` prerequisite all
-  postdate the codex review. Those parts are UNREVIEWED** - the review covered `b868e5c..6aef9e3`
-  and both rulings landed after it.
+  **A SECOND openreview pass covered the post-ruling half** (`codex`, same pair, over
+  `6aef9e3..236b91b`): `acceptable_with_changes`, two findings, **both durable-record hygiene and
+  neither touching the plan's substance** - `idm-4` (this file anchored the work five commits
+  stale and carried a commit count that rots on every commit) and `idm-5` (the idm-1..3 records
+  kept placeholder SHAs). Both fixed. **No part of this plan is unreviewed now**, and the
+  destructive half the second pass was commissioned to scrutinise came back sound.
   **D3 IS RULED (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
   *"yes, add it as an option."* New slice S5, own granular permission
   `IntuneDevicesEntraDelete`, checkbox beside each Intune action plus a standalone action,

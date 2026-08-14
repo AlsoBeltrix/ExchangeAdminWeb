@@ -5,8 +5,11 @@ decision is outstanding.
 Reviewed: openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback)
 over `b868e5c..6aef9e3`: `acceptable_with_changes`, three findings, all admitted and folded in
 (`.agents/review/findings/idm-{1,2,3}.md`), plus one material change adopted outside intake.
-**The D2 and D3 rulings landed after that review and added or widened S4, S5 and S6. Those three
-slices, the fourth policy alias, and the `Device.ReadWrite.All` prerequisite are unreviewed.**
+Re-reviewed after the D2 and D3 rulings: openreview `codex` (same pair) over `6aef9e3..236b91b`,
+covering S4, S5, S6, the fourth policy alias and the `Device.ReadWrite.All` prerequisite:
+`acceptable_with_changes`, two findings, **both durable-record hygiene, neither touching the
+plan's substance** (`.agents/review/findings/idm-{4,5}.md`). No part of this plan is now
+unreviewed.
 
 Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
 device details, and deleting"*.
