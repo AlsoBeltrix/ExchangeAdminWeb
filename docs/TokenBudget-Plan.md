@@ -266,12 +266,25 @@ Measured today: the two codex review dispatches were **1.9% of the session's inp
 7.3% of its output**. Reviews are one-shot against a large context; implementation is hundreds
 of turns each re-carrying a large context. Two dispatches against 297 turns.
 
-**Adversarial review is the cheapest quality lever available and must not be cut for budget
-reasons.** Five real defects surfaced today for roughly 2% of the tokens. The saving lives
-almost entirely in the implementation phase; taking it out of review would trade most of the
-value for almost none of the cost.
+**Scope that claim carefully - and an earlier revision of this plan did not.** The 1.9% figure is
+**tokens inside the Claude Code harness**. The reviewer runs on a different harness billing
+through the gateway, so *none* of its spend appears in that measurement. The month-scale
+reconciliation above found ~$915 of budget use invisible to Claude Code transcripts, and
+reviewer dispatches are the leading candidate for the bulk of it.
 
-The only review-related cost worth managing is the idle-gap re-prime named in L2.
+**So "review is 2% of cost" may be wrong by an order of magnitude in dollars, and is unproven
+either way.** What survives is narrower and still decisive: review consumes a negligible share of
+the *implementation* budget, so **moving implementation to a cheaper model captures the saving
+without touching review** - the two are independently billed. Five real defects surfaced today
+from two dispatches; adversarial review remains the highest-value-per-token lever here.
+
+**What is genuinely unmeasured, and should be:** the per-dispatch cost of a review. The codex
+event stream reports usage (today: 1.61M input, 23.9K output across two dispatches), so the
+figures exist - what is missing is the gateway's rate table. Until someone supplies it, do not
+assert that review is cheap in dollars; assert only that it is cheap in Claude-side tokens, which
+is what was measured.
+
+The other review-related cost, and this one *is* Claude-side: the idle-gap re-prime named in L2.
 
 ## Deliverable 2: the measurement tool
 
@@ -317,17 +330,23 @@ Design points that are not obvious and must not be re-litigated during implement
   written into a repository file becomes durable truth - this is the `idm-2` failure class from
   today's review, where an unverified inference was stated as fact. The tool prints the rate
   table it used and the words "estimated, first-party rates" alongside any total.
-- **`-Calibration <factor>`, and it is not optional decoration.** Measured 2026-08-14: over one
-  observed interval this plan's own model predicted **$88.87** against a reported budget movement
-  of **$49.72** - roughly **1.8x too high**. Partner pricing is the likely cause, with some
-  contribution from transcript-flush lag at the measurement boundary. One noisy sample is not a
-  calibration constant, which is exactly why the factor is a parameter with a default of `1.0`
-  rather than a number baked into the rate table. Record observed budget movements against tool
-  runs in `.agents/token-log.md`; when several intervals agree, set the factor and note the
-  evidence beside it.
-  **The direction matters more than the magnitude: real spend is LOWER than this plan says.**
-  Every dollar figure in this document is therefore a ceiling, and the August total in particular
-  should not be requoted as fact.
+- **`-Calibration <factor>`, defaulting to `1.0`.** Set it only from agreeing multi-interval
+  evidence recorded in `.agents/token-log.md`, never from a single observation - see the
+  correction below for why that rule exists.
+- **The tool measures Claude Code transcripts and nothing else. This is its most important
+  limitation and it must be printed with every total.** Measured 2026-08-14 across **all**
+  project transcript directories for August: 14,448 requests, **$3,901 at list rates**, against
+  **$4,816.26** reported budget use. The gap is **~$915, about 19% of the month, and it is
+  invisible to this tool** - the reviewer harnesses (codex/GPT-5.5, any Gemini) bill through the
+  gateway and write no Claude Code transcript. A run of this tool is a floor on spend, not a
+  measure of it.
+  **Correction, recorded because the mistake is instructive.** An earlier revision of this plan
+  concluded from **one** interval that the model ran 1.8x *high* and wrote that into the design.
+  The month-scale sample says the opposite - it runs ~19% *low*. The single interval was almost
+  certainly transcript-flush lag at the measurement boundary: the "before" snapshot missed turns
+  not yet written to disk, inflating the computed delta. **n=1 was never a calibration**, and the
+  plan said so in the same breath as acting on it anyway. The defaulting-to-`1.0` rule above is
+  what survives; the 1.8x figure is withdrawn.
 - **ASCII only.** CI fails on non-ASCII in any tracked `.ps1`/`.psm1`.
 - **Reads outside the repository.** The transcript root is outside the working tree and contains
   full conversation transcripts. The tool reads token counts only and must never print, copy or
@@ -403,8 +422,12 @@ in this plan's slice list; L1 points at it and that is the whole integration.
   against a model already measured to be ~1.8x high rather than against reality. Tokens are
   observed; cost is inferred, and the inference is what needs calibrating.
 - AC1b Over at least three intervals where a reported budget movement is known, the tool's
-  calibrated estimate tracks the movement. Until that holds, `-Calibration` stays at `1.0` and
-  every printed cost is read as a ceiling.
+  calibrated estimate tracks the movement. Until that holds, `-Calibration` stays at `1.0`.
+  Intervals shorter than a day are not admissible evidence: transcript-flush lag at the boundary
+  produced the withdrawn 1.8x figure.
+- AC1c Every total states that it covers Claude Code transcripts only and excludes reviewer-
+  harness spend, which bills through the gateway and writes no transcript. A printed total that
+  reads as whole-budget spend fails this criterion.
 - AC2 The same run against a fixture tree produces exactly the fixture's expected numbers.
 - AC3 Every printed cost is accompanied by the rate table used and an explicit estimate
   qualifier. No bare dollar figure reaches stdout or any written file.
