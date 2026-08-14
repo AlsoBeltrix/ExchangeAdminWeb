@@ -67,9 +67,13 @@ settles this - unlike `docs/GroupMemberNesting-Plan.md` D6, where one did. Optio
 
 Cost of 2 or 3: `EmailService` has no device-shaped notification. The nearest existing
 methods are mailbox/calendar/group specific (`SendUserNotificationAsync:169`,
-`SendGroupMembershipUserNotificationAsync`). A new one is a **shared infrastructure
-change**, which bumps the base app version - so option 2 or 3 turns this from "new module,
-no base bump" into "new module plus a base app version bump".
+`SendGroupMembershipUserNotificationAsync`), so a new one is needed.
+
+**An earlier revision of this plan priced that as a base app version bump and used it as an
+argument for option 1. That argument is withdrawn** - S0 already bumps the base version for
+`GraphTokenClient`, so options 2 and 3 add a second shared-file change under the same single
+bump and cost no version consequence at all. D2 is a question about what the affected person
+should be told, and nothing else.
 
 Second-order point for whoever rules it: on a Wipe the email may reach a mailbox the user
 can now only open on another device, and on a lost/stolen device the mail may be readable by
@@ -250,12 +254,20 @@ the confirmation step, exactly as `MfaReset.razor:250-258` does. `pps-1` found a
 re-checked authorization after its confirmation dialog but not protection; both are re-checked
 here.
 
-### T7 - a failed Graph read must not read as "no devices"
+### T7 - a failed Graph call must not read as a benign outcome, on reads or on writes
 
-`GetAsync` collapses failure and empty into null (`GraphTokenClient.cs:45-51`). Use
+**Reads.** `GetAsync` collapses failure and empty into null (`GraphTokenClient.cs:45-51`). Use
 `GetWithStatusAsync` on every read and throw or report on non-success, the fix already made
 in `MfaResetService.cs:54-57`. A 403 from a missing consent must not render as an empty
 device list.
+
+**Writes, and this is why S0 exists.** The shared client's `DeleteAsync`
+(`GraphTokenClient.cs:53-61`) and `PostNoContentAsync` (`:63-77`) both return a bare `bool` and
+discard the status code. Against them, a 403 for missing `PrivilegedOperations.All`, a 404 for a
+device someone already deleted, and a 503 are the same value - so the module could report only
+"it failed". That is not enough for this module specifically: its whole three-permission split
+exists to make a misconfigured app registration visible, and manual check 12 tests exactly that
+case. S0 adds the status-returning pair before any slice needs them.
 
 ## Module descriptor
 
@@ -307,6 +319,29 @@ Each slice is one commit and must build and test green on its own. Slice boundar
 on **compilation order**, not conceptual grouping - `ru-3` in `.agents/state.md` records a plan
 whose first commit would have failed `CS0246` because DI registration preceded the type.
 
+### S0 - status-returning Graph mutation helpers (shared infrastructure)
+
+Two purely additive methods on `Services/GraphTokenClient.cs`, both modelled on the existing
+`PatchWithStatusAsync` (`:104-119`) and returning its shape
+`(bool Ok, HttpStatusCode StatusCode, string? SafeError)`:
+
+- `DeleteWithStatusAsync(string endpoint)`
+- `PostNoContentWithStatusAsync(string endpoint, object? body = null)`
+
+Both reuse the existing `ExtractGraphError` (`:132-154`), so only the Graph `error.code` /
+`error.message` can escape - never a token or a raw body.
+
+`DeleteAsync` and `PostNoContentAsync` stay exactly as they are, with their current callers
+untouched, the same back-compat pairing `PatchAsync` already has over `PatchWithStatusAsync`
+(`:121-125`). Additive is deliberate rather than tidy: `ppsvc-1` in `.agents/review/index.md` is
+this repo's record of a change near this file reaching further than its author expected.
+
+Tests extend `ExchangeAdminWeb.Tests/GraphTokenClientTests.cs` - the one file this module may
+legitimately touch, because the code under test lives there.
+
+**This slice bumps the base app version.** `GraphTokenClient` is shared infrastructure and two
+other modules use it. See Versioning.
+
 ### S1 - models and read-only service
 
 - `Models/IntuneDeviceModels.cs`: `IntuneDevice` (the fields listed above, minus
@@ -347,7 +382,8 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 
 ### S3 - Delete, behind `IntuneDevicesDelete`
 
-- `DeleteDeviceAsync` on the service.
+- `DeleteDeviceAsync` on the service, over S0's `DeleteWithStatusAsync`. It reports 403, 404 and
+  5xx as distinct outcomes carrying the sanitized Graph error - never a bare "failed".
 - Page action: ticket number field adjacent to the button (`MigrationBatchSelection-Plan.md` D1
   and `mbs-1` - a confirm bar far from the acting control reads to the operator as a dead
   button), confirmation step, then in the handler: granular authorization re-check (T6),
@@ -359,7 +395,8 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 
 ### S4 - Retire and Wipe, behind `IntuneDevicesPrivileged`
 
-- `RetireDeviceAsync` and `WipeDeviceAsync` (`PostNoContentAsync`, no body).
+- `RetireDeviceAsync` and `WipeDeviceAsync`, both over S0's `PostNoContentWithStatusAsync`, with
+  the same distinct-outcome reporting as S3.
 - Same gate chain as S3 against the second alias.
 - Wipe requires typing the device name to confirm. Retire uses the ordinary confirm. The
   asymmetry is deliberate: retire is recoverable by re-enrolling, wipe destroys the machine's
@@ -383,9 +420,10 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
 
 ### S6 - affected-user notification (exists only if D2 rules 2 or 3)
 
-New `EmailService` method, its call sites, and a **base app version bump** because
-`EmailService` is shared. Kept as its own slice so that if D2 rules option 1 the module ships
-with no shared-file change at all.
+New `EmailService` method and its call sites. No additional version consequence - S0 has already
+bumped the base app version. Kept as its own slice because it is the only part of the work whose
+existence depends on an unruled decision, so a D2 of option 1 simply deletes a slice rather than
+unpicking edits from the others.
 
 ## Acceptance criteria
 
@@ -419,8 +457,17 @@ with no shared-file change at all.
   completed action report as failed.
 - AC14 The module's own Delinea secret is the only credential used. With
   `GraphDelineaSecretId` unset the module reports unavailable and falls back to nothing.
+- AC15 Delete, retire and wipe report 403, 404 and 5xx as three distinct outcomes carrying the
+  sanitized Graph error. Reverting either S0 helper to its bool-returning equivalent must fail
+  the service tests that distinguish them - if it does not, the distinction was never tested.
 
 ## Test plan
+
+S0 extends `ExchangeAdminWeb.Tests/GraphTokenClientTests.cs`: `DeleteWithStatusAsync` and
+`PostNoContentWithStatusAsync` each over 204, 403, 404 and 500, asserting the status and the
+extracted `SafeError`; a non-JSON error body yields a null `SafeError` rather than echoing the
+body; and the existing `DeleteAsync` / `PostNoContentAsync` tests still pass unchanged, which is
+what proves the addition was additive.
 
 New file `ExchangeAdminWeb.Tests/IntuneDeviceServiceTests.cs` with a slice-local stub handler.
 
@@ -488,6 +535,11 @@ here - that is a property of the API, not of the rollback.
 ## Versioning when this lands
 
 - New module `IntuneDevices` `1.0.0`.
-- Base app version **unchanged**, unless D2 rules option 2 or 3, in which case S6's shared
-  `EmailService` change bumps it. The two rules fire independently; do not let the presence of
-  one bump excuse skipping the other.
+- **Base app version bumps**, because S0 changes `Services/GraphTokenClient.cs`, which is shared
+  infrastructure used by two other modules. Adding a module does not bump the base version; this
+  work does one other thing as well, and that other thing does.
+- The two rules fire independently. A correct base bump for S0 is not evidence about the module
+  version, and vice versa - `.agents/state.md` records the `2.5.1` and Migration `1.6.0` failures,
+  both of which were one rule firing and the other being assumed to have.
+- If D2 rules option 2 or 3, S6 also touches `EmailService`. That is a second shared change under
+  the same single base bump, not a second bump.
