@@ -6,6 +6,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **EVENT LOG CSV TICKET: PLAN DRAFTED, AWAITING OWNER GO. NO CODE.**
+  `docs/EventLogCsvTicket-Plan.md`. Owner request 2026-08-20: *"we need a plan to add
+  ticket info to the .csv exports from the eventlog page"*.
+  Canonical detail is in the plan. Stored audit/trace `ticket` field appended as the
+  ninth CSV column; no ServiceNow lookup, no on-screen table column, no filter.
+  Independent of the queued plans below. Module `AdminEventLog` `1.0.3` -> `1.1.0`,
+  no base app bump. Start at S1 once given a go.
+  **NEXT: owner review of the ACs, then a go to implement.**
+
 - **TOKEN BUDGET: PLAN DRAFTED, D1 RULED, AWAITING OWNER GO. NO CODE.**
   `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
   token-budget-friendly implementation approach for September, with usage tracking built in.
@@ -383,9 +392,11 @@ conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
 `docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
 the last two independent of everything else and of each other.
 
-**FIVE plans are written, reviewed, and waiting on an owner go. No code has been
+**The plans listed below are written and waiting on an owner go. No code has been
 written for any of them.**
 
+0. `docs/EventLogCsvTicket-Plan.md` - **Draft, awaiting go.** Independent of 1-5.
+   Start at S1. See the entry in `## Now`.
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
    S1 and S2 must land before any slice that can target a group.
@@ -402,7 +413,7 @@ written for any of them.**
    `tools/Get-TokenUsage.ps1` and a tracked baseline. Independent of 1-4 and worth landing
    first, since it changes what the others cost. Start at S1. See the entry in `## Now`.
 
-All five are docs-only so far.
+All of the above are docs-only so far.
 
 *Push status is deliberately not recorded here.* Git owns it and sessions check it live
 (`git ls-remote origin master` against `git rev-parse HEAD`) - `.agents/playbooks/drift.md`,
