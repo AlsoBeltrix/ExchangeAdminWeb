@@ -1,7 +1,5 @@
 @page "/admin-event-log"
 @using System.Text.Json
-@using System.Globalization
-@using CsvHelper
 @using Microsoft.AspNetCore.Authorization
 @attribute [Authorize(Policy = "EventLog")]
 @rendermode InteractiveServer
@@ -580,6 +578,7 @@
                 Target = FormatTargetSummary(rawTarget),
                 FullTarget = rawTarget ?? "",
                 Result = TryGetString(root, "result") ?? "",
+                Ticket = TryGetString(root, "ticket") ?? "",
                 Level = "",
                 Message = "",
                 OperationId = TryGetString(root, "operationId") ?? "",
@@ -642,6 +641,7 @@
                 Target = "",
                 FullTarget = "",
                 Result = TryGetString(root, "result") ?? "",
+                Ticket = TryGetString(root, "ticket") ?? "",
                 Level = "",
                 Message = "",
                 OperationId = TryGetString(root, "operationId") ?? "",
@@ -1023,34 +1023,12 @@
 
         if (csvEntries.Count == 0) return;
 
-        using var writer = new System.IO.StringWriter();
-        using var csv = new CsvWriter(writer, CultureInfo.InvariantCulture);
+        var rows = csvEntries.Select(evt => new EventLogCsvRow(
+            evt.Time, evt.Source, evt.User, evt.Ip,
+            evt.Action, evt.Category, evt.FullTarget, evt.Result,
+            evt.Ticket)).ToList();
 
-        csv.WriteField("Time");
-        csv.WriteField("Source");
-        csv.WriteField("User");
-        csv.WriteField("IP");
-        csv.WriteField("Action");
-        csv.WriteField("Category");
-        csv.WriteField("Target");
-        csv.WriteField("Result");
-        await csv.NextRecordAsync();
-
-        foreach (var evt in csvEntries)
-        {
-            csv.WriteField(evt.Time);
-            csv.WriteField(evt.Source);
-            csv.WriteField(evt.User);
-            csv.WriteField(evt.Ip);
-            csv.WriteField(evt.Action);
-            csv.WriteField(evt.Category);
-            csv.WriteField(evt.FullTarget);
-            csv.WriteField(evt.Result);
-            await csv.NextRecordAsync();
-        }
-
-        await csv.FlushAsync();
-        var bytes = System.Text.Encoding.UTF8.GetBytes(writer.ToString());
+        var bytes = System.Text.Encoding.UTF8.GetBytes(EventLogCsvFormatter.Write(rows));
         var base64 = Convert.ToBase64String(bytes);
         var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
         await JS.InvokeVoidAsync("downloadFile", $"event_log_{timestamp}.csv", "text/csv", base64);
@@ -1097,6 +1075,7 @@
         public string Target { get; set; } = "";
         public string FullTarget { get; set; } = "";
         public string Result { get; set; } = "";
+        public string Ticket { get; set; } = "";
         public string Level { get; set; } = "";
         public string Message { get; set; } = "";
         public string OperationId { get; set; } = "";

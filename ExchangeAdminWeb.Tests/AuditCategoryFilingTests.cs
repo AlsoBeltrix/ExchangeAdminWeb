@@ -19,7 +19,7 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 public class AuditCategoryFilingTests
 {
-    private static string FindRepoFile(params string[] relativeSegments)
+    internal static string FindRepoFile(params string[] relativeSegments)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null)
@@ -84,5 +84,40 @@ public class AuditCategoryFilingTests
         Assert.Contains("<option value=\"EmergencyDisable\">", text);
         Assert.Contains("<option value=\"LicensingUpdates\">", text);
         Assert.Contains("<option value=\"Comms10k\">", text);
+    }
+}
+
+/// <summary>
+/// Guards the Event Log CSV export wiring (docs/EventLogCsvTicket-Plan.md AC4/AC7):
+/// DownloadCsv must go through EventLogCsvFormatter (a page keeping its own
+/// WriteField loop would pass the formatter tests while still exporting eight
+/// columns), and both JSONL parsers must copy the stored ticket onto the entry
+/// the formatter reads. Source-text guards because there is no bUnit harness.
+/// </summary>
+public class EventLogCsvWiringTests
+{
+    [Fact]
+    public void AdminEventLog_DownloadCsv_CallsEventLogCsvFormatter()
+    {
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
+
+        var start = text.IndexOf("private async Task DownloadCsv()", StringComparison.Ordinal);
+        Assert.True(start >= 0, "DownloadCsv method not found in AdminEventLog.razor.");
+        var end = text.IndexOf("\n    private ", start + 1, StringComparison.Ordinal);
+        var body = end > start ? text[start..end] : text[start..];
+
+        Assert.Contains("EventLogCsvFormatter.Write", body);
+        Assert.DoesNotContain("csv.WriteField(\"Time\")", body);
+    }
+
+    [Fact]
+    public void ParseAuditLine_and_ParseTraceLine_assign_Ticket()
+    {
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
+
+        var assignments = Regex.Matches(text, @"Ticket = TryGetString\(root, ""ticket""\) \?\? """"");
+        Assert.Equal(2, assignments.Count);
     }
 }
