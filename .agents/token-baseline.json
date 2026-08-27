@@ -1,0 +1,48 @@
+{
+  "schema": "exchangeadminweb.token-usage/1",
+  "generatedAtUtc": "2026-08-27T18:26:56Z",
+  "scope": {
+    "source": "Claude Code JSONL transcripts",
+    "transcriptRoot": "C:\\Users\\mcoelho\\.claude\\projects\\D--source-ExchangeAdminWeb",
+    "machine": "ASHBIAMWEB1",
+    "since": "2026-08-01",
+    "until": "2026-08-31",
+    "excludes": "anything not routed through this root: other machines, reviewer harnesses billing through the gateway, other tools and accounts"
+  },
+  "groupBy": "Total",
+  "rateTable": {
+    "name": "opus-5",
+    "inputPerMUsd": 5.0,
+    "outputPerMUsd": 25.0,
+    "cacheReadPerM": 0.5,
+    "cacheWritePerM": 6.25,
+    "note": "estimated, first-party list rates ('opus-5': input $5/M, output $25/M, cache read $0.5/M, cache write $6.25/M); actual billing goes through a gateway at partner rates"
+  },
+  "skippedMalformedLines": 0,
+  "groups": [
+    {
+      "group": "Total",
+      "requests": 5299,
+      "inputTokens": 690809,
+      "cacheWriteTokens": 61797715,
+      "cacheReadTokens": 2095491090,
+      "outputTokens": 3282412,
+      "meanContext": 407243,
+      "maxContext": 954008,
+      "over200K": 3895,
+      "estimatedCostUsd": 1519.5
+    }
+  ],
+  "totals": {
+    "group": "Total",
+    "requests": 5299,
+    "inputTokens": 690809,
+    "cacheWriteTokens": 61797715,
+    "cacheReadTokens": 2095491090,
+    "outputTokens": 3282412,
+    "meanContext": 407243,
+    "maxContext": 954008,
+    "over200K": 3895,
+    "estimatedCostUsd": 1519.5
+  }
+}
