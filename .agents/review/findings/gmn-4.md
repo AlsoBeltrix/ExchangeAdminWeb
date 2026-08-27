@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - one click can remove a nested group from a DIFFERENT group than the one
 the warning was opened for, erasing D2's required second action.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `6452ce9`
 
 Reviewer-raised (generation pass over `695e73f..3f2ab21`, S3+S4 of
 `docs/GroupMemberNesting-Plan.md`).
@@ -53,4 +53,13 @@ AC5 check on dev still rides the next deploy.
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 3f2ab2191399e07de02e3c71cdb1724423df4e07, base
 695e73f651b32e71037e2706e913be01aff6e755, capability_ok true, verdict findings (this is one of
-two), 2026-08-27 UTC. Verification round pending.
+two), 2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only),
+codex-cli 0.147.0. Round 1 (read-only sandbox) could not create the isolated proof tree and
+honestly returned guard_confirmed false - recorded as a transport failure, not a verdict.
+Round 2 (workspace-write, the playbook's one retry with the worktree capability the
+self-permissioning contract grants): verdict ACCEPTED, guard_confirmed true, capability_ok
+true, reviewed 6452ce9a673b9a61ae9d53e4696d31fc8e1438e3 base
+d2b2a6e53c478dda143b6c97a9ef0029c930e844, no comments, 2026-08-27 UTC. Working tree verified
+untouched after the run.

@@ -5,10 +5,6 @@ change. Resolved work lives in the plan/decision/incident docs, not here — thi
 what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
 ## Now
-
-**Active review loop: see `.agents/review/index.md`** (gmn-4, gmn-5 from the nesting S3+S4
-range review; remove this line when the loop closes).
-
 - **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
@@ -271,8 +267,8 @@ range review; remove this line when the loop closes).
   S5b `8c4042c`, S5c `a014068`; S6 is the commit that set this status. Versions: app `2.9.0`,
   `SelfServiceGroups 1.4.0`, `GroupManagement 2.3.0`. Range reviews (codex gpt-5.6-sol@xhigh,
   per-major-item): S1+S2 clean; S3+S4 raised gmn-4/gmn-5 (both MEDIUM, fixed `6452ce9` /
-  `d2b2a6e`, verification round in flight); S5a-S6 range review pending. The plan's manual
-  checks are NOT run - they need a deployed instance.
+  `d2b2a6e`, both fixes verified - codex round 2, guard confirmed); S5a-S6 range review
+  dispatched. The plan's manual checks are NOT run - they need a deployed instance.
   `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
   Owner report 2026-08-11: *"group self-management module needs to handle nested groups.
   when trying to add a group to a group, nothing resolves."*
@@ -320,8 +316,8 @@ range review; remove this line when the loop closes).
   the owner's response was that it was ceremonial and did not need their focus.** The
   reusable rule: where an existing predicate already answers the question, applying it is
   the work - a fork is only warranted when the options genuinely diverge.
-  **NEXT: the S5a-S6 range review, then the plan's manual checks on the next deploy.** The
-  gmn-4/gmn-5 verification rounds close the active review loop.
+  **NEXT: the S5a-S6 range review verdict, then the plan's manual checks on the next
+  deploy.** The gmn-4/gmn-5 loop is closed (both fixes verified).
 
 - **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER
   GO, NO CODE.** `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,

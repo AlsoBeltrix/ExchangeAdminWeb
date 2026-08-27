@@ -2,9 +2,9 @@
 
 **Severity**: MEDIUM - CI stays green after a refactor that lets a protected group removal
 reach the write, or turns group removal into a one-click action.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `d2b2a6e`
 
 Reviewer-raised (generation pass over `695e73f..3f2ab21`, S3+S4 of
 `docs/GroupMemberNesting-Plan.md`).
@@ -52,4 +52,12 @@ pure-rule unit tests and the plan's manual checks.
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 3f2ab2191399e07de02e3c71cdb1724423df4e07, base
 695e73f651b32e71037e2706e913be01aff6e755, capability_ok true, verdict findings (this is two of
-two), 2026-08-27 UTC. Verification round pending.
+two), 2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only),
+codex-cli 0.147.0. Round 1 (read-only sandbox) returned verdict "invalid" solely because the
+isolated guard proof could not run ("verification must fail closed"; static inspection found
+no adjacent regression) - recorded as a transport failure. Round 2 (workspace-write, the
+playbook's one retry): verdict ACCEPTED, guard_confirmed true, capability_ok true, reviewed
+d2b2a6e53c478dda143b6c97a9ef0029c930e844 base 76e0eb7eaf3a5a4458281752215c11ef54b63142, no
+comments, 2026-08-27 UTC. Working tree verified untouched after the run.
