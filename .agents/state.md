@@ -6,6 +6,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+**Active review loop: see `.agents/review/index.md`** (gmn-4, gmn-5 from the nesting S3+S4
+range review; remove this line when the loop closes).
+
 - **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
