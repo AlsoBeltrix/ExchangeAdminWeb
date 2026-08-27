@@ -718,13 +718,28 @@ public class ProtectedPrincipalService
         if (string.IsNullOrEmpty(targetDn) && !string.IsNullOrEmpty(target.SamAccountName))
         {
             var escaped = EscapeLdapFilter(target.SamAccountName);
-            ps.AddCommand("Get-ADUser")
+            // Get-ADObject, not Get-ADUser: the target may be a GROUP (nesting plan S1), and
+            // Get-ADUser answers a group with zero rows and no error - a silent allow.
+            ps.AddCommand("Get-ADObject")
               .AddParameter("LDAPFilter", $"(sAMAccountName={escaped})")
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            var users = ps.Invoke();
+            var objects = ps.Invoke();
             ps.Commands.Clear();
-            targetDn = users.FirstOrDefault()?.Properties["DistinguishedName"]?.Value?.ToString();
+
+            // The class-agnostic lookup widens what a sAMAccountName can match, so anything
+            // but exactly one result fails the check closed rather than resolving to an
+            // arbitrary object (docs/GroupMemberNesting-Plan.md S1).
+            bool fallbackFailed;
+            (targetDn, fallbackFailed) = SelectFallbackDn(
+                objects.Select(o => o?.Properties["DistinguishedName"]?.Value?.ToString()).ToList());
+            if (fallbackFailed)
+            {
+                _logger.LogWarning(
+                    "sAMAccountName {Sam} resolved to {Count} directory objects during the protected-group check - failing closed",
+                    target.SamAccountName, objects.Count);
+                return (matches, true);
+            }
         }
 
         if (string.IsNullOrEmpty(targetDn))
@@ -742,13 +757,24 @@ public class ProtectedPrincipalService
                     continue;
                 }
 
+                // A protected group must match AS ITSELF, not only through its members:
+                // in-chain ancestry never includes self, so without this a listed group is
+                // freely nestable anywhere (owner 2026-08-11; nesting plan S1).
+                if (IsProtectedGroupItself(targetDn, groupDn))
+                {
+                    matches.Add($"Group:{protectedGroup}");
+                    continue;
+                }
+
                 var targetFilter = EscapeLdapFilter(targetDn);
                 var groupFilter = EscapeLdapFilter(groupDn);
-                ps.AddCommand("Get-ADUser")
+                // Get-ADObject, not Get-ADUser: the in-chain filter already evaluates nested
+                // membership for any object class; only the cmdlet in front of it was wrong.
+                ps.AddCommand("Get-ADObject")
                   .AddParameter("LDAPFilter", $"(&(distinguishedName={targetFilter})(memberOf:1.2.840.113556.1.4.1941:={groupFilter}))")
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
-                var userResult = ps.Invoke();
+                var inChainResult = ps.Invoke();
                 ps.Commands.Clear();
 
                 if (ps.HadErrors)
@@ -758,7 +784,7 @@ public class ProtectedPrincipalService
                     continue;
                 }
 
-                if (userResult.Count > 0)
+                if (inChainResult.Count > 0)
                     matches.Add($"Group:{protectedGroup}");
             }
             catch (Exception ex)
@@ -772,6 +798,28 @@ public class ProtectedPrincipalService
 
         return (matches, expansionHadErrors);
     }
+
+    /// <summary>
+    /// The exactly-one rule for the class-agnostic sAMAccountName fallback in
+    /// CheckTransitiveGroupMembership: zero matches, multiple matches, or a match without a
+    /// readable DN all fail closed instead of resolving to an arbitrary object
+    /// (docs/GroupMemberNesting-Plan.md S1).
+    /// </summary>
+    internal static (string? TargetDn, bool Failed) SelectFallbackDn(IReadOnlyList<string?> candidateDns)
+    {
+        if (candidateDns.Count != 1 || string.IsNullOrWhiteSpace(candidateDns[0]))
+            return (null, true);
+        return (candidateDns[0], false);
+    }
+
+    /// <summary>
+    /// The self-match half of the Groups rule: the target IS the protected group, compared on
+    /// resolved DNs. In-chain ancestry never includes self, so without this a protected group
+    /// is protected as a container of members but not as an object being moved.
+    /// </summary>
+    internal static bool IsProtectedGroupItself(string? targetDn, string groupDn)
+        => !string.IsNullOrWhiteSpace(targetDn) &&
+           string.Equals(targetDn, groupDn, StringComparison.OrdinalIgnoreCase);
 
     private string? ResolveProtectedGroupDn(PowerShell ps, PSCredential credential, string protectedGroup)
     {
