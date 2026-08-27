@@ -9,6 +9,13 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
+- **codex sandbox for guard-proof verifications (observed 2026-08-27):** `-s read-only`
+  denies creating the isolated proof tree, so per-finding verification dispatches honestly
+  return `guard_confirmed: false` (one round even returned "invalid" purely on that
+  fail-closed rule). Dispatch verifications with `-s workspace-write` - it grants the
+  disposable-worktree capability the codereview playbook's self-permissioning contract
+  expects - and check `git status` afterwards; both 2026-08-27 runs left the tree untouched.
+  Generation (defect-hunt) passes stay `-s read-only`.
 - **codex** (`codex-cli 0.147.0`, re-probed 2026-08-14; was recorded as `0.146.0` as of
   2026-08-05, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
