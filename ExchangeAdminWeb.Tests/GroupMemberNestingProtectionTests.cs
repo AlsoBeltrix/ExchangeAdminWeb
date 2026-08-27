@@ -5,7 +5,7 @@ using ExchangeAdminWeb.Services.SelfServiceGroups;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// S1-S4 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
+/// S1 onward of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
 /// must see GROUP targets. Get-ADUser answered a group DN with zero rows and no error, which
 /// the check recorded as "no match" - a silent allow in a fail-closed service.
 ///
@@ -275,6 +275,29 @@ public class GroupMemberNestingProtectionTests
         Assert.Contains("ConfirmGroupRemoval", text, StringComparison.Ordinal);
         // D2's warning text: one-way removal, re-adding needs a ticket.
         Assert.Contains("re-adding it will require an IT Support Desk ticket", text, StringComparison.Ordinal);
+    }
+
+    // ----- S5a: the admin member list reports what a member actually is -----
+
+    [Fact]
+    public void AdminMemberListing_ReadsClassFromMembershipOutput_AndResolvesDetailsByGuid()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
+        var body = text[start..end];
+
+        // The old shape resolved every member with Get-ADUser -Identity <sam> and hardcoded
+        // RecipientType "ADUser", so a nested group rendered as a user with an empty Email.
+        Assert.Contains("GroupMemberClassifier.KindOf(objectClass)", body, StringComparison.Ordinal);
+        Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Identity\", objectGuid)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
+        Assert.Contains("MemberKind = kind", body, StringComparison.Ordinal);
+        Assert.Contains("ObjectGuid = objectGuid", body, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -221,21 +221,35 @@ public class GroupManagementService
 
             foreach (var m in members)
             {
-                var sam = m.Properties["SamAccountName"]?.Value?.ToString() ?? "";
-                ps.AddCommand("Get-ADUser")
-                  .AddParameter("Identity", sam)
-                  .AddParameter("Properties", new[] { "EmailAddress", "DisplayName" })
-                  .AddParameter("Credential", credential)
-                  .AddParameter("ErrorAction", "SilentlyContinue");
-                var userResults = ps.Invoke();
-                ps.Commands.Clear();
+                // Class and immutable id come from the Get-ADGroupMember output already in hand
+                // (nesting plan S5a). The old per-member Get-ADUser round-trip silently fell to a
+                // name fallback for any non-user member, labelling a nested GROUP "ADUser" with an
+                // empty Email - the member list misreported what the member is.
+                var objectClass = m.Properties["ObjectClass"]?.Value?.ToString() ?? "";
+                var objectGuid = m.Properties["ObjectGUID"]?.Value?.ToString() ?? "";
+                var kind = SelfServiceGroups.GroupMemberClassifier.KindOf(objectClass);
 
-                var user = userResults.FirstOrDefault();
+                // Details via a class-agnostic lookup keyed on the immutable objectGUID.
+                PSObject? detail = null;
+                if (!string.IsNullOrEmpty(objectGuid))
+                {
+                    ps.AddCommand("Get-ADObject")
+                      .AddParameter("Identity", objectGuid)
+                      .AddParameter("Properties", new[] { "mail", "DisplayName" })
+                      .AddParameter("Credential", credential)
+                      .AddParameter("ErrorAction", "SilentlyContinue");
+                    detail = ps.Invoke().FirstOrDefault();
+                    ps.Commands.Clear();
+                }
+
                 result.Members.Add(new GroupMemberInfo
                 {
-                    DisplayName = user?.Properties["DisplayName"]?.Value?.ToString() ?? m.Properties["Name"]?.Value?.ToString() ?? "",
-                    Email = user?.Properties["EmailAddress"]?.Value?.ToString() ?? "",
-                    RecipientType = "ADUser"
+                    DisplayName = detail?.Properties["DisplayName"]?.Value?.ToString()
+                        ?? m.Properties["Name"]?.Value?.ToString() ?? "",
+                    Email = detail?.Properties["mail"]?.Value?.ToString() ?? "",
+                    RecipientType = kind == "User" ? "ADUser" : kind,
+                    MemberKind = kind,
+                    ObjectGuid = objectGuid
                 });
             }
 
@@ -422,4 +436,10 @@ public class GroupMemberInfo
     public string DisplayName { get; set; } = "";
     public string Email { get; set; } = "";
     public string RecipientType { get; set; } = "";
+
+    /// <summary>Human-readable member kind ("User" / "Group" / "Computer" / "Other") - nesting plan S5a.</summary>
+    public string MemberKind { get; set; } = "";
+
+    /// <summary>Immutable directory id (objectGUID), the key the remove path uses (nesting plan S5b).</summary>
+    public string ObjectGuid { get; set; } = "";
 }
