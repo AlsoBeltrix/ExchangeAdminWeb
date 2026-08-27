@@ -357,15 +357,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Next
 
-**WORK IS PAUSED UNTIL 2026-09-01. Owner, 2026-08-12: the August AI budget is ~90%
-spent, so no implementation happens this month and the plans must be ready to start
-cold on 1 September.** Treat that date as the restart, not a deadline. A session opening
-before then should answer questions and change nothing.
-
-**One exception has already been taken, by the owner, 2026-08-13: the Migration size-check
-fix in `## Now`.** The pause governs the queued PLANS listed below; a direct owner instruction to
-fix a live defect overrides it. The pause is not a reason to refuse owner-directed work, and
-it is not authorization to start the queued plans early either.
+**THE PAUSE IS LIFTED. Owner, 2026-08-27: the token budget was reset early, so the
+2026-09-01 restart date no longer applies. The queued plans below start on a normal
+per-plan owner go, as ever.** (History: work was paused 2026-08-12 because the August
+AI budget was ~90% spent. Two owner-directed exceptions were taken during the pause:
+the Migration size-check fix, 2026-08-13, and the Event Log CSV Ticket implementation,
+2026-08-27, both in `## Now`.)
 
 **What "ready to go" means here, and all of it is FREE of AI budget** - four items, all
 owner-side, none of them needing an agent:
@@ -385,7 +382,7 @@ owner-side, none of them needing an agent:
    build. Keep the four scopes distinct. The fourth is a directory scope, wider than the other
    three, and is the one to weigh before consenting.
 
-With those four done, all four plans are cold-startable on 1 September with no
+With those four done, all four plans are cold-startable at any time with no
 conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
 `docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1),
 `docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
