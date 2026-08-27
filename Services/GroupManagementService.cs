@@ -227,9 +227,12 @@ public class GroupManagementService
                 // empty Email - the member list misreported what the member is.
                 var objectClass = m.Properties["ObjectClass"]?.Value?.ToString() ?? "";
                 var objectGuid = m.Properties["ObjectGUID"]?.Value?.ToString() ?? "";
+                var memberDn = m.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
                 var kind = SelfServiceGroups.GroupMemberClassifier.KindOf(objectClass);
 
-                // Details via a class-agnostic lookup keyed on the immutable objectGUID.
+                // Details via a class-agnostic lookup keyed on the immutable objectGUID, routed
+                // to the member's own domain (gmn-8) - a foreign-domain member's partition does
+                // not exist on the local DCs.
                 PSObject? detail = null;
                 if (!string.IsNullOrEmpty(objectGuid))
                 {
@@ -238,6 +241,9 @@ public class GroupManagementService
                       .AddParameter("Properties", new[] { "mail", "DisplayName" })
                       .AddParameter("Credential", credential)
                       .AddParameter("ErrorAction", "SilentlyContinue");
+                    var server = ServerFromDn(memberDn);
+                    if (server is not null)
+                        ps.AddParameter("Server", server);
                     detail = ps.Invoke().FirstOrDefault();
                     ps.Commands.Clear();
                 }
@@ -249,7 +255,8 @@ public class GroupManagementService
                     Email = detail?.Properties["mail"]?.Value?.ToString() ?? "",
                     RecipientType = kind == "User" ? "ADUser" : kind,
                     MemberKind = kind,
-                    ObjectGuid = objectGuid
+                    ObjectGuid = objectGuid,
+                    DistinguishedName = memberDn
                 });
             }
 
@@ -398,7 +405,10 @@ public class GroupManagementService
     /// S5b). When present the member resolves by GUID - the value cannot drift between the list
     /// render and the write, and it is the only way a listed GROUP (whose Email is empty) can be
     /// removed. Absent, the typed-identity path applies.</param>
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null)
+    /// <param name="memberDnHint">The listed member's DN, when known (gmn-8): the GUID stays
+    /// the identity key, the DN only routes the lookup to the owning domain's server - a
+    /// foreign-domain member's partition does not exist on the local domain's DCs.</param>
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null, string? memberDnHint = null)
     {
         // String pre-gate as before (secondary-alias bypass for USER members; pinned by tests).
         // Vacuous when the label is empty or names no user - the resolved-principal gate below
@@ -415,7 +425,7 @@ public class GroupManagementService
         try
         {
             resolvedMember = await ThrottledAdAsync(async () => await Task.Run(
-                () => ResolveMemberForWrite(creds.Value, member, memberDn: null, memberObjectGuid)));
+                () => ResolveMemberForWrite(creds.Value, member, memberDn: memberDnHint, memberObjectGuid)));
         }
         catch (Exception ex)
         {
@@ -516,6 +526,28 @@ public class GroupManagementService
     }
 
     /// <summary>
+    /// Derives the owning domain's DNS name from a distinguished name's DC components
+    /// (gmn-8): the picker's suggestions are deliberately forest-wide, but Get-ADObject binds
+    /// to the local domain by default, where a foreign object's partition does not exist -
+    /// selecting a WINROOT group on an ANALOG-hosted app failed at resolution. Pure so the
+    /// routing rule is unit-testable. Null when the DN carries no DC components (caller then
+    /// omits -Server and keeps today's local binding). Splits on unescaped commas only, so an
+    /// escaped comma inside a CN cannot smuggle a fake DC segment.
+    /// </summary>
+    internal static string? ServerFromDn(string? dn)
+    {
+        if (string.IsNullOrWhiteSpace(dn))
+            return null;
+        var labels = System.Text.RegularExpressions.Regex.Split(dn, @"(?<!\\),")
+            .Select(p => p.Trim())
+            .Where(p => p.StartsWith("DC=", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p[3..])
+            .Where(p => p.Length > 0)
+            .ToArray();
+        return labels.Length == 0 ? null : string.Join('.', labels);
+    }
+
+    /// <summary>
     /// Class-agnostic exactly-once member resolution for the write paths (S5b). Precedence:
     /// objectGUID (immutable, from the member list) over picker DN over the typed identity via a
     /// bound RFC 4515-escaped -LDAPFilter (replacing the interpolated -Filter strings this
@@ -553,6 +585,11 @@ public class GroupManagementService
               .AddParameter("Properties", props)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            // gmn-8: bind the lookup to the object's own domain, derived from the DN in hand
+            // (the picker's selected DN, or the member list's DN hint alongside the GUID).
+            var server = ServerFromDn(memberDn);
+            if (server is not null)
+                ps.AddParameter("Server", server);
             obj = ps.Invoke().FirstOrDefault();
             ps.Commands.Clear();
             if (obj is null)
@@ -738,4 +775,7 @@ public class GroupMemberInfo
 
     /// <summary>Immutable directory id (objectGUID), the key the remove path uses (nesting plan S5b).</summary>
     public string ObjectGuid { get; set; } = "";
+
+    /// <summary>Distinguished name - routes lookups to the member's own domain (gmn-8).</summary>
+    public string DistinguishedName { get; set; } = "";
 }

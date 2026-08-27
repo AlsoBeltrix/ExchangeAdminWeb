@@ -384,6 +384,57 @@ public class GroupMemberNestingProtectionTests
         Assert.Contains("\\2a", filter, StringComparison.Ordinal);
     }
 
+    // ----- gmn-8: forest-wide selections route to the owning domain -----
+
+    [Theory]
+    [InlineData("CN=Ops,OU=Groups,DC=winroot,DC=analog,DC=com", "winroot.analog.com")]
+    [InlineData("CN=Ops,DC=analog,DC=com", "analog.com")]
+    [InlineData("cn=x,dc=sub,dc=example,dc=org", "sub.example.org")]
+    public void ServerFromDn_DerivesTheOwningDomain(string dn, string expected)
+    {
+        Assert.Equal(expected, GroupManagementService.ServerFromDn(dn));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("CN=NoDomainHere")]
+    public void ServerFromDn_ReturnsNull_WithoutDcComponents(string? dn)
+    {
+        Assert.Null(GroupManagementService.ServerFromDn(dn));
+    }
+
+    [Fact]
+    public void ServerFromDn_IgnoresEscapedCommas_InsideAName()
+    {
+        Assert.Equal("analog.com",
+            GroupManagementService.ServerFromDn("CN=Ops\\, Team,OU=G,DC=analog,DC=com"));
+    }
+
+    [Fact]
+    public void ImmutableKeyLookups_BindToTheOwningDomainServer()
+    {
+        var text = AdminServiceText();
+
+        // The write-path resolver derives -Server from the DN it holds (picker DN or the DN
+        // hint carried beside the removal GUID)...
+        var rStart = text.IndexOf("internal virtual ResolvedMember ResolveMemberForWrite(", StringComparison.Ordinal);
+        Assert.True(rStart >= 0, "ResolveMemberForWrite not found - tripwire is stale.");
+        var rEnd = text.IndexOf("private async Task<ProtectionGate> CheckResolvedMemberAsync", rStart, StringComparison.Ordinal);
+        Assert.True(rEnd > rStart, "Could not bound ResolveMemberForWrite - update the tripwire.");
+        var resolver = text[rStart..rEnd];
+        Assert.Contains("ServerFromDn(memberDn)", resolver, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Server\", server)", resolver, StringComparison.Ordinal);
+
+        // ...and the member-list detail lookup routes by each member's own DN.
+        var lStart = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var lEnd = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", lStart, StringComparison.Ordinal);
+        Assert.True(lStart >= 0 && lEnd > lStart, "Could not bound GetMembersAsync - update the tripwire.");
+        var listing = text[lStart..lEnd];
+        Assert.Contains("ServerFromDn(memberDn)", listing, StringComparison.Ordinal);
+        Assert.Contains("DistinguishedName = memberDn", listing, StringComparison.Ordinal);
+    }
+
     private static string AdminServiceText() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
         "Services", "GroupManagementService.cs"));
 
@@ -435,7 +486,7 @@ public class GroupMemberNestingProtectionTests
         Assert.True(end > start, "Could not bound RemoveMemberAsync - update the tripwire.");
         var body = text[start..end];
 
-        var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn: null, memberObjectGuid)", StringComparison.Ordinal);
+        var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn: memberDnHint, memberObjectGuid)", StringComparison.Ordinal);
         var iGate = body.IndexOf("CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser)", StringComparison.Ordinal);
         var iDenial = body.IndexOf("return resolvedGate.Denial;", StringComparison.Ordinal);
         var iWrite = body.IndexOf("AddCommand(\"Remove-ADGroupMember\")", StringComparison.Ordinal);
@@ -461,7 +512,7 @@ public class GroupMemberNestingProtectionTests
 
         // The Remove button used to pass member.Email - the empty string for every group
         // (S5a's mislabelled listing) and a driftable identity for users.
-        Assert.Contains("RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid)", text, StringComparison.Ordinal);
+        Assert.Contains("RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid, listed.DistinguishedName)", text, StringComparison.Ordinal);
         Assert.DoesNotContain("RemoveMember(member.Email)", text, StringComparison.Ordinal);
     }
 

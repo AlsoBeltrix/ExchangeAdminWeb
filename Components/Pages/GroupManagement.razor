@@ -380,7 +380,7 @@
             // Protected-principal enforcement lives in GroupManagementService.RemoveMemberAsync
             // (CheckProtectedAsync plus the unconditional resolved-principal gate, gmn-6); see
             // AddMember. The single audited path below records every denial.
-            opResult = await GroupService.RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid);
+            opResult = await GroupService.RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid, listed.DistinguishedName);
 
             var removeExtra = new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid };
             // See AddMember: a serviced override succeeds, so the note must travel in extra.
