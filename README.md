@@ -93,6 +93,7 @@ A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
 - Browse audit events by date (one file per rotation period).
 - Filter by category, user, IP address, and result (Success/Failed).
 - Displays full event detail in an expandable JSON view.
+- Download CSV includes a `Ticket` column carrying the stored audit/trace ticket field.
 
 ### MFA Reset (`/mfa-reset`)
 

@@ -591,7 +591,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.0.3",
+            Version = "1.1.0",
             MainPermission = new("Access", "EventLog", FailClosed: true),
             GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
         },

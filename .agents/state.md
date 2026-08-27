@@ -6,14 +6,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **EVENT LOG CSV TICKET: PLAN DRAFTED, AWAITING OWNER GO. NO CODE.**
-  `docs/EventLogCsvTicket-Plan.md`. Owner request 2026-08-20: *"we need a plan to add
-  ticket info to the .csv exports from the eventlog page"*.
-  Canonical detail is in the plan. Stored audit/trace `ticket` field appended as the
-  ninth CSV column; no ServiceNow lookup, no on-screen table column, no filter.
-  Independent of the queued plans below. Module `AdminEventLog` `1.0.3` -> `1.1.0`,
-  no base app bump. Start at S1 once given a go.
-  **NEXT: owner review of the ACs, then a go to implement.**
+- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
+  `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
+  audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
+  ServiceNow lookup, no on-screen column, no filter. Module `AdminEventLog`
+  `1.0.3` -> `1.1.0`, no base app bump. Six new tests, mutation-proven; full suite
+  1707/0/3.
+  **NEXT: nothing until a deploy; the plan's four manual checks (section 8) ride it.**
 
 - **TOKEN BUDGET: PLAN DRAFTED, D1 RULED, AWAITING OWNER GO. NO CODE.**
   `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
@@ -395,8 +394,6 @@ the last two independent of everything else and of each other.
 **The plans listed below are written and waiting on an owner go. No code has been
 written for any of them.**
 
-0. `docs/EventLogCsvTicket-Plan.md` - **Draft, awaiting go.** Independent of 1-5.
-   Start at S1. See the entry in `## Now`.
 1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
    Start at S1 (make the protection check see group targets, plus the DN self-match).
    S1 and S2 must land before any slice that can target a group.
@@ -674,7 +671,7 @@ Live backlog only. Items need an approved plan before code unless noted.
    their result sets, with the export offered only when results are present. Needs a plan: five
    modules is five module version bumps, and if the export goes through a shared helper it is a
    base app bump as well. Two things the plan must settle before code -- whether these reuse the
-   Event Log CSV path (see `docs/EventLogCsvTicket-Plan.md`, which is itself unstarted) or each
+   Event Log CSV path (see `docs/EventLogCsvTicket-Plan.md`, implemented 2026-08-27) or each
    module rolls its own, and whether a BitLocker recovery-key export is allowed to contain the
    keys at all. Interacts with item 7: whatever ticket field BitLocker gains should appear in its
    export.

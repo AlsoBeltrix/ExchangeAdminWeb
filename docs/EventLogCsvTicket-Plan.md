@@ -1,9 +1,10 @@
 # Event Log CSV ticket column
 
-Status: Draft - awaiting owner go to implement. No owner decision is outstanding; the
-scope is the stored audit `ticket` field, not a ServiceNow lookup.
+Status: Implemented 2026-08-27 (owner go the same day). S1 `d54b33f`; S2 is the commit
+that set this status. NOT DEPLOYED, and the four manual checks in section 8 have not
+been run - they need a deployed instance and ride the next deploy.
 Owner: Michael
-Last verified against code: `4bef54d` / 2026-08-20
+Last verified against code: `d54b33f` / 2026-08-27
 Module: `AdminEventLog` `1.0.3` -> `1.1.0` (module-scoped; no base app bump)
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
@@ -220,7 +221,17 @@ confirm PASS. Prove the revert actually applied before trusting the result.
 
 ## 9. Traceability check
 
-Empty. Filled when plan iteration ends.
+- AC1, AC2, AC3, AC5: `ExchangeAdminWeb.Tests/EventLogCsvFormatterTests.cs`, the four
+  tests named in section 8.
+- AC4: `EventLogCsvWiringTests.ParseAuditLine_and_ParseTraceLine_assign_Ticket` (source
+  guard); the filtered-set half is unchanged code in `DownloadCsv` plus the manual
+  checks, which have not been run.
+- AC6: `Modules/ModuleCatalog.cs` AdminEventLog `Version = "1.1.0"`; csproj
+  `<VersionPrefix>` untouched (verified at commit time).
+- AC7: `EventLogCsvWiringTests.AdminEventLog_DownloadCsv_CallsEventLogCsvFormatter`.
+- Non-vacuity: all six new tests mutation-proven in two batches (4 then 2 targeted
+  failures, each mutation failing exactly its own test), then restored green. Full
+  suite after S1: 1707 passed / 0 failed / 3 skipped.
 
 ## 10. Review log
 
