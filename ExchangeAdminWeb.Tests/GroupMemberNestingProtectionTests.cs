@@ -1,10 +1,11 @@
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.SelfServiceGroups;
 
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// S1/S2 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
+/// S1-S3 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
 /// must see GROUP targets. Get-ADUser answered a group DN with zero rows and no error, which
 /// the check recorded as "no match" - a silent allow in a fail-closed service.
 ///
@@ -143,5 +144,84 @@ public class GroupMemberNestingProtectionTests
         // cmdlet in front of it decided which member classes the read could see.
         Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
+    }
+
+    // ----- S3 (D1): the add path refuses a GROUP by name, never as a generic miss -----
+
+    [Fact]
+    public void GroupProbeFilter_IsClassBounded_AndMatchesTheThreeIdentifiers()
+    {
+        Assert.Equal(
+            "(&(objectCategory=group)(|(name=Ops Team)(sAMAccountName=Ops Team)(mail=Ops Team)))",
+            AdOwnershipFilter.BuildGroupProbeFilter("Ops Team"));
+    }
+
+    [Fact]
+    public void GroupProbeFilter_EscapesLdapMetacharacters()
+    {
+        var filter = AdOwnershipFilter.BuildGroupProbeFilter("a*(b)\\c");
+
+        Assert.Contains("\\2a", filter, StringComparison.Ordinal);
+        Assert.Contains("\\28", filter, StringComparison.Ordinal);
+        Assert.Contains("\\29", filter, StringComparison.Ordinal);
+        Assert.Contains("\\5c", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("a*(b)", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NotFoundMessage_AddOfKnownGroup_NamesTheScopeRuleAndItsd()
+    {
+        var msg = SelfServiceGroupService.ComposeMemberNotFoundMessage(
+            "Ops Team", MembershipOperation.Add, identityIsGroup: true);
+
+        Assert.Contains("'Ops Team' is a group", msg, StringComparison.Ordinal);
+        Assert.Contains("IT Support Desk", msg, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NotFoundMessage_AddOfUnknownIdentity_KeepsTheExistingMiss()
+    {
+        var msg = SelfServiceGroupService.ComposeMemberNotFoundMessage(
+            "jdoe", MembershipOperation.Add, identityIsGroup: false);
+
+        Assert.Equal("'jdoe' did not match exactly one user. Check the identity and try again.", msg);
+    }
+
+    [Fact]
+    public void NotFoundMessage_RemovePath_IgnoresTheGroupProbe()
+    {
+        // D1 scopes the refusal to ADD; a remove miss keeps the generic message even when the
+        // identity names a group (group REMOVAL arrives in S4 via the list, not the typed box).
+        var msg = SelfServiceGroupService.ComposeMemberNotFoundMessage(
+            "Ops Team", MembershipOperation.Remove, identityIsGroup: true);
+
+        Assert.Equal("'Ops Team' did not match exactly one user. Check the identity and try again.", msg);
+    }
+
+    [Fact]
+    public void ChangeMemberAsync_WiresTheProbe_OnTheAddNotFoundPathOnly()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        var start = text.IndexOf("public async Task<MembershipChangeResult> ChangeMemberAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ChangeMemberAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("var memberDn = member.DistinguishedName;", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound the not-found block - update the tripwire.");
+        var body = text[start..end];
+
+        Assert.Contains("operation == MembershipOperation.Add", body, StringComparison.Ordinal);
+        Assert.Contains("GroupWithIdentityExists(creds.Value, memberIdentity)", body, StringComparison.Ordinal);
+        Assert.Contains("ComposeMemberNotFoundMessage(memberIdentity, operation, identityIsGroup)", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AddPanel_StatesTheUsersOnlyRule_BeforeAnyAttempt()
+    {
+        // AC1 is page copy; no bUnit harness exists, so the tripwire pins the static sentence.
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "SelfServiceGroups.razor"));
+
+        Assert.Contains("Only users can be added here", text, StringComparison.Ordinal);
+        Assert.Contains("IT Support Desk ticket", text, StringComparison.Ordinal);
     }
 }

@@ -387,7 +387,28 @@ public class SelfServiceGroupService
             return MembershipChangeResult.From(PermissionResult.Fail("The member could not be resolved right now. Please try again shortly."));
         }
         if (member is null || string.IsNullOrWhiteSpace(member.DistinguishedName))
-            return MembershipChangeResult.From(PermissionResult.Fail($"'{memberIdentity}' did not match exactly one user. Check the identity and try again."));
+        {
+            // D1 / nesting plan S3: on the ADD path only, one extra class-bounded probe
+            // distinguishes "you typed a GROUP into a users-only control" from a genuine miss, so
+            // the refusal states the scope rule instead of reading as a typo. The probe runs only
+            // after a user-resolution miss, so the happy path costs nothing; a probe failure
+            // degrades to the generic message rather than blocking the refusal.
+            var identityIsGroup = false;
+            if (operation == MembershipOperation.Add)
+            {
+                try
+                {
+                    identityIsGroup = await ThrottledAdAsync(async () => await Task.Run(
+                        () => GroupWithIdentityExists(creds.Value, memberIdentity)));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Group probe after a member-resolution miss failed; returning the generic not-found message");
+                }
+            }
+            return MembershipChangeResult.From(PermissionResult.Fail(
+                ComposeMemberNotFoundMessage(memberIdentity, operation, identityIsGroup)));
+        }
         var memberDn = member.DistinguishedName;
 
         // Protected-principal check on the SAME resolved member (not a second, independent lookup).
@@ -699,6 +720,57 @@ public class SelfServiceGroupService
             // An errored membership read must not be treated as a definitive answer. Throw so the
             // read-back reconciliation reports the change as unconfirmed rather than silently wrong.
             throw new InvalidOperationException("Could not read the group's membership.");
+        }
+        return result.Count > 0;
+    }
+
+    /// <summary>
+    /// Message selection for a member-resolution miss (nesting plan S3). D1 (owner, 2026-08-11):
+    /// self-service NEVER adds a group - a typed group gets a refusal that names the scope rule
+    /// and directs to the IT Support Desk; everything else keeps the existing not-found message.
+    /// The group probe result is only consulted on the ADD path; removal keeps the generic miss.
+    /// Extracted static so the selection is unit-testable without a directory.
+    /// </summary>
+    internal static string ComposeMemberNotFoundMessage(
+        string memberIdentity, MembershipOperation operation, bool identityIsGroup)
+    {
+        if (operation == MembershipOperation.Add && identityIsGroup)
+            return $"'{memberIdentity}' is a group. Only users can be added here - to nest a group " +
+                   "inside this group, open an IT Support Desk ticket.";
+        return $"'{memberIdentity}' did not match exactly one user. Check the identity and try again.";
+    }
+
+    /// <summary>
+    /// Class-bounded existence probe behind the S3 refusal message: does the typed identity name an
+    /// AD GROUP? Read-only, runs in its own runspace under this module's credential, and is only
+    /// reached after a user resolution returned no match. Errors return false - the probe shapes
+    /// the refusal's wording, never the authorization outcome.
+    /// </summary>
+    private static bool GroupWithIdentityExists(
+        (string username, string password, string domain) creds, string memberIdentity)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", AdOwnershipFilter.BuildGroupProbeFilter(memberIdentity.Trim()))
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var result = ps.Invoke();
+        ps.Commands.Clear();
+        if (ps.HadErrors)
+        {
+            ps.Streams.Error.Clear();
+            return false;
         }
         return result.Count > 0;
     }

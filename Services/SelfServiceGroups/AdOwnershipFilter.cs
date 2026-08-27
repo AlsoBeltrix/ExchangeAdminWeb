@@ -96,4 +96,20 @@ public static class AdOwnershipFilter
         // three identifiers a user is likely to type, no wildcards emitted.
         return $"(&(objectCategory=person)(objectClass=user)(|(userPrincipalName={m})(mail={m})(sAMAccountName={m})))";
     }
+
+    /// <summary>
+    /// Class-bounded probe used ONLY on the add-not-found path (nesting plan S3, D1): asks whether
+    /// the typed identity names an AD GROUP, so the refusal can state the users-only scope rule
+    /// instead of reading as a typo. Same escaping contract as
+    /// <see cref="BuildUserByIdentityFilter"/>; exact match, no wildcards emitted.
+    /// </summary>
+    /// <param name="memberIdentity">The user-typed member identity (name / sAMAccountName / email).</param>
+    public static string BuildGroupProbeFilter(string memberIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(memberIdentity))
+            throw new ArgumentException("Member identity is required.", nameof(memberIdentity));
+
+        var m = EscapeLdapFilterValue(memberIdentity);
+        return $"(&(objectCategory=group)(|(name={m})(sAMAccountName={m})(mail={m})))";
+    }
 }
