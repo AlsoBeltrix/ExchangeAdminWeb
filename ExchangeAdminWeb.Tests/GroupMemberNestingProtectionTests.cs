@@ -354,6 +354,110 @@ public class GroupMemberNestingProtectionTests
         Assert.Contains("ObjectGuid = objectGuid", body, StringComparison.Ordinal);
     }
 
+    // ----- S5b (gmn-2): nesting guards in the SERVICE, with the non-inverted cycle probe -----
+
+    [Fact]
+    public void SelfNest_MatchesOnResolvedDns_CaseInsensitive()
+    {
+        Assert.True(GroupManagementService.IsSelfNest("CN=Ops,DC=analog,DC=com", "cn=ops,dc=analog,dc=com"));
+        Assert.False(GroupManagementService.IsSelfNest("CN=Ops,DC=analog,DC=com", "CN=Other,DC=analog,DC=com"));
+    }
+
+    [Fact]
+    public void CycleProbe_SubjectIsTarget_ChainIsCandidate_NeverInverted()
+    {
+        // AC11b: a single-direction assertion passes against the inverted filter (which answers
+        // the benign already-a-member question), so both ends are pinned.
+        var filter = GroupManagementService.BuildCycleProbeFilter("CN=Target,DC=x", "CN=Candidate,DC=x");
+
+        Assert.StartsWith("(&(distinguishedName=CN=Target,DC=x)", filter, StringComparison.Ordinal);
+        Assert.EndsWith("(memberOf:1.2.840.113556.1.4.1941:=CN=Candidate,DC=x))", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CycleProbe_EscapesLdapMetacharacters()
+    {
+        var filter = GroupManagementService.BuildCycleProbeFilter("CN=A(1),DC=x", "CN=B*,DC=x");
+
+        Assert.Contains("\\28", filter, StringComparison.Ordinal);
+        Assert.Contains("\\29", filter, StringComparison.Ordinal);
+        Assert.Contains("\\2a", filter, StringComparison.Ordinal);
+    }
+
+    private static string AdminServiceText() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+        "Services", "GroupManagementService.cs"));
+
+    [Fact]
+    public void AdminAddPath_OrdersResolveGateGuardsWriteReadback()
+    {
+        var text = AdminServiceText();
+        var start = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "AddMemberAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound AddMemberAsync - update the tripwire.");
+        var body = text[start..end];
+
+        var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn, memberObjectGuid: null)", StringComparison.Ordinal);
+        var iGate = body.IndexOf("CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser)", StringComparison.Ordinal);
+        var iDenial = body.IndexOf("return groupGate.Denial;", StringComparison.Ordinal);
+        var iSelf = body.IndexOf("IsSelfNest(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
+        var iCycle = body.IndexOf("BuildCycleProbeFilter(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
+        var iFailClosed = body.IndexOf("The nesting check could not be completed.", StringComparison.Ordinal);
+        var iWrite = body.IndexOf("AddCommand(\"Add-ADGroupMember\")", StringComparison.Ordinal);
+        var iReadback = body.LastIndexOf("IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
+
+        Assert.True(iResolve >= 0, "Class-agnostic resolution missing from AddMemberAsync.");
+        Assert.True(iGate > iResolve, "The resolved-principal gate must follow the resolution (gmn-1).");
+        Assert.True(iDenial > iGate, "A gate denial must RETURN before the write.");
+        Assert.True(iSelf > iDenial, "Self-nest guard missing before the write (gmn-2).");
+        Assert.True(iCycle > iSelf, "Cycle probe missing before the write (gmn-2).");
+        Assert.True(iFailClosed > iCycle, "The cycle probe must fail closed on errors.");
+        Assert.True(iWrite > iFailClosed, "The write must come after every guard.");
+        Assert.True(iReadback > iWrite, "Read-back reconciliation must follow the write.");
+
+        // The interpolated PowerShell -Filter strings are gone from this path.
+        Assert.DoesNotContain("UserPrincipalName -eq '", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("EmailAddress -eq '", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminRemovePath_GuidKeyed_GatesResolved_AndReadsBack()
+    {
+        var text = AdminServiceText();
+        var start = text.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "RemoveMemberAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("// --- Helpers ---", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound RemoveMemberAsync - update the tripwire.");
+        var body = text[start..end];
+
+        var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn: null, memberObjectGuid)", StringComparison.Ordinal);
+        var iGate = body.IndexOf("CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser)", StringComparison.Ordinal);
+        var iDenial = body.IndexOf("return resolvedGate.Denial;", StringComparison.Ordinal);
+        var iWrite = body.IndexOf("AddCommand(\"Remove-ADGroupMember\")", StringComparison.Ordinal);
+        var iReadback = body.LastIndexOf("IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved)", StringComparison.Ordinal);
+
+        Assert.True(iResolve >= 0, "GUID-capable resolution missing from RemoveMemberAsync.");
+        Assert.True(iGate > iResolve, "The resolved-principal gate must follow the resolution (gmn-1).");
+        Assert.True(iDenial > iGate, "A gate denial must RETURN before the write.");
+        Assert.True(iWrite > iDenial, "The write must come after the gate.");
+        Assert.True(iReadback > iWrite, "Read-back reconciliation must follow the write.");
+
+        Assert.DoesNotContain("UserPrincipalName -eq '", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("EmailAddress -eq '", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminPage_PassesTheListedGuid_ToTheRemove()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+
+        // The Remove button used to pass member.Email - the empty string for every group
+        // (S5a's mislabelled listing) and a driftable identity for users.
+        Assert.Contains("RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName, listed.ObjectGuid)", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveMember(member.Email)", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AddPanel_StatesTheUsersOnlyRule_BeforeAnyAttempt()
     {

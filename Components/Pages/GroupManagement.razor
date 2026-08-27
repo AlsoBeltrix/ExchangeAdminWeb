@@ -117,7 +117,7 @@
                                         <td>
                                             @if (canManageOnPrem)
                                             {
-                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member.Email)" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">Remove</button>
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">Remove</button>
                                             }
                                         </td>
                                     </tr>
@@ -299,8 +299,11 @@
         finally { isLoading = false; }
     }
 
-    private async Task RemoveMember(string member)
+    private async Task RemoveMember(GroupMemberInfo listed)
     {
+        // Key the removal on the immutable objectGUID (nesting plan S5b): a listed GROUP has an
+        // empty Email, and a display identity can drift between the list render and the write.
+        var member = string.IsNullOrWhiteSpace(listed.Email) ? listed.DisplayName : listed.Email;
         isLoading = true;
         opResult = null;
         await Task.Yield();
@@ -329,9 +332,9 @@
             // covers non-'@' identities the old page gate missed. The page no longer
             // pre-checks — that duplicated gate produced unaudited failed mutation attempts
             // (2026-06-17 review). The single audited path below records every denial.
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName);
+            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName, listed.ObjectGuid);
 
-            var removeExtra = new Dictionary<string, object?> { ["member"] = member };
+            var removeExtra = new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid };
             // See AddMember: a serviced override succeeds, so the note must travel in extra.
             if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
                 removeExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;

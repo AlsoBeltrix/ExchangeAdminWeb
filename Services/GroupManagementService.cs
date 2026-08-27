@@ -262,8 +262,16 @@ public class GroupManagementService
     /// would silently make every caller that forgot it unable to service - or invite an ambient
     /// lookup, which attributes a bypass to whoever is on the thread. Null refuses.
     /// </param>
-    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null)
+    /// <param name="memberDn">Resolved DN of a picker selection, when one was made (nesting plan
+    /// gmn-3): group search is forest-wide, so two domains can hold same-named groups and only
+    /// the DN distinguishes them. Typed input passes null and goes through the exact class-aware
+    /// resolver with its exactly-one refusal.</param>
+    public async Task<PermissionResult> AddMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberDn = null)
     {
+        // Pre-gate on the typed identity, exactly as before: for USER members this closes the
+        // secondary-alias bypass via the Exchange fallback (pinned by tests). A GROUP identity
+        // resolves NotFound here and passes through - the class-aware gate on the RESOLVED
+        // principal below is what catches it (gmn-1).
         var gate = await CheckProtectedAsync(member, actingUser);
         if (gate.Denial is not null)
             return gate.Denial;
@@ -272,6 +280,37 @@ public class GroupManagementService
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 
+        // Resolve the member ONCE, class-agnostically (nesting plan S5b): user OR group, by the
+        // picker's DN when one is held, else by the typed identity through a bound, escaped LDAP
+        // filter with an exactly-one refusal. This single resolution feeds BOTH the protection
+        // gate and the write target, so the object that clears the gate is provably the object
+        // written. A member that cannot be resolved is REFUSED, never dropped through (gmn-1).
+        ResolvedMember resolvedMember;
+        try
+        {
+            resolvedMember = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveMemberForWrite(creds.Value, member, memberDn, memberObjectGuid: null)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve member {Member} for group add - blocking as a precaution", member);
+            return PermissionResult.Fail("The member could not be resolved right now. Please try again shortly.");
+        }
+        if (resolvedMember.Error is not null)
+            return PermissionResult.Fail(resolvedMember.Error);
+
+        // Group-capable gate on the RESOLVED principal (gmn-1): S1 made the transitive check see
+        // group targets, but that fix sits below the user-only resolver the pre-gate uses, so a
+        // group would never reach it. Users were gated above on the canonical identity; a GROUP
+        // gets its gate here, on the same object the write uses.
+        if (resolvedMember.IsGroup)
+        {
+            var groupGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
+            if (groupGate.Denial is not null)
+                return groupGate.Denial;
+            gate = groupGate;
+        }
+
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -287,34 +326,85 @@ public class GroupManagementService
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
+            var candidateDn = resolvedMember.Principal!.DistinguishedName!;
 
-            ps.AddCommand("Get-ADUser")
-              .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var users = ps.Invoke();
-            ps.Commands.Clear();
+            // Idempotent desired-state (AC11b): an add whose member is already present succeeds
+            // as a no-op - and is therefore never misreported as a cycle by the guard below.
+            if (IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn))
+                return PermissionResult.Ok($"{member} is already a member of {groupIdentity} (on-premises).", gate.ServicedNote);
 
-            if (users.Count == 0)
-                throw new InvalidOperationException($"User '{member}' not found in AD.");
-            if (users.Count > 1)
-                throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
+            if (resolvedMember.IsGroup)
+            {
+                // Nesting guards live HERE, immediately before the write, never in the page
+                // (gmn-2; GroupManagementService.cs:36-38 records the page-only shape this
+                // module already shipped and had bypassed). TARGET = the group being edited,
+                // CANDIDATE = the group being added.
+                if (IsSelfNest(resolvedGroupDn, candidateDn))
+                    return PermissionResult.Fail("Refused: a group cannot be nested inside itself.");
 
+                // Cycle: refuse when TARGET already sits inside CANDIDATE (directly or
+                // transitively) - adding CANDIDATE under TARGET would then close a loop. The
+                // subject of the query is TARGET and the group searched is CANDIDATE; the
+                // mirror question ("is CANDIDATE inside TARGET?") is the benign
+                // already-a-member case handled above, never a cycle (gmn-2).
+                ps.AddCommand("Get-ADGroup")
+                  .AddParameter("LDAPFilter", BuildCycleProbeFilter(resolvedGroupDn, candidateDn))
+                  .AddParameter("Credential", credential)
+                  .AddParameter("ErrorAction", "Stop");
+                var cycle = ps.Invoke();
+                ps.Commands.Clear();
+                if (ps.HadErrors)
+                {
+                    // Fail closed: an unanswerable cycle question is not a "no" (gmn-2).
+                    ps.Streams.Error.Clear();
+                    return PermissionResult.Fail("The nesting check could not be completed. Please try again shortly.");
+                }
+                if (cycle.Count > 0)
+                    return PermissionResult.Fail($"Refused: '{member}' already contains this group (directly or through nesting), so adding it would create a membership cycle.");
+            }
+
+            // The write. AD's own refusals (group scope rules across domains, etc.) surface
+            // verbatim through the read-back failure below rather than being pre-empted by a
+            // local rule that would drift from AD's (AC12).
+            Exception? writeError = null;
             ps.AddCommand("Add-ADGroupMember")
               .AddParameter("Identity", resolvedGroupDn)
-              .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Members", candidateDn)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            try { ps.Invoke(); }
+            catch (Exception ex) { writeError = ex; }
+            finally { ps.Commands.Clear(); ps.Streams.Error.Clear(); }
 
+            // Read-back reconciliation (Known Failure Class #2): success is decided ONLY by the
+            // membership reflecting the change, never by the absence of an exception.
+            bool presentAfter;
+            try { presentAfter = IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Post-add membership read-back failed for {Member}", member);
+                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.");
+            }
+            if (!presentAfter)
+            {
+                return writeError is not null
+                    ? PermissionResult.Fail($"Add failed: {writeError.Message}")
+                    : PermissionResult.Fail("The add did not take effect. Reload the member list and try again.");
+            }
             return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).", gate.ServicedNote);
         }));
     }
 
     /// <param name="actingUser">See <see cref="AddMemberAsync"/>: required, null refuses.</param>
-    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null)
+    /// <param name="memberObjectGuid">Immutable objectGUID from the member list (nesting plan
+    /// S5b). When present the member resolves by GUID - the value cannot drift between the list
+    /// render and the write, and it is the only way a listed GROUP (whose Email is empty) can be
+    /// removed. Absent, the typed-identity path applies.</param>
+    public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null)
     {
+        // String pre-gate as before (secondary-alias bypass for USER members; pinned by tests).
+        // Vacuous when the label is empty or names no user - the resolved-principal gate below
+        // covers those (gmn-1).
         var gate = await CheckProtectedAsync(member, actingUser);
         if (gate.Denial is not null)
             return gate.Denial;
@@ -323,6 +413,30 @@ public class GroupManagementService
         if (creds is null)
             return PermissionResult.Fail("AD credentials unavailable.");
 
+        ResolvedMember resolvedMember;
+        try
+        {
+            resolvedMember = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveMemberForWrite(creds.Value, member, memberDn: null, memberObjectGuid)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve member {Member} for group remove - blocking as a precaution", member);
+            return PermissionResult.Fail("The member could not be resolved right now. Please try again shortly.");
+        }
+        if (resolvedMember.Error is not null)
+            return PermissionResult.Fail(resolvedMember.Error);
+
+        // Gate the RESOLVED principal when the string pre-gate could not have seen it: a GROUP
+        // (gmn-1), or a GUID-keyed member whose label carried no resolvable identity.
+        if (resolvedMember.IsGroup || string.IsNullOrWhiteSpace(member))
+        {
+            var resolvedGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
+            if (resolvedGate.Denial is not null)
+                return resolvedGate.Denial;
+            gate = resolvedGate;
+        }
+
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -338,35 +452,219 @@ public class GroupManagementService
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
+            var memberDnResolved = resolvedMember.Principal!.DistinguishedName!;
 
-            ps.AddCommand("Get-ADUser")
-              .AddParameter("Filter", $"UserPrincipalName -eq '{member.Replace("'", "''")}' -or EmailAddress -eq '{member.Replace("'", "''")}'")
-              .AddParameter("Credential", credential)
-              .AddParameter("ErrorAction", "Stop");
-            var users = ps.Invoke();
-            ps.Commands.Clear();
+            // Idempotent desired-state: removing a member that is not present is a no-op.
+            if (!IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved))
+                return PermissionResult.Ok($"{member} is not a member of {groupIdentity} (on-premises).", gate.ServicedNote);
 
-            if (users.Count == 0)
-                throw new InvalidOperationException($"User '{member}' not found in AD.");
-            if (users.Count > 1)
-                throw new InvalidOperationException($"Ambiguous: '{member}' matches {users.Count} AD users.");
-
+            Exception? writeError = null;
             ps.AddCommand("Remove-ADGroupMember")
               .AddParameter("Identity", resolvedGroupDn)
-              .AddParameter("Members", users[0].Properties["DistinguishedName"]?.Value?.ToString())
+              .AddParameter("Members", memberDnResolved)
               .AddParameter("Credential", credential)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
-            ps.Invoke();
-            ps.Commands.Clear();
+            try { ps.Invoke(); }
+            catch (Exception ex) { writeError = ex; }
+            finally { ps.Commands.Clear(); ps.Streams.Error.Clear(); }
 
+            // Read-back reconciliation (Known Failure Class #2): success is decided ONLY by the
+            // membership reflecting the change, never by the absence of an exception.
+            bool presentAfter;
+            try { presentAfter = IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved); }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Post-remove membership read-back failed for {Member}", member);
+                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.");
+            }
+            if (presentAfter)
+            {
+                return writeError is not null
+                    ? PermissionResult.Fail($"Remove failed: {writeError.Message}")
+                    : PermissionResult.Fail("The remove did not take effect. Reload the member list and try again.");
+            }
             return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).", gate.ServicedNote);
         }));
     }
 
     // --- Helpers ---
 
-    private async Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
+    /// <summary>Outcome of the class-agnostic member resolution for the write paths (S5b).</summary>
+    internal readonly record struct ResolvedMember(ResolvedDirectoryPrincipal? Principal, bool IsGroup, string? Error)
+    {
+        public static ResolvedMember Failed(string error) => new(null, false, error);
+    }
+
+    /// <summary>
+    /// TARGET/CANDIDATE self-nest guard: refuses adding a group to itself, compared on the
+    /// resolved DNs, never on typed names (gmn-2). Pure so the rule is unit-testable.
+    /// </summary>
+    internal static bool IsSelfNest(string targetGroupDn, string candidateDn)
+        => string.Equals(targetGroupDn, candidateDn, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The cycle probe (gmn-2): asks whether TARGET (the group being edited) already sits inside
+    /// CANDIDATE (the group being added), directly or transitively - if so, adding CANDIDATE
+    /// under TARGET closes a loop. The SUBJECT is TARGET and the in-chain group is CANDIDATE;
+    /// the INVERTED filter answers the benign already-a-member question and must never be used
+    /// here. Pure so the direction is unit-testable (plan AC11b asserts both directions).
+    /// </summary>
+    internal static string BuildCycleProbeFilter(string targetGroupDn, string candidateDn)
+    {
+        var targetEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(targetGroupDn);
+        var candidateEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(candidateDn);
+        return $"(&(distinguishedName={targetEsc})(memberOf:1.2.840.113556.1.4.1941:={candidateEsc}))";
+    }
+
+    /// <summary>
+    /// Class-agnostic exactly-once member resolution for the write paths (S5b). Precedence:
+    /// objectGUID (immutable, from the member list) over picker DN over the typed identity via a
+    /// bound RFC 4515-escaped -LDAPFilter (replacing the interpolated -Filter strings this
+    /// module carried). Accepts user OR group; anything else, zero, or multiple matches is an
+    /// error the caller refuses on. For a GROUP the UserPrincipalName is string.Empty, never the
+    /// group's name (nesting plan S1 note: MatchesIdentity skips empty candidates, while a group
+    /// name in a UPN-shaped field could false-match a protected USER entry sharing the name).
+    /// Internal virtual as a TEST SEAM: resolution needs a live directory, and overriding it is
+    /// what lets tests prove a GROUP reaches the protection gate (gmn-1) without one.
+    /// </summary>
+    internal virtual ResolvedMember ResolveMemberForWrite(
+        (string username, string password, string domain) creds,
+        string memberIdentity, string? memberDn, string? memberObjectGuid)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var props = new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
+
+        PSObject? obj;
+        var immutableKey = memberObjectGuid ?? memberDn;
+        if (!string.IsNullOrWhiteSpace(immutableKey))
+        {
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("Identity", immutableKey)
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            obj = ps.Invoke().FirstOrDefault();
+            ps.Commands.Clear();
+            if (obj is null)
+                return ResolvedMember.Failed($"'{memberIdentity}' could not be resolved. Reload the list or select the entry again.");
+        }
+        else
+        {
+            var m = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(memberIdentity.Trim());
+            var filter = "(|" +
+                $"(&(objectCategory=person)(objectClass=user)(|(userPrincipalName={m})(mail={m})(sAMAccountName={m})))" +
+                $"(&(objectCategory=group)(|(name={m})(sAMAccountName={m})(mail={m})))" +
+                ")";
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", filter)
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var objects = ps.Invoke();
+            ps.Commands.Clear();
+            if (objects.Count == 0)
+                return ResolvedMember.Failed($"'{memberIdentity}' was not found in AD as a user or group.");
+            if (objects.Count > 1)
+                return ResolvedMember.Failed($"Ambiguous: '{memberIdentity}' matches {objects.Count} directory objects. Select the entry from the search suggestions.");
+            obj = objects[0];
+        }
+
+        var objectClass = obj.Properties["ObjectClass"]?.Value?.ToString()?.Trim().ToLowerInvariant();
+        var isUser = objectClass == "user";
+        var isGroup = objectClass == "group";
+        if (!isUser && !isGroup)
+            return ResolvedMember.Failed($"'{memberIdentity}' is a {objectClass ?? "directory object"}, not a user or group, and cannot be managed here.");
+        var dn = obj.Properties["DistinguishedName"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(dn))
+            return ResolvedMember.Failed($"'{memberIdentity}' resolved without a readable distinguished name.");
+
+        var principal = new ResolvedDirectoryPrincipal(
+            Source: "GroupManagementService-AD",
+            DisplayName: obj.Properties["DisplayName"]?.Value?.ToString()
+                ?? obj.Properties["Name"]?.Value?.ToString() ?? dn,
+            UserPrincipalName: isUser ? (obj.Properties["UserPrincipalName"]?.Value?.ToString() ?? string.Empty) : string.Empty,
+            SamAccountName: obj.Properties["SamAccountName"]?.Value?.ToString(),
+            PrimarySmtpAddress: obj.Properties["mail"]?.Value?.ToString(),
+            DistinguishedName: dn,
+            ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString(),
+            EntraObjectId: null);
+        return new ResolvedMember(principal, isGroup, null);
+    }
+
+    /// <summary>
+    /// Protection gate on an already-RESOLVED principal (gmn-1): the class-agnostic path for
+    /// members the string pre-gate cannot see - groups, and GUID-keyed members with no
+    /// resolvable label. Same fail-closed and servicer semantics as CheckProtectedAsync; with S1
+    /// in place, CheckAsync's Groups rule sees group targets, including the protected group
+    /// ITSELF via the DN self-match. Refusals direct to the IT Support Desk (D3).
+    /// </summary>
+    private async Task<ProtectionGate> CheckResolvedMemberAsync(ResolvedDirectoryPrincipal principal, ClaimsPrincipal? actingUser)
+    {
+        try
+        {
+            var check = await _protectedPrincipals.CheckAsync(principal);
+            if (check.CheckFailed)
+                return new(PermissionResult.Fail($"Protection check failed: {check.Reason}"), null);
+
+            if (check.IsProtected)
+            {
+                var servicedNote = ProtectedPrincipalServicing.NoteFor(
+                    _servicers, actingUser, ServicerModuleId, check.MatchedRules);
+
+                if (servicedNote is null)
+                    return new(PermissionResult.Fail("This member is a protected principal. Operation not permitted. Contact the IT Support Desk."), null);
+
+                return new(null, servicedNote);
+            }
+
+            return new(null, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Protected principal check failed for resolved member - blocking as precaution");
+            return new(PermissionResult.Fail($"Protection check error: {ex.Message}"), null);
+        }
+    }
+
+    /// <summary>
+    /// Direct-membership read used by the idempotency pre-checks and the post-write read-backs
+    /// (S5b, mirroring the self-service module). Class-agnostic; throws on a read error so an
+    /// unverifiable outcome fails closed rather than reading as success.
+    /// </summary>
+    private static bool IsDirectMemberOf(PowerShell ps, PSCredential credential, string groupDn, string memberDn)
+    {
+        var memberEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
+        var groupEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("LDAPFilter", $"(&(distinguishedName={memberEsc})(memberOf={groupEsc}))")
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var result = ps.Invoke();
+        ps.Commands.Clear();
+        if (ps.HadErrors)
+        {
+            ps.Streams.Error.Clear();
+            throw new InvalidOperationException("Could not read the group's membership.");
+        }
+        return result.Count > 0;
+    }
+
+    // Internal virtual as a TEST SEAM (this project exposes internals to the test assembly):
+    // both write paths fetch credentials before the resolution seam, so without this no test
+    // can drive a member past the credential step to prove the resolved-principal gate fires.
+    internal virtual async Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
     {
         return await _moduleCredentials.GetCredentialsAsync("GroupManagement", purpose);
     }
