@@ -5,6 +5,9 @@ change. Resolved work lives in the plan/decision/incident docs, not here — thi
 what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
 ## Now
+
+**Active review loop: see `.agents/review/index.md`** (gmn-6..gmn-9 from the nesting S5a-S6
+range review; remove this line when the loop closes).
 - **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
