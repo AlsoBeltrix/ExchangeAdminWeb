@@ -661,6 +661,30 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
+5. **Remove the redundant sidebar Home link** (owner, 2026-08-27). `NavMenu.razor:14` (the brand
+   link, `Application:Name` falling back to "Admin Portal") and `NavMenu.razor:23` (the `Home`
+   `NavLink`) both target `href=""` -- two controls, one destination. Owner's call is to drop
+   `Home` and keep the brand link. Shared layout, so this is a base app version bump and no
+   module bump. UI-only; no plan required beyond an owner go, but note the repo has no bUnit
+   harness, so nothing automated will prove the sidebar still renders -- eyeball it on dev.
+   Also check `nav-home` CSS for a rule that becomes dead.
+6. **CSV export for five modules that have none** (owner, 2026-08-27): `DhcpAuthorization`
+   (`ModuleCatalog.cs:467`) exports the current authorized-server list; `NamedLocations` (`:430`),
+   `BlockedSenders` (`:265`), `BitLockerRecovery` (`:484`) and `Migration` status (`:174`) export
+   their result sets, with the export offered only when results are present. Needs a plan: five
+   modules is five module version bumps, and if the export goes through a shared helper it is a
+   base app bump as well. Two things the plan must settle before code -- whether these reuse the
+   Event Log CSV path (see `docs/EventLogCsvTicket-Plan.md`, which is itself unstarted) or each
+   module rolls its own, and whether a BitLocker recovery-key export is allowed to contain the
+   keys at all. Interacts with item 7: whatever ticket field BitLocker gains should appear in its
+   export.
+7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`
+   (`ModuleCatalog.cs:484`) must require a ticket number before the search runs and before any
+   result is displayed. Needs a plan: this is an access/audit control on the most sensitive read
+   in the app, so `docs/ProjectConstitution.md` governs it, and the plan must say whether the
+   ticket is validated for shape only or looked up, and confirm it reaches the audit record.
+   `M365GroupManagement.razor:286` already gates on a ticket number and is the existing pattern
+   to read first. Module version bump; base app bump only if the gate is factored out for reuse.
 
 Landed items 2, 5 and 6 of the previous numbering (single-room Finder PP gap, GM-3 task set, ASCII
 sweep + lint gate) are archived: `docs/history/state-archive.md` (Archived 2026-07-30).
