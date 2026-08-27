@@ -4,11 +4,7 @@ First place to read for current repo state. Keep it short; update it when import
 change. Resolved work lives in the plan/decision/incident docs, not here — this file records only
 what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
-## Now
-
-**Active review loop: see `.agents/review/index.md`** (gmn-6..gmn-9 from the nesting S5a-S6
-range review; remove this line when the loop closes).
-- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
+## Now- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
   ServiceNow lookup, no on-screen column, no filter. Module `AdminEventLog`
@@ -269,9 +265,12 @@ range review; remove this line when the loop closes).
   DEPLOYED.** S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`, S5a `ba3b6c8`,
   S5b `8c4042c`, S5c `a014068`; S6 is the commit that set this status. Versions: app `2.9.0`,
   `SelfServiceGroups 1.4.0`, `GroupManagement 2.3.0`. Range reviews (codex gpt-5.6-sol@xhigh,
-  per-major-item): S1+S2 clean; S3+S4 raised gmn-4/gmn-5 (both MEDIUM, fixed `6452ce9` /
-  `d2b2a6e`, both fixes verified - codex round 2, guard confirmed); S5a-S6 range review
-  dispatched. The plan's manual checks are NOT run - they need a deployed instance.
+  per-major-item): S1+S2 clean; S3+S4 raised gmn-4/gmn-5 (both MEDIUM, fixed and verified);
+  S5a-S6 raised gmn-6..gmn-9 (two HIGH - including a real resolved-USER protection bypass in
+  the new write paths - and two MEDIUM; all four fixed one commit each, `0b4b72e` `b8379dc`
+  `dc503e1` `1c47d64`, all verified by codex with independent guard proofs). Every review
+  loop on this stream is CLOSED. The plan's manual checks are NOT run - they need a deployed
+  instance.
   `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
   Owner report 2026-08-11: *"group self-management module needs to handle nested groups.
   when trying to add a group to a group, nothing resolves."*
@@ -319,8 +318,9 @@ range review; remove this line when the loop closes).
   the owner's response was that it was ceremonial and did not need their focus.** The
   reusable rule: where an existing predicate already answers the question, applying it is
   the work - a fork is only warranted when the options genuinely diverge.
-  **NEXT: the S5a-S6 range review verdict, then the plan's manual checks on the next
-  deploy.** The gmn-4/gmn-5 loop is closed (both fixes verified).
+  **NEXT: the plan's manual checks ride the next deploy** (real nested groups, protected-
+  group refusals, the cross-domain picker case). All review loops closed - gmn-4 through
+  gmn-9 fixed and verified.
 
 - **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER
   GO, NO CODE.** `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,

@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - the cross-domain case gmn-3 was built for fails closed at
 resolution: a WINROOT selection from the forest-wide picker cannot be written, and a
 foreign-domain listed member cannot be removed by GUID.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `dc503e1`
 
 Reviewer-raised (generation pass over `3f2ab21..45b95e9`).
 
@@ -58,4 +58,10 @@ Cross-domain writes may still hit AD group-scope rules; those surface verbatim b
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 45b95e901189addc4e60df403f019362b8089619, base
 3f2ab2191399e07de02e3c71cdb1724423df4e07, capability_ok true, verdict findings (3 of 4),
-2026-08-27 UTC. Verification round pending.
+2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only),
+workspace-write sandbox per machines.md. Verdict ACCEPTED, guard_confirmed true,
+capability_ok true, reviewed dc503e1eb7372d49dacd551d298c9ccd59eb6351 base
+b8379dc2337b8d5d48683926855dc3b2f1d0e7d5, no comments, 2026-08-27 UTC. Working tree verified
+untouched after the run.

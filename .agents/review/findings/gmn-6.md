@@ -3,9 +3,9 @@
 **Severity**: HIGH - a protected user can be written (removed or added) when supplied by
 GUID/DN with a label the string pre-gate cannot resolve; the gate this stream built for
 groups was conditional and skipped exactly the class the pre-gate already misses.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `0b4b72e`
 
 Reviewer-raised (generation pass over `3f2ab21..45b95e9`, S5a-S6 of
 `docs/GroupMemberNesting-Plan.md`).
@@ -58,5 +58,11 @@ bypass); the resolved gate is now the authoritative one either way.
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 45b95e901189addc4e60df403f019362b8089619, base
 3f2ab2191399e07de02e3c71cdb1724423df4e07, capability_ok true, verdict findings (1 of 4),
-2026-08-27 UTC. Verification round pending (T2: HIGH routes frontier; owner goal-directive
-named codex/gpt-5.6-sol@xhigh for this stream's reviews - recorded as fallback accepted).
+2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh (inline, session-only), routed per T2
+(HIGH -> frontier; fallback accepted: owner goal-directive 2026-08-27 named this pair for the
+stream), workspace-write sandbox per machines.md. Verdict ACCEPTED, guard_confirmed true
+(independent revert-FAIL/restore-PASS in an isolated copy), capability_ok true, reviewed
+0b4b72ef53ad08db302294d48b8f1a343df7727e base cd92339f2aead422d0466240c37d71d7f7378827, no
+comments, 2026-08-27 UTC. Working tree verified untouched after the run.

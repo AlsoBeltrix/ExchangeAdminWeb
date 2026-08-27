@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - two same-named objects from different domains produce
 indistinguishable audit records, and failed attempts cannot be tied to the selected
 GUID/DN.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `1c47d64`
 
 Reviewer-raised (generation pass over `3f2ab21..45b95e9`).
 
@@ -50,4 +50,10 @@ only the admin page had the gap.
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 45b95e901189addc4e60df403f019362b8089619, base
 3f2ab2191399e07de02e3c71cdb1724423df4e07, capability_ok true, verdict findings (4 of 4),
-2026-08-27 UTC. Verification round pending.
+2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only),
+workspace-write sandbox per machines.md. Verdict ACCEPTED, guard_confirmed true,
+capability_ok true, reviewed 1c47d64c1dfd2a3a1440a51aa52ce45be1127a33 base
+dc503e1eb7372d49dacd551d298c9ccd59eb6351, no comments, 2026-08-27 UTC. Working tree verified
+untouched after the run.

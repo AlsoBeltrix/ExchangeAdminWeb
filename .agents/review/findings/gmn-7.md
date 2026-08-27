@@ -2,9 +2,9 @@
 
 **Severity**: HIGH - a write lands in a different AD group than the operator initiated it
 for, with a blank member label in the audit record.
-**Status**: In progress
+**Status**: Verified
 **Branch**: `-` (default-branch mode)
-**Commit**: the commit that adds this record
+**Commit**: `b8379dc`
 
 Reviewer-raised (generation pass over `3f2ab21..45b95e9`).
 
@@ -54,4 +54,10 @@ The audit member label for a picker-selected add is addressed separately in gmn-
 Reviewer: codex / gpt-5.6-sol / xhigh / standard (inline, session-only)
 codex-cli 0.147.0, reviewed 45b95e901189addc4e60df403f019362b8089619, base
 3f2ab2191399e07de02e3c71cdb1724423df4e07, capability_ok true, verdict findings (2 of 4),
-2026-08-27 UTC. Verification round pending (T2 as gmn-6).
+2026-08-27 UTC.
+
+Verification: Reviewer: codex / gpt-5.6-sol / xhigh (inline, session-only), routed per T2 as
+gmn-6, workspace-write sandbox per machines.md. Verdict ACCEPTED, guard_confirmed true,
+capability_ok true, reviewed b8379dc2337b8d5d48683926855dc3b2f1d0e7d5 base
+0b4b72ef53ad08db302294d48b8f1a343df7727e, no comments, 2026-08-27 UTC. Working tree verified
+untouched after the run.
