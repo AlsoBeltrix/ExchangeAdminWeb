@@ -25,6 +25,47 @@ All figures below were measured on 2026-08-14 from the Claude Code session trans
 project (`C:\Users\mcoelho\.claude\projects\D--source-ExchangeAdminWeb\*.jsonl`). They are this
 repository's own numbers, not published benchmarks.
 
+### Correction 2026-08-27 - these figures counted transcript lines, not billed requests
+
+Found while implementing S1. Claude Code writes one JSONL line per assistant content block,
+so a single billed API request appears as one to five lines, each carrying an IDENTICAL copy
+of that request's usage (verified 2026-08-27 across the whole August tree: zero request
+groups with varying usage). The tables below summed usage per line, so every absolute figure
+in them is overstated - by a factor that varies per component (roughly 1.5x on cache-read to
+2.2x on fresh input), because the multiplier is however many content blocks each response
+happened to have.
+
+**What survives, and why the plan still stands: every ratio-shaped conclusion.** Cache read
+still dominates cost, output is still a rounding error, the mean context still far exceeds
+Haiku's window (the deduplicated mean is HIGHER, since duplicates were dropped equally at
+all sizes), and the largest single request (954,008) was never affected - it is a per-request
+maximum, immune to duplication. D1's model assignment is unchanged. Derived per-day dollar
+figures elsewhere in this plan (the $73.49 day, the 17 re-primes) inherit the overcount in
+magnitude but not in kind; per-request unit figures (~$1.75 to re-prime a 280K context)
+were computed per request and stand.
+
+Corrected August figures, measured 2026-08-27 by `tools/Get-TokenUsage.ps1` (deduplicated
+on `message.id`, `<synthetic>` zero-usage entries excluded, window 2026-08-01..2026-08-31,
+with August still accruing on the measurement date):
+
+| Measure | Value |
+| --- | --- |
+| Requests (billed, deduplicated) | 5,285 |
+| Mean context per request | 408,004 tokens |
+| Largest single request | 954,008 tokens |
+| Requests over 200K context | 3,895 (73.7%) |
+| Input tokens | 685,709 |
+| Cache-write tokens | 61,747,028 |
+| Cache-read tokens | 2,093,867,301 |
+| Output tokens | 3,251,965 |
+| Estimated cost (list rates) | $1,517.58 |
+
+Cost composition after correction: cache read 69% / cache write 25% / output 5.4% / fresh
+input 0.2% - the same ordering the levers were ranked by.
+
+The uncorrected tables are kept below as written, because other figures in this plan were
+derived from them. Read them as line counts, not request counts.
+
 **August 2026, this project only** (the month's total spend was roughly twice this - other
 projects account for the rest):
 
@@ -317,6 +358,11 @@ Design points that are not obvious and must not be re-litigated during implement
   (`-notmatch '"output_tokens"'`) to skip the ~99% of lines that carry no usage, then a real
   `ConvertFrom-Json` on the survivors. This was measured during planning - the filter is the
   expensive part, and the surviving line count is in the low thousands per month.
+- **Deduplication.** One count per billed request: lines sharing a `message.id` are content
+  blocks of one response and repeat identical usage (the 2026-08-27 correction under
+  Measured baseline). The tool counts the first occurrence per `message.id`, skips the rest,
+  and excludes `<synthetic>` entries. A tool that sums per line re-creates the baseline
+  defect this plan had to correct.
 - **Streaming read.** `[System.IO.File]::ReadLines` line by line, never `Get-Content -Raw` on a
   100 MB tree.
 - **No `-PlanOnly`.** `.agents/repo-guidance.md` Architectural Invariant 4 requires every
@@ -472,8 +518,9 @@ in this plan's slice list; L1 points at it and that is the whole integration.
 
 ## Acceptance criteria
 
-- AC1 `Get-TokenUsage.ps1` reproduces the **token counts** in this document from the real
-  transcripts, within rounding. **Deliberately not the dollar figures** - an earlier revision
+- AC1 `Get-TokenUsage.ps1` reproduces the **corrected token counts** (the 2026-08-27
+  correction under Measured baseline) from the real transcripts, within rounding - not the
+  original tables, which counted duplicate lines and are kept only as derivation history. **Deliberately not the dollar figures** - an earlier revision
   made reproducing this plan's own cost estimates the criterion, which would have tested the tool
   against a model already measured to be ~1.8x high rather than against reality. Tokens are
   observed; cost is inferred, and the inference is what needs calibrating.
