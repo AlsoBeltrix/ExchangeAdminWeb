@@ -680,11 +680,14 @@ public class SelfServiceGroupService
     {
         var memberEsc = AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
         var groupEsc = AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
-        // Ask AD directly whether this user is a member of this group. distinguishedName is bound to the
+        // Ask AD directly whether this member is in this group. distinguishedName is bound to the
         // resolved member DN and memberOf to the resolved group DN; both are escaped so neither can alter
         // the filter. This reflects the write immediately (unlike a cached member list).
         var filter = $"(&(distinguishedName={memberEsc})(memberOf={groupEsc}))";
-        ps.AddCommand("Get-ADUser")
+        // Get-ADObject, not Get-ADUser (nesting plan S2): the filter is already class-agnostic,
+        // and a GROUP member must be visible to both the idempotency pre-check and the
+        // post-write read-back, or group operations misreport their end state.
+        ps.AddCommand("Get-ADObject")
           .AddParameter("LDAPFilter", filter)
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");

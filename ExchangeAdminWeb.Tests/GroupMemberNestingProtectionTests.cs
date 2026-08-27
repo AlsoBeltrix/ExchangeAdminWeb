@@ -4,7 +4,7 @@ using ExchangeAdminWeb.Services;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// S1 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
+/// S1/S2 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
 /// must see GROUP targets. Get-ADUser answered a group DN with zero rows and no error, which
 /// the check recorded as "no match" - a silent allow in a fail-closed service.
 ///
@@ -124,5 +124,24 @@ public class GroupMemberNestingProtectionTests
     public void TransitiveCheck_AppliesTheSelfMatch_InsideTheGroupLoop()
     {
         Assert.Contains("IsProtectedGroupItself(targetDn, groupDn)", TransitiveCheckBody(), StringComparison.Ordinal);
+    }
+
+    // ----- S2: the self-service membership read must see group members -----
+
+    [Fact]
+    public void SelfServiceMembershipRead_UsesClassAgnosticCmdlet()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        var start = text.IndexOf("private static bool IsMemberOfGroup(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "IsMemberOfGroup signature not found - tripwire is stale.");
+        var end = text.IndexOf("\n    private ", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound the IsMemberOfGroup body - update the tripwire.");
+        var body = text[start..end];
+
+        // The filter (&(distinguishedName=..)(memberOf=..)) is already class-agnostic; only the
+        // cmdlet in front of it decided which member classes the read could see.
+        Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
     }
 }
