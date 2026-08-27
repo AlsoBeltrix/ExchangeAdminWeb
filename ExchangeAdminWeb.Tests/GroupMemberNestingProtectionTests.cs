@@ -222,14 +222,30 @@ public class GroupMemberNestingProtectionTests
         "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
 
     [Fact]
-    public void RemoveListedMemberAsync_ResolvesByGuid_GatesProtection_AndFeedsTheSharedExecutor()
+    public void RemoveListedMemberAsync_ResolvesGatesAndDenies_InOrder_BeforeTheSharedExecutor()
     {
+        // gmn-5: whole-file Contains stayed green with the denial return deleted. Bound the
+        // method and assert the ORDER: resolve -> gate -> denial return -> executor.
         var text = SelfServiceText();
+        var start = text.IndexOf("public async Task<MembershipChangeResult> RemoveListedMemberAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "RemoveListedMemberAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("private static ResolvedDirectoryPrincipal? ResolveListedMemberByGuid(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound RemoveListedMemberAsync - update the tripwire.");
+        var body = text[start..end];
 
-        Assert.Contains("public async Task<MembershipChangeResult> RemoveListedMemberAsync(", text, StringComparison.Ordinal);
-        Assert.Contains("ResolveListedMemberByGuid(creds.Value, memberObjectGuid)", text, StringComparison.Ordinal);
-        Assert.Contains("ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection)", text, StringComparison.Ordinal);
-        // Both public entry points run the SAME protection gate before the shared executor.
+        var iResolve = body.IndexOf("ResolveListedMemberByGuid(creds.Value, memberObjectGuid)", StringComparison.Ordinal);
+        var iGate = body.IndexOf("await CheckMemberProtectedAsync(member, actingUser)", StringComparison.Ordinal);
+        var iDenialCheck = body.IndexOf("if (protection.Denial is not null)", StringComparison.Ordinal);
+        var iDenialReturn = body.IndexOf("return MembershipChangeResult.From(protection.Denial);", StringComparison.Ordinal);
+        var iExecutor = body.IndexOf("return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection);", StringComparison.Ordinal);
+
+        Assert.True(iResolve >= 0, "GUID resolution missing from RemoveListedMemberAsync.");
+        Assert.True(iGate > iResolve, "The protection gate must follow the resolution it gates.");
+        Assert.True(iDenialCheck > iGate, "The denial check is missing after the gate.");
+        Assert.True(iDenialReturn > iDenialCheck, "A denial must RETURN before the executor.");
+        Assert.True(iExecutor > iDenialReturn, "The executor must come after the denial return.");
+
+        // And the typed path still runs the same gate (two call sites file-wide).
         Assert.Equal(2, Regex.Matches(text, Regex.Escape("await CheckMemberProtectedAsync(member, actingUser)")).Count);
     }
 
@@ -265,17 +281,36 @@ public class GroupMemberNestingProtectionTests
     }
 
     [Fact]
-    public void Page_RemovesByGuid_AndConfirmsGroupRemovalInline()
+    public void Page_RemovesByGuid_AndGroupRowsOnlyEnterThePendingState()
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Components", "Pages", "SelfServiceGroups.razor"));
 
         Assert.Contains("RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid", text, StringComparison.Ordinal);
-        Assert.Contains("BeginGroupRemoval", text, StringComparison.Ordinal);
-        Assert.Contains("ConfirmGroupRemoval", text, StringComparison.Ordinal);
         // D2's warning text: one-way removal, re-adding needs a ticket.
         Assert.Contains("re-adding it will require an IT Support Desk ticket", text, StringComparison.Ordinal);
+
+        // gmn-5: the GROUP button must only OPEN the pending state - a one-click route to the
+        // removal would erase D2's second action. Bound the Group branch of the row markup.
+        var groupBranch = text.IndexOf("@if (member.Kind == \"Group\")", StringComparison.Ordinal);
+        Assert.True(groupBranch >= 0, "Group branch not found in the member row - tripwire is stale.");
+        var branchEnd = text.IndexOf("else", groupBranch, StringComparison.Ordinal);
+        Assert.True(branchEnd > groupBranch, "Could not bound the Group branch - update the tripwire.");
+        var branch = text[groupBranch..branchEnd];
+        Assert.Contains("BeginGroupRemoval(member)", branch, StringComparison.Ordinal);
+        Assert.DoesNotContain("ConfirmGroupRemoval", branch, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveListedMember(", branch, StringComparison.Ordinal);
+        Assert.DoesNotContain("RemoveMember(", branch, StringComparison.Ordinal);
+
+        // The confirming action exists exactly once, inside the pending-state block.
+        Assert.Equal(1, Regex.Matches(text, Regex.Escape("ConfirmGroupRemoval(member)")).Count);
+        var pendingBlock = text.IndexOf("pendingGroupRemoval?.ObjectGuid == member.ObjectGuid", StringComparison.Ordinal);
+        Assert.True(pendingBlock >= 0, "Pending-state block not found.");
+        Assert.True(text.IndexOf("ConfirmGroupRemoval(member)", StringComparison.Ordinal) > pendingBlock,
+            "ConfirmGroupRemoval must be reachable only from the pending-state block.");
     }
+
+    // (gmn-4's PendingGroupRemoval test is added in that finding's own commit.)
 
     // ----- S5a: the admin member list reports what a member actually is -----
 
