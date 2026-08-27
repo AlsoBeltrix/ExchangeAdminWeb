@@ -299,17 +299,15 @@ public class GroupManagementService
         if (resolvedMember.Error is not null)
             return PermissionResult.Fail(resolvedMember.Error);
 
-        // Group-capable gate on the RESOLVED principal (gmn-1): S1 made the transitive check see
-        // group targets, but that fix sits below the user-only resolver the pre-gate uses, so a
-        // group would never reach it. Users were gated above on the canonical identity; a GROUP
-        // gets its gate here, on the same object the write uses.
-        if (resolvedMember.IsGroup)
-        {
-            var groupGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
-            if (groupGate.Denial is not null)
-                return groupGate.Denial;
-            gate = groupGate;
-        }
+        // The AUTHORITATIVE gate runs on the RESOLVED principal, unconditionally (gmn-1,
+        // gmn-6): the string pre-gate cannot see a group at all, and misses a USER whose label
+        // (a display name, a stale identity) resolves NotFound while the DN/GUID resolves the
+        // real - possibly protected - object. Whatever resolution produced is what gets gated,
+        // and what gets written.
+        var resolvedGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
+        if (resolvedGate.Denial is not null)
+            return resolvedGate.Denial;
+        gate = resolvedGate;
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
@@ -427,15 +425,15 @@ public class GroupManagementService
         if (resolvedMember.Error is not null)
             return PermissionResult.Fail(resolvedMember.Error);
 
-        // Gate the RESOLVED principal when the string pre-gate could not have seen it: a GROUP
-        // (gmn-1), or a GUID-keyed member whose label carried no resolvable identity.
-        if (resolvedMember.IsGroup || string.IsNullOrWhiteSpace(member))
-        {
-            var resolvedGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
-            if (resolvedGate.Denial is not null)
-                return resolvedGate.Denial;
-            gate = resolvedGate;
-        }
+        // The AUTHORITATIVE gate runs on the RESOLVED principal, unconditionally (gmn-1,
+        // gmn-6): a listed member's label is its DISPLAY NAME when it has no mail - non-blank,
+        // yet the string pre-gate resolves it NotFound - so gating "when the label was blank"
+        // skipped exactly the members the pre-gate cannot see. The GUID-resolved object is what
+        // gets gated, and what gets written.
+        var resolvedGate = await CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser);
+        if (resolvedGate.Denial is not null)
+            return resolvedGate.Denial;
+        gate = resolvedGate;
 
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {

@@ -354,4 +354,49 @@ public class GroupManagementServiceTests : IDisposable
         Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Single(pp.CheckedTargets);
     }
+
+    // ----- gmn-6: the resolved-principal gate is UNCONDITIONAL - users too -----
+
+    [Fact]
+    public async Task AddMemberAsync_ResolvedUser_IsGated_WhenThePreGateMisses()
+    {
+        // The pre-gate resolves NotFound by construction (RecordingPpService); the resolved
+        // USER is protected. The conditional gate this finding removed would have skipped it.
+        var pp = CreateRecordingPp();
+        pp.Verdict = ProtectedPrincipalResult.Protected("matched", "Group:Protected Ops");
+        var service = CreateScriptedService(pp);
+        service.Scripted = new GroupManagementService.ResolvedMember(
+            new ResolvedDirectoryPrincipal("Test", "Pat Protected", "pat@contoso.com", "pat",
+                null, "CN=Pat Protected,OU=Users,DC=contoso,DC=com", "guid-u1", null),
+            IsGroup: false, Error: null);
+
+        var result = await service.AddMemberAsync("CN=Target,OU=Groups,DC=contoso,DC=com", "Pat Protected", actingUser: null, "Target");
+
+        Assert.False(result.Success);
+        Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
+        var target = Assert.Single(pp.CheckedTargets);
+        Assert.Equal("CN=Pat Protected,OU=Users,DC=contoso,DC=com", target.DistinguishedName);
+    }
+
+    [Fact]
+    public async Task RemoveMemberAsync_ResolvedUserByGuid_IsGated_DespiteANonBlankLabel()
+    {
+        // gmn-6's exact bypass shape: a mail-less listed member arrives with its DISPLAY NAME
+        // as the label - non-blank, so the old "gate when blank" condition skipped the gate -
+        // while the GUID resolves the real, protected user.
+        var pp = CreateRecordingPp();
+        pp.Verdict = ProtectedPrincipalResult.Protected("matched", "Group:Protected Ops");
+        var service = CreateScriptedService(pp);
+        service.Scripted = new GroupManagementService.ResolvedMember(
+            new ResolvedDirectoryPrincipal("Test", "Pat Protected", "pat@contoso.com", "pat",
+                null, "CN=Pat Protected,OU=Users,DC=contoso,DC=com", "guid-u1", null),
+            IsGroup: false, Error: null);
+
+        var result = await service.RemoveMemberAsync("CN=Target,OU=Groups,DC=contoso,DC=com", "Pat Protected", actingUser: null, "Target", memberObjectGuid: "guid-u1");
+
+        Assert.False(result.Success);
+        Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
+        var target = Assert.Single(pp.CheckedTargets);
+        Assert.Equal("CN=Pat Protected,OU=Users,DC=contoso,DC=com", target.DistinguishedName);
+    }
 }

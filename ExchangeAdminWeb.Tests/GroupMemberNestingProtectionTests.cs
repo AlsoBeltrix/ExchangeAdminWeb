@@ -399,7 +399,12 @@ public class GroupMemberNestingProtectionTests
 
         var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn, memberObjectGuid: null)", StringComparison.Ordinal);
         var iGate = body.IndexOf("CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser)", StringComparison.Ordinal);
-        var iDenial = body.IndexOf("return groupGate.Denial;", StringComparison.Ordinal);
+        var iDenial = body.IndexOf("return resolvedGate.Denial;", StringComparison.Ordinal);
+        // gmn-6: no class condition may guard the resolved-principal gate. The write-phase
+        // nesting guards legitimately branch on IsGroup, so the pin is scoped to the region
+        // between the resolution and the denial return.
+        Assert.True(iResolve >= 0 && iDenial > iResolve, "Gate region not found - tripwire is stale.");
+        Assert.DoesNotContain("if (resolvedMember.IsGroup)", body[iResolve..iDenial], StringComparison.Ordinal);
         var iSelf = body.IndexOf("IsSelfNest(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
         var iCycle = body.IndexOf("BuildCycleProbeFilter(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
         var iFailClosed = body.IndexOf("The nesting check could not be completed.", StringComparison.Ordinal);
@@ -438,6 +443,8 @@ public class GroupMemberNestingProtectionTests
 
         Assert.True(iResolve >= 0, "GUID-capable resolution missing from RemoveMemberAsync.");
         Assert.True(iGate > iResolve, "The resolved-principal gate must follow the resolution (gmn-1).");
+        // gmn-6: no label/class condition may guard the resolved-principal gate.
+        Assert.DoesNotContain("resolvedMember.IsGroup || string.IsNullOrWhiteSpace(member)", body, StringComparison.Ordinal);
         Assert.True(iDenial > iGate, "A gate denial must RETURN before the write.");
         Assert.True(iWrite > iDenial, "The write must come after the gate.");
         Assert.True(iReadback > iWrite, "Read-back reconciliation must follow the write.");
