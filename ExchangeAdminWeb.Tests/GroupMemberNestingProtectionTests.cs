@@ -576,6 +576,29 @@ public class GroupMemberNestingProtectionTests
         }
     }
 
+    // ----- gmn-9: the immutable identity reaches EVERY audit branch -----
+
+    [Fact]
+    public void AdminPage_AuditsCarryTheImmutableIdentity_OnEveryBranch()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+
+        var addStart = text.IndexOf("private async Task AddMember()", StringComparison.Ordinal);
+        var addEnd = text.IndexOf("finally { isLoading = false; }", addStart, StringComparison.Ordinal);
+        Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddMember - update the tripwire.");
+        var add = text[addStart..addEnd];
+        // Ticket denial, auth denial, the outcome record, and the exception path - all four.
+        Assert.Equal(4, Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")).Count);
+
+        var remStart = text.IndexOf("private async Task RemoveMember(GroupMemberInfo listed)", StringComparison.Ordinal);
+        var remEnd = text.IndexOf("finally { isLoading = false; }", remStart, StringComparison.Ordinal);
+        Assert.True(remStart >= 0 && remEnd > remStart, "Could not bound RemoveMember - update the tripwire.");
+        var remove = text[remStart..remEnd];
+        Assert.Equal(4, Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")).Count);
+        Assert.Equal(4, Regex.Matches(remove, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")).Count);
+    }
+
     [Fact]
     public void SelectGroup_ClearsTheHeldPickerSelection()
     {

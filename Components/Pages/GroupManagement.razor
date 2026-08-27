@@ -295,7 +295,7 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
                 return;
             }
 
@@ -304,7 +304,7 @@
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
                 return;
             }
 
@@ -316,7 +316,10 @@
             // audited path below records every denial.
             opResult = await GroupService.AddMemberAsync(group.Identity, memberLabel, authState.User, group.SamAccountName, selection?.DistinguishedName);
 
-            var addExtra = new Dictionary<string, object?> { ["member"] = memberLabel };
+            // gmn-9: the immutable identity (the DN actually written, when one was selected)
+            // travels in EVERY audit branch - two same-named objects from different domains
+            // must produce distinguishable records.
+            var addExtra = new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName };
             // A serviced override succeeded, so it cannot ride errorDetail - that field is
             // written as null on success and the record of who permitted it would vanish.
             if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
@@ -337,7 +340,7 @@
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = memberLabel, ["memberDn"] = selection?.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = group.Name, ["Member"] = memberLabel }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
@@ -364,7 +367,7 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
                 return;
             }
 
@@ -373,7 +376,7 @@
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
                 return;
             }
 
@@ -382,7 +385,8 @@
             // AddMember. The single audited path below records every denial.
             opResult = await GroupService.RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid, listed.DistinguishedName);
 
-            var removeExtra = new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid };
+            // gmn-9: GUID and DN travel in EVERY audit branch, not just this one.
+            var removeExtra = new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName };
             // See AddMember: a serviced override succeeds, so the note must travel in extra.
             if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
                 removeExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;
@@ -397,7 +401,7 @@
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid, ["memberDn"] = listed.DistinguishedName }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
             try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = group.Name, ["Member"] = member }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
