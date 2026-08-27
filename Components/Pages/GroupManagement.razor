@@ -238,6 +238,8 @@
         memberList = null;
         opResult = null;
         newMember = "";
+        // gmn-7: a group switch never inherits a picker selection made for another group.
+        newMemberSelection = null;
     }
 
     private async Task LoadMembers()
@@ -274,6 +276,15 @@
 
     private async Task AddMember()
     {
+        // gmn-7: snapshot everything this handler acts on BEFORE the first await. Group
+        // navigation stays live while awaits run, so the write must use the group and member
+        // the operation was initiated with, never whatever the page points at afterwards.
+        var group = selectedGroup;
+        var memberLabel = newMember.Trim();
+        var selection = newMemberSelection;
+        if (group is null || string.IsNullOrWhiteSpace(memberLabel))
+            return;
+
         isLoading = true;
         opResult = null;
         await Task.Yield();
@@ -284,7 +295,7 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember ticket denial"); }
                 return;
             }
 
@@ -293,38 +304,41 @@
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember auth denial"); }
                 return;
             }
 
             // Protected-principal enforcement lives in GroupManagementService.AddMemberAsync
-            // (CheckProtectedAsync): it fails closed on Unavailable/Ambiguous resolution and
-            // covers non-'@' identities the old page gate missed. The page no longer
-            // pre-checks — that duplicated gate produced unaudited failed mutation attempts
-            // (2026-06-17 review). The single audited path below records every denial.
-            opResult = await GroupService.AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), authState.User, selectedGroup.SamAccountName, newMemberSelection?.DistinguishedName);
+            // (CheckProtectedAsync plus the unconditional resolved-principal gate, gmn-6): it
+            // fails closed on Unavailable/Ambiguous resolution and covers non-'@' identities
+            // the old page gate missed. The page no longer pre-checks - that duplicated gate
+            // produced unaudited failed mutation attempts (2026-06-17 review). The single
+            // audited path below records every denial.
+            opResult = await GroupService.AddMemberAsync(group.Identity, memberLabel, authState.User, group.SamAccountName, selection?.DistinguishedName);
 
-            var addExtra = new Dictionary<string, object?> { ["member"] = newMember.Trim() };
+            var addExtra = new Dictionary<string, object?> { ["member"] = memberLabel };
             // A serviced override succeeded, so it cannot ride errorDetail - that field is
             // written as null on success and the record of who permitted it would vanish.
             if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
                 addExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, addExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Added"] = newMember.Trim() }, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, addExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Member Added"] = memberLabel }, opResult.Success ? null : opResult.Message); } catch { }
 
             if (opResult.Success)
             {
                 newMember = "";
                 newMemberSelection = null;
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.SamAccountName);
+                // Refresh only when the operator is still looking at the group we wrote to.
+                if (ReferenceEquals(selectedGroup, group))
+                    memberList = await GroupService.GetMembersAsync(group.Identity, group.SamAccountName);
             }
         }
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = newMember.Trim() }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = newMember.Trim() }, ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_AddMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = memberLabel }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_AddMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_AddMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = group.Name, ["Member"] = memberLabel }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }
@@ -334,6 +348,12 @@
         // Key the removal on the immutable objectGUID (nesting plan S5b): a listed GROUP has an
         // empty Email, and a display identity can drift between the list render and the write.
         var member = string.IsNullOrWhiteSpace(listed.Email) ? listed.DisplayName : listed.Email;
+        // gmn-7: snapshot the group BEFORE the first await - group navigation stays live while
+        // awaits run, and the removal must execute against the group whose list showed the row.
+        var group = selectedGroup;
+        if (group is null)
+            return;
+
         isLoading = true;
         opResult = null;
         await Task.Yield();
@@ -344,7 +364,7 @@
             if (!ticketValidation.IsValid)
             {
                 opResult = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, $"Ticket validation failed: {ticketValidation.Message}", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember ticket denial"); }
                 return;
             }
 
@@ -353,33 +373,32 @@
             if (!authCheck.Succeeded)
             {
                 opResult = PermissionResult.Fail("Authorization denied.");
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticket, "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember auth denial"); }
                 return;
             }
 
             // Protected-principal enforcement lives in GroupManagementService.RemoveMemberAsync
-            // (CheckProtectedAsync): it fails closed on Unavailable/Ambiguous resolution and
-            // covers non-'@' identities the old page gate missed. The page no longer
-            // pre-checks — that duplicated gate produced unaudited failed mutation attempts
-            // (2026-06-17 review). The single audited path below records every denial.
-            opResult = await GroupService.RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName, listed.ObjectGuid);
+            // (CheckProtectedAsync plus the unconditional resolved-principal gate, gmn-6); see
+            // AddMember. The single audited path below records every denial.
+            opResult = await GroupService.RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid);
 
             var removeExtra = new Dictionary<string, object?> { ["member"] = member, ["memberObjectGuid"] = listed.ObjectGuid };
             // See AddMember: a serviced override succeeds, so the note must travel in extra.
             if (!string.IsNullOrWhiteSpace(opResult.ServicedNote))
                 removeExtra[ProtectedPrincipalServicing.AuditKey] = opResult.ServicedNote;
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, removeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = selectedGroup.Name, ["Member Removed"] = member }, opResult.Success ? null : opResult.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, opResult.Success, ticket, opResult.Success ? null : opResult.Message, removeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", opResult.Success, ticket, new Dictionary<string, string> { ["Group"] = group.Name, ["Member Removed"] = member }, opResult.Success ? null : opResult.Message); } catch { }
 
-            if (opResult.Success)
-                memberList = await GroupService.GetMembersAsync(selectedGroup.Identity, selectedGroup.SamAccountName);
+            // Refresh only when the operator is still looking at the group we wrote to.
+            if (opResult.Success && ReferenceEquals(selectedGroup, group))
+                memberList = await GroupService.GetMembersAsync(group.Identity, group.SamAccountName);
         }
         catch (Exception ex)
         {
             opResult = PermissionResult.Fail(ex.Message);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", selectedGroup!.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = selectedGroup!.Name, ["Member"] = member }, ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "GroupManagement_RemoveMember", "GroupManagement", group.Name, false, ticketNumber.Trim(), ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for GroupManagement_RemoveMember"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "GroupManagement_RemoveMember", false, ticketNumber.Trim(), new Dictionary<string, string> { ["Group"] = group.Name, ["Member"] = member }, ex.Message); } catch { }
         }
         finally { isLoading = false; }
     }

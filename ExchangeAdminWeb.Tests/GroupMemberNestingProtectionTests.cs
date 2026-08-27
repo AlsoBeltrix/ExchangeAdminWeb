@@ -461,7 +461,7 @@ public class GroupMemberNestingProtectionTests
 
         // The Remove button used to pass member.Email - the empty string for every group
         // (S5a's mislabelled listing) and a driftable identity for users.
-        Assert.Contains("RemoveMemberAsync(selectedGroup!.Identity, member, authState.User, selectedGroup.SamAccountName, listed.ObjectGuid)", text, StringComparison.Ordinal);
+        Assert.Contains("RemoveMemberAsync(group.Identity, member, authState.User, group.SamAccountName, listed.ObjectGuid)", text, StringComparison.Ordinal);
         Assert.DoesNotContain("RemoveMember(member.Email)", text, StringComparison.Ordinal);
     }
 
@@ -479,7 +479,7 @@ public class GroupMemberNestingProtectionTests
 
         // The held DN is what the service writes; forest-wide search can offer two same-named
         // groups from different domains and only the DN distinguishes them (gmn-3).
-        Assert.Contains("AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), authState.User, selectedGroup.SamAccountName, newMemberSelection?.DistinguishedName)", text, StringComparison.Ordinal);
+        Assert.Contains("AddMemberAsync(group.Identity, memberLabel, authState.User, group.SamAccountName, selection?.DistinguishedName)", text, StringComparison.Ordinal);
 
         // Typed input has no DN: the ValueChanged handler must clear the held selection so a
         // stale DN from a previous pick cannot survive a retype.
@@ -492,6 +492,50 @@ public class GroupMemberNestingProtectionTests
         // The member list renders what a member IS (S5a's kind reaches the operator).
         Assert.Contains("<th>Kind</th>", text, StringComparison.Ordinal);
         Assert.Contains("@member.MemberKind", text, StringComparison.Ordinal);
+    }
+
+    // ----- gmn-7: in-flight handlers act on snapshots, never on live navigation state -----
+
+    [Fact]
+    public void AdminPage_HandlersSnapshotState_BeforeTheFirstAwait()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+
+        foreach (var handler in new[] { "private async Task AddMember()", "private async Task RemoveMember(GroupMemberInfo listed)" })
+        {
+            var start = text.IndexOf(handler, StringComparison.Ordinal);
+            Assert.True(start >= 0, handler + " not found - tripwire is stale.");
+            var end = text.IndexOf("finally { isLoading = false; }", start, StringComparison.Ordinal);
+            Assert.True(end > start, "Could not bound " + handler + " - update the tripwire.");
+            var body = text[start..end];
+
+            var iSnap = body.IndexOf("var group = selectedGroup;", StringComparison.Ordinal);
+            // Both handlers open their async work with Task.Yield - the canonical first await
+            // (a bare "await " token also appears in comments).
+            var iAwait = body.IndexOf("await Task.Yield();", StringComparison.Ordinal);
+            Assert.True(iSnap >= 0, "Group snapshot missing in " + handler);
+            Assert.True(iAwait > iSnap, "The snapshot must precede the first await in " + handler);
+
+            // After the snapshot, the handler must not dereference the live selection state
+            // (ReferenceEquals comparison for the refresh guard is the one allowed read).
+            Assert.DoesNotContain("selectedGroup!.", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("selectedGroup.", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("newMemberSelection?.", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void SelectGroup_ClearsTheHeldPickerSelection()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+        var start = text.IndexOf("private void SelectGroup(GroupInfo group)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "SelectGroup not found - tripwire is stale.");
+        var end = text.IndexOf("private async Task LoadMembers()", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound SelectGroup - update the tripwire.");
+
+        Assert.Contains("newMemberSelection = null", text[start..end], StringComparison.Ordinal);
     }
 
     [Fact]
