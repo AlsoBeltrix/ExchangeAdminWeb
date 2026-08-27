@@ -161,3 +161,34 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 - Address exactly one finding or fix per commit and commit each before starting the
   next; batch sweeps spanning many findings happen only on the owner's explicit
   request.
+
+## Token Budget
+
+Working protocol for implementing plans at materially lower token cost. Evidence and
+derivation live in `docs/TokenBudget-Plan.md`; measure with `tools/Get-TokenUsage.ps1`
+against the committed baseline `.agents/token-baseline.json`. Every cost the tool
+prints is an estimate at first-party list rates, scoped to this machine's transcripts.
+
+- **Model per phase (D1, 2026-08-14):** Opus 5 plans and adjudicates escalations;
+  Sonnet 5 at `high` (`xhigh` on hard slices) implements; codex/GPT-5.5 reviews at
+  full strength; Gemini is an owner-dispatched third harness for contested findings.
+  Do not economise on reasoning effort - output is a rounding error of cost; context
+  size and request count are the cost. Revert trigger: materially more admitted
+  findings per Sonnet-implemented slice than the August baseline, or any
+  CRITICAL/HIGH finding the deterministic gates should have caught - move
+  implementation back to Opus 5 and record why in `.agents/decisions.md`.
+- **Keep the always-loaded prefix small:** run `playbook drift` when `state.md`
+  grows; target under 10K tokens.
+- **Do not let the cache expire (5-minute TTL):** work in sustained bursts; do other
+  work in-session while long background tasks run; never switch models mid-session
+  (the cache is model-scoped) - switch at session boundaries only.
+- **Fewer requests:** batch independent tool calls into one turn; never re-read what
+  is already in context; do not read a file back to verify an edit; read ranges, not
+  whole files; delegate broad searches to a throwaway subagent, never a single-file
+  read.
+- **One slice, one session:** start a session, land one slice, close it. Late turns
+  of a long session are its most expensive, and compaction is a paid summarization
+  pass over everything accumulated.
+- **Log each slice:** append one line to `.agents/token-log.md` in the same commit
+  that lands the slice - part of the existing paperwork motion, not a separate
+  ritual.

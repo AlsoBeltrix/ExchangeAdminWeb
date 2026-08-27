@@ -14,3 +14,4 @@ The committed baseline these compare against is `.agents/token-baseline.json`
 Format: `date  slice  model  reqs N  mean-ctx NK  est $X.XX`
 
 2026-08-27  TokenBudget S1+S2  fable-5 (est at opus-5 rates)  reqs 62  mean-ctx 76K  est $6.79
+2026-08-27  TokenBudget S3+S4  fable-5 (est at opus-5 rates)  reqs 64  mean-ctx 79K  est $7.17  (same session as S1+S2; session total at close, supersedes the line above)

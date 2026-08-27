@@ -14,9 +14,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   1707/0/3.
   **NEXT: nothing until a deploy; the plan's four manual checks (section 8) ride it.**
 
-- **TOKEN BUDGET: S1 LANDED 2026-08-27 (owner go the same day); S2-S4 QUEUED.**
-  S1 is `tools/Get-TokenUsage.ps1` plus the `transcript-root:` entry in `.agents/machines.md`
-  it reads its default path from.
+- **TOKEN BUDGET: IMPLEMENTED 2026-08-27 (owner go the same day; S1-S4 all landed).**
+  Baseline correction `b2b2887` first (the plan's August figures had counted transcript lines,
+  not billed requests); S1 tool + `transcript-root:` entry in `.agents/machines.md` `fb2a44b`;
+  S2 Pester (17 tests, four-mutation non-vacuity proof) `be97436`; S3 baseline + log `fe1c7bf`;
+  S4 is the Token Budget section in `.agents/repo-guidance.md`, landed in the commit that set
+  the plan's status to Implemented.
   `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
   token-budget-friendly implementation approach for September, with usage tracking built in.
   Canonical detail is in the plan; do not duplicate it here.
@@ -41,9 +44,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   costs ~$1.75, the cache TTL is 5 minutes, idle gaps are billed.
   **Haiku 4.5 is permanently disqualified** - 200K context, 72.3% of requests exceed it. Do not
   re-propose. Sonnet 4.6 and every older Opus are strictly dominated on price and capability.
-  **NEXT: S2 (Pester coverage for the tool).** Then S3 (baseline + log; regenerate the August
-  baseline on or after 2026-09-01 so the full month is in it) and S4 (the protocol section in
-  `.agents/repo-guidance.md`).
+  **NEXT: regenerate `.agents/token-baseline.json` on or after 2026-09-01** (one tool run,
+  commit the diff) so the full August is captured; the protocol section in
+  `.agents/repo-guidance.md` then governs how the September queue is implemented.
 
 - **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
   `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's

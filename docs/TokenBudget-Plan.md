@@ -1,8 +1,12 @@
 # Token-Budgeted Implementation - Plan
 
-Status: In progress - owner go 2026-08-27, the day the work pause lifted early (token budget
-reset). D1 ruled and D2 withdrawn, both 2026-08-14. **No owner decision is outstanding.**
-S1 (the tool) lands in the commit that sets this status; S2-S4 queued.
+Status: Implemented 2026-08-27, same-day owner go (the work pause lifted that morning; token
+budget reset early). D1 ruled and D2 withdrawn, both 2026-08-14. Slices: S1 `fb2a44b`
+(preceded by the baseline correction `b2b2887`), S2 `be97436`, S3 `fe1c7bf`, S4 is the commit
+that set this status (Token Budget section in `.agents/repo-guidance.md`). Regenerate the
+August baseline on or after 2026-09-01, then compare September against it. AC9 is exercised by
+September's slices; AC10 belongs to `playbook drift`, invoked separately; all other ACs
+verified on 2026-08-27.
 
 Owner request 2026-08-14: *"let's make an implementation plan that is token-budget friendly.
 I will use that next month and see how it does. add something that tracks token usage as part
