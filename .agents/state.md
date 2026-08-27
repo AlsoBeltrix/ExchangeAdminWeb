@@ -23,11 +23,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
   token-budget-friendly implementation approach for September, with usage tracking built in.
   Canonical detail is in the plan; do not duplicate it here.
-  **D1 RULED (owner delegated the choice to the agent):** Opus 5 plans and adjudicates,
-  **Sonnet 5 at `high`/`xhigh` implements**, codex/GPT-5.5 reviews, Gemini reserved as an
-  owner-dispatched third harness. Owner's principle - *"minimum model for reliable work, complex
-  model for checking"* - matched the measured cost shape (implementation 98% of tokens, review
-  2%) and was adopted.
+  **D1 RULED 2026-08-14, AMENDED by the owner 2026-08-27: Fable 5 implements end to end,**
+  one fresh session per slice; codex/GPT-5.5 reviews, Gemini reserved as an owner-dispatched
+  third harness. Rationale and the Sonnet fallback live in `.agents/decisions.md` (2026-08-27).
   **D2 WITHDRAWN - `.agents/playbooks/drift.md` already owns it.** Reducing this file is the
   sweep's first checklist item, and it rotates `## Now` entries **verbatim** to
   `docs/history/state-archive.md` rather than rewriting them. Invoke with `playbook drift`, or

@@ -5,6 +5,34 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-08-27 - Implementation model: Fable 5 end to end (amends Token Budget D1)
+
+Status: Active. Amends D1 of `docs/TokenBudget-Plan.md` (Implemented 2026-08-27): the L4c
+assignment table's implementer column is superseded; the rest of the assignment stands.
+
+Owner direction 2026-08-27: "go with fable", choosing among a Sonnet 5 session, an Opus 5
+session, or Fable 5 end to end for implementing the queued plans. The stated goal was "I
+just want to minimize duplicating work", with the added fact that Fable bills ~2x Opus
+rates (~5x Sonnet).
+
+What changes: implementation is done by **Fable 5, end to end, one fresh session per
+slice**. What stands from D1: codex/GPT-5.5 review at full strength, Gemini as the
+owner-dispatched third harness for contested findings, no economising on reasoning
+effort, and the session/cache/request discipline in `.agents/repo-guidance.md` (Token
+Budget).
+
+Reason: at one-slice-one-session discipline a slice estimates roughly $3 (Sonnet) to $14
+(Fable) whichever model implements - the rate difference is noise. The cost that matters
+is rework: a review-fix cycle costs another session plus owner attention and roughly eats
+the rate saving, so the strongest implementer minimizes duplicated work, which was the
+goal. The orchestrator-plus-implementation-subagent shape is rejected outright: it pays
+twice by construction (supervising context plus subagent tokens).
+
+The Sonnet 5 trial is NOT scheduled. If cost pressure returns, the recorded fallback is
+D1's original assignment (Sonnet 5 at `high`/`xhigh` implements) with its revert trigger,
+started on a lower-stakes plan rather than authorization code. `.agents/token-log.md`
+keeps per-slice cost measured either way, so this choice stays observable.
+
 ### 2026-07-31 - Protected-principal admin input is validated under the app-pool identity, not the Delinea directory-read secret
 
 Status: Active. Plan `docs/ProtectedPrincipalInputValidation-Plan.md` (Approved, owner

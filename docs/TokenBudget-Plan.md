@@ -586,7 +586,7 @@ both directions.
 
 ## Owner decisions
 
-### D1 - RULED 2026-08-14, delegated to the agent by the owner
+### D1 - RULED 2026-08-14, delegated to the agent by the owner. AMENDED 2026-08-27: Fable 5 implements end to end (`.agents/decisions.md`)
 
 Owner: *"that's what I'm asking you. I have API keys for all the Claude models except Fable,
 GPT-5.5, and Gemini. Pricing tiers I'm not sure about, but model capability is the driver here.

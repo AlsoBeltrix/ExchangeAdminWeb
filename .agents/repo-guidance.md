@@ -169,14 +169,14 @@ derivation live in `docs/TokenBudget-Plan.md`; measure with `tools/Get-TokenUsag
 against the committed baseline `.agents/token-baseline.json`. Every cost the tool
 prints is an estimate at first-party list rates, scoped to this machine's transcripts.
 
-- **Model per phase (D1, 2026-08-14):** Opus 5 plans and adjudicates escalations;
-  Sonnet 5 at `high` (`xhigh` on hard slices) implements; codex/GPT-5.5 reviews at
+- **Model per phase (D1 2026-08-14, amended 2026-08-27 - `.agents/decisions.md`):**
+  Fable 5 implements end to end, one fresh session per slice; codex/GPT-5.5 reviews at
   full strength; Gemini is an owner-dispatched third harness for contested findings.
-  Do not economise on reasoning effort - output is a rounding error of cost; context
-  size and request count are the cost. Revert trigger: materially more admitted
-  findings per Sonnet-implemented slice than the August baseline, or any
-  CRITICAL/HIGH finding the deterministic gates should have caught - move
-  implementation back to Opus 5 and record why in `.agents/decisions.md`.
+  Never orchestrate an implementation subagent from a supervising session - that shape
+  pays twice by construction. Do not economise on reasoning effort - output is a
+  rounding error of cost; context size and request count are the cost. If cost
+  pressure returns, the recorded fallback is D1's original Sonnet-implements
+  assignment with its revert trigger (decisions entry, 2026-08-27).
 - **Keep the always-loaded prefix small:** run `playbook drift` when `state.md`
   grows; target under 10K tokens.
 - **Do not let the cache expire (5-minute TTL):** work in sustained bursts; do other
