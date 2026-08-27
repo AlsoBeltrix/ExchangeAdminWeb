@@ -36,12 +36,22 @@ public class GroupMemberClassifierTests
     }
 
     [Theory]
-    [InlineData("computer")]
     [InlineData("group")]
+    [InlineData("Group")]
+    [InlineData(" group ")]
+    public void Group_is_removable(string objectClass)
+    {
+        // Nesting plan S4 (D2): an owner may remove a nested group, behind the page's inline
+        // warning-and-confirm step. Group ADDS stay excluded (D1).
+        Assert.True(GroupMemberClassifier.IsRemovable(objectClass));
+    }
+
+    [Theory]
+    [InlineData("computer")]
     [InlineData("contact")]
     [InlineData("")]
     [InlineData(null)]
-    public void Non_user_is_not_removable(string? objectClass)
+    public void Other_classes_are_not_removable(string? objectClass)
     {
         Assert.False(GroupMemberClassifier.IsRemovable(objectClass));
     }

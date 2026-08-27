@@ -5,7 +5,7 @@ using ExchangeAdminWeb.Services.SelfServiceGroups;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// S1-S3 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
+/// S1-S4 of docs/GroupMemberNesting-Plan.md: the protected-principal transitive membership check
 /// must see GROUP targets. Get-ADUser answered a group DN with zero rows and no error, which
 /// the check recorded as "no match" - a silent allow in a fail-closed service.
 ///
@@ -205,13 +205,76 @@ public class GroupMemberNestingProtectionTests
             "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
         var start = text.IndexOf("public async Task<MembershipChangeResult> ChangeMemberAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "ChangeMemberAsync signature not found - tripwire is stale.");
-        var end = text.IndexOf("var memberDn = member.DistinguishedName;", start, StringComparison.Ordinal);
+        var end = text.IndexOf(
+            "return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection);",
+            start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound the not-found block - update the tripwire.");
         var body = text[start..end];
 
         Assert.Contains("operation == MembershipOperation.Add", body, StringComparison.Ordinal);
         Assert.Contains("GroupWithIdentityExists(creds.Value, memberIdentity)", body, StringComparison.Ordinal);
         Assert.Contains("ComposeMemberNotFoundMessage(memberIdentity, operation, identityIsGroup)", body, StringComparison.Ordinal);
+    }
+
+    // ----- S4 (D2): GUID-keyed list removal, the only path that can remove a group -----
+
+    private static string SelfServiceText() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+        "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+
+    [Fact]
+    public void RemoveListedMemberAsync_ResolvesByGuid_GatesProtection_AndFeedsTheSharedExecutor()
+    {
+        var text = SelfServiceText();
+
+        Assert.Contains("public async Task<MembershipChangeResult> RemoveListedMemberAsync(", text, StringComparison.Ordinal);
+        Assert.Contains("ResolveListedMemberByGuid(creds.Value, memberObjectGuid)", text, StringComparison.Ordinal);
+        Assert.Contains("ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection)", text, StringComparison.Ordinal);
+        // Both public entry points run the SAME protection gate before the shared executor.
+        Assert.Equal(2, Regex.Matches(text, Regex.Escape("await CheckMemberProtectedAsync(member, actingUser)")).Count);
+    }
+
+    [Fact]
+    public void TypedPath_StillFeedsTheSharedExecutor()
+    {
+        // The single-executor refactor: ChangeMemberAsync keeps its signature and hands the
+        // check-write-reconcile sequence to the same method the list path uses.
+        Assert.Contains(
+            "ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection)",
+            SelfServiceText(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GuidResolver_AcceptsOnlyUserOrGroup_AndKeepsGroupUpnEmpty()
+    {
+        var text = SelfServiceText();
+        var start = text.IndexOf("private static ResolvedDirectoryPrincipal? ResolveListedMemberByGuid(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ResolveListedMemberByGuid not found - tripwire is stale.");
+        var end = text.IndexOf("internal readonly record struct ProtectionGate", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ResolveListedMemberByGuid - update the tripwire.");
+        var body = text[start..end];
+
+        Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Identity\", memberObjectGuid)", body, StringComparison.Ordinal);
+        Assert.Contains("objectClass == \"user\"", body, StringComparison.Ordinal);
+        Assert.Contains("objectClass == \"group\"", body, StringComparison.Ordinal);
+        Assert.Contains("if (!isUser && !isGroup)", body, StringComparison.Ordinal);
+        // A group must NEVER carry its name in the UPN-shaped field - MatchesIdentity would let it
+        // false-match a protected USER entry sharing the name (plan S1 note).
+        Assert.Contains("UserPrincipalName: isUser ?", body, StringComparison.Ordinal);
+        Assert.Contains(": string.Empty", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Page_RemovesByGuid_AndConfirmsGroupRemovalInline()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "SelfServiceGroups.razor"));
+
+        Assert.Contains("RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid", text, StringComparison.Ordinal);
+        Assert.Contains("BeginGroupRemoval", text, StringComparison.Ordinal);
+        Assert.Contains("ConfirmGroupRemoval", text, StringComparison.Ordinal);
+        // D2's warning text: one-way removal, re-adding needs a ticket.
+        Assert.Contains("re-adding it will require an IT Support Desk ticket", text, StringComparison.Ordinal);
     }
 
     [Fact]

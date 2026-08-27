@@ -264,13 +264,43 @@
                                     <td class="text-end">
                                         @if (member.IsRemovable)
                                         {
-                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
-                                                    disabled="@isChanging">
-                                                Remove
-                                            </button>
+                                            @if (member.Kind == "Group")
+                                            {
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => BeginGroupRemoval(member)"
+                                                        disabled="@isChanging">
+                                                    Remove
+                                                </button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
+                                                        disabled="@isChanging">
+                                                    Remove
+                                                </button>
+                                            }
                                         }
                                     </td>
                                 </tr>
+                                @if (pendingGroupRemoval?.ObjectGuid == member.ObjectGuid)
+                                {
+                                    <!-- D2: a group removal is one-way from the owner's seat, so warn inline beneath
+                                         the acting row (the reachable pattern, not a top-of-table confirm) and require
+                                         a second action. User removals keep their existing no-confirm behaviour. -->
+                                    <tr>
+                                        <td colspan="4">
+                                            <div class="alert alert-warning py-2 mb-0 d-flex align-items-center justify-content-between">
+                                                <small><strong>@member.DisplayName</strong> is a group. Removing it takes access away
+                                                from its members, and re-adding it will require an IT Support Desk ticket.</small>
+                                                <span class="text-nowrap ms-2">
+                                                    <button class="btn btn-danger btn-sm me-1" @onclick="() => ConfirmGroupRemoval(member)"
+                                                            disabled="@isChanging">Remove group</button>
+                                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => pendingGroupRemoval = null"
+                                                            disabled="@isChanging">Cancel</button>
+                                                </span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
                             }
                         </tbody>
                     </table>
@@ -302,6 +332,7 @@
     private bool isChanging;
     private MembershipOperation? pendingOp;
     private PermissionResult? changeResult;
+    private GroupMember? pendingGroupRemoval;
 
     private IReadOnlyList<GroupMember> groupMembers = [];
     private bool isLoadingMembers;
@@ -378,11 +409,98 @@
         }
     }
 
-    // Removes a listed member via the same eligibility/protection-checked write path as a typed
-    // remove (AC-M2); on success the member list is refreshed so the row disappears.
+    // List Remove entry (AC-M2): user rows remove directly; group rows arrive via the inline
+    // confirm (BeginGroupRemoval), per D2's one-way warning.
     private async Task RemoveMember(GroupMember member)
     {
-        await ChangeMember(MembershipOperation.Remove, member.Identity);
+        await RemoveListedMember(member);
+    }
+
+    // D2: first click on a group's Remove only opens the inline warning beneath the row; the
+    // removal itself needs the second action in ConfirmGroupRemoval.
+    private void BeginGroupRemoval(GroupMember member)
+    {
+        changeResult = null;
+        pendingGroupRemoval = member;
+    }
+
+    private async Task ConfirmGroupRemoval(GroupMember member)
+    {
+        pendingGroupRemoval = null;
+        await RemoveListedMember(member);
+    }
+
+    // List-driven removal, keyed on the member's immutable objectGUID (nesting plan S4): a display
+    // identity can drift or collide between the list render and the write; the GUID cannot. This
+    // is also the only path that can remove a nested GROUP (D2). Same audit-first, best-effort
+    // notify contract as the typed path.
+    private async Task RemoveListedMember(GroupMember member)
+    {
+        if (selected == null || isChanging)
+            return;
+
+        isChanging = true;
+        pendingOp = MembershipOperation.Remove;
+        changeResult = null;
+        await Task.Yield();
+
+        var group = selected;
+        var memberLabel = string.IsNullOrWhiteSpace(member.Identity) ? member.DistinguishedName : member.Identity;
+        const string action = "SelfServiceGroups_RemoveMember";
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            // Defense in depth (AC5), same as the typed path: re-check module authorization on the
+            // page before the write; the service re-checks group/eligibility/ownership/protection
+            // immediately before writing.
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
+            if (!authCheck.Succeeded)
+            {
+                changeResult = PermissionResult.Fail("Authorization denied.");
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", "Authorization denied", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
+                return;
+            }
+
+            var outcome = await GroupService.RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid, authState.User);
+            changeResult = outcome.Result;
+
+            var changeExtra = new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid };
+            // A serviced override succeeded, so it cannot ride errorDetail - that field is written
+            // as null on success and the record of who permitted it would vanish.
+            if (!string.IsNullOrWhiteSpace(outcome.Result.ServicedNote))
+                changeExtra[ProtectedPrincipalServicing.AuditKey] = outcome.Result.ServicedNote;
+
+            // Audit-first, best-effort notify (owner decision B, 2026-07-27), as on the typed path.
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, changeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+
+            var memberDetail = string.IsNullOrWhiteSpace(outcome.AffectedMemberDisplayName) ? memberLabel : $"{outcome.AffectedMemberDisplayName} ({memberLabel})";
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            // Affected-member notification rides the SAME predicate as a user's (D6): for a group
+            // the address is the group's mail attribute; no mail, no notification.
+            if (outcome.NotifyAffectedUser)
+            {
+                try { await Email.SendGroupMembershipUserNotificationAsync(outcome.AffectedMemberEmail!, group.Name, currentUser, false); } catch (Exception emailEx) { Logger.LogError(emailEx, "Affected-user notification failed for {Action}", action); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service list removal failed for {User} on {Group}", callerSid, group.Name);
+            changeResult = PermissionResult.Fail("The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", ex.Message, new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+        }
+        finally
+        {
+            isChanging = false;
+            pendingOp = null;
+        }
+
+        // Reflect the change in the displayed membership (AC-M2), as on the typed path.
+        if (changeResult?.Success == true)
+            await LoadMembers();
     }
 
     private async Task ChangeMember(MembershipOperation operation, string? explicitIdentity = null)

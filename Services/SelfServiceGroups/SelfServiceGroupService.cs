@@ -409,7 +409,6 @@ public class SelfServiceGroupService
             return MembershipChangeResult.From(PermissionResult.Fail(
                 ComposeMemberNotFoundMessage(memberIdentity, operation, identityIsGroup)));
         }
-        var memberDn = member.DistinguishedName;
 
         // Protected-principal check on the SAME resolved member (not a second, independent lookup).
         // Fail-closed when protected or the check cannot complete (Known Failure Class #3). Enforced in
@@ -418,6 +417,22 @@ public class SelfServiceGroupService
         var protection = await CheckMemberProtectedAsync(member, actingUser);
         if (protection.Denial is not null)
             return MembershipChangeResult.From(protection.Denial);
+
+        return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection);
+    }
+
+    /// <summary>
+    /// Single executor for every membership write (nesting plan S4): serialize per group,
+    /// re-check eligibility, idempotency pre-check, write, then read-back reconciliation. Both
+    /// public entry points - typed ChangeMemberAsync and list-driven RemoveListedMemberAsync -
+    /// feed this method, so the check-write-reconcile contract cannot diverge between them.
+    /// </summary>
+    private async Task<MembershipChangeResult> ApplyMembershipChangeAsync(
+        string callerSid, string groupObjectGuid,
+        (string username, string password, string domain) creds,
+        ResolvedDirectoryPrincipal member, MembershipOperation operation, ProtectionGate protection)
+    {
+        var memberDn = member.DistinguishedName!;
 
         // Serialize per-group so two changes to the same group cannot interleave their check->write
         // cycles (plan section 6.5). Keyed on the immutable objectGUID.
@@ -436,7 +451,7 @@ public class SelfServiceGroupService
                 using var ps = PowerShell.Create();
                 ps.Runspace = runspace;
 
-                var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
+                var credential = CreateCredential(creds.username, creds.password, creds.domain);
                 PrepareAdRunspace(ps);
 
                 var callerDn = ResolveCallerDn(ps, credential, callerSid);
@@ -548,6 +563,116 @@ public class SelfServiceGroupService
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// List-driven membership REMOVAL keyed on the member's IMMUTABLE objectGUID (nesting plan S4,
+    /// D2) - the only path that can remove a GROUP member. A display identity (sAMAccountName/UPN)
+    /// can drift or collide between the list render and the write; the GUID cannot. The member is
+    /// resolved once via Get-ADObject, accepted only as objectClass user or group, run through the
+    /// SAME protection gate as the typed path (with S1 in place a protected nested group is refused
+    /// with the IT Support Desk message, D3), and fed to the same single executor.
+    /// Typed identities keep using <see cref="ChangeMemberAsync"/>, which stays USER-only (D1).
+    /// Audit and notification remain the caller's (page) responsibility, as on the typed path.
+    /// </summary>
+    public async Task<MembershipChangeResult> RemoveListedMemberAsync(
+        string callerSid, string groupObjectGuid, string memberObjectGuid, ClaimsPrincipal? actingUser)
+    {
+        if (string.IsNullOrWhiteSpace(callerSid))
+            throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
+        if (string.IsNullOrWhiteSpace(groupObjectGuid))
+            throw new ArgumentException("Group objectGUID is required.", nameof(groupObjectGuid));
+        if (string.IsNullOrWhiteSpace(memberObjectGuid))
+            return MembershipChangeResult.From(PermissionResult.Fail("A member objectGUID is required."));
+
+        var creds = await _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", "on-prem AD self-service membership change");
+        if (creds is null)
+            return MembershipChangeResult.From(PermissionResult.Fail("AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups."));
+
+        // Resolve the affected member ONCE by its immutable objectGUID, using THIS module's
+        // credential; the single resolution feeds both the protection gate and the write target,
+        // exactly as on the typed path. A resolution error fails closed (Known Failure Class #3).
+        ResolvedDirectoryPrincipal? member;
+        try
+        {
+            member = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveListedMemberByGuid(creds.Value, memberObjectGuid)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve the listed member - blocking as a precaution");
+            return MembershipChangeResult.From(PermissionResult.Fail("The member could not be resolved right now. Please try again shortly."));
+        }
+        if (member is null || string.IsNullOrWhiteSpace(member.DistinguishedName))
+            return MembershipChangeResult.From(PermissionResult.Fail("That member could not be found, or is not a user or group. Reload the member list and try again."));
+
+        var protection = await CheckMemberProtectedAsync(member, actingUser);
+        if (protection.Denial is not null)
+            return MembershipChangeResult.From(protection.Denial);
+
+        return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection);
+    }
+
+    /// <summary>
+    /// Resolves a listed member by objectGUID for <see cref="RemoveListedMemberAsync"/>. Accepts
+    /// objectClass user OR group only (nesting plan S4); anything else resolves null and the caller
+    /// refuses. For a GROUP the UserPrincipalName is string.Empty, NEVER the group's name:
+    /// MatchesIdentity skips empty candidates, while a group name in a UPN-shaped field could
+    /// false-match a protected USER entry sharing the name. A group's identity flows through
+    /// SamAccountName, DistinguishedName and ObjectGuid; its mail attribute rides
+    /// PrimarySmtpAddress so the affected-member notification runs on the same predicate as a
+    /// user's (D6 - no class check added anywhere).
+    /// </summary>
+    private static ResolvedDirectoryPrincipal? ResolveListedMemberByGuid(
+        (string username, string password, string domain) creds, string memberObjectGuid)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        ps.AddCommand("Get-ADObject")
+          .AddParameter("Identity", memberObjectGuid)
+          .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
+          .AddParameter("Credential", credential)
+          .AddParameter("ErrorAction", "Stop");
+        var objects = ps.Invoke();
+        ps.Commands.Clear();
+
+        if (objects.Count != 1)
+            return null;
+        var o = objects[0];
+        var objectClass = o.Properties["ObjectClass"]?.Value?.ToString()?.Trim().ToLowerInvariant();
+        var isUser = objectClass == "user";
+        var isGroup = objectClass == "group";
+        if (!isUser && !isGroup)
+            return null;
+        var dn = o.Properties["DistinguishedName"]?.Value?.ToString();
+        if (string.IsNullOrWhiteSpace(dn))
+            return null;
+
+        var displayName = o.Properties["DisplayName"]?.Value?.ToString();
+        var plainName = o.Properties["Name"]?.Value?.ToString();
+        return new ResolvedDirectoryPrincipal(
+            Source: "SelfServiceGroupService-AD",
+            DisplayName: displayName ?? plainName ?? dn,
+            UserPrincipalName: isUser ? (o.Properties["UserPrincipalName"]?.Value?.ToString() ?? string.Empty) : string.Empty,
+            SamAccountName: o.Properties["SamAccountName"]?.Value?.ToString(),
+            PrimarySmtpAddress: o.Properties["mail"]?.Value?.ToString(),
+            DistinguishedName: dn,
+            ObjectGuid: o.Properties["ObjectGUID"]?.Value?.ToString(),
+            EntraObjectId: null);
     }
 
     /// <summary>

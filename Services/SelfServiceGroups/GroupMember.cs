@@ -5,11 +5,11 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// docs/SelfServiceGroupsMemberListingAndPicker-Plan.md, member listing). Projected from
 /// <c>Get-ADGroupMember</c> to primitives so no System.DirectoryServices type crosses into C#.
 ///
-/// <see cref="IsRemovable"/> reflects the first-cut write scope: only USER members can be removed
-/// through this self-service path (matching the user-only add/remove constraint of the shipped
-/// module, `docs/SelfServiceGroupManagement-Plan.md` section 6.5, codex F7). Non-user members
-/// (nested groups, computers, service principals) are listed read-only so the manager sees the full
-/// membership but cannot remove them here.
+/// <see cref="IsRemovable"/> reflects the write scope (nesting plan S4): USER and GROUP members
+/// can be removed through this self-service path - a group behind the page's inline
+/// warning-and-confirm step (D2), and group ADDS stay excluded entirely (D1). Computers, service
+/// principals and other classes are listed read-only so the manager sees the full membership but
+/// cannot remove them here.
 /// </summary>
 public sealed record GroupMember
 {
@@ -27,6 +27,6 @@ public sealed record GroupMember
     /// <summary>Human-readable member kind: "User" / "Group" / "Computer" / "Other".</summary>
     public string Kind { get; init; } = "";
 
-    /// <summary>True only for user members - the first-cut removable scope.</summary>
+    /// <summary>True for user and group members - the classes the remove path may act on (S4).</summary>
     public bool IsRemovable { get; init; }
 }

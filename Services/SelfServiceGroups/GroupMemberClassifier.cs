@@ -6,11 +6,12 @@ namespace ExchangeAdminWeb.Services.SelfServiceGroups;
 /// <c>Get-ADGroupMember</c> read so the "which members can be removed here" rule is unit-testable
 /// without a domain controller.
 ///
-/// First-cut write scope is USER-ONLY (matching the shipped module's add/remove constraint,
-/// `docs/SelfServiceGroupManagement-Plan.md` section 6.5, codex F7): only a plain <c>user</c> is
-/// removable. A <c>computer</c> is an AD subclass of <c>user</c> but is NOT a removable user member
-/// here, so it is classified as its own kind and is not removable. Everything else (group, service
-/// principal, contact, unknown) is listed read-only.
+/// Write scope (nesting plan S4, D2): a plain <c>user</c> and a nested <c>group</c> are removable
+/// through this self-service path - group removal happens behind the page's inline
+/// warning-and-confirm step, and group ADDS remain excluded entirely (D1, IT Support Desk only).
+/// A <c>computer</c> is an AD subclass of <c>user</c> but is NOT removable here, so it is
+/// classified as its own kind. Everything else (service principal, contact, unknown) is listed
+/// read-only.
 /// </summary>
 public static class GroupMemberClassifier
 {
@@ -32,9 +33,10 @@ public static class GroupMemberClassifier
     }
 
     /// <summary>
-    /// True only when the member is a plain user - the first-cut removable scope. A computer (a user
-    /// subclass), a group, or any other class is not removable through this self-service path.
+    /// True when the member is a plain user or a nested group - the classes the self-service
+    /// REMOVE path may act on (nesting plan S4, D2). A computer (a user subclass) and every other
+    /// class stay read-only through this path.
     /// </summary>
     public static bool IsRemovable(string? objectClass)
-        => KindOf(objectClass) == "User";
+        => KindOf(objectClass) is "User" or "Group";
 }
