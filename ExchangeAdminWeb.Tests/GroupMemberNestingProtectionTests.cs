@@ -458,6 +458,35 @@ public class GroupMemberNestingProtectionTests
         Assert.DoesNotContain("RemoveMember(member.Email)", text, StringComparison.Ordinal);
     }
 
+    // ----- S5c (gmn-3): the picker's DN travels with the selection, and dies on a retype -----
+
+    [Fact]
+    public void AdminPage_AddPicker_IsAdBacked_HoldsTheDn_AndClearsItOnTypedInput()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+
+        // AD objects, any class - not Exchange recipients this on-prem chain would reject.
+        Assert.Contains("ADIdentityAutocomplete ObjectKind=\"Any\"", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("RecipientAutocomplete", text, StringComparison.Ordinal);
+
+        // The held DN is what the service writes; forest-wide search can offer two same-named
+        // groups from different domains and only the DN distinguishes them (gmn-3).
+        Assert.Contains("AddMemberAsync(selectedGroup!.Identity, newMember.Trim(), authState.User, selectedGroup.SamAccountName, newMemberSelection?.DistinguishedName)", text, StringComparison.Ordinal);
+
+        // Typed input has no DN: the ValueChanged handler must clear the held selection so a
+        // stale DN from a previous pick cannot survive a retype.
+        var changed = text.IndexOf("private void OnNewMemberChanged(string value)", StringComparison.Ordinal);
+        Assert.True(changed >= 0, "OnNewMemberChanged not found - tripwire is stale.");
+        var changedEnd = text.IndexOf("private void OnNewMemberSelected(", changed, StringComparison.Ordinal);
+        Assert.True(changedEnd > changed, "Could not bound OnNewMemberChanged - update the tripwire.");
+        Assert.Contains("newMemberSelection = null", text[changed..changedEnd], StringComparison.Ordinal);
+
+        // The member list renders what a member IS (S5a's kind reaches the operator).
+        Assert.Contains("<th>Kind</th>", text, StringComparison.Ordinal);
+        Assert.Contains("@member.MemberKind", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AddPanel_StatesTheUsersOnlyRule_BeforeAnyAttempt()
     {
