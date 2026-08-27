@@ -14,7 +14,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   1707/0/3.
   **NEXT: nothing until a deploy; the plan's four manual checks (section 8) ride it.**
 
-- **TOKEN BUDGET: PLAN DRAFTED, D1 RULED, AWAITING OWNER GO. NO CODE.**
+- **TOKEN BUDGET: S1 LANDED 2026-08-27 (owner go the same day); S2-S4 QUEUED.**
+  S1 is `tools/Get-TokenUsage.ps1` plus the `transcript-root:` entry in `.agents/machines.md`
+  it reads its default path from.
   `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
   token-budget-friendly implementation approach for September, with usage tracking built in.
   Canonical detail is in the plan; do not duplicate it here.
@@ -31,15 +33,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   playbook's 2026-07-11 deleted-on-sight ruling. **Size, the volatile figure this argument rests
   on:** 138 KB / ~51,800 tokens (roughly 18% of every request) when the plan was written; 58 KB
   after the 2026-08-14 drift sweep. Re-measure rather than quoting either number.
-  **Measured baselines worth not re-deriving** (2026-08-14, this project, August):
-  7,876 requests, 394K mean context, ~$2,311 at Opus rates; cost split cache-read 65% /
-  cache-write 29% / output 6% / input 0.3%. A cache re-prime at 280K context costs ~$1.75 and
-  the TTL is 5 minutes, so idle gaps are billed. Reviews were 1.9% of input tokens.
+  **Measured baselines: CORRECTED 2026-08-27 - the 2026-08-14 figures counted transcript
+  lines, not billed requests** (one request writes 1-5 identical-usage JSONL lines). Canonical
+  corrected numbers live in the plan's "Correction 2026-08-27" under Measured baseline
+  (`b2b2887`), and in `.agents/token-baseline.json` once S3 lands; do not quote the old
+  7,876-request / ~$2,311 figures. Per-request unit facts stand: a re-prime at 280K context
+  costs ~$1.75, the cache TTL is 5 minutes, idle gaps are billed.
   **Haiku 4.5 is permanently disqualified** - 200K context, 72.3% of requests exceed it. Do not
   re-propose. Sonnet 4.6 and every older Opus are strictly dominated on price and capability.
-  **NEXT: a go to implement S1.** D2 is withdrawn, so no owner decision is outstanding on this
-  plan; the earlier "a D2 ruling, then a go" line here contradicted the withdrawal three
-  paragraphs above it and `docs/TokenBudget-Plan.md`'s own `Status:`.
+  **NEXT: S2 (Pester coverage for the tool).** Then S3 (baseline + log; regenerate the August
+  baseline on or after 2026-09-01 so the full month is in it) and S4 (the protocol section in
+  `.agents/repo-guidance.md`).
 
 - **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
   `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's

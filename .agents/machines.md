@@ -43,5 +43,14 @@ _First recorded 2026-07-21._
 
 _Re-probed 2026-08-14._ Pester `6.0.1` and PSScriptAnalyzer `1.25.0` are installed; the
 PowerShell suites run under `pwsh` (`C:\Program Files\PowerShell\7\pwsh.exe`), not 5.1.
+
+### Claude Code transcript root (`tools/Get-TokenUsage.ps1`)
+
+- transcript-root: `C:\Users\mcoelho\.claude\projects\D--source-ExchangeAdminWeb`
+
+This project's transcripts only — the default scope the token baseline is measured on.
+Point the tool at `C:\Users\mcoelho\.claude\projects` with `-TranscriptRoot` for every
+local project. The script reads the first `transcript-root:` entry in this file; if a
+second machine is ever recorded here, pass `-TranscriptRoot` explicitly on it.
 - harness-cli: codex.ps1 (recorded 2026-07-27, refresh offer)
 - harness-cli: codex.cmd (recorded 2026-07-27, refresh offer)

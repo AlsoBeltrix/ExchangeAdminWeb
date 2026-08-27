@@ -1,8 +1,8 @@
 # Token-Budgeted Implementation - Plan
 
-Status: Draft - awaiting owner go to implement. D1 ruled and D2 withdrawn, both 2026-08-14. **No
-owner decision is outstanding.** Intended for use from 2026-09-01, when the current work pause
-lifts.
+Status: In progress - owner go 2026-08-27, the day the work pause lifted early (token budget
+reset). D1 ruled and D2 withdrawn, both 2026-08-14. **No owner decision is outstanding.**
+S1 (the tool) lands in the commit that sets this status; S2-S4 queued.
 
 Owner request 2026-08-14: *"let's make an implementation plan that is token-budget friendly.
 I will use that next month and see how it does. add something that tracks token usage as part
@@ -431,6 +431,12 @@ Design points that are not obvious and must not be re-litigated during implement
   If all three resolve favourably, the telemetry table replaces transcript parsing as S1's data
   source and this tool becomes an absolute instrument rather than a relative one. **Resolving
   them is a prerequisite task for S1, not a slice of it.**
+
+  **Resolved for S1, 2026-08-27: transcripts.** Headroom has been bypassed since the
+  2026-08-14 failure, so its telemetry misses every window measured here and cannot source
+  an August baseline regardless of questions 2 and 3, which stay open for a later
+  re-evaluation. S1 shipped on the transcript reader, per this section's own conclusion
+  that it remains the cross-check even if headroom later becomes primary.
 
   **Therefore: do not reconcile this tool's output against the account budget figure.** A
   per-machine measurement compared to an account-wide total cannot converge, and an attempt to
