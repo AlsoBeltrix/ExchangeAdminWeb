@@ -303,14 +303,33 @@ public class GroupMemberNestingProtectionTests
         Assert.DoesNotContain("RemoveMember(", branch, StringComparison.Ordinal);
 
         // The confirming action exists exactly once, inside the pending-state block.
-        Assert.Equal(1, Regex.Matches(text, Regex.Escape("ConfirmGroupRemoval(member)")).Count);
+        Assert.Single(Regex.Matches(text, Regex.Escape("ConfirmGroupRemoval(member)")));
         var pendingBlock = text.IndexOf("pendingGroupRemoval?.ObjectGuid == member.ObjectGuid", StringComparison.Ordinal);
         Assert.True(pendingBlock >= 0, "Pending-state block not found.");
         Assert.True(text.IndexOf("ConfirmGroupRemoval(member)", StringComparison.Ordinal) > pendingBlock,
             "ConfirmGroupRemoval must be reachable only from the pending-state block.");
     }
 
-    // (gmn-4's PendingGroupRemoval test is added in that finding's own commit.)
+    [Fact]
+    public void PendingGroupRemoval_IsClearedOnReload_AndRevalidatedOnConfirm()
+    {
+        // gmn-4: the pending confirm must not survive a list reload or a group switch, and the
+        // second action must confirm exactly the row the warning was opened for.
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "SelfServiceGroups.razor"));
+
+        var load = text.IndexOf("private async Task LoadMembers()", StringComparison.Ordinal);
+        Assert.True(load >= 0, "LoadMembers not found - tripwire is stale.");
+        var loadEnd = text.IndexOf("private async Task RemoveMember(", load, StringComparison.Ordinal);
+        Assert.True(loadEnd > load, "Could not bound LoadMembers - update the tripwire.");
+        Assert.Contains("pendingGroupRemoval = null", text[load..loadEnd], StringComparison.Ordinal);
+
+        var confirm = text.IndexOf("private async Task ConfirmGroupRemoval(GroupMember member)", StringComparison.Ordinal);
+        Assert.True(confirm >= 0, "ConfirmGroupRemoval not found - tripwire is stale.");
+        var confirmEnd = text.IndexOf("private async Task RemoveListedMember(", confirm, StringComparison.Ordinal);
+        Assert.True(confirmEnd > confirm, "Could not bound ConfirmGroupRemoval - update the tripwire.");
+        Assert.Contains("pendingGroupRemoval?.ObjectGuid != member.ObjectGuid", text[confirm..confirmEnd], StringComparison.Ordinal);
+    }
 
     // ----- S5a: the admin member list reports what a member actually is -----
 

@@ -391,6 +391,9 @@
         isLoadingMembers = true;
         memberLoadError = null;
         groupMembers = [];
+        // gmn-4: a pending group-removal confirm never survives a list reload or a group
+        // switch - a stale one would make "Remove group" the FIRST action on another group.
+        pendingGroupRemoval = null;
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
@@ -426,6 +429,13 @@
 
     private async Task ConfirmGroupRemoval(GroupMember member)
     {
+        // gmn-4: the second action must confirm exactly the row the warning was opened for; a
+        // stale or mismatched pending state performs no removal.
+        if (pendingGroupRemoval?.ObjectGuid != member.ObjectGuid)
+        {
+            pendingGroupRemoval = null;
+            return;
+        }
         pendingGroupRemoval = null;
         await RemoveListedMember(member);
     }
