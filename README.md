@@ -114,8 +114,29 @@ Search and manage distribution lists, mail-enabled security groups, and Microsof
   - **On-prem AD** — Synced groups modified via Delinea-authenticated AD operations
   - **Graph API** — Microsoft 365 (Unified) groups
 - Add/remove members, view group details
+- On-prem AD members can be users or nested groups: the member list shows each member's kind,
+  adds are guarded against self-nesting and membership cycles in the service, writes are
+  confirmed by a post-write read-back, and a protected group member is refused (the
+  `ProtectedServicer:GroupManagement` override applies)
 - **Requires:** `GroupManagementOnPrem` section access for on-premises group modifications
 - Section access key: `GroupManagement`
+
+### Self-Service Groups (`/self-service-groups`)
+
+On-prem AD group membership management for group OWNERS (managedBy / co-managers holding
+member-write rights on the group DACL), without admin access. (Section added 2026-08-27; the
+module previously had no README entry.)
+
+- Lists the groups the signed-in user owns; write eligibility is checked at list time against
+  the group's DACL and re-checked at every write
+- Add or remove USER members by username, email, or UPN; every change is confirmed by a
+  post-write read-back, audited, and notifies the affected member for security groups
+- Nested groups: adding a group is never possible here (the page says so up front and a typed
+  group gets a refusal directing to the IT Support Desk); a nested group CAN be removed, behind
+  an inline warning that re-adding it will require a ticket
+- Protected principals - including protected groups and groups nested under one - are refused;
+  the `ProtectedServicer:SelfServiceGroups` override applies
+- Section access key: `SelfServiceGroups`
 
 ### M365 Group Management (`/m365-group-management`)
 

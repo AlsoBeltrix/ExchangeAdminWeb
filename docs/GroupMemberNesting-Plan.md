@@ -1,8 +1,14 @@
 # Nested Group Membership - Self-Service Refusal, Admin Support
 
-Status: Approved (owner, 2026-08-11). Rulings D1-D6 below are complete; no open owner
-decision. Covers two modules (`SelfServiceGroups`, `GroupManagement`) and one shared
-service (`ProtectedPrincipalService`).
+Status: Implemented 2026-08-27 (owner goal-directive the same day; Fable 5 implemented per the
+amended Token Budget D1). Slices: S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`,
+S5a `ba3b6c8`, S5b `8c4042c`, S5c `a014068`, S6 the commit that set this status. NOT DEPLOYED;
+the manual checks in Verification have NOT been run - they need a deployed instance and live
+AD. Range reviews per major item (codex gpt-5.6-sol @ xhigh): S1+S2 clean; S3+S4 raised gmn-4
+and gmn-5 (both MEDIUM, admitted, fixed in `6452ce9` / `d2b2a6e` - records in
+`.agents/review/findings/`); S5a-S6 review recorded in `.agents/review/index.md` when it
+lands. Rulings D1-D6 below are complete. Covers two modules (`SelfServiceGroups`,
+`GroupManagement`) and one shared service (`ProtectedPrincipalService`).
 
 Reviewed as a plan by openreview `codex`
 (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over

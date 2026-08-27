@@ -289,7 +289,7 @@ public sealed class ModuleCatalog
             SortOrder = 150,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "2.2.0",
+            Version = "2.3.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -346,7 +346,7 @@ public sealed class ModuleCatalog
             SortOrder = 165,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.0",
+            Version = "1.4.0",
             MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
