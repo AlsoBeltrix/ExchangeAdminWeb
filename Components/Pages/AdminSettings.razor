@@ -627,13 +627,15 @@
     /// </remarks>
     private async Task SweepExistingEntriesAsync()
     {
-        var targets = new List<(string Entry, string Lookup, string Kind)>();
-        targets.AddRange(ppUsers.Select(u => (u, u, "User")));
-        targets.AddRange(ppGroups.Select(g => (g, g, "Group")));
-        targets.AddRange(ppOus.Select(o => (o, o, "OU")));
-        // Group targets store "guid|DN"; the DN half is what AD can confirm exists. The badge
-        // keys on the stored entry, so the row it decorates is the row that was checked.
-        targets.AddRange(ppTargets.Select(t => (t, ProtectedGroupTargetEntry.Parse(t).DistinguishedName ?? t, "Group")));
+        var targets = new List<(string Entry, string Kind)>();
+        targets.AddRange(ppUsers.Select(u => (u, "User")));
+        targets.AddRange(ppGroups.Select(g => (g, "Group")));
+        targets.AddRange(ppOus.Select(o => (o, "OU")));
+        // Group TARGETS are deliberately not swept (pgwt-6, the patterns precedent): their
+        // identity is the GUID, which keeps protecting across a rename or move - a DN lookup
+        // would badge a renamed-but-still-effective row "protects nothing" and invite the
+        // admin to remove real protection. A row for a genuinely deleted group protects
+        // nothing and harms nothing.
 
         if (targets.Count == 0)
             return;
@@ -641,14 +643,14 @@
         var stale = await Task.Run(() =>
         {
             var found = new List<string>();
-            foreach (var (entry, lookup, kind) in targets)
+            foreach (var (entry, kind) in targets)
             {
                 try
                 {
                     // ONLY an affirmative NotFound flags a row. Unavailable is skipped so an
                     // outage cannot make every entry look broken at once.
                     if (ProtectedPrincipalEntryValidator.ShouldFlagAsStale(
-                            ADSearch.ValidateExists(lookup, kind).Outcome))
+                            ADSearch.ValidateExists(entry, kind).Outcome))
                         found.Add(entry);
                 }
                 catch (Exception ex)
@@ -717,11 +719,25 @@
 
         var decision = ProtectedPrincipalEntryValidator.Decide(target, raw, objectKind, result);
 
-        if (decision.Accepted && decision.ValueToAdd is { } toAdd
-            && !target.Contains(toAdd, StringComparer.OrdinalIgnoreCase))
+        if (decision.Accepted && decision.ValueToAdd is { } toAdd)
         {
-            target.Add(toAdd);
-            dirty.Set(SectionProtected, true);
+            // pgwt-6: a target's identity is its GUID, so re-adding a renamed group REPLACES
+            // the old row (refreshing the stored DN) instead of accumulating two rows that
+            // share one GUID - where removing one later would confusingly leave protection on.
+            if (objectKind == "GroupTarget")
+            {
+                var newGuid = ProtectedGroupTargetEntry.Parse(toAdd).ObjectGuid;
+                if (!string.IsNullOrEmpty(newGuid) && target.RemoveAll(x => string.Equals(
+                        ProtectedGroupTargetEntry.Parse(x).ObjectGuid, newGuid,
+                        StringComparison.OrdinalIgnoreCase)) > 0)
+                    dirty.Set(SectionProtected, true);
+            }
+
+            if (!target.Contains(toAdd, StringComparer.OrdinalIgnoreCase))
+            {
+                target.Add(toAdd);
+                dirty.Set(SectionProtected, true);
+            }
         }
 
         ppAddError = decision.ErrorMessage;

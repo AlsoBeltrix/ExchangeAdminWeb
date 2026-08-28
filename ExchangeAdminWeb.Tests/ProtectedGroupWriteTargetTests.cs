@@ -402,7 +402,30 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.Contains("@bind-Value=\"ppNewTarget\"", page, StringComparison.Ordinal);
         Assert.Contains("\"GroupTarget\", v => ppNewTarget = v, lookupKind: \"Group\"", page, StringComparison.Ordinal);
         Assert.Contains("GroupTargets = ppTargets", page, StringComparison.Ordinal);
-        Assert.Contains("ProtectedGroupTargetEntry.Parse(t).DistinguishedName ?? t", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminPage_TargetRows_AreNotSwept_AndDedupeByGuid()
+    {
+        // pgwt-6: a renamed target still protects via its GUID, so a DN-keyed stale badge
+        // would falsely tell the admin the row "protects nothing" - target rows leave the
+        // sweep (the patterns precedent). And a re-added target REPLACES any row sharing its
+        // GUID, so one group can never hold two rows.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "AdminSettings.razor"));
+
+        var sweepStart = page.IndexOf("private async Task SweepExistingEntriesAsync()", StringComparison.Ordinal);
+        Assert.True(sweepStart >= 0, "SweepExistingEntriesAsync not found - tripwire is stale.");
+        var sweepEnd = page.IndexOf("private async Task AddValidatedAsync(", sweepStart, StringComparison.Ordinal);
+        Assert.True(sweepEnd > sweepStart, "Could not bound the sweep - update the tripwire.");
+        Assert.DoesNotContain("ppTargets", page[sweepStart..sweepEnd], StringComparison.Ordinal);
+
+        var addStart = page.IndexOf("private async Task AddValidatedAsync(", StringComparison.Ordinal);
+        var addEnd = page.IndexOf("private async Task SaveProtectedPrincipals()", addStart, StringComparison.Ordinal);
+        Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddValidatedAsync - update the tripwire.");
+        var add = page[addStart..addEnd];
+        Assert.Contains("objectKind == \"GroupTarget\"", add, StringComparison.Ordinal);
+        Assert.Contains("RemoveAll", add, StringComparison.Ordinal);
     }
 
     // ---- harness ------------------------------------------------------------------------------
