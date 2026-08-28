@@ -367,6 +367,12 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
         if (obj is null)
             return new DirectoryValidationResult(ClassifyOutcome(ValidationStep.CompletedWithNoResults), null);
 
+        // Ambiguity is still not an error for EXISTENCE (several matches answer "yes"), but
+        // the result carries it so kinds that must act on exactly one object - the protected
+        // TARGET list stores one group's immutable id - can refuse instead of persisting
+        // whichever match AD returned first (pgwt-4). ResultSetSize 2 above makes >1 decisive.
+        var matches = found.Count(o => o is not null);
+
         return new DirectoryValidationResult(
             ClassifyOutcome(ValidationStep.CompletedWithResults),
             new ADSearchResult(
@@ -377,7 +383,8 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
                 UserPrincipalName: obj.Properties["UserPrincipalName"]?.Value?.ToString(),
                 Email: obj.Properties["mail"]?.Value?.ToString(),
                 ObjectType: objectKind == "OU" ? "OU" : (objectKind == "Group" ? "Group" : "User"),
-                ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString()));
+                ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString()),
+            Ambiguous: matches > 1);
     }
 
     private static string[] ValidationProperties(string objectKind) => objectKind switch
@@ -780,7 +787,8 @@ public enum DirectoryLookupOutcome
 /// </summary>
 public sealed record DirectoryValidationResult(
     DirectoryLookupOutcome Outcome,
-    ADSearchResult? Match);
+    ADSearchResult? Match,
+    bool Ambiguous = false);
 
 /// <summary>
 /// Represents a single Active Directory search result for autocomplete display.

@@ -92,6 +92,19 @@ public static class ProtectedPrincipalEntryValidator
                     ConsultedDirectory: true);
         }
 
+        if (objectKind == "GroupTarget" && result.Ambiguous)
+        {
+            // A target row stores ONE group's immutable id; accepting an ambiguous name would
+            // persist whichever match AD returned first, leaving the intended group writable
+            // (pgwt-4). A picker selection is a DN and always resolves exactly one.
+            return new EntryValidationDecision(
+                false,
+                null,
+                $"'{v}' matches more than one group. Pick the group from the search suggestions.",
+                ClearInput: false,
+                ConsultedDirectory: true);
+        }
+
         if (objectKind == "GroupTarget" && string.IsNullOrWhiteSpace(result.Match?.ObjectGuid))
         {
             // A target entry keys on the immutable objectGUID (docs/ProtectedGroupWriteTarget-

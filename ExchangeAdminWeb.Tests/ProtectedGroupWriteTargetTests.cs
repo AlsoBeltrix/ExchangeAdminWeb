@@ -327,6 +327,29 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     }
 
     [Fact]
+    public void Validator_GroupTarget_RefusesAnAmbiguousMatch()
+    {
+        // pgwt-4: an ambiguous typed name would persist whichever match AD returned first,
+        // leaving the intended group writable while another appears protected.
+        var match = new ADSearchResult("Ops", TargetDn, "Ops", null, null, "Group", ObjectGuid: TargetGuid);
+
+        var decision = ProtectedPrincipalEntryValidator.Decide(
+            [], "Ops", "GroupTarget", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match, Ambiguous: true));
+
+        Assert.False(decision.Accepted);
+        Assert.Contains("more than one group", decision.ErrorMessage!, StringComparison.Ordinal);
+
+        // The existing lists keep their existence-only semantics: ambiguity still accepts.
+        var groupList = ProtectedPrincipalEntryValidator.Decide(
+            [], "Ops", "Group", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match, Ambiguous: true));
+        Assert.True(groupList.Accepted);
+
+        // And the lookup actually reports ambiguity (source tripwire - the live path needs AD).
+        var svc = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADDirectorySearchService.cs"));
+        Assert.Contains("Ambiguous: matches > 1", svc, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Validator_ValueToAdd_SavedThroughTheStore_IsWhatTheGateRefuses()
     {
         // AC7 end to end: the value the admin page's ADD decision produces, saved through
