@@ -206,7 +206,7 @@ public class GroupMemberNestingProtectionTests
         var start = text.IndexOf("public async Task<MembershipChangeResult> ChangeMemberAsync(", StringComparison.Ordinal);
         Assert.True(start >= 0, "ChangeMemberAsync signature not found - tripwire is stale.");
         var end = text.IndexOf(
-            "return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection);",
+            "return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection, actingUser);",
             start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound the not-found block - update the tripwire.");
         var body = text[start..end];
@@ -237,7 +237,7 @@ public class GroupMemberNestingProtectionTests
         var iGate = body.IndexOf("await CheckMemberProtectedAsync(member, actingUser)", StringComparison.Ordinal);
         var iDenialCheck = body.IndexOf("if (protection.Denial is not null)", StringComparison.Ordinal);
         var iDenialReturn = body.IndexOf("return MembershipChangeResult.From(protection.Denial);", StringComparison.Ordinal);
-        var iExecutor = body.IndexOf("return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection);", StringComparison.Ordinal);
+        var iExecutor = body.IndexOf("return await ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, MembershipOperation.Remove, protection, actingUser);", StringComparison.Ordinal);
 
         Assert.True(iResolve >= 0, "GUID resolution missing from RemoveListedMemberAsync.");
         Assert.True(iGate > iResolve, "The protection gate must follow the resolution it gates.");
@@ -255,7 +255,7 @@ public class GroupMemberNestingProtectionTests
         // The single-executor refactor: ChangeMemberAsync keeps its signature and hands the
         // check-write-reconcile sequence to the same method the list path uses.
         Assert.Contains(
-            "ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection)",
+            "ApplyMembershipChangeAsync(callerSid, groupObjectGuid, creds.Value, member, operation, protection, actingUser)",
             SelfServiceText(), StringComparison.Ordinal);
     }
 
