@@ -3,9 +3,10 @@
 **Severity**: HIGH - the immutable-identity contract inverts: a row created BECAUSE its identity
 could not be resolved falls back to resolving its display name, which can match a same-named
 local object and remove the wrong member.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification BLOCKED - transport, see
+Reviewer comments)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `f239437`
 
 ## Evidence
 
@@ -75,3 +76,16 @@ rows classify "Other" and are not removable) - asserted by existing tests, uncha
 quirk on a completed turn, recorded not invalidating)
 
 Generation pass over `fbf37ac..3b766ca`, verdict `findings` (3), `capability_ok: true`.
+
+**Verification rounds - transport unsupported (2026-08-28):** two workspace-write dispatches
+(`Reviewer: codex-commercial / gpt-5.6-sol / xhigh / standard`, pins base `cd70f69` head
+`f239437`) both returned `invalid` with `capability_ok: false` / `guard_confirmed: false`: the
+sandbox rejected every process launch (round 2 also file reads) with
+`helper_unknown_error: setup refresh had errors`. Not a dispute about the fix - the reviewer
+never inspected the diff or ran the guard. Per the playbook's terminal-denial rule the
+transport is recorded unsupported and no further variants were tried. Read-only dispatches on
+the same harness worked the same day (the generation pass above), so the fault is specific to
+the workspace-write sandbox on codex-cli 0.150.1. Coder-side guard proof stands (fix reverted:
+compile failure of the guarding tests; restored: 1775/0/3 green). **Owner decides:** retry
+codex-commercial later, name another verifier (grok holds a verified cache entry -
+an offer, not a dispatch), or accept the coder-side proof.

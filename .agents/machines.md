@@ -9,6 +9,12 @@ _First recorded 2026-07-21._
 
 ### Cross-harness review (`codereview` / `openreview`) reviewers
 
+- **codex-commercial workspace-write sandbox BROKEN as of 2026-08-28** (codex-cli `0.150.1`,
+  Headroom proxy in path): every process launch - and on the second round even file reads - is
+  rejected pre-launch with `helper_unknown_error: setup refresh had errors`, so guard-proof
+  verification dispatches return `capability_ok:false`. `read-only` dispatches worked the same
+  day (generation passes unaffected). Probe workspace-write with a smoke dispatch before the
+  next verification round; the lst-1 record carries the two failed rounds.
 - **codex sandbox for guard-proof verifications (observed 2026-08-27):** `-s read-only`
   denies creating the isolated proof tree, so per-finding verification dispatches honestly
   return `guard_confirmed: false` (one round even returned "invalid" purely on that
