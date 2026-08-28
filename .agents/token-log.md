@@ -19,3 +19,4 @@ Format: `date  slice  model  reqs N  mean-ctx NK  est $X.XX`
 2026-08-28  GroupListingCrossDomainFix  fable-5 (est at opus-5 rates)  reqs 38  mean-ctx 219K  est $8.76  (session figures at commit; session also spans the unauthorised pgwt start and its diagnosis/cleanup)
 2026-08-28  lst-1..lst-3 fixes + review loop  fable-5 (est at opus-5 rates)  reqs 70  mean-ctx 312K  est $18.04  (same session; session total at lst-2 close, supersedes the line above; codex reviews bill on their own harness)
 2026-08-28  ProtectedGroupWriteTarget S1-S4  fable-5 (est at opus-5 rates)  reqs 90  mean-ctx 359K  est $28.47  (same session; session total at S4 close, supersedes the line above)
+2026-08-28  pgwt range-review fixes pgwt-4..9  fable-5 (est at opus-5 rates)  reqs 126  mean-ctx 431K  est $41.59  (same session; session total at loop close, supersedes the line above; codex reviews bill on their own harness)

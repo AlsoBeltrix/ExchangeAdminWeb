@@ -3,9 +3,10 @@
 **Severity**: MEDIUM - a servicer-authorised attempt on a protected target that later
 fails (guard, AD write, read-back) audits WITHOUT the authorising group; a post-timeout
 committed change can leave a protected-group mutation with no servicing note.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `f857d1b`
 
 ## Evidence
 

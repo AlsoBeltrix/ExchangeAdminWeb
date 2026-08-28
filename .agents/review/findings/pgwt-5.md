@@ -2,9 +2,10 @@
 
 **Severity**: MEDIUM - a WINROOT group picked from the forest-wide suggestions is refused
 as nonexistent by the local-domain revalidation, so it cannot be protected via the UI.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `14a34f8`
 
 ## Evidence
 
@@ -22,10 +23,15 @@ unreachable-capability shape).
 
 ## Approach
 
-DN-shaped identities route the validation lookup to the DN's owning domain:
+DN-shaped GROUP identities route the validation lookup to the DN's owning domain:
 `ExecuteValidateExists` derives `-Server` via the existing `DnsDomainFromDn` when the
-(normalized) identity contains `=`. Non-DN input keeps today's local binding. This heals
-the older Groups/OU lists through the same single call site.
+(normalized) identity contains `=`. Scoped to the Group kind after a first unconditional
+cut broke `ADDirectoryLiveTests.ValidateExists_NonexistentOu_IsNotFound_NotUnavailable`:
+the OU/User kinds carry a live-proven contract that a nonexistent DN under a bogus domain
+answers NotFound from the local DC, and routing to an unresolvable host turned that
+affirmative absence into Unavailable. Only the group pickers are forest-wide, so the
+scoping loses nothing the finding needed; it heals the older Groups list through the same
+call site.
 
 ## Files changed
 

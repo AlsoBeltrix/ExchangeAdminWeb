@@ -330,9 +330,13 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   cmdlet's 5000-object cap) and resolve each member routed to its own domain; an unresolvable
   member degrades to a DN-named read-only row rather than failing the list.
   `GroupManagement 2.3.1`, `SelfServiceGroups 1.4.1`, no base bump.
-  **Active review loop: see `.agents/review/index.md`** - lst-1..lst-3 from the codereview of
-  that listing fix (codex gpt-5.6-sol@xhigh over `fbf37ac..3b766ca`); remove this line when the
-  loop closes.
+  **Active review loop: see `.agents/review/index.md`** - lst-1..3 (listing fix) and
+  pgwt-4..9 (pgwt range review) are ALL FIXED and coder-guard-proven; the loop stays open
+  ONLY because independent verification is blocked by the broken codex-commercial
+  workspace-write sandbox (recorded in `.agents/machines.md` and on lst-1). Owner decides:
+  retry codex later, name grok as verifier, or accept the coder-side proofs. pgwt-3 was
+  declined at intake (`.agents/review/pgwt-3.contested.md`), also owner-adjudicable.
+  Remove this line when the loop closes.
   **NEXT: the plan's manual checks ride the next deploy** (real nested groups, protected-
   group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins member
   listing for this fix, in BOTH group modules). All review loops closed - gmn-4 through

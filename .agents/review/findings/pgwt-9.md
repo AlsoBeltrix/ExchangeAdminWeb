@@ -2,9 +2,9 @@
 
 **Severity**: LOW - a later session following the canonical state entry point could
 re-request approval or restart landed work.
-**Status**: In progress
+**Status**: In progress (fix landed; docs-only, `git diff --check` clean)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `c51d4f6`
 
 ## Evidence
 

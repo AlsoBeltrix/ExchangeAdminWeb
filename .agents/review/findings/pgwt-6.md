@@ -2,9 +2,10 @@
 
 **Severity**: MEDIUM - the false badge invites an admin to remove protection that is still
 effective; string-keyed dedupe then allows two rows for one GUID.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `065b310`
 
 ## Evidence
 

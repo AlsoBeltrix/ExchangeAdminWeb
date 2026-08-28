@@ -2,9 +2,10 @@
 
 **Severity**: MEDIUM - the intended privileged group stays writable while a same-named
 other group appears protected.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `e332c45`
 
 ## Evidence
 

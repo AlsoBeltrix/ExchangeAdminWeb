@@ -1,9 +1,9 @@
 # pgwt-8: AdminSettings module version not bumped for the new target list
 
 **Severity**: LOW - deployment/support checks cannot distinguish the changed module.
-**Status**: In progress
+**Status**: In progress (fix landed)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `da5b967`
 
 ## Evidence
 
