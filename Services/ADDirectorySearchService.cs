@@ -350,6 +350,23 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
           .AddParameter("ResultSetSize", 2)
           .AddParameter("ErrorAction", "Stop");
 
+        // pgwt-5: a DN names its owning domain, but the default binding is the LOCAL domain -
+        // so a forest-wide picker selection (a WINROOT group) revalidated here read as
+        // nonexistent and could not be protected through the UI at all. Route DN-shaped GROUP
+        // input to its own domain. Scoped to the Group kind deliberately: only the group
+        // pickers are forest-wide, and the OU/User kinds carry a live-proven contract that a
+        // nonexistent DN under a bogus domain answers NotFound from the local DC
+        // (ADDirectoryLiveTests) - routing those to an unresolvable host would turn the
+        // affirmative absence into Unavailable. NormalizeIdentity already distinguishes a DN's
+        // escape-backslash from a DOMAIN\name separator.
+        var normalized = NormalizeIdentity(identity);
+        if (objectKind == "Group" && normalized.Contains('='))
+        {
+            var server = DnsDomainFromDn(normalized);
+            if (server is not null)
+                ps.AddParameter("Server", server);
+        }
+
         var found = ps.Invoke();
         ps.Commands.Clear();
 

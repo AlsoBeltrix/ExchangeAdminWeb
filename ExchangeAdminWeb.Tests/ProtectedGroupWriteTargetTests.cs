@@ -367,6 +367,29 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
     }
 
     [Fact]
+    public void Validation_RoutesDnShapedLookups_ToTheOwningDomain()
+    {
+        // pgwt-5 (source tripwire; the live cross-domain lookup needs a directory): a
+        // forest-wide picker selection must not be revalidated against the local domain only,
+        // or a WINROOT group can be picked but never saved.
+        var svc = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "ADDirectorySearchService.cs"));
+        var start = svc.IndexOf("private DirectoryValidationResult ExecuteValidateExists(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ExecuteValidateExists not found - tripwire is stale.");
+        var end = svc.IndexOf("private static string[] ValidationProperties(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ExecuteValidateExists - update the tripwire.");
+        var body = svc[start..end];
+
+        var iRoute = body.IndexOf("DnsDomainFromDn(normalized)", StringComparison.Ordinal);
+        var iInvoke = body.IndexOf("ps.Invoke()", StringComparison.Ordinal);
+        Assert.True(iRoute >= 0, "DN-shaped validation lookups must route to the owning domain (pgwt-5).");
+        Assert.True(iInvoke > iRoute, "The routing must be applied before the lookup runs (pgwt-5).");
+        Assert.Contains("AddParameter(\"Server\", server)", body, StringComparison.Ordinal);
+        // Scoped to GROUPS: only the group pickers are forest-wide, and the OU/User kinds have
+        // a live-proven NotFound contract for bogus-domain DNs that routing would break.
+        Assert.Contains("objectKind == \"Group\" && normalized.Contains('=')", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdminPage_WiresTheTargetList()
     {
         // No bUnit harness exists, so the page wiring is pinned: its own captioned picker, the
