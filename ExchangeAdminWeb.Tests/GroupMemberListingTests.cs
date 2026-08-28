@@ -142,4 +142,30 @@ public class GroupMemberListingTests
             "Components", "Pages", "GroupManagement.razor"));
         Assert.Contains("string.IsNullOrEmpty(member.ObjectGuid)", page, StringComparison.Ordinal);
     }
+
+    // ----- lst-3: an errored admin membership read is a read ERROR, not an empty group -----
+
+    [Fact]
+    public void AdminListing_RejectsAnErroredMembershipRead()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
+        var body = text[start..end];
+
+        // The stream is cleared BEFORE the membership read (so earlier SilentlyContinue probes
+        // cannot pollute the check), and HadErrors is rejected BEFORE any member is projected.
+        var iRead = body.IndexOf("AddCommand(\"Get-ADGroup\")", StringComparison.Ordinal);
+        var iPreClear = body.IndexOf("ps.Streams.Error.Clear();", StringComparison.Ordinal);
+        var iReject = body.IndexOf("if (ps.HadErrors || groupWithMembers is null)", StringComparison.Ordinal);
+        var iProject = body.IndexOf("MemberDnsOf(groupWithMembers)", StringComparison.Ordinal);
+        Assert.True(iRead >= 0, "Membership read not found - tripwire is stale.");
+        Assert.True(iPreClear >= 0 && iPreClear < iRead, "The pre-read error-stream clear must precede the membership read (lst-3).");
+        Assert.True(iReject > iRead, "The HadErrors rejection is missing after the membership read (lst-3).");
+        Assert.True(iProject > iReject, "Members must only be projected after the errored-read rejection (lst-3).");
+        Assert.Contains("The group's membership could not be read.", body, StringComparison.Ordinal);
+    }
 }

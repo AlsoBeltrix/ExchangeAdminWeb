@@ -218,6 +218,9 @@ public class GroupManagementService
             // another domain in the forest and cannot be chased under this credential - one
             // WINROOT group nested in an ANALOG group broke the entire listing (dev, 2026-08-28).
             // Comms10k already reads membership this way, for the same cmdlet's 5000-object cap.
+            // lst-3: clear whatever ResolveAdGroupIdentity's SilentlyContinue probes left in the
+            // shared error stream, so HadErrors below reports THIS read only.
+            ps.Streams.Error.Clear();
             ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", resolvedDn)
               .AddParameter("Properties", new[] { "member" })
@@ -225,9 +228,12 @@ public class GroupManagementService
               .AddParameter("ErrorAction", "Stop");
             var groupWithMembers = ps.Invoke().FirstOrDefault(o => o is not null);
             ps.Commands.Clear();
-            if (groupWithMembers is null)
+            // lst-3: an errored membership read must never present as an empty or truncated
+            // list (Known Failure Class #2) - mirror the self-service twin's rejection.
+            if (ps.HadErrors || groupWithMembers is null)
             {
-                result.Error = "The group could not be read.";
+                ps.Streams.Error.Clear();
+                result.Error = "The group's membership could not be read.";
                 return result;
             }
 
