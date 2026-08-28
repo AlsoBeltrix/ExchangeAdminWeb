@@ -431,6 +431,13 @@ public class GroupManagementService
     /// foreign-domain member's partition does not exist on the local domain's DCs.</param>
     public async Task<PermissionResult> RemoveMemberAsync(string groupIdentity, string member, ClaimsPrincipal? actingUser, string? samAccountName = null, string? memberObjectGuid = null, string? memberDnHint = null)
     {
+        // lst-1: a listed row whose immutable identity could not be resolved is INERT. The page
+        // sends the row's ObjectGuid verbatim, so a blank (non-null) GUID means exactly that
+        // degraded row; refusing here guarantees the resolver can never fall back from the
+        // absent immutable key to the mutable display name and act on a same-named local object.
+        if (memberObjectGuid is not null && string.IsNullOrWhiteSpace(memberObjectGuid))
+            return PermissionResult.Fail("That member could not be fully resolved from the list and cannot be removed here. Reload the member list and try again.");
+
         // String pre-gate as before (secondary-alias bypass for USER members; pinned by tests).
         // Vacuous when the label is empty or names no user - the resolved-principal gate below
         // covers those (gmn-1).
@@ -602,6 +609,16 @@ public class GroupManagementService
         => ProtectedPrincipalService.ExtractCnFromDn(dn)?.Replace("\\,", ",") ?? dn;
 
     /// <summary>
+    /// First non-BLANK of two identity keys (lst-1). Null-coalescing let an empty-string GUID
+    /// shadow a real DN, which then fell through to typed-name resolution - the one thing a
+    /// degraded row must never do. Pure for unit tests.
+    /// </summary>
+    internal static string? FirstNonBlank(string? first, string? second)
+        => !string.IsNullOrWhiteSpace(first) ? first
+         : !string.IsNullOrWhiteSpace(second) ? second
+         : null;
+
+    /// <summary>
     /// Class-agnostic exactly-once member resolution for the write paths (S5b). Precedence:
     /// objectGUID (immutable, from the member list) over picker DN over the typed identity via a
     /// bound RFC 4515-escaped -LDAPFilter (replacing the interpolated -Filter strings this
@@ -631,7 +648,10 @@ public class GroupManagementService
         var props = new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
 
         PSObject? obj;
-        var immutableKey = memberObjectGuid ?? memberDn;
+        // lst-1: coalesce on non-BLANK, never null-only. A blank GUID beside a real DN must
+        // resolve by the DN (routed to its owning domain) or fail - `??` let the empty string
+        // win and dropped through to typed-name resolution of the display label.
+        var immutableKey = FirstNonBlank(memberObjectGuid, memberDn);
         if (!string.IsNullOrWhiteSpace(immutableKey))
         {
             ps.AddCommand("Get-ADObject")

@@ -126,7 +126,12 @@
                                         <td>
                                             @if (canManageOnPrem)
                                             {
-                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)" disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber))">Remove</button>
+                                                @* lst-1: a row with no immutable id could not be resolved in its own
+                                                   domain and is INERT - the service refuses it too; this removes the
+                                                   affordance so the refusal is not the operator's first hint. *@
+                                                <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
+                                                        disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber) || string.IsNullOrEmpty(member.ObjectGuid))"
+                                                        title="@(string.IsNullOrEmpty(member.ObjectGuid) ? "This member could not be resolved in its own domain, so it cannot be removed here." : null)">Remove</button>
                                             }
                                         </td>
                                     </tr>

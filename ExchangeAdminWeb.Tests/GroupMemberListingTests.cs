@@ -101,4 +101,45 @@ public class GroupMemberListingTests
         Assert.Equal("Other", GroupMemberClassifier.KindOf(null));
         Assert.False(GroupMemberClassifier.IsRemovable(null));
     }
+
+    // ----- lst-1: a degraded row (blank ObjectGuid) must be inert end to end -----
+
+    [Theory]
+    [InlineData(null, "CN=A,DC=x", "CN=A,DC=x")]
+    [InlineData("", "CN=A,DC=x", "CN=A,DC=x")]
+    [InlineData("   ", "CN=A,DC=x", "CN=A,DC=x")]
+    [InlineData("guid-1", "CN=A,DC=x", "guid-1")]
+    [InlineData(null, null, null)]
+    [InlineData("", "  ", null)]
+    public void FirstNonBlank_NeverLetsABlankKeyShadowARealOne(string? first, string? second, string? expected)
+    {
+        Assert.Equal(expected, GroupManagementService.FirstNonBlank(first, second));
+    }
+
+    [Fact]
+    public void AdminRemove_RefusesABlankListedGuid_AndPageDisablesTheButton()
+    {
+        var service = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+
+        // The service guard sits at the top of RemoveMemberAsync, BEFORE any resolution.
+        var start = service.IndexOf("public async Task<PermissionResult> RemoveMemberAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "RemoveMemberAsync signature not found - tripwire is stale.");
+        var end = service.IndexOf("// --- Helpers ---", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound RemoveMemberAsync - update the tripwire.");
+        var body = service[start..end];
+        var iGuard = body.IndexOf("memberObjectGuid is not null && string.IsNullOrWhiteSpace(memberObjectGuid)", StringComparison.Ordinal);
+        var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn: memberDnHint, memberObjectGuid)", StringComparison.Ordinal);
+        Assert.True(iGuard >= 0, "Blank-listed-GUID refusal missing from RemoveMemberAsync (lst-1).");
+        Assert.True(iResolve > iGuard, "The blank-GUID refusal must precede resolution (lst-1).");
+
+        // The resolver coalesces on non-blank, so no other caller can regress the same way.
+        Assert.Contains("FirstNonBlank(memberObjectGuid, memberDn)", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("memberObjectGuid ?? memberDn", service, StringComparison.Ordinal);
+
+        // And the page removes the affordance for a row with no immutable id.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+        Assert.Contains("string.IsNullOrEmpty(member.ObjectGuid)", page, StringComparison.Ordinal);
+    }
 }
