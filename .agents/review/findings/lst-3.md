@@ -2,9 +2,10 @@
 
 **Severity**: MEDIUM - an errored read can present as an empty or truncated member list
 (Known Failure Class #2), on the admin module only.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1, per the playbook's terminal-denial rule)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `0667099`
 
 ## Evidence
 
