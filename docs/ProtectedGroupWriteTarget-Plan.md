@@ -1,9 +1,18 @@
 # Protected On-Prem Groups As Write Targets
 
-Status: In progress (owner go 2026-08-28). The identity-model fork that was OQ1 is
-resolved in Design (T0) and the reasoning is recorded there for the owner to reverse if
-they disagree. Depends on `docs/GroupMemberNesting-Plan.md` S1 having landed (it did,
-2026-08-27).
+Status: Implemented 2026-08-28 (owner go the same day). S1 `2984df0` (store kind
+`group_target`, `CheckWriteTarget`, the shared `ForWriteTarget` gate), S2 `1217e14`
+(GroupManagement: both write paths resolve the target group into a full snapshot and gate
+it), S3 `1f8f863` (self-service: the shared executor gates the target after eligibility),
+S4 `645bd37` (admin Protected Group Targets input, validator canonicalisation to
+`objectGUID|DN`, versions: base app `2.10.0`, GroupManagement `2.4.0`, SelfServiceGroups
+`1.5.0`). Suite 1829/0/3 at close; every slice non-vacuity-probed (fix reverted, guarding
+tests fail; restored, green); M365 untouched, verified over the whole range. The manual
+checks in Verification ride the next deploy.
+
+The identity-model fork that was OQ1 is resolved in Design (T0) and the reasoning is
+recorded there for the owner to reverse if they disagree. Depended on
+`docs/GroupMemberNesting-Plan.md` S1, which landed 2026-08-27.
 
 **Scope is ON-PREM ACTIVE DIRECTORY ONLY (owner, 2026-08-11: "we're not touching the cloud
 groups module").** An earlier draft covered `M365GroupManagement` as well; that was scope I

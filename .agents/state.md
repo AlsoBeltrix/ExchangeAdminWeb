@@ -338,8 +338,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   listing for this fix, in BOTH group modules). All review loops closed - gmn-4 through
   gmn-9 fixed and verified.
 
-- **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER
-  GO, NO CODE.** `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
+- **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: IMPLEMENTED 2026-08-28 (owner go the same
+  day: "continue with the next task"). NOT DEPLOYED.** S1 `2984df0`, S2 `1217e14`, S3
+  `1f8f863`, S4 `645bd37`; versions app `2.10.0`, `GroupManagement 2.4.0`,
+  `SelfServiceGroups 1.5.0`; suite 1829/0/3, every slice non-vacuity-probed, M365
+  verified untouched over the range. Canonical detail (slices, the target-gate rule set,
+  the AC6/AC8 reconciliation recorded before code) lives in the plan's Status and
+  Revision 2026-08-28 sections. **NEXT: range codereview per the owner's standing
+  dispatch, then the plan's manual checks ride the next deploy.**
+  `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
   scope narrowed after).
   **Found by the owner reading the nesting plan, and it is the larger hole of the two.**
   **The group modules protection-check the MEMBER being added or removed and never the
