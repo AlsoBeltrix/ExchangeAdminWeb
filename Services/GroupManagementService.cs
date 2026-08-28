@@ -415,6 +415,33 @@ public class GroupManagementService
             return resolvedGate.Denial;
         gate = resolvedGate;
 
+        // pgwt T2: resolve the TARGET GROUP once into a full snapshot and gate it BEFORE any
+        // write - the group being written into was never protection-checked at all, which is
+        // the plan's reason to exist. The snapshot's DN is what the write uses below, so the
+        // object cleared is provably the object written. Refusals fail closed (AC5); an
+        // authorised ProtectedServicer:GroupManagement operator proceeds with the note in the
+        // audit (AC3).
+        ResolvedMember resolvedGroup;
+        try
+        {
+            resolvedGroup = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveGroupForWrite(creds.Value, samAccountName, groupIdentity)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve group {Group} for member add - blocking as a precaution", groupIdentity);
+            return PermissionResult.Fail("The group could not be resolved right now. Please try again shortly.");
+        }
+        if (resolvedGroup.Error is not null)
+            return PermissionResult.Fail(resolvedGroup.Error);
+
+        var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+            _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
+        if (!targetGate.Allowed)
+            return PermissionResult.Fail(targetGate.FailReason
+                ?? "This group is a protected principal and its membership cannot be changed. Operation not permitted.");
+        var combinedNote = CombineNotes(gate.ServicedNote, targetGate.ServicedNote);
+
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -429,13 +456,14 @@ public class GroupManagementService
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
+            // pgwt T2: the DN comes from the SAME snapshot the target gate cleared.
+            var resolvedGroupDn = resolvedGroup.Principal!.DistinguishedName!;
             var candidateDn = resolvedMember.Principal!.DistinguishedName!;
 
             // Idempotent desired-state (AC11b): an add whose member is already present succeeds
             // as a no-op - and is therefore never misreported as a cycle by the guard below.
             if (IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn))
-                return PermissionResult.Ok($"{member} is already a member of {groupIdentity} (on-premises).", gate.ServicedNote);
+                return PermissionResult.Ok($"{member} is already a member of {groupIdentity} (on-premises).", combinedNote);
 
             if (resolvedMember.IsGroup)
             {
@@ -495,7 +523,7 @@ public class GroupManagementService
                     ? PermissionResult.Fail($"Add failed: {writeError.Message}")
                     : PermissionResult.Fail("The add did not take effect. Reload the member list and try again.");
             }
-            return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).", gate.ServicedNote);
+            return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).", combinedNote);
         }));
     }
 
@@ -551,6 +579,30 @@ public class GroupManagementService
             return resolvedGate.Denial;
         gate = resolvedGate;
 
+        // pgwt T3: removal is NOT exempt - removing the last legitimate member of a protected
+        // group is as damaging as adding an illegitimate one, and an attacker's first move is
+        // often a removal. Same resolve-once snapshot, same shared gate, same servicer route.
+        ResolvedMember resolvedGroup;
+        try
+        {
+            resolvedGroup = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveGroupForWrite(creds.Value, samAccountName, groupIdentity)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve group {Group} for member remove - blocking as a precaution", groupIdentity);
+            return PermissionResult.Fail("The group could not be resolved right now. Please try again shortly.");
+        }
+        if (resolvedGroup.Error is not null)
+            return PermissionResult.Fail(resolvedGroup.Error);
+
+        var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+            _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
+        if (!targetGate.Allowed)
+            return PermissionResult.Fail(targetGate.FailReason
+                ?? "This group is a protected principal and its membership cannot be changed. Operation not permitted.");
+        var combinedNote = CombineNotes(gate.ServicedNote, targetGate.ServicedNote);
+
         return await ThrottledAdAsync(async () => await Task.Run(() =>
         {
             var iss = InitialSessionState.CreateDefault();
@@ -565,12 +617,13 @@ public class GroupManagementService
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedGroupDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
+            // pgwt T2: the DN comes from the SAME snapshot the target gate cleared.
+            var resolvedGroupDn = resolvedGroup.Principal!.DistinguishedName!;
             var memberDnResolved = resolvedMember.Principal!.DistinguishedName!;
 
             // Idempotent desired-state: removing a member that is not present is a no-op.
             if (!IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved))
-                return PermissionResult.Ok($"{member} is not a member of {groupIdentity} (on-premises).", gate.ServicedNote);
+                return PermissionResult.Ok($"{member} is not a member of {groupIdentity} (on-premises).", combinedNote);
 
             Exception? writeError = null;
             ps.AddCommand("Remove-ADGroupMember")
@@ -598,7 +651,7 @@ public class GroupManagementService
                     ? PermissionResult.Fail($"Remove failed: {writeError.Message}")
                     : PermissionResult.Fail("The remove did not take effect. Reload the member list and try again.");
             }
-            return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).", gate.ServicedNote);
+            return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).", combinedNote);
         }));
     }
 
@@ -878,6 +931,86 @@ public class GroupManagementService
             throw new InvalidOperationException("AD group service is busy. Please try again shortly.");
         try { return await operation(); }
         finally { _adThrottle.Release(); }
+    }
+
+    /// <summary>
+    /// Full-snapshot group resolution for the WRITE paths (pgwt T2). ResolveAdGroupIdentity's
+    /// bare DN is enough to WRITE to a group and not enough to ASK whether it is protected
+    /// (pgwt-2: MatchesIdentity loses three identifiers and CheckPatternMatches returns at its
+    /// first line on an empty SamAccountName). The write paths therefore resolve the target
+    /// ONCE into a ResolvedDirectoryPrincipal that feeds BOTH the target gate and the write.
+    /// Same candidate semantics as ResolveAdGroupIdentity (sam first, then the page's identity;
+    /// exactly-one match per candidate), through a bound RFC 4515-escaped filter. A group's
+    /// UserPrincipalName stays string.Empty (nesting plan S1 note). Internal virtual as a TEST
+    /// SEAM, like ResolveMemberForWrite.
+    /// </summary>
+    internal virtual ResolvedMember ResolveGroupForWrite(
+        (string username, string password, string domain) creds,
+        string? samAccountName, string groupIdentity)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var candidates = new List<string>();
+        if (!string.IsNullOrEmpty(samAccountName)) candidates.Add(samAccountName);
+        if (!string.IsNullOrEmpty(groupIdentity)) candidates.Add(groupIdentity);
+
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var esc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(candidate);
+            ps.AddCommand("Get-ADGroup")
+              .AddParameter("LDAPFilter", $"(|(sAMAccountName={esc})(name={esc})(mail={esc}))")
+              .AddParameter("Properties", new[] { "mail" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var groups = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                continue;
+            }
+            if (groups.Count != 1)
+                continue;
+
+            var g = groups[0];
+            var dn = g?.Properties["DistinguishedName"]?.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(dn))
+                continue;
+
+            var principal = new ResolvedDirectoryPrincipal(
+                Source: "GroupManagementService-AD",
+                DisplayName: g!.Properties["Name"]?.Value?.ToString() ?? dn,
+                UserPrincipalName: string.Empty,
+                SamAccountName: g.Properties["SamAccountName"]?.Value?.ToString(),
+                PrimarySmtpAddress: g.Properties["mail"]?.Value?.ToString(),
+                DistinguishedName: dn,
+                ObjectGuid: g.Properties["ObjectGUID"]?.Value?.ToString(),
+                EntraObjectId: null);
+            return new ResolvedMember(principal, true, null);
+        }
+
+        return ResolvedMember.Failed($"AD group not found. Tried: {string.Join(", ", candidates)}");
+    }
+
+    /// <summary>
+    /// Joins the member-gate and target-gate serviced notes for the single audit-note slot;
+    /// null when neither was serviced (pgwt T2). Pure for unit tests.
+    /// </summary>
+    internal static string? CombineNotes(string? memberNote, string? targetNote)
+    {
+        if (string.IsNullOrWhiteSpace(memberNote))
+            return string.IsNullOrWhiteSpace(targetNote) ? null : targetNote;
+        return string.IsNullOrWhiteSpace(targetNote) ? memberNote : $"{memberNote}; {targetNote}";
     }
 
     private static string ResolveAdGroupIdentity(PowerShell ps, string? alias, string email, PSCredential credential)
