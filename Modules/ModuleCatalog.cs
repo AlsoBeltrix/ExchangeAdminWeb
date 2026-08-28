@@ -586,7 +586,9 @@ public sealed class ModuleCatalog
             SortOrder = 900,
             EnabledByDefault = true,
             IsSystemModule = true,
-            Version = "1.1.1",
+            // 1.2.0: the protected-principals panel gains the Protected Group Targets list
+            // (docs/ProtectedGroupWriteTarget-Plan.md T0) - pgwt-8.
+            Version = "1.2.0",
             MainPermission = new("Access", "AdminSettings")
         },
         new()
