@@ -292,7 +292,9 @@ public sealed class ModuleCatalog
             // 2.3.1: the member listing reads the group's member attribute and resolves each
             // member in its own domain - Get-ADGroupMember faulted wholesale on a cross-domain
             // nested member (ADWS GetADGroupMemberFault, found validating nesting on dev).
-            Version = "2.3.1",
+            // 2.4.0: both write paths protection-check the TARGET GROUP on a full snapshot,
+            // with a servicer override (docs/ProtectedGroupWriteTarget-Plan.md).
+            Version = "2.4.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [
@@ -351,7 +353,9 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.4.1: same member-attribute listing fix as GroupManagement 2.3.1 - the
             // Get-ADGroupMember read faulted on a cross-domain nested member.
-            Version = "1.4.1",
+            // 1.5.0: the shared executor protection-checks the TARGET GROUP after eligibility;
+            // a protected group is not a self-service object (pgwt AC4).
+            Version = "1.5.0",
             MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")

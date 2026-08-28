@@ -376,12 +376,15 @@ public sealed class ADDirectorySearchService : IOperatorDirectory
                 SamAccountName: obj.Properties["SamAccountName"]?.Value?.ToString(),
                 UserPrincipalName: obj.Properties["UserPrincipalName"]?.Value?.ToString(),
                 Email: obj.Properties["mail"]?.Value?.ToString(),
-                ObjectType: objectKind == "OU" ? "OU" : (objectKind == "Group" ? "Group" : "User")));
+                ObjectType: objectKind == "OU" ? "OU" : (objectKind == "Group" ? "Group" : "User"),
+                ObjectGuid: obj.Properties["ObjectGUID"]?.Value?.ToString()));
     }
 
     private static string[] ValidationProperties(string objectKind) => objectKind switch
     {
-        "Group" => ["DisplayName", "DistinguishedName", "SamAccountName", "mail"],
+        // ObjectGUID: the protected-target admin input stores the immutable id beside the DN
+        // (docs/ProtectedGroupWriteTarget-Plan.md T0), so validation must return it.
+        "Group" => ["DisplayName", "DistinguishedName", "SamAccountName", "mail", "ObjectGUID"],
         "OU" => ["Name", "DistinguishedName"],
         _ => ["DisplayName", "DistinguishedName", "SamAccountName", "UserPrincipalName", "mail"]
     };
@@ -806,7 +809,8 @@ public sealed record ADSearchResult(
     string? Email,
     string ObjectType,
     string? ObjectSid = null,
-    string? DnsDomain = null)
+    string? DnsDomain = null,
+    string? ObjectGuid = null)
 {
     /// <summary>
     /// The NetBIOS-style label to show beside a name (<c>ANALOG</c>, <c>WINROOT</c>), or null.

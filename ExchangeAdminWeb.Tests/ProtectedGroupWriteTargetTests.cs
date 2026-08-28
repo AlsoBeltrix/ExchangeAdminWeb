@@ -298,6 +298,67 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.Contains("Protection check error:", decision.FailReason!, StringComparison.Ordinal);
     }
 
+    // ----- S4: the admin ADD decision produces the stored form enforcement matches (AC7) -----
+
+    [Fact]
+    public void Validator_GroupTarget_CanonicalisesToGuidPipeDn()
+    {
+        var match = new ADSearchResult("Domain Admins", TargetDn, "DomainAdmins", null, null, "Group", ObjectGuid: TargetGuid);
+
+        var decision = ProtectedPrincipalEntryValidator.Decide(
+            [], TargetDn, "GroupTarget", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+
+        Assert.True(decision.Accepted);
+        Assert.Equal(ProtectedGroupTargetEntry.Format(TargetGuid, TargetDn), decision.ValueToAdd);
+    }
+
+    [Fact]
+    public void Validator_GroupTarget_RefusesWhenTheDirectoryGaveNoGuid()
+    {
+        // The immutable id is the entry's identity (T0); a DN-only row would silently
+        // un-protect on a rename, so a GUID-less Found match is refused, not degraded.
+        var match = new ADSearchResult("Domain Admins", TargetDn, "DomainAdmins", null, null, "Group");
+
+        var decision = ProtectedPrincipalEntryValidator.Decide(
+            [], TargetDn, "GroupTarget", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+
+        Assert.False(decision.Accepted);
+        Assert.Contains("identifier could not be read", decision.ErrorMessage!, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Validator_ValueToAdd_SavedThroughTheStore_IsWhatTheGateRefuses()
+    {
+        // AC7 end to end: the value the admin page's ADD decision produces, saved through
+        // SaveConfig, is what CheckWriteTarget matches - never a hand-built fixture.
+        var match = new ADSearchResult("Domain Admins", TargetDn, "DomainAdmins", null, null, "Group", ObjectGuid: TargetGuid);
+        var decision = ProtectedPrincipalEntryValidator.Decide(
+            [], TargetDn, "GroupTarget", new DirectoryValidationResult(DirectoryLookupOutcome.Found, match));
+        Assert.True(decision.Accepted);
+
+        var service = CreateRealService();
+        service.SaveConfig(new ProtectedPrincipalConfig { GroupTargets = [decision.ValueToAdd!] });
+
+        var result = service.CheckWriteTarget(Group(dn: TargetDn, guid: TargetGuid));
+        Assert.True(result.IsProtected);
+    }
+
+    [Fact]
+    public void AdminPage_WiresTheTargetList()
+    {
+        // No bUnit harness exists, so the page wiring is pinned: its own captioned picker, the
+        // GroupTarget decision kind over a Group directory lookup, the save mapping, and the
+        // sweep's DN lookup for composite entries.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "AdminSettings.razor"));
+
+        Assert.Contains("Protected Group Targets", page, StringComparison.Ordinal);
+        Assert.Contains("@bind-Value=\"ppNewTarget\"", page, StringComparison.Ordinal);
+        Assert.Contains("\"GroupTarget\", v => ppNewTarget = v, lookupKind: \"Group\"", page, StringComparison.Ordinal);
+        Assert.Contains("GroupTargets = ppTargets", page, StringComparison.Ordinal);
+        Assert.Contains("ProtectedGroupTargetEntry.Parse(t).DistinguishedName ?? t", page, StringComparison.Ordinal);
+    }
+
     // ---- harness ------------------------------------------------------------------------------
 
     private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null) =>

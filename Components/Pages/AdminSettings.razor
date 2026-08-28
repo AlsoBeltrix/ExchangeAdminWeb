@@ -229,6 +229,37 @@
                         <button class="btn btn-outline-success" @onclick="AddPpPattern" disabled="@string.IsNullOrWhiteSpace(ppNewPattern)">Add</button>
                     </div>
                 </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Protected Group Targets</label>
+                    @* Deliberately captioned as protecting the GROUP, not its members - the
+                       existing Protected Groups list above means "everyone inside is protected"
+                       and the two must not read alike (pgwt T0). *@
+                    <small class="text-muted d-block mb-1">Protects the GROUP itself as a write target: members cannot be added or removed except by an authorised servicer. Does not protect the group's members.</small>
+                    <div class="adm-scroll mb-2">
+                        <table class="adm-tbl">
+                            <tbody>
+                                @if (ppTargets.Count == 0)
+                                {
+                                    <tr><td colspan="2" class="adm-empty">None</td></tr>
+                                }
+                                @foreach (var t in ppTargets.ToList())
+                                {
+                                    var captured = t;
+                                    <tr>
+                                        <td class="adm-val">@TargetLabel(captured) @StaleBadge(captured)</td>
+                                        <td class="adm-act">
+                                            <button class="adm-rm" type="button" @onclick="() => RemovePp(ppTargets, captured)">Remove</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="input-group input-group-sm">
+                        <ADIdentityAutocomplete ObjectKind="Group" ReturnValueKind="DN" @bind-Value="ppNewTarget" Placeholder="Search AD groups..." Disabled="@ppValidating" />
+                        <button class="btn btn-outline-success" @onclick="AddPpTarget" disabled="@(ppValidating || string.IsNullOrWhiteSpace(ppNewTarget))">@(ppValidating ? "Checking..." : "Add")</button>
+                    </div>
+                </div>
             </div>
 
             @if (!string.IsNullOrEmpty(ppAddError))
@@ -317,8 +348,8 @@
 
     private string PaneClass(string section) => tab == section ? "on" : "";
 
-    /// <summary>Total protected entries across all four kinds, for the tab count.</summary>
-    private int ProtectedCount() => ppUsers.Count + ppGroups.Count + ppOus.Count + ppPatterns.Count;
+    /// <summary>Total protected entries across all five kinds, for the tab count.</summary>
+    private int ProtectedCount() => ppUsers.Count + ppGroups.Count + ppOus.Count + ppPatterns.Count + ppTargets.Count;
 
     /// <summary>
     /// Saves what the visible tab owns. Deliberately not "save everything": each save has its own
@@ -371,7 +402,8 @@
     private List<string> ppGroups = new();
     private List<string> ppOus = new();
     private List<string> ppPatterns = new();
-    private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "";
+    private List<string> ppTargets = new();
+    private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "", ppNewTarget = "";
     private string ppDirectoryReadSecretId = "";
     private string? ppLoadError;
 
@@ -531,6 +563,7 @@
             ppGroups = cfg.Groups.ToList();
             ppOus = cfg.OrganizationalUnits.ToList();
             ppPatterns = cfg.SamAccountNamePatterns.ToList();
+            ppTargets = cfg.GroupTargets.ToList();
         }
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
     }
@@ -552,6 +585,14 @@
     private async Task AddPpUser() => await AddValidatedAsync(ppUsers, ppNewUser, "User", v => ppNewUser = v);
     private async Task AddPpGroup() => await AddValidatedAsync(ppGroups, ppNewGroup, "Group", v => ppNewGroup = v);
     private async Task AddPpOu() => await AddValidatedAsync(ppOus, ppNewOu, "OU", v => ppNewOu = v);
+
+    // Protected TARGETS look up an AD Group but canonicalise as "GroupTarget": the stored value
+    // is "objectGUID|DN" (pgwt T0), produced by the validator so the saved entry is exactly
+    // what CheckWriteTarget later matches.
+    private async Task AddPpTarget() => await AddValidatedAsync(ppTargets, ppNewTarget, "GroupTarget", v => ppNewTarget = v, lookupKind: "Group");
+
+    /// <summary>The DN half of a stored "guid|DN" target entry, for display.</summary>
+    private static string TargetLabel(string stored) => ProtectedGroupTargetEntry.Parse(stored).Label;
 
     private void AddPpPattern() { var v = ppNewPattern.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase)) ppPatterns.Add(v); ppNewPattern = ""; }
 
@@ -586,10 +627,13 @@
     /// </remarks>
     private async Task SweepExistingEntriesAsync()
     {
-        var targets = new List<(string Entry, string Kind)>();
-        targets.AddRange(ppUsers.Select(u => (u, "User")));
-        targets.AddRange(ppGroups.Select(g => (g, "Group")));
-        targets.AddRange(ppOus.Select(o => (o, "OU")));
+        var targets = new List<(string Entry, string Lookup, string Kind)>();
+        targets.AddRange(ppUsers.Select(u => (u, u, "User")));
+        targets.AddRange(ppGroups.Select(g => (g, g, "Group")));
+        targets.AddRange(ppOus.Select(o => (o, o, "OU")));
+        // Group targets store "guid|DN"; the DN half is what AD can confirm exists. The badge
+        // keys on the stored entry, so the row it decorates is the row that was checked.
+        targets.AddRange(ppTargets.Select(t => (t, ProtectedGroupTargetEntry.Parse(t).DistinguishedName ?? t, "Group")));
 
         if (targets.Count == 0)
             return;
@@ -597,14 +641,14 @@
         var stale = await Task.Run(() =>
         {
             var found = new List<string>();
-            foreach (var (entry, kind) in targets)
+            foreach (var (entry, lookup, kind) in targets)
             {
                 try
                 {
                     // ONLY an affirmative NotFound flags a row. Unavailable is skipped so an
                     // outage cannot make every entry look broken at once.
                     if (ProtectedPrincipalEntryValidator.ShouldFlagAsStale(
-                            ADSearch.ValidateExists(entry, kind).Outcome))
+                            ADSearch.ValidateExists(lookup, kind).Outcome))
                         found.Add(entry);
                 }
                 catch (Exception ex)
@@ -636,7 +680,7 @@
     /// retry. Collapsing them would tell an admin their correct entry was a typo during an outage
     /// (owner ruling, .agents/decisions.md and the plan's D1).
     /// </remarks>
-    private async Task AddValidatedAsync(List<string> target, string raw, string objectKind, Action<string> setInput)
+    private async Task AddValidatedAsync(List<string> target, string raw, string objectKind, Action<string> setInput, string? lookupKind = null)
     {
         // Blank and duplicate are settled without a directory round-trip.
         if (!ProtectedPrincipalEntryValidator.ShouldConsultDirectory(target, raw))
@@ -657,7 +701,7 @@
         {
             // Off the render path: ValidateExists is synchronous and takes a lock that can block
             // for up to 30s, which would freeze the circuit if called inline.
-            result = await Task.Run(() => ADSearch.ValidateExists(raw.Trim(), objectKind));
+            result = await Task.Run(() => ADSearch.ValidateExists(raw.Trim(), lookupKind ?? objectKind));
         }
         catch (Exception ex)
         {
@@ -714,7 +758,8 @@
                 Users = ppUsers.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
                 Groups = ppGroups.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
                 OrganizationalUnits = ppOus.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
-                SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
+                SamAccountNamePatterns = ppPatterns.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray(),
+                GroupTargets = ppTargets.Where(s => !string.IsNullOrWhiteSpace(s)).ToArray()
             };
 
             ProtectedPrincipalService.SaveConfig(newConfig);
@@ -725,7 +770,7 @@
                 var ip = ClientInfo.GetIpForUser(currentUser);
                 Audit.LogSettingsChange(currentUser, ip, "ProtectedPrincipals",
                     Array.Empty<string>(),
-                    new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length}" });
+                    new[] { $"Users:{newConfig.Users.Length},Groups:{newConfig.Groups.Length},OUs:{newConfig.OrganizationalUnits.Length},Patterns:{newConfig.SamAccountNamePatterns.Length},Targets:{newConfig.GroupTargets.Length}" });
             }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 

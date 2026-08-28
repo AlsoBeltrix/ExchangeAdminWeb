@@ -92,6 +92,19 @@ public static class ProtectedPrincipalEntryValidator
                     ConsultedDirectory: true);
         }
 
+        if (objectKind == "GroupTarget" && string.IsNullOrWhiteSpace(result.Match?.ObjectGuid))
+        {
+            // A target entry keys on the immutable objectGUID (docs/ProtectedGroupWriteTarget-
+            // Plan.md T0): accepting without it would store a DN-only row that a rename
+            // silently un-protects. Refuse and let the operator retry.
+            return new EntryValidationDecision(
+                false,
+                null,
+                $"'{v}' was found, but its directory identifier could not be read. Try again.",
+                ClearInput: false,
+                ConsultedDirectory: true);
+        }
+
         return new EntryValidationDecision(
             true, CanonicalValue(v, objectKind, result.Match), null, ClearInput: true, ConsultedDirectory: true);
     }
@@ -145,6 +158,10 @@ public static class ProtectedPrincipalEntryValidator
         {
             "Group" => match.DistinguishedName,
             "OU" => match.DistinguishedName,
+            // Protected TARGETS store "objectGUID|DN" (pgwt T0): the GUID survives renames,
+            // the DN doubles as the display label. Decide refuses a Found match with no GUID
+            // before this line, so the bang is guarded.
+            "GroupTarget" => ProtectedGroupTargetEntry.Format(match.ObjectGuid!, match.DistinguishedName),
             _ => match.UserPrincipalName ?? match.Email
         };
 
