@@ -287,6 +287,78 @@ public class GroupManagementService
                 });
             }
 
+            // lst-2: the linked member attribute does NOT carry primaryGroupID membership,
+            // which the replaced Get-ADGroupMember included. Primary membership never crosses
+            // domains, so ONE query against the group's own domain restores it. Fail closed
+            // throughout: an unreadable SID or an errored primary query is a read error, never
+            // a silently narrower list - the silent omission IS the finding.
+            var groupSid = groupWithMembers.Properties["SID"]?.Value?.ToString();
+            var rid = RidFromSid(groupSid);
+            if (rid is null)
+            {
+                result.Members.Clear();
+                result.Error = "The group's membership could not be read.";
+                return result;
+            }
+
+            var seenDns = new HashSet<string>(
+                result.Members.Select(x => x.DistinguishedName), StringComparer.OrdinalIgnoreCase);
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
+              .AddParameter("Properties", new[] { "mail", "DisplayName" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var groupServer = ServerFromDn(resolvedDn);
+            if (groupServer is not null)
+                ps.AddParameter("Server", groupServer);
+            System.Collections.ObjectModel.Collection<PSObject> primaries;
+            try
+            {
+                primaries = ps.Invoke();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Primary-group membership read failed for {Group}", groupIdentity);
+                result.Members.Clear();
+                result.Error = "The group's membership could not be read.";
+                return result;
+            }
+            finally
+            {
+                ps.Commands.Clear();
+            }
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                result.Members.Clear();
+                result.Error = "The group's membership could not be read.";
+                return result;
+            }
+
+            foreach (var p in primaries)
+            {
+                var dn = p?.Properties["DistinguishedName"]?.Value?.ToString();
+                if (string.IsNullOrWhiteSpace(dn) || !seenDns.Add(dn))
+                    continue;
+                var cls = p!.Properties["ObjectClass"]?.Value?.ToString();
+                var k = SelfServiceGroups.GroupMemberClassifier.KindOf(cls);
+                result.Members.Add(new GroupMemberInfo
+                {
+                    DisplayName = p.Properties["DisplayName"]?.Value?.ToString()
+                        ?? p.Properties["Name"]?.Value?.ToString()
+                        ?? DisplayNameFromDn(dn),
+                    Email = p.Properties["mail"]?.Value?.ToString() ?? "",
+                    RecipientType = k == "User" ? "ADUser" : k,
+                    MemberKind = k,
+                    ObjectGuid = p.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
+                    DistinguishedName = dn,
+                    // Remove-ADGroupMember cannot remove a member from its PRIMARY group; the
+                    // page disables Remove so the affordance is not an always-failing button.
+                    IsPrimaryMember = true
+                });
+            }
+
             return result;
         }));
     }
@@ -625,6 +697,22 @@ public class GroupManagementService
          : null;
 
     /// <summary>
+    /// The RID (final sub-authority) of a SID string, for the primaryGroupID union (lst-2).
+    /// Null when the value is not an S-1-... SID with a numeric tail - the caller fails the
+    /// read closed rather than querying with garbage. Pure for unit tests.
+    /// </summary>
+    internal static string? RidFromSid(string? sid)
+    {
+        if (string.IsNullOrWhiteSpace(sid) || !sid.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var i = sid.LastIndexOf('-');
+        if (i < 0 || i == sid.Length - 1)
+            return null;
+        var tail = sid[(i + 1)..];
+        return tail.All(char.IsAsciiDigit) ? tail : null;
+    }
+
+    /// <summary>
     /// Class-agnostic exactly-once member resolution for the write paths (S5b). Precedence:
     /// objectGUID (immutable, from the member list) over picker DN over the typed identity via a
     /// bound RFC 4515-escaped -LDAPFilter (replacing the interpolated -Filter strings this
@@ -858,4 +946,11 @@ public class GroupMemberInfo
 
     /// <summary>Distinguished name - routes lookups to the member's own domain (gmn-8).</summary>
     public string DistinguishedName { get; set; } = "";
+
+    /// <summary>
+    /// True when the membership comes from the member's primaryGroupID (lst-2): real
+    /// membership the linked member attribute does not carry, and one that
+    /// Remove-ADGroupMember cannot remove - the page offers no Remove for such rows.
+    /// </summary>
+    public bool IsPrimaryMember { get; set; }
 }

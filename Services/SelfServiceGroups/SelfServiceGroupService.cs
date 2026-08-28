@@ -328,6 +328,57 @@ public class SelfServiceGroupService
                 });
             }
 
+            // lst-2: union primaryGroupID membership back in - real membership the linked
+            // member attribute does not carry (Get-ADGroupMember used to include it). Primary
+            // membership never crosses domains, so one query against the group's own domain
+            // suffices. Fail closed: an unreadable SID or an errored query is a read error,
+            // never a silently narrower list.
+            var groupSidValue = withMembers.Properties["SID"]?.Value?.ToString();
+            var rid = GroupManagementService.RidFromSid(groupSidValue);
+            if (rid is null)
+                throw new InvalidOperationException("The group's membership could not be read.");
+
+            var seenDns = new HashSet<string>(
+                results.Select(r => r.DistinguishedName), StringComparer.OrdinalIgnoreCase);
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", $"(primaryGroupID={rid})")
+              .AddParameter("Properties", new[] { "SamAccountName", "UserPrincipalName" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var groupServer = GroupManagementService.ServerFromDn(groupDn);
+            if (groupServer is not null)
+                ps.AddParameter("Server", groupServer);
+            var primaries = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                throw new InvalidOperationException("The group's membership could not be read.");
+            }
+
+            foreach (var p in primaries)
+            {
+                var dn = p?.Properties["DistinguishedName"]?.Value?.ToString();
+                if (string.IsNullOrWhiteSpace(dn) || !seenDns.Add(dn))
+                    continue;
+                var cls = p!.Properties["ObjectClass"]?.Value?.ToString();
+                var psam = p.Properties["SamAccountName"]?.Value?.ToString() ?? "";
+                var pupn = p.Properties["UserPrincipalName"]?.Value?.ToString();
+                results.Add(new GroupMember
+                {
+                    ObjectGuid = p.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
+                    DistinguishedName = dn,
+                    DisplayName = p.Properties["Name"]?.Value?.ToString()
+                                  ?? (psam.Length > 0 ? psam : GroupManagementService.DisplayNameFromDn(dn)),
+                    Identity = !string.IsNullOrWhiteSpace(pupn) ? pupn : psam,
+                    Kind = GroupMemberClassifier.KindOf(cls),
+                    // lst-2: Remove-ADGroupMember cannot remove a member from its primary
+                    // group - never offer the affordance, whatever the class.
+                    IsRemovable = false,
+                });
+            }
+
             return (IReadOnlyList<GroupMember>)results;
         }));
     }

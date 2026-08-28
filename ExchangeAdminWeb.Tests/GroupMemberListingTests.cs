@@ -168,4 +168,50 @@ public class GroupMemberListingTests
         Assert.True(iProject > iReject, "Members must only be projected after the errored-read rejection (lst-3).");
         Assert.Contains("The group's membership could not be read.", body, StringComparison.Ordinal);
     }
+
+    // ----- lst-2: primaryGroupID members are unioned back in, read-only, fail-closed -----
+
+    [Theory]
+    [InlineData("S-1-5-21-8915387-325452579-1788637320-513", "513")]
+    [InlineData("s-1-5-32-544", "544")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    [InlineData("S-1-5-21-1-2-3-", null)]
+    [InlineData("not-a-sid", null)]
+    [InlineData("S-1-5-21-1-2-3-51x", null)]
+    public void RidFromSid_DerivesTheFinalSubAuthority_OrRefuses(string? sid, string? expected)
+    {
+        Assert.Equal(expected, GroupManagementService.RidFromSid(sid));
+    }
+
+    [Fact]
+    public void Listings_UnionPrimaryGroupMembers_ReadOnly_AndFailClosed()
+    {
+        var admin = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var aStart = admin.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        var aEnd = admin.IndexOf("public async Task<PermissionResult> AddMemberAsync(", aStart, StringComparison.Ordinal);
+        Assert.True(aStart >= 0 && aEnd > aStart, "Could not bound GetMembersAsync - update the tripwire.");
+        var aBody = admin[aStart..aEnd];
+        Assert.Contains("(primaryGroupID={rid})", aBody, StringComparison.Ordinal);
+        Assert.Contains("RidFromSid(", aBody, StringComparison.Ordinal);
+        Assert.Contains("IsPrimaryMember = true", aBody, StringComparison.Ordinal);
+        // Fail-closed: every primary-read failure clears the members and reports a read error,
+        // so the linked half can never present alone as the complete membership.
+        Assert.Contains("result.Members.Clear();", aBody, StringComparison.Ordinal);
+
+        var ss = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        var sStart = ss.IndexOf("public async Task<IReadOnlyList<GroupMember>> GetGroupMembersAsync(", StringComparison.Ordinal);
+        var sEnd = ss.IndexOf("public async Task<MembershipChangeResult> ChangeMemberAsync(", sStart, StringComparison.Ordinal);
+        Assert.True(sStart >= 0 && sEnd > sStart, "Could not bound GetGroupMembersAsync - update the tripwire.");
+        var sBody = ss[sStart..sEnd];
+        Assert.Contains("(primaryGroupID={rid})", sBody, StringComparison.Ordinal);
+        Assert.Contains("IsRemovable = false", sBody, StringComparison.Ordinal);
+
+        // The admin page offers no Remove for a primary row.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+        Assert.Contains("member.IsPrimaryMember", page, StringComparison.Ordinal);
+    }
 }
