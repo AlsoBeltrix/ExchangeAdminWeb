@@ -2,9 +2,10 @@
 
 **Severity**: MEDIUM - a real member class disappears from a complete-looking list; rare in
 admin-managed groups (primary group is almost always Domain Users) but silent when it happens.
-**Status**: In progress
+**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
+workspace-write transport fault recorded on lst-1, per the playbook's terminal-denial rule)
 **Branch**: `-` (default-branch mode)
-**Commit**: (filled in after commit)
+**Commit**: `550a8dc`
 
 ## Evidence
 
