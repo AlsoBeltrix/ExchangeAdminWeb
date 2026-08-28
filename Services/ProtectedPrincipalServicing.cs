@@ -62,4 +62,52 @@ public static class ProtectedPrincipalServicing
         string.IsNullOrWhiteSpace(servicedNote)
             ? null
             : new Dictionary<string, object?> { [AuditKey] = servicedNote };
+
+    /// <summary>
+    /// Outcome of the shared write-target gate (docs/ProtectedGroupWriteTarget-Plan.md T1).
+    /// <paramref name="Allowed"/> false with a null <paramref name="FailReason"/> means the
+    /// target is protected and unserviced - the CALLER supplies its audience's refusal wording
+    /// (admin vs self-service); a non-null <paramref name="FailReason"/> is a fail-closed check
+    /// failure and is used verbatim. <paramref name="ServicedNote"/> is set only when an
+    /// authorised servicer overrode the refusal and must reach the audit call's extra.
+    /// </summary>
+    public sealed record WriteTargetDecision(bool Allowed, string? FailReason, string? ServicedNote);
+
+    /// <summary>
+    /// The one write-target gate every on-prem group module consults (plan T1): may members be
+    /// added to or removed from <paramref name="targetGroup"/>?
+    /// </summary>
+    /// <remarks>
+    /// The invariants are the servicer stream's, not re-litigated: protection is evaluated
+    /// FIRST via <see cref="ProtectedPrincipalService.CheckWriteTarget"/> and never weakened;
+    /// fail-closed outranks servicing (a failed or errored check denies with its reason, AC5);
+    /// a null acting principal refuses; the grant is per module; the note names the authorising
+    /// group and the rules overridden, qualified "write target" so an audit can tell a serviced
+    /// TARGET from a serviced MEMBER. Two hand-written gates is how they come to disagree about
+    /// what "protected" means - this is the only one.
+    /// </remarks>
+    public static WriteTargetDecision ForWriteTarget(
+        ProtectedPrincipalService protection,
+        ProtectedPrincipalServicerService servicers,
+        ResolvedDirectoryPrincipal targetGroup,
+        ClaimsPrincipal? actingUser,
+        string moduleId)
+    {
+        try
+        {
+            var check = protection.CheckWriteTarget(targetGroup);
+            if (check.CheckFailed)
+                return new(false, $"Protection check failed: {check.Reason}", null);
+            if (!check.IsProtected)
+                return new(true, null, null);
+
+            var note = NoteFor(servicers, actingUser, moduleId, check.MatchedRules, qualifier: "write target");
+            return note is null ? new(false, null, null) : new(true, null, note);
+        }
+        catch (Exception ex)
+        {
+            // Fail closed: an errored check says nothing about the target (AC5).
+            return new(false, $"Protection check error: {ex.Message}", null);
+        }
+    }
 }

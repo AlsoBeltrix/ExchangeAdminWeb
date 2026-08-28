@@ -34,6 +34,62 @@ public sealed class ProtectedPrincipalConfig
     public string[] Groups { get; set; } = [];
     public string[] OrganizationalUnits { get; set; } = [];
     public string[] SamAccountNamePatterns { get; set; } = [];
+
+    /// <summary>
+    /// Protected write TARGETS (docs/ProtectedGroupWriteTarget-Plan.md T0): groups protected AS
+    /// OBJECTS BEING WRITTEN INTO. A separate rule set from the four principal lists - consulted
+    /// only by <see cref="ProtectedPrincipalService.CheckWriteTarget"/>, never by
+    /// <see cref="ProtectedPrincipalService.CheckAsync"/>. Entry format: "objectGUID|DN".
+    /// </summary>
+    public string[] GroupTargets { get; set; } = [];
+}
+
+/// <summary>
+/// One parsed Protected Targets entry. Stored as <c>objectGUID|DN</c>: the GUID is the immutable
+/// identity (a rename or move cannot silently un-protect the group), the DN doubles as the
+/// display label and as a fallback matcher. Pure so the matching rule is unit-testable.
+/// </summary>
+public sealed record ProtectedGroupTargetEntry(string? ObjectGuid, string? DistinguishedName)
+{
+    /// <summary>Safe separator: a GUID can never contain it, so the first one is unambiguous.</summary>
+    public const char Separator = '|';
+
+    public static string Format(string objectGuid, string distinguishedName)
+        => $"{objectGuid}{Separator}{distinguishedName}";
+
+    /// <summary>
+    /// Parses a stored value. Without a separator, the value is matched as whichever identifier
+    /// it parses to (GUID or DN), so a hand-repaired or partial row still protects rather than
+    /// silently matching nothing.
+    /// </summary>
+    public static ProtectedGroupTargetEntry Parse(string? stored)
+    {
+        var v = (stored ?? string.Empty).Trim();
+        if (v.Length == 0)
+            return new(null, null);
+
+        var sep = v.IndexOf(Separator);
+        if (sep < 0)
+            return Guid.TryParse(v, out _) ? new(v, null) : new(null, v);
+
+        var guid = v[..sep].Trim();
+        var dn = v[(sep + 1)..].Trim();
+        return new(guid.Length == 0 ? null : guid, dn.Length == 0 ? null : dn);
+    }
+
+    /// <summary>Display label: the DN where present, else the GUID.</summary>
+    public string Label => DistinguishedName ?? ObjectGuid ?? string.Empty;
+
+    /// <summary>GUID first (immutable), DN as fallback. An empty identifier never matches.</summary>
+    public bool Matches(ResolvedDirectoryPrincipal target)
+    {
+        if (!string.IsNullOrEmpty(ObjectGuid) && !string.IsNullOrEmpty(target.ObjectGuid) &&
+            string.Equals(ObjectGuid, target.ObjectGuid, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return !string.IsNullOrEmpty(DistinguishedName) && !string.IsNullOrEmpty(target.DistinguishedName) &&
+               string.Equals(DistinguishedName, target.DistinguishedName, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public class ProtectedPrincipalService
@@ -163,6 +219,59 @@ public class ProtectedPrincipalService
         return ProtectedPrincipalResult.NotProtected();
     }
 
+    /// <summary>
+    /// May this GROUP be WRITTEN TO (members added or removed)? A separate question from
+    /// CheckAsync's "is this principal protected" (docs/ProtectedGroupWriteTarget-Plan.md T0/T1).
+    /// </summary>
+    /// <remarks>
+    /// Rule set: Users (direct identity), SamAccountNamePatterns, OrganizationalUnits, and the
+    /// Protected Targets list. The <c>Groups</c> rule is deliberately EXCLUDED: that list means
+    /// "everyone inside this group is protected", and evaluating it here would make every listed
+    /// group unmanageable the moment the build deploys - the plan's AC8 anti-lockout criterion
+    /// and T0's no-reinterpretation rule (plan Revision 2026-08-28). The legacy MailboxPermissions
+    /// ExcludedUsers list is not evaluated either: it is a module-scoped user list, not one of
+    /// the four rule kinds.
+    ///
+    /// Synchronous and directory-free by construction: every rule evaluated here keys on the
+    /// resolved snapshot the caller supplies (pgwt-2: a FULL snapshot, never a bare DN), so an
+    /// unavailable directory cannot turn this check into a silent allow. Fails closed on a
+    /// config load error (AC5). virtual as a test seam, like CheckAsync.
+    /// </remarks>
+    public virtual ProtectedPrincipalResult CheckWriteTarget(ResolvedDirectoryPrincipal target)
+    {
+        var (cfg, _, loadError) = LoadEffectiveConfig();
+
+        if (loadError != null)
+            return ProtectedPrincipalResult.Failed(loadError);
+
+        var matchedRules = new List<string>();
+
+        if (cfg != null)
+        {
+            CheckDirectUserMatches(cfg, target, matchedRules);
+            CheckPatternMatches(cfg, target, matchedRules);
+            CheckOuMatches(cfg, target, matchedRules);
+            CheckGroupTargetMatches(cfg, target, matchedRules);
+        }
+
+        if (matchedRules.Count > 0)
+            return ProtectedPrincipalResult.Protected(
+                "Target group is protected against membership changes.",
+                matchedRules.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+
+        return ProtectedPrincipalResult.NotProtected();
+    }
+
+    private static void CheckGroupTargetMatches(ProtectedPrincipalConfig cfg, ResolvedDirectoryPrincipal target, List<string> matchedRules)
+    {
+        foreach (var stored in cfg.GroupTargets)
+        {
+            var entry = ProtectedGroupTargetEntry.Parse(stored);
+            if (entry.Matches(target))
+                matchedRules.Add($"Target:{entry.Label}");
+        }
+    }
+
     // virtual: same test seam as HasCentralConfig / CheckAsync. PermissionValidator's fail-closed
     // deny on a config load error cannot be reached in a test otherwise. No behavior change.
     public virtual (ProtectedPrincipalConfig? config, string[] legacyExclusions, string? error) LoadEffectiveConfig()
@@ -201,6 +310,7 @@ public class ProtectedPrincipalService
                 Groups = data.Groups,
                 OrganizationalUnits = data.OrganizationalUnits,
                 SamAccountNamePatterns = data.SamAccountNamePatterns,
+                GroupTargets = data.GroupTargets,
             }
             : null;
 
@@ -469,7 +579,8 @@ public class ProtectedPrincipalService
             config.Users ?? [],
             config.Groups ?? [],
             config.OrganizationalUnits ?? [],
-            config.SamAccountNamePatterns ?? []));
+            config.SamAccountNamePatterns ?? [],
+            config.GroupTargets ?? []));
 
         InvalidateCache();
         _logger.LogInformation("Protected-principals config saved and cache invalidated");
@@ -511,7 +622,8 @@ public class ProtectedPrincipalService
                     parsed.Users ?? [],
                     parsed.Groups ?? [],
                     parsed.OrganizationalUnits ?? [],
-                    parsed.SamAccountNamePatterns ?? []));
+                    parsed.SamAccountNamePatterns ?? [],
+                    parsed.GroupTargets ?? []));
             }
             catch (Exception ex)
             {

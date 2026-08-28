@@ -17,6 +17,13 @@ public sealed class ProtectedPrincipalRepository
     public const string KindOu = "ou";
     public const string KindSamPattern = "sam_pattern";
 
+    /// <summary>
+    /// Protected write TARGETS (docs/ProtectedGroupWriteTarget-Plan.md T0): a group protected
+    /// AS AN OBJECT being written into, never a rule about its members. Stored beside the four
+    /// principal-rule kinds and reinterpreting none of them. Value format: "objectGUID|DN".
+    /// </summary>
+    public const string KindGroupTarget = "group_target";
+
     private readonly IConfigStore _store;
 
     public ProtectedPrincipalRepository(IConfigStore store) => _store = store;
@@ -71,6 +78,7 @@ public sealed class ProtectedPrincipalRepository
             InsertKind(connection, transaction, KindGroup, data.Groups);
             InsertKind(connection, transaction, KindOu, data.OrganizationalUnits);
             InsertKind(connection, transaction, KindSamPattern, data.SamAccountNamePatterns);
+            InsertKind(connection, transaction, KindGroupTarget, data.GroupTargets);
 
             MarkPresent(connection, transaction);
         });
@@ -97,6 +105,7 @@ public sealed class ProtectedPrincipalRepository
             InsertKind(connection, transaction, KindGroup, data.Groups);
             InsertKind(connection, transaction, KindOu, data.OrganizationalUnits);
             InsertKind(connection, transaction, KindSamPattern, data.SamAccountNamePatterns);
+            InsertKind(connection, transaction, KindGroupTarget, data.GroupTargets);
             MarkPresent(connection, transaction);
             return true;
         });
@@ -110,6 +119,7 @@ public sealed class ProtectedPrincipalRepository
         var groups = new List<string>();
         var ous = new List<string>();
         var patterns = new List<string>();
+        var targets = new List<string>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -121,9 +131,11 @@ public sealed class ProtectedPrincipalRepository
                 case KindGroup: groups.Add(value); break;
                 case KindOu: ous.Add(value); break;
                 case KindSamPattern: patterns.Add(value); break;
+                case KindGroupTarget: targets.Add(value); break;
             }
         }
-        return new ProtectedPrincipalData(users.ToArray(), groups.ToArray(), ous.ToArray(), patterns.ToArray());
+        return new ProtectedPrincipalData(
+            users.ToArray(), groups.ToArray(), ous.ToArray(), patterns.ToArray(), targets.ToArray());
     }
 
     private static bool ReadConfigured(SqliteConnection connection)
@@ -157,12 +169,17 @@ public sealed class ProtectedPrincipalRepository
     }
 }
 
-/// <summary>The four protected-principal lists, repository-shaped (decoupled from the service config type).</summary>
+/// <summary>
+/// The protected-principal lists, repository-shaped (decoupled from the service config type).
+/// <paramref name="GroupTargets"/> is the write-target list (kind <c>group_target</c>), a
+/// separate rule set from the four principal lists (docs/ProtectedGroupWriteTarget-Plan.md T0).
+/// </summary>
 public sealed record ProtectedPrincipalData(
     string[] Users,
     string[] Groups,
     string[] OrganizationalUnits,
-    string[] SamAccountNamePatterns)
+    string[] SamAccountNamePatterns,
+    string[] GroupTargets)
 {
-    public static ProtectedPrincipalData Empty { get; } = new([], [], [], []);
+    public static ProtectedPrincipalData Empty { get; } = new([], [], [], [], []);
 }
