@@ -330,6 +330,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   cmdlet's 5000-object cap) and resolve each member routed to its own domain; an unresolvable
   member degrades to a DN-named read-only row rather than failing the list.
   `GroupManagement 2.3.1`, `SelfServiceGroups 1.4.1`, no base bump.
+  **Active review loop: see `.agents/review/index.md`** - lst-1..lst-3 from the codereview of
+  that listing fix (codex gpt-5.6-sol@xhigh over `fbf37ac..3b766ca`); remove this line when the
+  loop closes.
   **NEXT: the plan's manual checks ride the next deploy** (real nested groups, protected-
   group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins member
   listing for this fix, in BOTH group modules). All review loops closed - gmn-4 through
