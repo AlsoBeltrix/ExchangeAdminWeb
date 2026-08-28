@@ -318,8 +318,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the owner's response was that it was ceremonial and did not need their focus.** The
   reusable rule: where an existing predicate already answers the question, applying it is
   the work - a fork is only warranted when the options genuinely diverge.
+  **2026-08-28 validation finding, FIXED IN REPO, NOT DEPLOYED: both member listings faulted
+  on a cross-domain nested member.** `Get-ADGroupMember` makes ADWS resolve every member
+  server-side and faults the whole read when a member sits in another forest domain the module
+  credential cannot chase - `Organization Management` (WINROOT), nested in `ExchangeWebAdmins`
+  since 2026-05-12, broke the self-service member list on dev (ADWS `GetADGroupMemberFault`;
+  the same read succeeds under an operator identity, so it is credential/chase-dependent).
+  **NOT a 2.9.0 regression: the failing code is byte-identical in 2.8.1** - the nesting
+  validation simply pointed the list at a nested-group case for the first time. Both group
+  modules now read the group's `member` attribute (the Comms10k pattern, which also lifts the
+  cmdlet's 5000-object cap) and resolve each member routed to its own domain; an unresolvable
+  member degrades to a DN-named read-only row rather than failing the list.
+  `GroupManagement 2.3.1`, `SelfServiceGroups 1.4.1`, no base bump.
   **NEXT: the plan's manual checks ride the next deploy** (real nested groups, protected-
-  group refusals, the cross-domain picker case). All review loops closed - gmn-4 through
+  group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins member
+  listing for this fix, in BOTH group modules). All review loops closed - gmn-4 through
   gmn-9 fixed and verified.
 
 - **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: PLAN DRAFTED AND REVIEWED, AWAITING OWNER

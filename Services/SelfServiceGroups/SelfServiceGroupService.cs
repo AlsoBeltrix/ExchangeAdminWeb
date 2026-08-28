@@ -261,15 +261,19 @@ public class SelfServiceGroupService
             if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
                 throw new InvalidOperationException("You are not permitted to view or manage this group's membership.");
 
-            // Read direct members. Get-ADGroupMember returns objectClass per member, which the pure
-            // classifier maps to a kind + removability. Bound -Identity (objectGUID), no interpolation.
-            ps.AddCommand("Get-ADGroupMember")
+            // The member list comes from the group's own linked attribute, NOT Get-ADGroupMember:
+            // that cmdlet makes ADWS resolve every member server-side and faults the WHOLE read
+            // ("An operations error occurred", GetADGroupMemberFault) when a member belongs to
+            // another domain in the forest and cannot be chased under this credential - one
+            // WINROOT group nested in an ANALOG group broke the entire listing (dev, 2026-08-28).
+            ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", groupObjectGuid)
+              .AddParameter("Properties", new[] { "member" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            var members = ps.Invoke();
+            var withMembers = ps.Invoke().FirstOrDefault(o => o is not null);
             ps.Commands.Clear();
-            if (ps.HadErrors)
+            if (ps.HadErrors || withMembers is null)
             {
                 ps.Streams.Error.Clear();
                 // An errored read must not read as "no members" (Known Failure Class #2).
@@ -277,20 +281,47 @@ public class SelfServiceGroupService
             }
 
             var results = new List<GroupMember>();
-            foreach (var m in members)
+            foreach (var memberDn in GroupManagementService.MemberDnsOf(withMembers))
             {
-                var objectClass = m.Properties["objectClass"]?.Value?.ToString();
-                var sam = m.Properties["SamAccountName"]?.Value?.ToString() ?? "";
-                var upn = m.Properties["UserPrincipalName"]?.Value?.ToString();
+                // One class-agnostic lookup per member, routed to the member's own domain (a
+                // foreign-domain member's partition does not exist on the local DCs, gmn-8). A
+                // member that cannot be resolved still appears - named from its DN, kind
+                // "Other", not removable - because omitting it would present a partial list as
+                // complete (Known Failure Class #2).
+                PSObject? m = null;
+                try
+                {
+                    ps.AddCommand("Get-ADObject")
+                      .AddParameter("Identity", memberDn)
+                      .AddParameter("Properties", new[] { "SamAccountName", "UserPrincipalName" })
+                      .AddParameter("Credential", credential)
+                      .AddParameter("ErrorAction", "SilentlyContinue");
+                    var server = GroupManagementService.ServerFromDn(memberDn);
+                    if (server is not null)
+                        ps.AddParameter("Server", server);
+                    m = ps.Invoke().FirstOrDefault(o => o is not null);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Member {MemberDn} could not be resolved in its own domain - listing it from the DN alone",
+                        memberDn);
+                }
+                finally
+                {
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
+
+                var objectClass = m?.Properties["ObjectClass"]?.Value?.ToString();
+                var sam = m?.Properties["SamAccountName"]?.Value?.ToString() ?? "";
+                var upn = m?.Properties["UserPrincipalName"]?.Value?.ToString();
                 results.Add(new GroupMember
                 {
-                    ObjectGuid = m.Properties["objectGUID"]?.Value?.ToString()
-                                 ?? m.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
-                    DistinguishedName = m.Properties["distinguishedName"]?.Value?.ToString()
-                                        ?? m.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
-                    DisplayName = m.Properties["name"]?.Value?.ToString()
-                                  ?? m.Properties["Name"]?.Value?.ToString()
-                                  ?? sam,
+                    ObjectGuid = m?.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
+                    DistinguishedName = memberDn,
+                    DisplayName = m?.Properties["Name"]?.Value?.ToString()
+                                  ?? (sam.Length > 0 ? sam : GroupManagementService.DisplayNameFromDn(memberDn)),
                     Identity = !string.IsNullOrWhiteSpace(upn) ? upn : sam,
                     Kind = GroupMemberClassifier.KindOf(objectClass),
                     IsRemovable = GroupMemberClassifier.IsRemovable(objectClass),

@@ -212,50 +212,71 @@ public class GroupManagementService
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var resolvedDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
 
-            ps.AddCommand("Get-ADGroupMember")
+            // The member list comes from the group's own linked attribute, NOT Get-ADGroupMember:
+            // that cmdlet makes ADWS resolve every member server-side and faults the WHOLE read
+            // ("An operations error occurred", GetADGroupMemberFault) when a member belongs to
+            // another domain in the forest and cannot be chased under this credential - one
+            // WINROOT group nested in an ANALOG group broke the entire listing (dev, 2026-08-28).
+            // Comms10k already reads membership this way, for the same cmdlet's 5000-object cap.
+            ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", resolvedDn)
+              .AddParameter("Properties", new[] { "member" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
-            var members = ps.Invoke();
+            var groupWithMembers = ps.Invoke().FirstOrDefault(o => o is not null);
             ps.Commands.Clear();
-
-            foreach (var m in members)
+            if (groupWithMembers is null)
             {
-                // Class and immutable id come from the Get-ADGroupMember output already in hand
-                // (nesting plan S5a). The old per-member Get-ADUser round-trip silently fell to a
-                // name fallback for any non-user member, labelling a nested GROUP "ADUser" with an
-                // empty Email - the member list misreported what the member is.
-                var objectClass = m.Properties["ObjectClass"]?.Value?.ToString() ?? "";
-                var objectGuid = m.Properties["ObjectGUID"]?.Value?.ToString() ?? "";
-                var memberDn = m.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
-                var kind = SelfServiceGroups.GroupMemberClassifier.KindOf(objectClass);
+                result.Error = "The group could not be read.";
+                return result;
+            }
 
-                // Details via a class-agnostic lookup keyed on the immutable objectGUID, routed
-                // to the member's own domain (gmn-8) - a foreign-domain member's partition does
-                // not exist on the local DCs.
+            foreach (var memberDn in MemberDnsOf(groupWithMembers))
+            {
+                // One class-agnostic lookup per member, routed to the member's own domain
+                // (gmn-8) - a foreign-domain member's partition does not exist on the local DCs.
+                // Class, immutable id and details all come from this read; nesting plan S5a's
+                // intent (the list reports what a member IS) is preserved with a new source.
                 PSObject? detail = null;
-                if (!string.IsNullOrEmpty(objectGuid))
+                try
                 {
                     ps.AddCommand("Get-ADObject")
-                      .AddParameter("Identity", objectGuid)
+                      .AddParameter("Identity", memberDn)
                       .AddParameter("Properties", new[] { "mail", "DisplayName" })
                       .AddParameter("Credential", credential)
                       .AddParameter("ErrorAction", "SilentlyContinue");
                     var server = ServerFromDn(memberDn);
                     if (server is not null)
                         ps.AddParameter("Server", server);
-                    detail = ps.Invoke().FirstOrDefault();
-                    ps.Commands.Clear();
+                    detail = ps.Invoke().FirstOrDefault(o => o is not null);
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Member {MemberDn} could not be resolved in its own domain - listing it from the DN alone",
+                        memberDn);
+                }
+                finally
+                {
+                    ps.Commands.Clear();
+                    ps.Streams.Error.Clear();
+                }
+
+                // A member that cannot be resolved still appears - named from its DN, kind
+                // "Other", with no immutable id so nothing can act on it. Omitting it would
+                // present a partial list as complete (Known Failure Class #2).
+                var objectClass = detail?.Properties["ObjectClass"]?.Value?.ToString();
+                var kind = SelfServiceGroups.GroupMemberClassifier.KindOf(objectClass);
 
                 result.Members.Add(new GroupMemberInfo
                 {
                     DisplayName = detail?.Properties["DisplayName"]?.Value?.ToString()
-                        ?? m.Properties["Name"]?.Value?.ToString() ?? "",
+                        ?? detail?.Properties["Name"]?.Value?.ToString()
+                        ?? DisplayNameFromDn(memberDn),
                     Email = detail?.Properties["mail"]?.Value?.ToString() ?? "",
                     RecipientType = kind == "User" ? "ADUser" : kind,
                     MemberKind = kind,
-                    ObjectGuid = objectGuid,
+                    ObjectGuid = detail?.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
                     DistinguishedName = memberDn
                 });
             }
@@ -546,6 +567,39 @@ public class GroupManagementService
             .ToArray();
         return labels.Length == 0 ? null : string.Join('.', labels);
     }
+
+    /// <summary>
+    /// The member DNs held on a group's linked <c>member</c> attribute, as surfaced through a
+    /// PSObject property (a collection, a single string, or absent for an empty group). Pure so
+    /// the projection is unit-testable without a directory.
+    /// </summary>
+    internal static List<string> MemberDnsOf(PSObject group)
+    {
+        var dns = new List<string>();
+        var raw = group.Properties["member"]?.Value;
+        if (raw is string single)
+        {
+            if (!string.IsNullOrWhiteSpace(single))
+                dns.Add(single);
+        }
+        else if (raw is System.Collections.IEnumerable many)
+        {
+            foreach (var o in many)
+            {
+                var s = o?.ToString();
+                if (!string.IsNullOrWhiteSpace(s))
+                    dns.Add(s);
+            }
+        }
+        return dns;
+    }
+
+    /// <summary>
+    /// Display fallback for a member that could not be resolved in its own domain: the DN's CN
+    /// with AD's comma escaping undone, else the DN itself. Pure for unit tests.
+    /// </summary>
+    internal static string DisplayNameFromDn(string dn)
+        => ProtectedPrincipalService.ExtractCnFromDn(dn)?.Replace("\\,", ",") ?? dn;
 
     /// <summary>
     /// Class-agnostic exactly-once member resolution for the write paths (S5b). Precedence:

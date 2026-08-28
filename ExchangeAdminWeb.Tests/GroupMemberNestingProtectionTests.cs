@@ -334,7 +334,7 @@ public class GroupMemberNestingProtectionTests
     // ----- S5a: the admin member list reports what a member actually is -----
 
     [Fact]
-    public void AdminMemberListing_ReadsClassFromMembershipOutput_AndResolvesDetailsByGuid()
+    public void AdminMemberListing_ReadsTheMemberAttribute_AndResolvesEachMemberInItsOwnDomain()
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Services", "GroupManagementService.cs"));
@@ -344,14 +344,21 @@ public class GroupMemberNestingProtectionTests
         Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
         var body = text[start..end];
 
-        // The old shape resolved every member with Get-ADUser -Identity <sam> and hardcoded
-        // RecipientType "ADUser", so a nested group rendered as a user with an empty Email.
-        Assert.Contains("GroupMemberClassifier.KindOf(objectClass)", body, StringComparison.Ordinal);
-        Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
-        Assert.Contains("AddParameter(\"Identity\", objectGuid)", body, StringComparison.Ordinal);
+        // Two superseded shapes are both pinned out. Get-ADUser -Identity <sam> hardcoded
+        // RecipientType "ADUser" (S5a's finding); Get-ADGroupMember made ADWS resolve every
+        // member server-side and faulted the WHOLE read on a cross-domain member it could not
+        // chase (GetADGroupMemberFault - the 2026-08-28 ExchangeWebAdmins failure). The listing
+        // reads the group's linked member attribute and resolves each member itself, routed to
+        // the owning domain, with an unresolvable member degrading to a DN-named inert row.
+        Assert.DoesNotContain("AddCommand(\"Get-ADGroupMember\")", body, StringComparison.Ordinal);
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Properties\", new[] { \"member\" })", body, StringComparison.Ordinal);
+        Assert.Contains("MemberDnsOf(groupWithMembers)", body, StringComparison.Ordinal);
+        Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
+        Assert.Contains("AddParameter(\"Identity\", memberDn)", body, StringComparison.Ordinal);
+        Assert.Contains("GroupMemberClassifier.KindOf(objectClass)", body, StringComparison.Ordinal);
         Assert.Contains("MemberKind = kind", body, StringComparison.Ordinal);
-        Assert.Contains("ObjectGuid = objectGuid", body, StringComparison.Ordinal);
+        Assert.Contains("DisplayNameFromDn(memberDn)", body, StringComparison.Ordinal);
     }
 
     // ----- S5b (gmn-2): nesting guards in the SERVICE, with the non-inverted cycle probe -----
