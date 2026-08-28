@@ -1,8 +1,9 @@
 # Protected On-Prem Groups As Write Targets
 
-Status: Draft, pending owner go. No open question - the identity-model fork that was OQ1
-is resolved in Design (T0) and the reasoning is recorded there for the owner to reverse if
-they disagree. Depends on `docs/GroupMemberNesting-Plan.md` S1 having landed.
+Status: In progress (owner go 2026-08-28). The identity-model fork that was OQ1 is
+resolved in Design (T0) and the reasoning is recorded there for the owner to reverse if
+they disagree. Depends on `docs/GroupMemberNesting-Plan.md` S1 having landed (it did,
+2026-08-27).
 
 **Scope is ON-PREM ACTIVE DIRECTORY ONLY (owner, 2026-08-11: "we're not touching the cloud
 groups module").** An earlier draft covered `M365GroupManagement` as well; that was scope I
@@ -18,6 +19,33 @@ Reviewed as a plan by openreview `codex`
 narrowed scope**, but the criterion it earned (AC9) is kept, because the new target list
 needs an admin input of its own and a capability nobody can configure is the failure it
 warned about, cloud or not.
+
+**Revision 2026-08-28 (implementation start).** Two clarifications recorded before code,
+both forced by the reviewed text itself; flagged for the owner rather than silently chosen:
+
+1. **The target gate's rule set is: `Users`, `SamAccountNamePatterns`,
+   `OrganizationalUnits`, and the new Protected Targets list. The `Groups` rule is
+   EXCLUDED.** AC8 requires a group listed under `Groups` to stay manageable, and T0
+   forbids reinterpreting stored lists; running the Groups rule inside the target gate
+   would do exactly that - the nesting plan's self-match would fire on every listed
+   group, which is T0's rejected option (a) by the back door. The in-chain half is
+   excluded for the same reason: refusing writes into any group nested inside a listed
+   one derives new target semantics from the members-protection list, with the same
+   lockout shape. Consequence recorded, NOT worked: a subgroup nested inside a protected
+   group is not automatically a protected target, so an operator can still grant
+   transitive `Domain Admins` membership by writing into an unlisted subgroup unless
+   that subgroup is itself added to the target list. Closing that hole transitively
+   would reinterpret `Groups`; it is the owner's call to direct separately.
+2. **AC6 as written is void, and the conflict is internal to this plan.** Its premise -
+   that the gate routes a group target through the S1-fixed Groups machinery - is the
+   very routing AC8 forbids. The gate this plan ships has no S1-dependent code path; the
+   S1 dependency was sequencing (S1 landed 2026-08-27, before this work), and the S1
+   self-match/class-agnostic tripwires live in `GroupMemberNestingProtectionTests`. AC6
+   is therefore not asserted by a test here; AC1-AC5 and AC7-AC9 all are.
+
+Storage detail fixed at implementation: each target entry stores `objectGUID|DN` in one
+row (kind `group_target` in the row-per-value store); the DN doubles as the display
+label and as a fallback matcher when a resolved target carries no GUID.
 
 ## Problem
 
