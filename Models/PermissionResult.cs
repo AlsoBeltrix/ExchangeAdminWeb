@@ -31,4 +31,23 @@ public class PermissionResult
 
     public static PermissionResult Fail(string message, string? detail = null) =>
         new() { Success = false, Message = message, Detail = detail };
+
+    /// <summary>
+    /// The same result carrying a serviced note (pgwt-7). After a servicer override EVERY
+    /// outcome - success or failure - must reach the audit with the note, or a failed write on
+    /// a protected target loses the record of who was authorised to attempt it (and a write
+    /// that timed out AFTER committing at the DC audits as a noteless failure). No-op when the
+    /// note is blank or unchanged.
+    /// </summary>
+    public PermissionResult WithServicedNote(string? servicedNote)
+        => string.IsNullOrWhiteSpace(servicedNote) || ServicedNote == servicedNote
+            ? this
+            : new PermissionResult
+            {
+                Success = Success,
+                Message = Message,
+                Detail = Detail,
+                ExcludedTargets = ExcludedTargets,
+                ServicedNote = servicedNote,
+            };
 }

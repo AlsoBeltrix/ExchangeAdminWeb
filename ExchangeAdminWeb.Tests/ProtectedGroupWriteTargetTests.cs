@@ -428,6 +428,31 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.Contains("RemoveAll", add, StringComparison.Ordinal);
     }
 
+    // ----- pgwt-7: post-override failures keep the serviced note for the audit -----
+
+    [Fact]
+    public void PostGateFailures_CarryTheServicedNote()
+    {
+        // Pure half: the helper is lossless and no-ops on a blank note.
+        var fail = ExchangeAdminWeb.Models.PermissionResult.Fail("Add failed: boom", "detail");
+        var noted = fail.WithServicedNote("note: authorised by G");
+        Assert.False(noted.Success);
+        Assert.Equal("Add failed: boom", noted.Message);
+        Assert.Equal("detail", noted.Detail);
+        Assert.Equal("note: authorised by G", noted.ServicedNote);
+        Assert.Same(fail, fail.WithServicedNote(null));
+        Assert.Same(fail, fail.WithServicedNote("  "));
+
+        // Wiring: every post-override failure return in both services is wrapped, so a failed
+        // write on a protected target still audits who was authorised to attempt it.
+        var gm = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "GroupManagementService.cs"));
+        Assert.Equal(7, System.Text.RegularExpressions.Regex.Matches(
+            gm, System.Text.RegularExpressions.Regex.Escape(".WithServicedNote(combinedNote)")).Count);
+        var ssg = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(
+            ssg, System.Text.RegularExpressions.Regex.Escape(".WithServicedNote(combinedNote)")).Count);
+    }
+
     // ---- harness ------------------------------------------------------------------------------
 
     private static ResolvedDirectoryPrincipal Group(string dn, string? guid, string? sam = null) =>

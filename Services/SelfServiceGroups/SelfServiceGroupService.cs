@@ -634,14 +634,14 @@ public class SelfServiceGroupService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Post-write membership read-back failed - reporting the change as unconfirmed");
-                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership."));
+                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.").WithServicedNote(combinedNote));
                 }
 
                 if (!MembershipChangeReconciler.IsDesiredStateReached(operation, presentAfter))
                 {
                     if (writeError is not null)
                         _logger.LogWarning(writeError, "Membership write threw and the read-back shows the desired state was not reached");
-                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership."));
+                    return MembershipChangeResult.From(PermissionResult.Fail("The change could not be confirmed after writing. Reload your groups to check the current membership.").WithServicedNote(combinedNote));
                 }
 
                 // Write applied and confirmed by read-back: carry the notify metadata so the caller can

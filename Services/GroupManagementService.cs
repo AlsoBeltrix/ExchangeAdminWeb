@@ -472,7 +472,7 @@ public class GroupManagementService
                 // module already shipped and had bypassed). TARGET = the group being edited,
                 // CANDIDATE = the group being added.
                 if (IsSelfNest(resolvedGroupDn, candidateDn))
-                    return PermissionResult.Fail("Refused: a group cannot be nested inside itself.");
+                    return PermissionResult.Fail("Refused: a group cannot be nested inside itself.").WithServicedNote(combinedNote);
 
                 // Cycle: refuse when TARGET already sits inside CANDIDATE (directly or
                 // transitively) - adding CANDIDATE under TARGET would then close a loop. The
@@ -489,10 +489,10 @@ public class GroupManagementService
                 {
                     // Fail closed: an unanswerable cycle question is not a "no" (gmn-2).
                     ps.Streams.Error.Clear();
-                    return PermissionResult.Fail("The nesting check could not be completed. Please try again shortly.");
+                    return PermissionResult.Fail("The nesting check could not be completed. Please try again shortly.").WithServicedNote(combinedNote);
                 }
                 if (cycle.Count > 0)
-                    return PermissionResult.Fail($"Refused: '{member}' already contains this group (directly or through nesting), so adding it would create a membership cycle.");
+                    return PermissionResult.Fail($"Refused: '{member}' already contains this group (directly or through nesting), so adding it would create a membership cycle.").WithServicedNote(combinedNote);
             }
 
             // The write. AD's own refusals (group scope rules across domains, etc.) surface
@@ -515,13 +515,15 @@ public class GroupManagementService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Post-add membership read-back failed for {Member}", member);
-                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.");
+                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.").WithServicedNote(combinedNote);
             }
             if (!presentAfter)
             {
-                return writeError is not null
+                // pgwt-7: every post-override failure carries the note - see WithServicedNote.
+                return (writeError is not null
                     ? PermissionResult.Fail($"Add failed: {writeError.Message}")
-                    : PermissionResult.Fail("The add did not take effect. Reload the member list and try again.");
+                    : PermissionResult.Fail("The add did not take effect. Reload the member list and try again."))
+                    .WithServicedNote(combinedNote);
             }
             return PermissionResult.Ok($"{member} added to {groupIdentity} (on-premises).", combinedNote);
         }));
@@ -643,13 +645,15 @@ public class GroupManagementService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Post-remove membership read-back failed for {Member}", member);
-                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.");
+                return PermissionResult.Fail("The change could not be confirmed after writing. Reload the member list to check the current membership.").WithServicedNote(combinedNote);
             }
             if (presentAfter)
             {
-                return writeError is not null
+                // pgwt-7: every post-override failure carries the note - see WithServicedNote.
+                return (writeError is not null
                     ? PermissionResult.Fail($"Remove failed: {writeError.Message}")
-                    : PermissionResult.Fail("The remove did not take effect. Reload the member list and try again.");
+                    : PermissionResult.Fail("The remove did not take effect. Reload the member list and try again."))
+                    .WithServicedNote(combinedNote);
             }
             return PermissionResult.Ok($"{member} removed from {groupIdentity} (on-premises).", combinedNote);
         }));
