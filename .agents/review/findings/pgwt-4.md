@@ -2,8 +2,7 @@
 
 **Severity**: MEDIUM - the intended privileged group stays writable while a same-named
 other group appears protected.
-**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
-workspace-write transport fault recorded on lst-1)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `e332c45`
 
@@ -51,5 +50,9 @@ None.
 
 `Reviewer: codex-commercial / gpt-5.6-sol / xhigh / standard` (owner standing dispatch),
 generation pass over `8700531..5336072`, verdict `findings` (7), capability_ok true.
-Verification round: NOT DISPATCHED - blocked by the workspace-write transport fault
-recorded on lst-1.
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+Owner-run interactive codex (default gpt-5.6-sol) - `.agents/review/manual-verify.*`. Full
+suite 1833/0/3. Comments: validation reports multi-match lookups
+(`ADDirectorySearchService.cs:404`); GroupTarget refuses ambiguous typed input while other
+kinds keep existence-only semantics (`ProtectedPrincipalEntryValidator.cs:95`); no adjacent
+regression found.

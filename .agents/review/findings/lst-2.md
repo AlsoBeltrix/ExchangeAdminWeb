@@ -2,8 +2,7 @@
 
 **Severity**: MEDIUM - a real member class disappears from a complete-looking list; rare in
 admin-managed groups (primary group is almost always Domain Users) but silent when it happens.
-**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
-workspace-write transport fault recorded on lst-1, per the playbook's terminal-denial rule)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `550a8dc`
 
@@ -69,3 +68,10 @@ Live behaviour needs the deploy-time manual check (list a group holding a primar
 2026-08-28; codex-cli 0.150.1 via Headroom proxy; wrapper exit-code -1 quirk noted)
 
 Generation pass over `fbf37ac..3b766ca`, verdict `findings` (3), `capability_ok: true`.
+
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+Owner-run interactive codex (default gpt-5.6-sol) - `.agents/review/manual-verify.*`. Full
+suite 1833/0/3. Comments: admin listing unions primaryGroupID members from the owning domain
+and fails closed on primary-read errors (`GroupManagementService.cs:308`); self-service twin
+matches, primary rows non-removable (`SelfServiceGroupService.cs:345`); no adjacent
+regression found.

@@ -3,8 +3,7 @@
 **Severity**: HIGH - the immutable-identity contract inverts: a row created BECAUSE its identity
 could not be resolved falls back to resolving its display name, which can match a same-named
 local object and remove the wrong member.
-**Status**: In progress (fix landed; independent verification BLOCKED - transport, see
-Reviewer comments)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `f239437`
 
@@ -89,3 +88,10 @@ the workspace-write sandbox on codex-cli 0.150.1. Coder-side guard proof stands 
 compile failure of the guarding tests; restored: 1775/0/3 green). **Owner decides:** retry
 codex-commercial later, name another verifier (grok holds a verified cache entry -
 an offer, not a dispatch), or accept the coder-side proof.
+
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+The owner ran the consolidated verification interactively (codex, default gpt-5.6-sol) after
+the two headless transport failures - prompt/result in `.agents/review/manual-verify.*`.
+Full suite 1833/0/3. Comments: blank listed GUIDs refused before resolution
+(`GroupManagementService.cs:546`); first-nonblank identity selection (`:805`); page disables
+removal for unresolved rows; no adjacent regression found.

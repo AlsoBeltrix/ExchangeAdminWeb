@@ -2,8 +2,7 @@
 
 **Severity**: MEDIUM - the false badge invites an admin to remove protection that is still
 effective; string-keyed dedupe then allows two rows for one GUID.
-**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
-workspace-write transport fault recorded on lst-1)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `065b310`
 
@@ -51,5 +50,8 @@ None.
 
 `Reviewer: codex-commercial / gpt-5.6-sol / xhigh / standard` (owner standing dispatch),
 generation pass over `8700531..5336072`, verdict `findings` (7), capability_ok true.
-Verification round: NOT DISPATCHED - blocked by the workspace-write transport fault
-recorded on lst-1.
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+Owner-run interactive codex (default gpt-5.6-sol) - `.agents/review/manual-verify.*`. Full
+suite 1833/0/3. Comments: GUID-effective targets excluded from the DN stale sweep
+(`AdminSettings.razor:634`); re-adds replace rows sharing the GUID before adding the
+refreshed value (`:730`); no adjacent regression found.

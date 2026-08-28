@@ -2,8 +2,7 @@
 
 **Severity**: MEDIUM - a WINROOT group picked from the forest-wide suggestions is refused
 as nonexistent by the local-domain revalidation, so it cannot be protected via the UI.
-**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
-workspace-write transport fault recorded on lst-1)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `14a34f8`
 
@@ -56,5 +55,8 @@ Live cross-domain validation unproven until the deploy-time manual check.
 
 `Reviewer: codex-commercial / gpt-5.6-sol / xhigh / standard` (owner standing dispatch),
 generation pass over `8700531..5336072`, verdict `findings` (7), capability_ok true.
-Verification round: NOT DISPATCHED - blocked by the workspace-write transport fault
-recorded on lst-1.
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+Owner-run interactive codex (default gpt-5.6-sol) - `.agents/review/manual-verify.*`. Full
+suite 1833/0/3. Comments: DN-shaped Group validation routes to the DN's owning domain,
+scoped away from the OU/User validation contracts (`ADDirectorySearchService.cs:365`); no
+adjacent regression found.

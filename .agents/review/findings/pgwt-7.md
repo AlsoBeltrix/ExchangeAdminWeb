@@ -3,8 +3,7 @@
 **Severity**: MEDIUM - a servicer-authorised attempt on a protected target that later
 fails (guard, AD write, read-back) audits WITHOUT the authorising group; a post-timeout
 committed change can leave a protected-group mutation with no servicing note.
-**Status**: In progress (fix landed; independent verification NOT DISPATCHED - blocked by the
-workspace-write transport fault recorded on lst-1)
+**Status**: Verified (owner-run codex verification round, 2026-08-28; accepted, guard confirmed)
 **Branch**: `-` (default-branch mode)
 **Commit**: `f857d1b`
 
@@ -54,5 +53,9 @@ note - nothing was overridden yet.
 
 `Reviewer: codex-commercial / gpt-5.6-sol / xhigh / standard` (owner standing dispatch),
 generation pass over `8700531..5336072`, verdict `findings` (7), capability_ok true.
-Verification round: NOT DISPATCHED - blocked by the workspace-write transport fault
-recorded on lst-1.
+**Verification round (OWNER-RUN, 2026-08-28): verdict `accepted`, `guard_confirmed: true`.**
+Owner-run interactive codex (default gpt-5.6-sol) - `.agents/review/manual-verify.*`. Full
+suite 1833/0/3. Comments: WithServicedNote preserves failure result data while attaching the
+override note (`PermissionResult.cs:42`); post-gate failure paths retain the note in both
+services (`GroupManagementService.cs:518` and the self-service twin); no adjacent regression
+found.
