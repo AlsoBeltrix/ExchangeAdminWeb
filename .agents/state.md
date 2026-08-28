@@ -402,8 +402,8 @@ the Migration size-check fix, 2026-08-13, and the Event Log CSV Ticket implement
 **What "ready to go" means here, and all of it is FREE of AI budget** - four items, all
 owner-side, none of them needing an agent:
 
-1. **A go on `docs/ProtectedGroupWriteTarget-Plan.md`.** It is Draft with no open
-   question in it; it needs the word, nothing else.
+1. ~~A go on `docs/ProtectedGroupWriteTarget-Plan.md`~~ - **DONE: implemented 2026-08-28**
+   (see `## Now`); nothing owner-side remains on it except the deploy-time manual checks.
 2. **A D2 ruling on `docs/RiskyUsersModule-Plan.md`** - do risky-user reads alert
    administrators? Three options are written out in that plan's `## Owner decisions`.
    It is a pre-ship gate, so leaving it unruled would stall the work at the very end
@@ -417,20 +417,17 @@ owner-side, none of them needing an agent:
    build. Keep the four scopes distinct. The fourth is a directory scope, wider than the other
    three, and is the one to weigh before consenting.
 
-With those four done, all four plans are cold-startable at any time with no
-conversation needed: `docs/GroupMemberNesting-Plan.md` at its S1, then
-`docs/ProtectedGroupWriteTarget-Plan.md` (which depends on that S1),
-`docs/RiskyUsersModule-Plan.md` at its S1, and `docs/IntuneDeviceManagement-Plan.md` at its S0 -
-the last two independent of everything else and of each other.
+With those done, the remaining plans are cold-startable at any time with no
+conversation needed: `docs/RiskyUsersModule-Plan.md` at its S1 and
+`docs/IntuneDeviceManagement-Plan.md` at its S0 - independent of everything else and of
+each other.
 
-**The plans listed below are written and waiting on an owner go. No code has been
-written for any of them.**
+**Queue status (corrected 2026-08-28, pgwt-9):**
 
-1. `docs/GroupMemberNesting-Plan.md` - **Approved**, D1-D6 complete, no open question.
-   Start at S1 (make the protection check see group targets, plus the DN self-match).
-   S1 and S2 must land before any slice that can target a group.
-2. `docs/ProtectedGroupWriteTarget-Plan.md` - **Draft, awaiting go.** Depends on the
-   nesting plan's S1; its AC6 fails if S1 is reverted, deliberately.
+1. `docs/GroupMemberNesting-Plan.md` - **IMPLEMENTED 2026-08-27** (see `## Now`); manual
+   checks ride the next deploy. Do not restart.
+2. `docs/ProtectedGroupWriteTarget-Plan.md` - **IMPLEMENTED 2026-08-28** (see `## Now`);
+   manual checks ride the next deploy. Do not restart.
 3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
    module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
    pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
