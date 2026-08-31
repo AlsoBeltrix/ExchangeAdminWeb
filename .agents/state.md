@@ -7,7 +7,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 ## Now
 
 - **GROUP SEARCH FOREST SCOPE: IMPLEMENTED 2026-08-31 (owner go: "make this search work
-  first"). NOT DEPLOYED.** Group Management's group search queried only the app
+  first"). ON DEV since 2026-08-31 (third same-day deploy) and VERIFIED live: the
+  "domain admins" search returns rows from BOTH domains with the Domain column (AD and
+  WINROOT), checked browser-side after the owner's deploy.** Group Management's group
+  search previously queried only the app
   credential's home domain and showed no domain per row - the owner hit it validating
   protected targets on dev ("Domain Admins" ambiguous, other domains unreachable). The
   search now queries the forest global catalog (same success-only-cache and ":3268"
@@ -16,8 +19,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   (pure DomainLabel + wiring tripwires), non-vacuity probed (wiring reverted, tripwire
   failed, restored). **The owner deferred replacing the search with an autocomplete
   ("not sure about autocomplete yet") - noted, not planned.**
-  **NEXT: rides the next dev deploy; then re-run the "domain" search and confirm rows
-  from BOTH domains with the Domain column.**
+  **NEXT: nothing - dev check done 2026-08-31. Prod promotion is the owner's call.**
 
 - **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
   2026-08-31 (the `2.10.0` deploy); NOT on prod.**
