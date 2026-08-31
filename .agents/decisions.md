@@ -5,6 +5,26 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-08-31 - Reviewer verification rounds: CRITICAL-only, and only on explicit owner approval
+
+Status: Active. Repo-level override of the codereview playbook's per-finding verification
+half (the playbook defers to repo invariants by its own terms; the toolkit-owned playbook
+file is unchanged).
+
+Owner ruling 2026-08-31: "critical only, and only with my explicit approval", after the
+cost question was raised directly. Evidence for the ruling: no verification round in this
+repo's history has ever overturned a coder-probe-proven fix; two rounds failed outright on
+the codex transport; the 2026-08-31 fsr-1 round burned a large dispatch and returned
+nothing.
+
+What changes: generation (defect-hunt) passes are unchanged. Per-finding reviewer
+verification dispatches happen ONLY for CRITICAL findings, and each such dispatch needs
+its own explicit owner go - never automatic, whatever the playbook's tier routing says.
+Every other finding closes on the coder-side guard proof (revert -> guard fails ->
+restore -> passes) recorded in its finding doc.
+
+Applied the same day: fsr-1 (HIGH) closed on its recorded coder proof.
+
 ### 2026-08-31 - Self-service is never gated by Protected Group Targets (reverses pgwt AC4)
 
 Status: Active. Reverses AC4 and the self-service half of T2 in

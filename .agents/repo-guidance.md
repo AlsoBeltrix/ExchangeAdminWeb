@@ -163,6 +163,9 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 - Address exactly one finding or fix per commit and commit each before starting the
   next; batch sweeps spanning many findings happen only on the owner's explicit
   request.
+- Reviewer verification rounds are CRITICAL-only and each needs an explicit owner go
+  (`.agents/decisions.md` 2026-08-31); all other findings close on the coder-side
+  guard proof. Generation passes are unchanged.
 
 ## Token Budget
 

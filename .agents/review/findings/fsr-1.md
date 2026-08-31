@@ -4,8 +4,8 @@
 the module then mishandles: a unique foreign name is refused as not-found, and a name that
 ALSO exists locally (Domain Admins) silently resolves to the LOCAL group, so the protection
 check and any write act on the wrong object.
-**Status**: In progress (fix landed and coder-guard-proven; verification round
-TRANSPORT-FAILED - the codex workspace-write native-exec fault persists; owner decides)
+**Status**: Verified (closed on the coder-side guard proof per the 2026-08-31 ruling:
+verification rounds are CRITICAL-only, owner-approved; this is HIGH)
 **Branch**: `-` (default-branch mode)
 **Commit**: `f6a4eb1`
 
