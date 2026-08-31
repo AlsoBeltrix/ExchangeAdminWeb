@@ -38,8 +38,9 @@ member-protection check.
 - `ExchangeAdminWeb.Tests/` - the no-gate/keep-member-check tripwire
 
 ## Guard proof
-(pending) - the tripwire: re-adding `ForWriteTarget` to SelfServiceGroupService FAILS it;
-removing the member-protection check FAILS its second assertion.
+`ExchangeAdminWeb.Tests/ProtectedGroupWriteTargetTests.cs::SelfService_DoesNotConsultTheTargetGate_ButKeepsTheMemberGate`
+- probed 2026-08-31: a `ForWriteTarget` marker inserted into SelfServiceGroupService FAILS
+it (1/1 fail); restored, PASSES (1/1).
 
 ## Coder dispute (if any)
 None - the finding is correct; the doc updates apply the owner's already-given ruling, and

@@ -428,6 +428,21 @@ public sealed class ProtectedGroupWriteTargetTests : IDisposable
         Assert.Contains("RemoveAll", add, StringComparison.Ordinal);
     }
 
+    // ----- fsr-2: the self-service exception is a ruling, not an accident -----
+
+    [Fact]
+    public void SelfService_DoesNotConsultTheTargetGate_ButKeepsTheMemberGate()
+    {
+        // Owner ruling 2026-08-31 (.agents/decisions.md; the Constitution carries the scoped
+        // exception): self-service eligibility means native AD write rights, so the target
+        // gate is admin-module-only. The member-protection check is NOT part of the ruling
+        // and must survive it.
+        var ssg = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        Assert.DoesNotContain("ForWriteTarget", ssg, StringComparison.Ordinal);
+        Assert.Contains("CheckMemberProtectedAsync", ssg, StringComparison.Ordinal);
+    }
+
     // ----- pgwt-7: post-override failures keep the serviced note for the audit -----
 
     [Fact]

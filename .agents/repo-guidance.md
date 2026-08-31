@@ -142,7 +142,9 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 3. **Fail-closed authorization** — authorization/enablement stores must deny when a
    read or write fails (never fall through to a permissive default), and every
    mutating module must route its write target through the protected-principal check
-   before writing.
+   before writing. One scoped exception: Self-Service Groups does not consult
+   Protected Group Targets (owner ruling 2026-08-31, `.agents/decisions.md`,
+   Constitution carries it); its member-protection check stays.
 4. **Stale references** — never trust remembered file contents or doc claims. Re-read
    files before editing; verify doc statements against current code.
 
