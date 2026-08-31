@@ -359,8 +359,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   **NEXT: dev manual checks - browser-driven 2026-08-31 (owner-attended): listing fix
   verified in BOTH modules (13/13 incl. the cross-domain group); admin refusal checks
   interrupted by the owner mid-run and superseded by the AC4 ruling; Event Log CSV
-  checks not run. Leftover on dev: `ADEXNLQ_Users` sits in Protected Group Targets
-  (test row, owner aware, removal pending owner word).**
+  checks not run. The `ADEXNLQ_Users` test row was removed from Protected Group
+  Targets by the owner the same day - dev settings are back to the pre-test state.**
   `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
   scope narrowed after).
   **Found by the owner reading the nesting plan, and it is the larger hole of the two.**
