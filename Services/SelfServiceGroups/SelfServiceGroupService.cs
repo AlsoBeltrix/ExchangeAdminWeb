@@ -557,17 +557,12 @@ public class SelfServiceGroupService
                 if (!CallerCanManageMembers(ps, credential, groupDn, callerSid))
                     return MembershipChangeResult.From(PermissionResult.Fail("You are no longer permitted to manage this group's membership."));
 
-                // pgwt T2: gate the TARGET GROUP itself - AFTER eligibility, so protection
-                // status is not an oracle for callers who could not manage the group anyway,
-                // and before any write. A self-service user will essentially never hold the
-                // servicer grant, so in practice this is a hard refusal naming the IT Support
-                // Desk: a protected group is not a self-service object (AC4). Deterministic
-                // and directory-free - the snapshot comes from the group object already
-                // re-read by immutable GUID above.
-                var targetGate = EvaluateTargetGate(BuildGroupSnapshot(group, groupDn), actingUser);
-                if (targetGate.Denial is not null)
-                    return MembershipChangeResult.From(targetGate.Denial);
-                var combinedNote = GroupManagementService.CombineNotes(protection.ServicedNote, targetGate.ServicedNote);
+                // Protected Group Targets deliberately do NOT gate self-service (owner ruling
+                // 2026-08-31, .agents/decisions.md): the eligibility check above means the
+                // caller already holds write-member rights on this group in AD itself, so an
+                // app-side refusal is inconvenience, not security. The admin module keeps its
+                // target gate - that path acts with the app's privileged credential.
+                var combinedNote = protection.ServicedNote;
 
                 // Idempotent desired-state (slice 5a): only write if the current membership requires it.
                 // Uses the member DN resolved once above - no second resolution.
@@ -784,40 +779,6 @@ public class SelfServiceGroupService
     /// servicer overrode the refusal; it must reach the page's audit call.
     /// </summary>
     internal readonly record struct ProtectionGate(PermissionResult? Denial, string? ServicedNote);
-
-    /// <summary>
-    /// Snapshot of the re-read target group for the write-target gate (pgwt-2: the gate needs
-    /// the full identifier set, never a bare DN). UserPrincipalName stays empty for a group
-    /// (nesting plan S1 note); the group's mail rides PrimarySmtpAddress. Static and
-    /// PSObject-in so the projection is unit-testable without a directory.
-    /// </summary>
-    internal static ResolvedDirectoryPrincipal BuildGroupSnapshot(PSObject group, string groupDn)
-        => new(
-            Source: "SelfServiceGroupService-AD",
-            DisplayName: group.Properties["Name"]?.Value?.ToString() ?? groupDn,
-            UserPrincipalName: string.Empty,
-            SamAccountName: group.Properties["SamAccountName"]?.Value?.ToString(),
-            PrimarySmtpAddress: group.Properties["mail"]?.Value?.ToString(),
-            DistinguishedName: groupDn,
-            ObjectGuid: group.Properties["ObjectGUID"]?.Value?.ToString(),
-            EntraObjectId: null);
-
-    /// <summary>
-    /// The write-target gate for this module (pgwt T2), internal as a TEST SEAM like
-    /// <see cref="CheckMemberProtectedAsync"/>: the executor runs inside a live runspace no
-    /// unit test can enter, and exposing the decision - which has no side effects - is what
-    /// makes the refusal and servicer paths testable. Same fail-closed semantics as the shared
-    /// helper; the unserviced refusal names the IT Support Desk (AC4, D3).
-    /// </summary>
-    internal ProtectionGate EvaluateTargetGate(ResolvedDirectoryPrincipal targetGroup, ClaimsPrincipal? actingUser)
-    {
-        var decision = ProtectedPrincipalServicing.ForWriteTarget(
-            _protectedPrincipals, _servicers, targetGroup, actingUser, ServicerModuleId);
-        if (decision.Allowed)
-            return new(null, decision.ServicedNote);
-        return new(PermissionResult.Fail(decision.FailReason
-            ?? "This group is protected and its membership cannot be changed here. Contact the IT Support Desk."), null);
-    }
 
     /// <remarks>
     /// Internal rather than private as a TEST SEAM (the project already exposes internals to

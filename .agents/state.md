@@ -337,10 +337,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   fault (still recorded in `.agents/machines.md` - probe before the next headless
   verification dispatch). pgwt-3 remains declined at intake
   (`.agents/review/pgwt-3.contested.md`), owner-overrulable any time.
-  **NEXT: run the plan's manual checks on dev - unblocked 2026-08-31** (real nested groups,
-  protected-group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins
-  member listing in BOTH group modules for the listing fix). All review loops closed -
-  gmn-4 through gmn-9 fixed and verified.
+  **Listing fix VERIFIED on dev 2026-08-31** (browser-driven, owner-attended):
+  ExchangeWebAdmins lists 13/13 members including the WINROOT `Organization Management`
+  nested group, in BOTH group modules. **NEXT: the remaining nesting manual checks** (real
+  nested add/remove on a throwaway group - owner's, it writes AD - and the cross-domain
+  picker case). All review loops closed - gmn-4 through gmn-9 fixed and verified.
 
 - **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: IMPLEMENTED 2026-08-28 (owner go the same
   day: "continue with the next task"). ON DEV since 2026-08-31 (the `2.10.0` deploy); NOT
@@ -349,8 +350,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `SelfServiceGroups 1.5.0`; suite 1829/0/3, every slice non-vacuity-probed, M365
   verified untouched over the range. Canonical detail (slices, the target-gate rule set,
   the AC6/AC8 reconciliation recorded before code) lives in the plan's Status and
-  Revision 2026-08-28 sections. **NEXT: run the plan's manual checks on dev
-  (unblocked 2026-08-31; the range codereview is done - pgwt-4..9 fixed and verified).**
+  Revision 2026-08-28 sections.
+  **AC4 REVERSED 2026-08-31 (owner ruling during dev validation, `.agents/decisions.md`):
+  self-service is never gated by Protected Group Targets - owners always edit owned
+  groups there. S3's gate and its test file removed, `SelfServiceGroups 1.6.0`, NOT
+  DEPLOYED (dev still runs the 1.5.0 gate until the next deploy). The GroupManagement
+  admin gate stands - it guards the app's privileged credential, the real boundary.**
+  **NEXT: dev manual checks - browser-driven 2026-08-31 (owner-attended): listing fix
+  verified in BOTH modules (13/13 incl. the cross-domain group); admin refusal checks
+  interrupted by the owner mid-run and superseded by the AC4 ruling; Event Log CSV
+  checks not run. Leftover on dev: `ADEXNLQ_Users` sits in Protected Group Targets
+  (test row, owner aware, removal pending owner word).**
   `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
   scope narrowed after).
   **Found by the owner reading the nesting plan, and it is the larger hole of the two.**

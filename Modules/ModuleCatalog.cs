@@ -355,7 +355,10 @@ public sealed class ModuleCatalog
             // Get-ADGroupMember read faulted on a cross-domain nested member.
             // 1.5.0: the shared executor protection-checks the TARGET GROUP after eligibility;
             // a protected group is not a self-service object (pgwt AC4).
-            Version = "1.5.0",
+            // 1.6.0: 1.5.0's target gate removed (owner ruling 2026-08-31, .agents/decisions.md):
+            // owners always edit owned groups here; eligibility already means native AD write
+            // rights, so the app-side refusal was inconvenience, not security.
+            Version = "1.6.0",
             MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
