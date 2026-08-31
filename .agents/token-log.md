@@ -24,3 +24,4 @@ Format: `date  slice  model  reqs N  mean-ctx NK  est $X.XX`
 2026-08-31  GroupSearchForestScope  fable-5 (est at opus-5 rates)  day-total reqs 166  mean-ctx 239K  est $41.28  (same session; supersedes the line above; day shared with the crashed morning session)
 2026-08-31  ProtectedTargetQueryGate (GroupManagement 2.6.0)  fable-5 (est at opus-5 rates)  day-total reqs 222  mean-ctx 267K  est $55.04  (same session; supersedes the line above; day shared with the crashed morning session)
 2026-08-31  fsr-1 cross-domain routing fix + codereview round  fable-5 (est at opus-5 rates)  day-total reqs 262  mean-ctx 292K  est $67.25  (same session; supersedes the line above; codex generation pass bills on its own harness)
+2026-08-31  BitLockerMandatoryTicket plan draft  fable-5 (est at opus-5 rates)  day-total reqs 327  mean-ctx 313K  est $85.03  (new session, same day; supersedes the line above as the day total)

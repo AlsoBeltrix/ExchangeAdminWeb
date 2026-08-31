@@ -480,8 +480,9 @@ each other.
 
 **QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"):**
 
-1. BitLocker mandatory Ticket field - PLAN FIRST (Constitution governs; item 7 in the
-   older list below)
+1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31
+   (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner decision), awaiting a go to
+   implement at its S1 (item 7 in the older list below)
 2. CSV export for five modules - PLAN FIRST (item 6 below; interacts with 1)
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
@@ -777,11 +778,14 @@ Live backlog only. Items need an approved plan before code unless noted.
    export.
 7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`
    (`ModuleCatalog.cs:484`) must require a ticket number before the search runs and before any
-   result is displayed. Needs a plan: this is an access/audit control on the most sensitive read
-   in the app, so `docs/ProjectConstitution.md` governs it, and the plan must say whether the
-   ticket is validated for shape only or looked up, and confirm it reaches the audit record.
-   `M365GroupManagement.razor:286` already gates on a ticket number and is the existing pattern
-   to read first. Module version bump; base app bump only if the gate is factored out for reuse.
+   result is displayed. **PLAN DRAFTED 2026-08-31: `docs/BitLockerMandatoryTicket-Plan.md`,
+   awaiting a go to implement.** The plan's answers to the two questions this item posed:
+   shape-only validation (non-blank after trim, the `M365GroupManagement.razor:117-125`
+   pattern; no ServiceNow lookup, per Constitution External Integrations), and the ticket
+   reaches both the search and reveal audit events through the `ticketNumber` parameters
+   `AuditService` already has - so no shared change, module bump `1.0.2` -> `1.1.0` only,
+   no base app bump. Enforcement is in `BitLockerRecoveryService` (required parameter,
+   fail-closed guard first), not the page, because UI hiding is not security.
 
 Landed items 2, 5 and 6 of the previous numbering (single-room Finder PP gap, GM-3 task set, ASCII
 sweep + lint gate) are archived: `docs/history/state-archive.md` (Archived 2026-07-30).
