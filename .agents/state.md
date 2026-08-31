@@ -478,6 +478,16 @@ conversation needed: `docs/RiskyUsersModule-Plan.md` at its S1 and
 `docs/IntuneDeviceManagement-Plan.md` at its S0 - independent of everything else and of
 each other.
 
+**QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"):**
+
+1. BitLocker mandatory Ticket field - PLAN FIRST (Constitution governs; item 7 in the
+   older list below)
+2. CSV export for five modules - PLAN FIRST (item 6 below; interacts with 1)
+3. Risky Users module - S1, all decisions ruled
+4. Intune Devices module - S0, all decisions ruled
+5. Sidebar Home link removal - ruled, no plan needed
+Each still starts on its own explicit go, one fresh session per slice.
+
 **Queue status (corrected 2026-08-28, pgwt-9):**
 
 1. `docs/GroupMemberNesting-Plan.md` - **IMPLEMENTED 2026-08-27** (see `## Now`); manual
