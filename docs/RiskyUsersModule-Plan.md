@@ -114,7 +114,19 @@ why S6 is the most heavily specified slice in this plan.
 module ships once as `1.0.0`. If the read phase reaches dev first and remediation follows,
 remediation is `1.1.0` -- two builds must never share one version number.
 
-### D2 -- OPEN. Do reads on this module alert administrators?
+### D2 -- RULED 2026-08-31 (owner): reads are AUDITED, never alert-emailed
+
+Owner wording: "views? no." then "it should be logged, but not alert emailed."
+Every read audits via `AuditService.LogModuleAction` (mandatory, unchanged); the read
+path never touches `EmailService`. This is the deployment classification the
+Constitution's Notifications clause calls for, recorded in `.agents/decisions.md`
+2026-08-31 as the extension of the 2026-06-30 per-module classification. AC17 therefore
+asserts the AUDIT-ONLY shape: reads audit, and `EmailService` is absent from the read
+path. Action notifications (dismiss/confirm etc.) are untouched - they alert per the
+mutating-action rule. The pre-ship gate below is SATISFIED by this ruling; the original
+question is kept verbatim for the record.
+
+### D2 (original question, ruled above) -- Do reads on this module alert administrators?
 
 Constitution, Notifications: "A read module classified as a security-response surface
 must send an administrator alert", and whether a given read counts "is a deployment

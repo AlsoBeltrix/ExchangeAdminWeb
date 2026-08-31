@@ -257,12 +257,10 @@ CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
   was put explicitly. Slice ORDER is unchanged (S1-S4 before S5-S7, because the write UI
   attaches to rendered rows); what changed is that shipping the read phase alone is not a
   finished deliverable. Do not re-propose the split.
-  **D2 REMAINS OPEN: do reads alert administrators?** This is the
-  first module in the repo that meets the Constitution's security-response read-alerting
-  clause (`docs/ProjectConstitution.md:79`) on its face; `.agents/decisions.md`
-  2026-06-30 classified every existing module's reads as non-alerting on reasoning that
-  does not transfer here. **D2 is a pre-ship gate, not a blocker on starting** - S1-S4
-  proceed audit-only, but nothing may be marked `Implemented` until it is ruled.
+  **D2 RULED 2026-08-31 (owner: "it should be logged, but not alert emailed"): reads
+  audit, never alert-email.** Recorded in `.agents/decisions.md` 2026-08-31; AC17
+  asserts the audit-only shape. The pre-ship gate is cleared - the module waits only
+  on an implementation go and the owner-side Entra app registration.
   **The design constraint that shaped the plan: risky users are CLOUD identities.** The
   repo's group, OU and SamAccountName protection rules all evaluate from an on-prem DN
   and structurally cannot match a cloud-only principal (Constitution, Protected

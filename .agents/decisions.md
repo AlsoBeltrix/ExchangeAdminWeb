@@ -5,6 +5,20 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-08-31 - RiskyUsers reads: audited, never alert-emailed (D2 ruled)
+
+Status: Active. Extends the 2026-06-30 per-module read classification to `RiskyUsers`,
+the first module purpose-built for security response. The Constitution's Notifications
+clause makes this a deployment classification; this entry is that classification.
+
+Owner ruling 2026-08-31: "views? no." and "it should be logged, but not alert emailed."
+
+What changes: every RiskyUsers read audits via `AuditService.LogModuleAction` (mandatory,
+as everywhere); the read path never wires `EmailService`. AC17 in
+`docs/RiskyUsersModule-Plan.md` asserts exactly that shape. Mutating actions still
+notify per the mutating-action rule. The RiskyUsers pre-ship gate is cleared - the module
+now waits only on an implementation go (and the owner-side Entra app registration).
+
 ### 2026-08-31 - Reviewer verification rounds: CRITICAL-only, and only on explicit owner approval
 
 Status: Active. Repo-level override of the codereview playbook's per-finding verification
