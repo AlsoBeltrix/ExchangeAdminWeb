@@ -15,6 +15,16 @@ _First recorded 2026-07-21._
   verification dispatches return `capability_ok:false`. `read-only` dispatches worked the same
   day (generation passes unaffected). Probe workspace-write with a smoke dispatch before the
   next verification round; the lst-1 record carries the two failed rounds.
+  **Still broken 2026-08-31** (fsr-1 verification round, direct `codex.cmd exec` with the
+  wrapper env replicated - not the Headroom path - so the proxy is exonerated). PROBE
+  CAVEAT: a smoke that "runs a command" can succeed through a synced MCP server (serena
+  `execute_shell_command`) without touching the native exec sandbox - the 2026-08-31 smoke
+  did exactly that and read as a false pass. A valid probe must force a NATIVE exec (the
+  transcript shows `exec_command` items, not `mcp_tool_call`).
+  Dispatch-transport notes (2026-08-31): the `codex-commercial.ps1` wrapper's CmdletBinding
+  eats `-o`/positional args - dispatch via `codex.cmd` with `CODEX_HOME=.codex-commercial`
+  and OPENAI_*/PORTKEY_* stripped; multi-line prompts must ride STDIN (cmd-shim argument
+  text drops them and codex answers blind - check the transcript has real tool items).
 - **codex sandbox for guard-proof verifications (observed 2026-08-27):** `-s read-only`
   denies creating the isolated proof tree, so per-finding verification dispatches honestly
   return `guard_confirmed: false` (one round even returned "invalid" purely on that

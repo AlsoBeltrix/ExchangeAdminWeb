@@ -3,9 +3,10 @@
 **Severity**: LOW - documentation authority drift, no runtime behavior wrong: the highest
 engineering authority still states the rule the owner reversed on 2026-08-31, so a future
 governance-compliant session could "fix" self-service by restoring the removed gate.
-**Status**: In progress
+**Status**: Verified (docs + probe-proven tripwire, 6f4d972; no verification round per
+the pgwt-8/9 LOW precedent)
 **Branch**: `-` (default-branch mode)
-**Commit**: (pending)
+**Commit**: `6f4d972`
 
 ## Evidence
 `docs/ProjectConstitution.md` (protected-principals rule: every writing module refuses

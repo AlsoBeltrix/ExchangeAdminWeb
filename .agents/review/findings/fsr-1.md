@@ -4,9 +4,10 @@
 the module then mishandles: a unique foreign name is refused as not-found, and a name that
 ALSO exists locally (Domain Admins) silently resolves to the LOCAL group, so the protection
 check and any write act on the wrong object.
-**Status**: In progress
+**Status**: In progress (fix landed and coder-guard-proven; verification round
+TRANSPORT-FAILED - the codex workspace-write native-exec fault persists; owner decides)
 **Branch**: `-` (default-branch mode)
-**Commit**: (pending)
+**Commit**: `f6a4eb1`
 
 ## Evidence
 `Services/GroupManagementService.cs` - `SearchGroupsAsync` returns global-catalog rows from
@@ -39,7 +40,9 @@ read. `CheckTargetProtectionAsync` inherits the fix through `ResolveGroupForWrit
 - `ExchangeAdminWeb.Tests/GroupManagementTargetGateTests.cs` or a listing suite - tripwires
 
 ## Guard proof
-(pending)
+`ExchangeAdminWeb.Tests/GroupSearchForestScopeTests.cs::ResolveGroupForWrite_TakesTheDnFastPath_ExactOrNothing`
+and `::MemberRead_And_Writes_RouteByTheGroupsOwningDomain` - probed 2026-08-31: DN
+fast-path neutered, 1/1 FAIL; restored, PASS; full suite 1841/0/3 at commit.
 
 ## Coder dispute (if any)
 None.
@@ -61,3 +64,16 @@ verdict `findings` (2), `capability_ok: true`, 2026-08-31. Transport notes: disp
 OPENAI_*/PORTKEY_* stripped) because the .ps1 wrapper's parameter binder eats `-o`/`exec`;
 prompt piped via stdin because the cmd shim drops multi-line argument text (a blind
 "clean" from that fault was discarded on the unechoed SHA pins).
+
+**Verification round 2026-08-31: TRANSPORT-FAILED.** Dispatch codex-commercial /
+gpt-5.6-sol / xhigh (T2 -> frontier; fallback accepted per the owner standing dispatch,
+lst-1 precedent), `-s workspace-write`, pins 3505e67..f6a4eb1. Every native exec was
+rejected (`helper_unknown_error: setup refresh had errors` - the fault recorded in
+`.agents/machines.md` 2026-08-28, still live). The reviewer returned an honest
+`invalid` with `capability_ok: false` and an empty reviewed_sha - correctly fail-closed,
+not a review. A pre-dispatch smoke "passed" only because it executed through the serena
+MCP server, which does not exercise the native exec sandbox; noted so the next probe is
+not fooled. Per the playbook's terminal-denial rule: recorded, transport unsupported,
+routed to the owner. Options: owner-run interactive verification (the 2026-08-28
+`manual-verify` pattern - prompt staged at `.agents/review/manual-verify-fsr1.md`),
+accept the coder-side guard proof, or retry after a codex upgrade.

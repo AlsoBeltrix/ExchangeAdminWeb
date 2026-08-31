@@ -6,9 +6,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-**Active review loop: see `.agents/review/index.md`** - fsr-1 (HIGH, fixed, verification
-pending) and fsr-2 (LOW, doc alignment) from the codex generation pass over
-`ac6face..3505e67` (owner dispatch 2026-08-31). Remove this line when the loop closes.
+**Active review loop: see `.agents/review/index.md`** - fsr-1 fixed (`f6a4eb1`) and
+coder-guard-proven; the loop stays open ONLY because verification is blocked by the
+codex workspace-write native-exec fault (recorded in `.agents/machines.md`, persists
+2026-08-31). Owner decides: run `.agents/review/manual-verify-fsr1.md` interactively,
+accept the coder proof, or retry after a codex upgrade. fsr-2 closed (`6f4d972`).
+Remove this line when the loop closes.
 
 - **PROTECTED TARGETS ANSWER AT FIRST QUERY: IMPLEMENTED 2026-08-31 (owner go after
   testing on dev: refusal "should happen as soon as the group is queried; preferably
