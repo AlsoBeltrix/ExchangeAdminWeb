@@ -1,5 +1,15 @@
 # Protected On-Prem Groups As Write Targets
 
+**Revision 2026-08-31 (owner ruling during dev validation): AC4 REVERSED - self-service
+is never gated by Protected Group Targets.** `.agents/decisions.md` 2026-08-31 is the
+ruling's record. A group owner always edits the groups they own in Self-Service Groups;
+the S3 gate and its tests are removed. Rationale: self-service eligibility means the
+user already holds write rights on the group in AD and can bypass the app with ADUC -
+gating them is inconvenience, not security. The boundary this feature actually secures
+is the app's own privileged credential: the GroupManagement (admin-module) gate stands
+unchanged, and real protection for a natively-writable group is DACL hygiene in AD.
+T2's self-service paragraph and AC4 below are history, kept verbatim for the record.
+
 Status: Implemented 2026-08-28 (owner go the same day). S1 `2984df0` (store kind
 `group_target`, `CheckWriteTarget`, the shared `ForWriteTarget` gate), S2 `1217e14`
 (GroupManagement: both write paths resolve the target group into a full snapshot and gate

@@ -5,6 +5,28 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-08-31 - Self-service is never gated by Protected Group Targets (reverses pgwt AC4)
+
+Status: Active. Reverses AC4 and the self-service half of T2 in
+`docs/ProtectedGroupWriteTarget-Plan.md` (S3, commit `1f8f863`); the plan carries a
+matching Revision 2026-08-31 note. The GroupManagement (admin-module) target gate is
+unchanged and stands.
+
+Owner ruling 2026-08-31, during dev validation of the deployed feature: "protecting
+groups from someone who can edit them in ADUC is just inconvenient, not secure" and
+"if I own a group, I expect to be able to edit it here. period."
+
+What changes: `SelfServiceGroupService` no longer consults the Protected Group Targets
+list; a group owner can always edit the groups they own in Self-Service Groups. The
+S3 gate and its tests come out; SelfServiceGroups module version bumps.
+
+Boundary clarification recorded with the ruling: a Protected Group Target secures the
+group only against writes made through the app's privileged credential (the admin
+module), because self-service eligibility already means the user holds write rights on
+the group in AD itself and can bypass the app with ADUC. App-side gating of such users
+is inconvenience, not security; real protection for a group is DACL hygiene in AD,
+which no app setting can substitute for.
+
 ### 2026-08-27 - Implementation model: Fable 5 end to end (amends Token Budget D1)
 
 Status: Active. Amends D1 of `docs/TokenBudget-Plan.md` (Implemented 2026-08-27): the L4c
