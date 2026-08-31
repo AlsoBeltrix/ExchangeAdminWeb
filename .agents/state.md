@@ -480,9 +480,11 @@ each other.
 
 **QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"):**
 
-1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31
-   (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner decision), awaiting a go to
-   implement at its S1 (item 7 in the older list below)
+1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31, REVISED same day for the
+   owner's ServiceNow ruling (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner
+   decision), awaiting a go to implement at its S1. Now also builds the shared
+   ticket-validation seam with a per-module switch (`.agents/decisions.md` 2026-08-31),
+   so it carries a BASE APP BUMP plus the module bump (item 7 in the older list below)
 2. CSV export for five modules - PLAN FIRST (item 6 below; interacts with 1)
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
@@ -778,14 +780,19 @@ Live backlog only. Items need an approved plan before code unless noted.
    export.
 7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`
    (`ModuleCatalog.cs:484`) must require a ticket number before the search runs and before any
-   result is displayed. **PLAN DRAFTED 2026-08-31: `docs/BitLockerMandatoryTicket-Plan.md`,
-   awaiting a go to implement.** The plan's answers to the two questions this item posed:
-   shape-only validation (non-blank after trim, the `M365GroupManagement.razor:117-125`
-   pattern; no ServiceNow lookup, per Constitution External Integrations), and the ticket
-   reaches both the search and reveal audit events through the `ticketNumber` parameters
-   `AuditService` already has - so no shared change, module bump `1.0.2` -> `1.1.0` only,
-   no base app bump. Enforcement is in `BitLockerRecoveryService` (required parameter,
-   fail-closed guard first), not the page, because UI hiding is not security.
+   result is displayed. **PLAN DRAFTED 2026-08-31, REVISED the same day:
+   `docs/BitLockerMandatoryTicket-Plan.md`, awaiting a go to implement.** The owner ruled
+   mid-planning that ServiceNow ticket validation IS coming app-wide, so the plan now also
+   builds the shared backend-agnostic `ITicketValidator` seam with a per-module
+   `ValidateTickets` Module Config switch (off = any non-blank text, the default; on =
+   validate, which until a backend exists refuses with a named-config message - fail
+   closed, never decorative). Ruling recorded in `.agents/decisions.md` 2026-08-31;
+   rewiring the OTHER modules' ticket fields through the validator is future work that
+   waits for the ServiceNow backend plan. The ticket reaches both the search and reveal
+   audit events through the `ticketNumber` parameters `AuditService` already has.
+   Versions: module `1.0.2` -> `1.1.0` AND a base app bump (shared service + DI).
+   Enforcement is in `BitLockerRecoveryService` (required parameter, fail-closed guard
+   first), not the page, because UI hiding is not security.
 
 Landed items 2, 5 and 6 of the previous numbering (single-room Finder PP gap, GM-3 task set, ASCII
 sweep + lint gate) are archived: `docs/history/state-archive.md` (Archived 2026-07-30).

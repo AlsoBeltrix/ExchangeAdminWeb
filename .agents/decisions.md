@@ -5,6 +5,40 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-08-31 - ServiceNow ticket validation: required later, seam built now, per-module switch
+
+Status: Active. Satisfies the Constitution's External Integrations clause ("Ticket
+fields are plain audit metadata unless ServiceNow validation or writeback is
+explicitly requested") - validation is now explicitly requested, app-wide. Writeback
+is not.
+
+Owner ruling 2026-08-31, during BitLocker ticket-field planning: "service now
+integration IS going to be required, so any place where a ticket field exists is
+going to need to tie into that validation once it's live. so, to stop painting into
+corners, why don't you build that, have an on/off switch in admin settings per
+module, and have the off setting allow any text and the on setting actually
+validate? I don't have API access to SNow yet, so the point now is to make adding it
+later less of a fucking disaster."
+
+What changes:
+
+- A shared ticket-validation seam (`ITicketValidator`) is built now, as shared
+  infrastructure (base app bump when it lands). First consumer: the BitLocker
+  mandatory ticket gate (`docs/BitLockerMandatoryTicket-Plan.md`).
+- Each module with a ticket field gets its own on/off switch in Module Config
+  (per-module, not global). Off (the default): any non-blank ticket is accepted as
+  plain audit metadata - today's behavior. On: the ticket must validate.
+- No ServiceNow API access exists yet, so no ServiceNow client is built yet. Until
+  the integration exists, a module switched On refuses ticket-gated operations with
+  a message naming the unconfigured integration - fail closed and visible, never a
+  decorative switch that silently accepts.
+- When the ServiceNow integration is built (its own plan, its own credential via
+  the PAM store - the Constitution already names ServiceNow as a PAM-held
+  service-integration credential), every existing ticket field ties into the
+  validator. That rewiring sweep is future work, not part of the BitLocker plan.
+- The seam stays backend-agnostic (same reasoning as the PAM seam): ServiceNow is
+  the first and only planned backend, but the interface does not hardcode it.
+
 ### 2026-08-31 - RiskyUsers reads: audited, never alert-emailed (D2 ruled)
 
 Status: Active. Extends the 2026-06-30 per-module read classification to `RiskyUsers`,
