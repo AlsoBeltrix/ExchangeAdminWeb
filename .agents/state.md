@@ -353,9 +353,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Revision 2026-08-28 sections.
   **AC4 REVERSED 2026-08-31 (owner ruling during dev validation, `.agents/decisions.md`):
   self-service is never gated by Protected Group Targets - owners always edit owned
-  groups there. S3's gate and its test file removed, `SelfServiceGroups 1.6.0`, NOT
-  DEPLOYED (dev still runs the 1.5.0 gate until the next deploy). The GroupManagement
-  admin gate stands - it guards the app's privileged credential, the real boundary.**
+  groups there. S3's gate and its test file removed, `SelfServiceGroups 1.6.0`, ON DEV
+  since 2026-08-31 (second same-day deploy, verified from the live page: app 2.10.0,
+  SelfServiceGroups 1.6.0). The GroupManagement admin gate stands - it guards the app's
+  privileged credential, the real boundary. The owner then populated Protected Group
+  Targets on dev with real groups that STAY (2026-08-31) - the feature is live in
+  anger on dev; prod still has none of this.**
   **NEXT: dev manual checks - browser-driven 2026-08-31 (owner-attended): listing fix
   verified in BOTH modules (13/13 incl. the cross-domain group); admin refusal checks
   interrupted by the owner mid-run and superseded by the AC4 ruling; Event Log CSV
