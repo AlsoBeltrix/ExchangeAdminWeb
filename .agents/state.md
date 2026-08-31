@@ -485,7 +485,9 @@ each other.
    decision), awaiting a go to implement at its S1. Now also builds the shared
    ticket-validation seam with a per-module switch (`.agents/decisions.md` 2026-08-31),
    so it carries a BASE APP BUMP plus the module bump (item 7 in the older list below)
-2. CSV export for five modules - PLAN FIRST (item 6 below; interacts with 1)
+2. CSV export for five modules - PLAN DRAFTED 2026-08-31
+   (`docs/ModuleCsvExport-Plan.md`; ONE owner decision open: D1, keys in the BitLocker
+   export - recommended NO; item 6 below; S5 depends on item 1 landing first)
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
 5. Sidebar Home link removal - ruled, no plan needed
@@ -773,11 +775,14 @@ Live backlog only. Items need an approved plan before code unless noted.
    `BlockedSenders` (`:265`), `BitLockerRecovery` (`:484`) and `Migration` status (`:174`) export
    their result sets, with the export offered only when results are present. Needs a plan: five
    modules is five module version bumps, and if the export goes through a shared helper it is a
-   base app bump as well. Two things the plan must settle before code -- whether these reuse the
-   Event Log CSV path (see `docs/EventLogCsvTicket-Plan.md`, implemented 2026-08-27) or each
-   module rolls its own, and whether a BitLocker recovery-key export is allowed to contain the
-   keys at all. Interacts with item 7: whatever ticket field BitLocker gains should appear in its
-   export.
+   base app bump as well. **PLAN DRAFTED 2026-08-31: `docs/ModuleCsvExport-Plan.md`.** Its
+   answers to the two questions this item posed: a new shared `CsvExport.Write` static helper
+   generalizing the Event Log formatter's WriteField quoting contract (base bump; the Event Log
+   formatter itself is untouched), and the BitLocker export's key question is D1 in that plan -
+   the ONE open owner decision, recommended NO keys (metadata + Ticket column only, since the
+   per-row Reveal audit is the disclosure control a bulk CSV would bypass). Interacts with item
+   7 as planned: the BitLocker export carries the `searchTicket` the ticket plan adds, so its
+   S5 waits for item 7's implementation.
 7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`
    (`ModuleCatalog.cs:484`) must require a ticket number before the search runs and before any
    result is displayed. **PLAN DRAFTED 2026-08-31, REVISED the same day:
