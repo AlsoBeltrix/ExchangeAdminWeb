@@ -151,13 +151,14 @@
             <div class="card-body p-0">
                 <div style="max-height: 400px; overflow-y: auto;">
                     <table class="table table-sm table-hover mb-0">
-                        <thead><tr><th>Name</th><th>Email</th><th>Type</th><th></th></tr></thead>
+                        <thead><tr><th>Name</th><th>Domain</th><th>Email</th><th>Type</th><th></th></tr></thead>
                         <tbody>
                             @foreach (var group in searchResults)
                             {
                                 var g = group;
                                 <tr class="@(selectedGroup?.Identity == g.Identity ? "table-active" : "")">
                                     <td>@g.Name</td>
+                                    <td><span class="badge bg-light text-dark border">@g.DomainLabel</span></td>
                                     <td><small>@g.Email</small></td>
                                     <td><span class="badge bg-light text-dark border">@g.GroupType</span></td>
                                     <td><button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(g)">Manage</button></td>

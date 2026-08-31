@@ -294,7 +294,9 @@ public sealed class ModuleCatalog
             // nested member (ADWS GetADGroupMemberFault, found validating nesting on dev).
             // 2.4.0: both write paths protection-check the TARGET GROUP on a full snapshot,
             // with a servicer override (docs/ProtectedGroupWriteTarget-Plan.md).
-            Version = "2.4.0",
+            // 2.5.0: group search queries the forest global catalog instead of the credential's
+            // home domain only, and results show which domain each group lives in.
+            Version = "2.5.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [

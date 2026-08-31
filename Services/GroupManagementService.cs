@@ -123,6 +123,12 @@ public class GroupManagementService
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
             var escaped = searchTerm.Replace("'", "''");
 
+            // Search the whole forest via the global catalog, never just the credential's home
+            // domain: without -Server the same filter silently returns one domain's groups and
+            // a bare "Domain Admins" row is ambiguous on its face (owner, 2026-08-31). Null
+            // catalog falls back to the local domain - a degraded search beats a broken one.
+            var catalog = ResolveSearchGlobalCatalog(ps, credential);
+
             ps.AddCommand("Get-ADGroup")
               .AddParameter("Filter", $"Name -like '*{escaped}*' -or SamAccountName -like '*{escaped}*' -or Mail -like '*{escaped}*'")
               .AddParameter("Properties", new[] { "Mail", "GroupCategory", "GroupScope", "SamAccountName", "Description" })
@@ -132,6 +138,11 @@ public class GroupManagementService
               // substring. RankGroups then promotes it to the top; the page shows 100.
               .AddParameter("ResultSetSize", 200)
               .AddParameter("ErrorAction", "Stop");
+            // The StartsWith guard is load-bearing, not padding: a failed host lookup once
+            // yielded the string ":3268", which Get-ADGroup ACCEPTS and then quietly serves
+            // from the local domain (see ADDirectorySearchService.ResolveGlobalCatalog).
+            if (catalog is not null && !catalog.StartsWith(':'))
+                ps.AddParameter("Server", catalog);
             var groups = ps.Invoke();
             ps.Commands.Clear();
 
@@ -141,19 +152,62 @@ public class GroupManagementService
                 var scope = group.Properties["GroupScope"]?.Value?.ToString() ?? "";
                 var groupType = category == "Security" ? $"Security ({scope})" : $"Distribution ({scope})";
 
+                var dn = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "";
                 results.Add(new GroupInfo
                 {
                     Name = group.Properties["Name"]?.Value?.ToString() ?? "",
                     Email = group.Properties["Mail"]?.Value?.ToString() ?? "",
-                    Identity = group.Properties["DistinguishedName"]?.Value?.ToString() ?? "",
+                    Identity = dn,
                     SamAccountName = group.Properties["SamAccountName"]?.Value?.ToString() ?? "",
                     GroupType = groupType,
-                    Backend = "OnPremAD"
+                    Backend = "OnPremAD",
+                    // A forest-wide search returns groups from several domains; derived from the
+                    // DN because it is already present - no extra round-trip per row.
+                    Domain = ADDirectorySearchService.DnsDomainFromDn(dn)
                 });
             }
 
             return RankGroups(results, searchTerm.Trim()).Take(100).ToList();
         }));
+    }
+
+    // Forest global-catalog endpoint, "host:3268", for the group search. SUCCESS is cached for
+    // the process (static: this service is scoped per circuit and the forest's catalog does not
+    // vary per operator); a FAILURE is never cached, so the next search retries instead of
+    // silently pinning search to local-domain-only forever. The asymmetry is load-bearing -
+    // ADDirectorySearchService.ResolveGlobalCatalog documents the incident that earned it.
+    private static string? _searchGlobalCatalog;
+
+    private string? ResolveSearchGlobalCatalog(PowerShell ps, PSCredential credential)
+    {
+        if (_searchGlobalCatalog is not null)
+            return _searchGlobalCatalog;
+
+        try
+        {
+            // AddScript with an in-script projection, not AddCommand + property access:
+            // reading forest.Properties["GlobalCatalogs"] off the PSObject yields an empty
+            // value in a fresh runspace (measured in ADDirectorySearchService).
+            ps.AddScript("param($c) (Get-ADForest -Credential $c -ErrorAction Stop).GlobalCatalogs | Select-Object -First 1")
+              .AddArgument(credential);
+            var gcHost = ps.Invoke().FirstOrDefault(o => o is not null)?.ToString();
+            ps.Commands.Clear();
+
+            if (!string.IsNullOrWhiteSpace(gcHost))
+            {
+                _searchGlobalCatalog = $"{gcHost}:3268";
+                return _searchGlobalCatalog;
+            }
+
+            _logger.LogWarning("Forest returned no global catalog; group search covers only the local domain");
+        }
+        catch (Exception ex)
+        {
+            ps.Commands.Clear();
+            _logger.LogWarning(ex, "Could not resolve a global catalog; group search covers only the local domain");
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -1060,6 +1114,14 @@ public class GroupInfo
     public string SamAccountName { get; set; } = "";
     public string GroupType { get; set; } = "";
     public string Backend { get; set; } = "OnPremAD";
+    /// <summary>DNS domain from the DN's DC components; null when the DN carried none.</summary>
+    public string? Domain { get; set; }
+    /// <summary>
+    /// Display label ("AD", "WINROOT"): the DNS domain's first label, uppercased - the same
+    /// convention the forest-wide pickers use. Empty when the domain is unknown, so the page
+    /// shows nothing rather than a wrong domain.
+    /// </summary>
+    public string DomainLabel => string.IsNullOrEmpty(Domain) ? "" : Domain.Split('.')[0].ToUpperInvariant();
 }
 
 public class GroupMemberList

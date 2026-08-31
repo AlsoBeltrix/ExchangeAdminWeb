@@ -4,7 +4,22 @@ First place to read for current repo state. Keep it short; update it when import
 change. Resolved work lives in the plan/decision/incident docs, not here — this file records only
 what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
-## Now- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
+## Now
+
+- **GROUP SEARCH FOREST SCOPE: IMPLEMENTED 2026-08-31 (owner go: "make this search work
+  first"). NOT DEPLOYED.** Group Management's group search queried only the app
+  credential's home domain and showed no domain per row - the owner hit it validating
+  protected targets on dev ("Domain Admins" ambiguous, other domains unreachable). The
+  search now queries the forest global catalog (same success-only-cache and ":3268"
+  guard as `ADDirectorySearchService.ResolveGlobalCatalog`, fail-soft to local) and
+  results carry a Domain column. `GroupManagement 2.5.0`, no base bump. 7 new tests
+  (pure DomainLabel + wiring tripwires), non-vacuity probed (wiring reverted, tripwire
+  failed, restored). **The owner deferred replacing the search with an autocomplete
+  ("not sure about autocomplete yet") - noted, not planned.**
+  **NEXT: rides the next dev deploy; then re-run the "domain" search and confirm rows
+  from BOTH domains with the Domain column.**
+
+- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
   2026-08-31 (the `2.10.0` deploy); NOT on prod.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
