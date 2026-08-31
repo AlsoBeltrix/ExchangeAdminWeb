@@ -6,6 +6,25 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **PROTECTED TARGETS ANSWER AT FIRST QUERY: IMPLEMENTED 2026-08-31 (owner go after
+  testing on dev: refusal "should happen as soon as the group is queried; preferably
+  protected groups won't show members either"). NOT DEPLOYED.** GroupManagement only:
+  `CheckTargetProtectionAsync` runs at group selection - a non-servicer gets the
+  refusal immediately and the panel (Load Members, add box, member table) never
+  renders; the member read itself gates server-side as the fail-closed backstop; a
+  servicer sees a Protected badge and works normally. Write-path gates unchanged
+  (defense in depth). Self-service untouched per the same day's AC4 ruling.
+  `GroupManagement 2.6.0`, no base bump. 7 new tests (behavioral via the seamed
+  harness + tripwires), probe: both gates neutered, 5 tests failed, restored.
+  **NEXT: rides the next dev deploy; then select a protected group as a non-servicer
+  and confirm the immediate refusal with no member list.**
+  **Two adjacent PRE-EXISTING gaps found while reading, NOT fixed (survey is not
+  authorization): (1) `ResolveGroupForWrite` LDAP-filters sam/name/mail with no
+  -Server, so a WINROOT group likely cannot be written to (or now, checked) from the
+  admin module - its resolve fails local-only; (2) `GetMembersAsync` reads the group
+  by DN with no -Server either, so opening a WINROOT group's members likely fails too.
+  Both predate today; owner decides whether to schedule.**
+
 - **GROUP SEARCH FOREST SCOPE: IMPLEMENTED 2026-08-31 (owner go: "make this search work
   first"). ON DEV since 2026-08-31 (third same-day deploy) and VERIFIED live: the
   "domain admins" search returns rows from BOTH domains with the Domain column (AD and

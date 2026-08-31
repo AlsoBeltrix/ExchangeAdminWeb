@@ -296,7 +296,10 @@ public sealed class ModuleCatalog
             // with a servicer override (docs/ProtectedGroupWriteTarget-Plan.md).
             // 2.5.0: group search queries the forest global catalog instead of the credential's
             // home domain only, and results show which domain each group lives in.
-            Version = "2.5.0",
+            // 2.6.0: protected target groups answer at first query - a non-servicer is refused
+            // at selection and never sees members; servicers see a Protected badge. The
+            // write-path gates stay as the backstop.
+            Version = "2.6.0",
             MainPermission = new("Access", "GroupManagement", FailClosed: true),
             GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
             ConfigFields = [

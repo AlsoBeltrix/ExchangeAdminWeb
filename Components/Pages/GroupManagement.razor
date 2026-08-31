@@ -52,7 +52,7 @@
                     <strong>@selectedGroup.Name</strong>
                     <small class="text-muted ms-2">@selectedGroup.Email</small>
                 </div>
-                <button class="btn btn-outline-secondary btn-sm" @onclick="() => { selectedGroup = null; memberList = null; }">Close</button>
+                <button class="btn btn-outline-secondary btn-sm" @onclick="() => { selectedGroup = null; memberList = null; targetProtection = null; }">Close</button>
             </div>
             <div class="card-body">
                 @if (!canManageOnPrem)
@@ -60,6 +60,23 @@
                     <div class="alert alert-warning mb-3">
                         You do not have permission to modify on-premises AD groups. Contact the Exchange team.
                     </div>
+                }
+
+                @if (targetProtection is null)
+                {
+                    @* The protection answer gates the whole panel: nothing renders until it
+                       arrives, and a denial replaces the panel outright (owner, 2026-08-31). *@
+                    <div class="text-muted"><span class="spinner-border spinner-border-sm me-1"></span><small>Checking protection...</small></div>
+                }
+                else if (targetProtection.DenialMessage != null)
+                {
+                    <div class="alert alert-danger mb-0">@targetProtection.DenialMessage</div>
+                }
+                else
+                {
+                @if (targetProtection.IsProtected)
+                {
+                    <div class="alert alert-warning py-2"><small>Protected group - your servicer grant for this module authorises viewing and changes; every write is recorded with that authority.</small></div>
                 }
 
                 @if (memberList == null)
@@ -140,6 +157,7 @@
                         </table>
                     </div>
                 }
+                }
             </div>
         </div>
     }
@@ -186,6 +204,7 @@
     private string ticketNumber = "";
     private List<GroupInfo> searchResults = new();
     private GroupInfo? selectedGroup;
+    private TargetProtectionCheck? targetProtection;
     private GroupMemberList? memberList;
     private PermissionResult? opResult;
 
@@ -238,7 +257,7 @@
         finally { isLoading = false; }
     }
 
-    private void SelectGroup(GroupInfo group)
+    private async Task SelectGroup(GroupInfo group)
     {
         selectedGroup = group;
         memberList = null;
@@ -246,6 +265,24 @@
         newMember = "";
         // gmn-7: a group switch never inherits a picker selection made for another group.
         newMemberSelection = null;
+
+        // Query-time protection check (owner ruling 2026-08-31): the operator learns a group
+        // is protected at selection, not after composing a write. gmn-7 shape: the result is
+        // applied only if this group is still the selection when the await returns. Fail
+        // closed - an errored check denies rather than rendering the normal panel.
+        targetProtection = null;
+        try
+        {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var check = await GroupService.CheckTargetProtectionAsync(group.Identity, group.SamAccountName, authState.User);
+            if (ReferenceEquals(selectedGroup, group))
+                targetProtection = check;
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(selectedGroup, group))
+                targetProtection = new TargetProtectionCheck(true, ex.Message, null);
+        }
     }
 
     private async Task LoadMembers()
@@ -254,7 +291,8 @@
         await Task.Yield();
         try
         {
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, selectedGroup.SamAccountName);
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, authState.User, selectedGroup.SamAccountName);
         }
         catch (Exception ex)
         {
@@ -340,7 +378,7 @@
                 newMemberSelection = null;
                 // Refresh only when the operator is still looking at the group we wrote to.
                 if (ReferenceEquals(selectedGroup, group))
-                    memberList = await GroupService.GetMembersAsync(group.Identity, group.SamAccountName);
+                    memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName);
             }
         }
         catch (Exception ex)
@@ -402,7 +440,7 @@
 
             // Refresh only when the operator is still looking at the group we wrote to.
             if (opResult.Success && ReferenceEquals(selectedGroup, group))
-                memberList = await GroupService.GetMembersAsync(group.Identity, group.SamAccountName);
+                memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName);
         }
         catch (Exception ex)
         {

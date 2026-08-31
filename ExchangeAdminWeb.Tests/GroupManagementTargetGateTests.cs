@@ -103,6 +103,112 @@ public sealed class GroupManagementTargetGateTests : IDisposable
         Assert.Contains("protected principal", result.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ----- Query-time gate (owner ruling 2026-08-31): protection answers at first query -----
+
+    [Fact]
+    public async Task Check_ProtectedTarget_DeniesAnOrdinaryOperator()
+    {
+        var service = CreateService(targetVerdict: ProtectedPrincipalResult.Protected(
+            "Target group is protected against membership changes.", "Target:" + GroupDn));
+
+        var check = await service.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", UserIn("S-1-5-21-1-2-3-9999"));
+
+        Assert.True(check.IsProtected);
+        Assert.NotNull(check.DenialMessage);
+        Assert.Null(check.ServicedNote);
+    }
+
+    [Fact]
+    public async Task Check_ProtectedTarget_AllowsAServicer_WithTheNote()
+    {
+        var service = CreateService(targetVerdict: ProtectedPrincipalResult.Protected(
+            "Target group is protected against membership changes.", "Target:" + GroupDn),
+            servicerGroups: [ServicerSid]);
+
+        var check = await service.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", UserIn(ServicerSid));
+
+        Assert.True(check.IsProtected);
+        Assert.Null(check.DenialMessage);
+        Assert.NotNull(check.ServicedNote);
+    }
+
+    [Fact]
+    public async Task Check_UnprotectedTarget_IsClear()
+    {
+        var service = CreateService(targetVerdict: ProtectedPrincipalResult.NotProtected());
+
+        var check = await service.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", UserIn(ServicerSid));
+
+        Assert.False(check.IsProtected);
+        Assert.Null(check.DenialMessage);
+    }
+
+    [Fact]
+    public async Task Check_FailsClosed_OnResolveFailure_AndOnAFailedVerdict()
+    {
+        // AC5's shape at query time: no snapshot or an errored store never reads as clear.
+        var noResolve = CreateService(targetVerdict: ProtectedPrincipalResult.NotProtected(), groupResolves: false);
+        Assert.NotNull((await noResolve.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", UserIn(ServicerSid))).DenialMessage);
+
+        var failedCheck = CreateService(targetVerdict: ProtectedPrincipalResult.Failed("store unreadable"));
+        Assert.NotNull((await failedCheck.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", UserIn(ServicerSid))).DenialMessage);
+    }
+
+    [Fact]
+    public async Task Check_NullActingUser_IsDenied_OnAProtectedTarget()
+    {
+        var service = CreateService(targetVerdict: ProtectedPrincipalResult.Protected(
+            "Target group is protected against membership changes.", "Target:" + GroupDn),
+            servicerGroups: [ServicerSid]);
+
+        Assert.NotNull((await service.CheckTargetProtectionAsync(GroupDn, "DomainAdmins", actingUser: null)).DenialMessage);
+    }
+
+    [Fact]
+    public void MemberListing_GatesTheTarget_BeforeProjectingMembers()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var start = text.IndexOf("public async Task<GroupMemberList> GetMembersAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "GetMembersAsync signature not found - tripwire is stale.");
+        var end = text.IndexOf("public async Task<PermissionResult> AddMemberAsync(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound GetMembersAsync - update the tripwire.");
+        var body = text[start..end];
+
+        var iRead = body.IndexOf("AddCommand(\"Get-ADGroup\")", StringComparison.Ordinal);
+        var iGate = body.IndexOf("ProtectedPrincipalServicing.ForWriteTarget(", StringComparison.Ordinal);
+        var iDenial = body.IndexOf("result.Error = targetGate.FailReason", StringComparison.Ordinal);
+        var iProject = body.IndexOf("MemberDnsOf(groupWithMembers)", StringComparison.Ordinal);
+
+        Assert.True(iGate > iRead, "The member read must gate the TARGET on the group it just fetched.");
+        Assert.True(iDenial > iGate, "The gate's denial return is missing from the member read.");
+        Assert.True(iProject > iDenial, "Members must only be projected after the target gate allows.");
+    }
+
+    [Fact]
+    public void Page_ChecksProtection_AtSelection_AndHidesThePanelWhenDenied()
+    {
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "GroupManagement.razor"));
+
+        // Selection triggers the check, gmn-7-shaped (applied only to the still-selected group).
+        Assert.Contains("CheckTargetProtectionAsync(group.Identity, group.SamAccountName", page, StringComparison.Ordinal);
+
+        // A denial replaces the panel: Load Members, the add box and the member table all
+        // render inside the branch behind the denial test, never beside it.
+        var iDenial = page.IndexOf("targetProtection.DenialMessage != null", StringComparison.Ordinal);
+        var iLoad = page.IndexOf("Load Members", StringComparison.Ordinal);
+        var iAdd = page.IndexOf("Search for a user or group", StringComparison.Ordinal);
+        Assert.True(iDenial >= 0, "The denial branch is missing from the page.");
+        Assert.True(iLoad > iDenial, "Load Members must render behind the protection answer.");
+        Assert.True(iAdd > iDenial, "The add box must render behind the protection answer.");
+
+        // Every member listing call carries the acting user - the service refuses a null on
+        // a protected target, so an ambient-credential bypass cannot creep back in.
+        Assert.DoesNotContain("GetMembersAsync(group.Identity, group.SamAccountName", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetMembersAsync(selectedGroup!.Identity, selectedGroup.SamAccountName", page, StringComparison.Ordinal);
+    }
+
     // ----- CombineNotes: both serviced notes must reach the one audit slot -----
 
     [Theory]

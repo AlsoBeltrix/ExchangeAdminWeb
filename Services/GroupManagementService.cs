@@ -243,7 +243,44 @@ public class GroupManagementService
             .ToList();
     }
 
-    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, string? samAccountName = null)
+    /// <summary>
+    /// Query-time protection answer for a group the operator is about to open (owner ruling
+    /// 2026-08-31: protection fires at first query, not at the write). Resolves the target
+    /// into the same full snapshot the write paths gate on, then asks the shared gate.
+    /// Fail-closed throughout: no credentials, no resolution, or an errored check all DENY.
+    /// DenialMessage null with IsProtected true is the servicer case - viewing and writing
+    /// stay available, each write carrying the serviced note.
+    /// </summary>
+    public async Task<TargetProtectionCheck> CheckTargetProtectionAsync(
+        string groupIdentity, string? samAccountName, ClaimsPrincipal? actingUser)
+    {
+        var creds = await GetCredentialsAsync("on-prem AD protected-target check");
+        if (creds is null)
+            return new(true, "The protection check could not be completed (AD credentials unavailable).", null);
+
+        ResolvedMember resolvedGroup;
+        try
+        {
+            resolvedGroup = await ThrottledAdAsync(async () => await Task.Run(
+                () => ResolveGroupForWrite(creds.Value, samAccountName, groupIdentity)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not resolve group {Group} for the protection check - blocking as a precaution", groupIdentity);
+            return new(true, "The group could not be resolved right now. Please try again shortly.", null);
+        }
+        if (resolvedGroup.Error is not null)
+            return new(true, resolvedGroup.Error, null);
+
+        var gate = ProtectedPrincipalServicing.ForWriteTarget(
+            _protectedPrincipals, _servicers, resolvedGroup.Principal!, actingUser, ServicerModuleId);
+        if (!gate.Allowed)
+            return new(true, gate.FailReason
+                ?? "This group is a protected principal and its membership cannot be changed. Operation not permitted.", null);
+        return new(gate.ServicedNote is not null, null, gate.ServicedNote);
+    }
+
+    public async Task<GroupMemberList> GetMembersAsync(string groupIdentity, ClaimsPrincipal? actingUser, string? samAccountName = null)
     {
         var creds = await GetCredentialsAsync("on-prem AD group membership lookup");
         if (creds is null)
@@ -277,7 +314,7 @@ public class GroupManagementService
             ps.Streams.Error.Clear();
             ps.AddCommand("Get-ADGroup")
               .AddParameter("Identity", resolvedDn)
-              .AddParameter("Properties", new[] { "member" })
+              .AddParameter("Properties", new[] { "member", "mail" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             var groupWithMembers = ps.Invoke().FirstOrDefault(o => o is not null);
@@ -288,6 +325,30 @@ public class GroupManagementService
             {
                 ps.Streams.Error.Clear();
                 result.Error = "The group's membership could not be read.";
+                return result;
+            }
+
+            // Query-time protection (owner ruling 2026-08-31): a protected target group reveals
+            // its members only to an authorised servicer for this module - the operator learns
+            // at first query, never after composing a write. Same full-snapshot shape as the
+            // write paths (pgwt-2: a bare DN is not enough to ASK whether it is protected), fed
+            // from the group object this read already fetched. The write-path gates stay - this
+            // is an additional fence, not a replacement.
+            var targetSnapshot = new ResolvedDirectoryPrincipal(
+                Source: "GroupManagementService-AD",
+                DisplayName: groupWithMembers.Properties["Name"]?.Value?.ToString() ?? resolvedDn,
+                UserPrincipalName: string.Empty,
+                SamAccountName: groupWithMembers.Properties["SamAccountName"]?.Value?.ToString(),
+                PrimarySmtpAddress: groupWithMembers.Properties["mail"]?.Value?.ToString(),
+                DistinguishedName: resolvedDn,
+                ObjectGuid: groupWithMembers.Properties["ObjectGUID"]?.Value?.ToString(),
+                EntraObjectId: null);
+            var targetGate = ProtectedPrincipalServicing.ForWriteTarget(
+                _protectedPrincipals, _servicers, targetSnapshot, actingUser, ServicerModuleId);
+            if (!targetGate.Allowed)
+            {
+                result.Error = targetGate.FailReason
+                    ?? "This group is a protected principal and its membership cannot be viewed here. Operation not permitted.";
                 return result;
             }
 
@@ -1123,6 +1184,13 @@ public class GroupInfo
     /// </summary>
     public string DomainLabel => string.IsNullOrEmpty(Domain) ? "" : Domain.Split('.')[0].ToUpperInvariant();
 }
+
+/// <summary>
+/// Outcome of the query-time protected-target check. A non-null <paramref name="DenialMessage"/>
+/// means the operator may neither view nor change the group; <paramref name="IsProtected"/> true
+/// with a null denial is an authorised servicer, whose writes carry <paramref name="ServicedNote"/>.
+/// </summary>
+public sealed record TargetProtectionCheck(bool IsProtected, string? DenialMessage, string? ServicedNote);
 
 public class GroupMemberList
 {

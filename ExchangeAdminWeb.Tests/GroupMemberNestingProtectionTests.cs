@@ -352,7 +352,9 @@ public class GroupMemberNestingProtectionTests
         // the owning domain, with an unresolvable member degrading to a DN-named inert row.
         Assert.DoesNotContain("AddCommand(\"Get-ADGroupMember\")", body, StringComparison.Ordinal);
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
-        Assert.Contains("AddParameter(\"Properties\", new[] { \"member\" })", body, StringComparison.Ordinal);
+        // "mail" rides the same read since 2.6.0 - it feeds the query-time target-gate
+        // snapshot without a second round-trip; the member-attribute shape is unchanged.
+        Assert.Contains("AddParameter(\"Properties\", new[] { \"member\", \"mail\" })", body, StringComparison.Ordinal);
         Assert.Contains("MemberDnsOf(groupWithMembers)", body, StringComparison.Ordinal);
         Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
         Assert.Contains("AddParameter(\"Identity\", memberDn)", body, StringComparison.Ordinal);
@@ -611,7 +613,8 @@ public class GroupMemberNestingProtectionTests
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Components", "Pages", "GroupManagement.razor"));
-        var start = text.IndexOf("private void SelectGroup(GroupInfo group)", StringComparison.Ordinal);
+        // async Task since 2.6.0: selection now awaits the query-time protection check.
+        var start = text.IndexOf("private async Task SelectGroup(GroupInfo group)", StringComparison.Ordinal);
         Assert.True(start >= 0, "SelectGroup not found - tripwire is stale.");
         var end = text.IndexOf("private async Task LoadMembers()", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound SelectGroup - update the tripwire.");
