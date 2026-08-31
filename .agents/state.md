@@ -4,13 +4,14 @@ First place to read for current repo state. Keep it short; update it when import
 change. Resolved work lives in the plan/decision/incident docs, not here — this file records only
 what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
 
-## Now- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). NOT DEPLOYED.**
+## Now- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
+  2026-08-31 (the `2.10.0` deploy); NOT on prod.**
   `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
   audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
   ServiceNow lookup, no on-screen column, no filter. Module `AdminEventLog`
   `1.0.3` -> `1.1.0`, no base app bump. Six new tests, mutation-proven; full suite
   1707/0/3.
-  **NEXT: nothing until a deploy; the plan's four manual checks (section 8) ride it.**
+  **NEXT: run the plan's four manual checks (section 8) on dev - unblocked 2026-08-31.**
 
 - **TOKEN BUDGET: IMPLEMENTED 2026-08-27 (owner go the same day; S1-S4 all landed).**
   Baseline correction `b2b2887` first (the plan's August figures had counted transcript lines,
@@ -261,8 +262,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   deploy, else `1.1.0` for the remediation half; base app version UNCHANGED (adding a
   module does not bump it).
 
-- **NESTED GROUP MEMBERSHIP: IMPLEMENTED 2026-08-27 (owner goal-directive the same day). NOT
-  DEPLOYED.** S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`, S5a `ba3b6c8`,
+- **NESTED GROUP MEMBERSHIP: IMPLEMENTED 2026-08-27 (owner goal-directive the same day). ON
+  DEV since 2026-08-31 (the `2.10.0` deploy); NOT on prod.** S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`, S5a `ba3b6c8`,
   S5b `8c4042c`, S5c `a014068`; S6 is the commit that set this status. Versions: app `2.9.0`,
   `SelfServiceGroups 1.4.0`, `GroupManagement 2.3.0`. Range reviews (codex gpt-5.6-sol@xhigh,
   per-major-item): S1+S2 clean; S3+S4 raised gmn-4/gmn-5 (both MEDIUM, fixed and verified);
@@ -318,8 +319,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the owner's response was that it was ceremonial and did not need their focus.** The
   reusable rule: where an existing predicate already answers the question, applying it is
   the work - a fork is only warranted when the options genuinely diverge.
-  **2026-08-28 validation finding, FIXED IN REPO, NOT DEPLOYED: both member listings faulted
-  on a cross-domain nested member.** `Get-ADGroupMember` makes ADWS resolve every member
+  **2026-08-28 validation finding, FIXED - on dev since 2026-08-31, not on prod: both member
+  listings faulted on a cross-domain nested member.** `Get-ADGroupMember` makes ADWS resolve every member
   server-side and faults the whole read when a member sits in another forest domain the module
   credential cannot chase - `Organization Management` (WINROOT), nested in `ExchangeWebAdmins`
   since 2026-05-12, broke the self-service member list on dev (ADWS `GetADGroupMemberFault`;
@@ -336,19 +337,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   fault (still recorded in `.agents/machines.md` - probe before the next headless
   verification dispatch). pgwt-3 remains declined at intake
   (`.agents/review/pgwt-3.contested.md`), owner-overrulable any time.
-  **NEXT: the plan's manual checks ride the next deploy** (real nested groups, protected-
-  group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins member
-  listing for this fix, in BOTH group modules). All review loops closed - gmn-4 through
-  gmn-9 fixed and verified.
+  **NEXT: run the plan's manual checks on dev - unblocked 2026-08-31** (real nested groups,
+  protected-group refusals, the cross-domain picker case - and re-run the ExchangeWebAdmins
+  member listing in BOTH group modules for the listing fix). All review loops closed -
+  gmn-4 through gmn-9 fixed and verified.
 
 - **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: IMPLEMENTED 2026-08-28 (owner go the same
-  day: "continue with the next task"). NOT DEPLOYED.** S1 `2984df0`, S2 `1217e14`, S3
+  day: "continue with the next task"). ON DEV since 2026-08-31 (the `2.10.0` deploy); NOT
+  on prod.** S1 `2984df0`, S2 `1217e14`, S3
   `1f8f863`, S4 `645bd37`; versions app `2.10.0`, `GroupManagement 2.4.0`,
   `SelfServiceGroups 1.5.0`; suite 1829/0/3, every slice non-vacuity-probed, M365
   verified untouched over the range. Canonical detail (slices, the target-gate rule set,
   the AC6/AC8 reconciliation recorded before code) lives in the plan's Status and
-  Revision 2026-08-28 sections. **NEXT: range codereview per the owner's standing
-  dispatch, then the plan's manual checks ride the next deploy.**
+  Revision 2026-08-28 sections. **NEXT: run the plan's manual checks on dev
+  (unblocked 2026-08-31; the range codereview is done - pgwt-4..9 fixed and verified).**
   `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
   scope narrowed after).
   **Found by the owner reading the nesting plan, and it is the larger hole of the two.**
@@ -598,8 +600,13 @@ review was ever obtained.
 - **App version:** owned by `<VersionPrefix>` in `ExchangeAdminWeb.csproj` -- read the number
   there, never from here. The per-release history of that number is archived verbatim in
   `docs/history/state-archive.md` (Archived 2026-08-14).
-- **Deployed: dev `2.8.1`, prod `2.8.1`** -- re-verified from both assemblies 2026-08-14
-  (`FileVersion 2.8.1.0`, `Product 2.8.1`, both DLLs written 2026-08-13 16:52:57).
+- **Deployed: dev `2.10.0` (DLL written 2026-08-31 08:42), prod `2.8.1` (unchanged,
+  2026-08-13 16:52:57)** -- re-verified from both assemblies 2026-08-31; push also verified
+  (both remotes at local HEAD). **The 2026-08-31 deploy was DEV ONLY.** Dev `2.10.0` carries
+  over prod: nesting (app 2.9.0 work), the Event Log CSV ticket column, the cross-domain
+  member-listing fix with the lst-1..3 review fixes, and the protected write-target feature
+  with the pgwt-4..9 review fixes. Prod promotion is the owner's call after the dev manual
+  checks.
   **That timestamp is the 2026-08-13 Migration size-check deploy, and it is on BOTH hosts** --
   the question `## Now` records the owner as never having answered. This is assembly-timestamp
   evidence only; the Migration module version was not read off either host, and the app version
