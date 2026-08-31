@@ -6,6 +6,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+**Active review loop: see `.agents/review/index.md`** - fsr-1 (HIGH, fixed, verification
+pending) and fsr-2 (LOW, doc alignment) from the codex generation pass over
+`ac6face..3505e67` (owner dispatch 2026-08-31). Remove this line when the loop closes.
+
 - **PROTECTED TARGETS ANSWER AT FIRST QUERY: IMPLEMENTED 2026-08-31 (owner go after
   testing on dev: refusal "should happen as soon as the group is queried; preferably
   protected groups won't show members either"). NOT DEPLOYED.** GroupManagement only:

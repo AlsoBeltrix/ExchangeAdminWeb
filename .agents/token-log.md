@@ -23,3 +23,4 @@ Format: `date  slice  model  reqs N  mean-ctx NK  est $X.XX`
 2026-08-31  pgwt AC4 reversal (self-service target gate removed) + dev browser validation  fable-5 (est at opus-5 rates)  day-total reqs 116  mean-ctx 222K  est $31.17  (day shared with the crashed morning session; codex reviews none)
 2026-08-31  GroupSearchForestScope  fable-5 (est at opus-5 rates)  day-total reqs 166  mean-ctx 239K  est $41.28  (same session; supersedes the line above; day shared with the crashed morning session)
 2026-08-31  ProtectedTargetQueryGate (GroupManagement 2.6.0)  fable-5 (est at opus-5 rates)  day-total reqs 222  mean-ctx 267K  est $55.04  (same session; supersedes the line above; day shared with the crashed morning session)
+2026-08-31  fsr-1 cross-domain routing fix + codereview round  fable-5 (est at opus-5 rates)  day-total reqs 262  mean-ctx 292K  est $67.25  (same session; supersedes the line above; codex generation pass bills on its own harness)

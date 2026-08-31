@@ -64,6 +64,49 @@ public sealed class GroupSearchForestScopeTests
         Assert.DoesNotContain("_searchGlobalCatalog = null", resolver, StringComparison.Ordinal);
     }
 
+    // ----- fsr-1: everything downstream of the forest search routes by the picked DN -----
+
+    [Fact]
+    public void ResolveGroupForWrite_TakesTheDnFastPath_ExactOrNothing()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var start = text.IndexOf("internal virtual ResolvedMember ResolveGroupForWrite(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ResolveGroupForWrite signature not found - tripwire is stale.");
+        var end = text.IndexOf("internal static string? CombineNotes(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ResolveGroupForWrite - update the tripwire.");
+        var body = text[start..end];
+
+        var iDnServer = body.IndexOf("var dnServer = ServerFromDn(groupIdentity);", StringComparison.Ordinal);
+        var iRoute = body.IndexOf("AddParameter(\"Server\", dnServer)", StringComparison.Ordinal);
+        var iMiss = body.IndexOf("AD group not found by its distinguished name", StringComparison.Ordinal);
+        var iLoop = body.IndexOf("foreach (var candidate in candidates", StringComparison.Ordinal);
+
+        Assert.True(iDnServer >= 0, "The DN fast-path is gone from ResolveGroupForWrite.");
+        Assert.True(iRoute > iDnServer, "The DN resolve must route to the DN's owning domain.");
+        // Exact-or-nothing: a DN miss returns Failed INSIDE the branch - falling through to
+        // the local-domain name loop would bring back the namesake swap (fsr-1's worst case).
+        Assert.True(iMiss > iRoute && iMiss < iLoop, "A DN miss must fail before the name loop.");
+        Assert.True(iLoop > iMiss, "The name loop must sit after the whole DN branch.");
+    }
+
+    [Fact]
+    public void MemberRead_And_Writes_RouteByTheGroupsOwningDomain()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+
+        // GetMembersAsync: a DN identity is used as-is (never re-resolved by local name)...
+        Assert.Contains("var resolvedDn = ServerFromDn(groupIdentity) is not null", text, StringComparison.Ordinal);
+        // ...and the group read itself is routed.
+        Assert.Contains("var memberReadServer = ServerFromDn(resolvedDn);", text, StringComparison.Ordinal);
+
+        // Both write cmdlets and the cycle probe act on the group object in ITS domain.
+        Assert.Contains("var addServer = ServerFromDn(resolvedGroupDn);", text, StringComparison.Ordinal);
+        Assert.Contains("var removeServer = ServerFromDn(resolvedGroupDn);", text, StringComparison.Ordinal);
+        Assert.Contains("var cycleServer = ServerFromDn(resolvedGroupDn);", text, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void SearchResults_CarryTheDomain_AndThePageShowsIt()
     {

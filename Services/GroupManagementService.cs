@@ -301,7 +301,11 @@ public class GroupManagementService
             ps.Commands.Clear();
 
             var credential = CreateCredential(creds.Value.username, creds.Value.password, creds.Value.domain);
-            var resolvedDn = ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
+            // fsr-1: a DN identity (the search row) is used as-is - the name resolver is
+            // local-domain-bound and would return the local namesake for a foreign group.
+            var resolvedDn = ServerFromDn(groupIdentity) is not null
+                ? groupIdentity
+                : ResolveAdGroupIdentity(ps, samAccountName, groupIdentity, credential);
 
             // The member list comes from the group's own linked attribute, NOT Get-ADGroupMember:
             // that cmdlet makes ADWS resolve every member server-side and faults the WHOLE read
@@ -317,6 +321,11 @@ public class GroupManagementService
               .AddParameter("Properties", new[] { "member", "mail" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            // fsr-1: the group object lives in its own domain's partition - route the read
+            // there, exactly as the primary-group read below already does.
+            var memberReadServer = ServerFromDn(resolvedDn);
+            if (memberReadServer is not null)
+                ps.AddParameter("Server", memberReadServer);
             var groupWithMembers = ps.Invoke().FirstOrDefault(o => o is not null);
             ps.Commands.Clear();
             // lst-3: an errored membership read must never present as an empty or truncated
@@ -598,6 +607,10 @@ public class GroupManagementService
                   .AddParameter("LDAPFilter", BuildCycleProbeFilter(resolvedGroupDn, candidateDn))
                   .AddParameter("Credential", credential)
                   .AddParameter("ErrorAction", "Stop");
+                // fsr-1: probe in the target group's own domain.
+                var cycleServer = ServerFromDn(resolvedGroupDn);
+                if (cycleServer is not null)
+                    ps.AddParameter("Server", cycleServer);
                 var cycle = ps.Invoke();
                 ps.Commands.Clear();
                 if (ps.HadErrors)
@@ -619,6 +632,10 @@ public class GroupManagementService
               .AddParameter("Members", candidateDn)
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            // fsr-1: the write operates on the group object - route to its owning domain.
+            var addServer = ServerFromDn(resolvedGroupDn);
+            if (addServer is not null)
+                ps.AddParameter("Server", addServer);
             try { ps.Invoke(); }
             catch (Exception ex) { writeError = ex; }
             finally { ps.Commands.Clear(); ps.Streams.Error.Clear(); }
@@ -749,6 +766,10 @@ public class GroupManagementService
               .AddParameter("Credential", credential)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
+            // fsr-1: the write operates on the group object - route to its owning domain.
+            var removeServer = ServerFromDn(resolvedGroupDn);
+            if (removeServer is not null)
+                ps.AddParameter("Server", removeServer);
             try { ps.Invoke(); }
             catch (Exception ex) { writeError = ex; }
             finally { ps.Commands.Clear(); ps.Streams.Error.Clear(); }
@@ -1079,6 +1100,50 @@ public class GroupManagementService
         ps.Commands.Clear();
 
         var credential = CreateCredential(creds.username, creds.password, creds.domain);
+
+        // fsr-1: an identity that IS a DN (the search row's Identity) resolves exactly, by
+        // -Identity routed to the DN's owning domain. The candidate loop below matches
+        // sam/name/mail in the LOCAL domain only, which cannot see a foreign-domain group
+        // and - worse - quietly returns the local NAMESAKE (Domain Admins exists in every
+        // domain), so the gate and the write would act on a different group than the
+        // operator picked. Exact-or-nothing: a DN that does not resolve NEVER falls
+        // through to the name loop, or the namesake swap comes straight back.
+        var dnServer = ServerFromDn(groupIdentity);
+        if (dnServer is not null)
+        {
+            try
+            {
+                ps.AddCommand("Get-ADGroup")
+                  .AddParameter("Identity", groupIdentity)
+                  .AddParameter("Properties", new[] { "mail" })
+                  .AddParameter("Credential", credential)
+                  .AddParameter("Server", dnServer)
+                  .AddParameter("ErrorAction", "Stop");
+                var byDn = ps.Invoke().FirstOrDefault(o => o is not null);
+                ps.Commands.Clear();
+                if (byDn is null || ps.HadErrors)
+                {
+                    ps.Streams.Error.Clear();
+                    return ResolvedMember.Failed($"AD group not found by its distinguished name: {groupIdentity}");
+                }
+                return new ResolvedMember(new ResolvedDirectoryPrincipal(
+                    Source: "GroupManagementService-AD",
+                    DisplayName: byDn.Properties["Name"]?.Value?.ToString() ?? groupIdentity,
+                    UserPrincipalName: string.Empty,
+                    SamAccountName: byDn.Properties["SamAccountName"]?.Value?.ToString(),
+                    PrimarySmtpAddress: byDn.Properties["mail"]?.Value?.ToString(),
+                    DistinguishedName: byDn.Properties["DistinguishedName"]?.Value?.ToString() ?? groupIdentity,
+                    ObjectGuid: byDn.Properties["ObjectGUID"]?.Value?.ToString(),
+                    EntraObjectId: null), IsGroup: true, Error: null);
+            }
+            catch (Exception)
+            {
+                ps.Commands.Clear();
+                ps.Streams.Error.Clear();
+                return ResolvedMember.Failed($"AD group not found by its distinguished name: {groupIdentity}");
+            }
+        }
+
         var candidates = new List<string>();
         if (!string.IsNullOrEmpty(samAccountName)) candidates.Add(samAccountName);
         if (!string.IsNullOrEmpty(groupIdentity)) candidates.Add(groupIdentity);
