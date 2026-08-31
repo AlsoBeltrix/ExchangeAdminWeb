@@ -785,10 +785,13 @@ Live backlog only. Items need an approved plan before code unless noted.
    mid-planning that ServiceNow ticket validation IS coming app-wide, so the plan now also
    builds the shared backend-agnostic `ITicketValidator` seam with a per-module
    `ValidateTickets` Module Config switch (off = any non-blank text, the default; on =
-   validate, which until a backend exists refuses with a named-config message - fail
-   closed, never decorative). Ruling recorded in `.agents/decisions.md` 2026-08-31;
-   rewiring the OTHER modules' ticket fields through the validator is future work that
-   waits for the ServiceNow backend plan. The ticket reaches both the search and reveal
+   validate through the EXISTING dormant `Services/ServiceNowService.cs` client - while
+   `ServiceNow:Enabled` is false, on refuses with a dormant-integration message: fail
+   closed, never decorative). A ServiceNow client already exists and eight pages already
+   call it; the per-module switch is the missing piece (`.agents/decisions.md`
+   2026-08-31, corrected entry). Rewiring the OTHER ticket fields through the validator
+   is future go-live work, which also must move `ServiceNow:Password` out of appsettings
+   into the PAM store (recorded pre-existing Constitution gap). The ticket reaches both the search and reveal
    audit events through the `ticketNumber` parameters `AuditService` already has.
    Versions: module `1.0.2` -> `1.1.0` AND a base app bump (shared service + DI).
    Enforcement is in `BitLockerRecoveryService` (required parameter, fail-closed guard

@@ -20,24 +20,42 @@ module, and have the off setting allow any text and the on setting actually
 validate? I don't have API access to SNow yet, so the point now is to make adding it
 later less of a fucking disaster."
 
+Corrected the same day against the code: a ServiceNow client ALREADY EXISTS and is
+dormant, not absent. `Services/ServiceNowService.cs` implements `ValidateTicketAsync`
+(Table API, INC/REQ table routing, active-state check), registered as a singleton
+(`Program.cs:192`), switched by the app-wide deployment setting `ServiceNow:Enabled`
+(dormant -> every ticket passes, by design; `docs/AdminModuleDeveloperGuide.md:1067-1069`
+documents it as a planned feature awaiting API access). Eight pages already call it
+inline at action time (MailboxPermissions, CalendarPermissions, ConferenceRooms,
+Comms10k, GroupManagement, MfaReset, DhcpAuthorization, plus a never-referenced
+shared component `Components/Shared/TicketNumberInput.razor`). What is missing is
+exactly the owner's per-module switch, plus coverage of the ticket fields that do
+not validate at all.
+
 What changes:
 
-- A shared ticket-validation seam (`ITicketValidator`) is built now, as shared
-  infrastructure (base app bump when it lands). First consumer: the BitLocker
-  mandatory ticket gate (`docs/BitLockerMandatoryTicket-Plan.md`).
+- A shared per-module policy layer (`ITicketValidator`) is built now over the
+  existing `ServiceNowService`, as shared infrastructure (base app bump when it
+  lands). First consumer: the BitLocker mandatory ticket gate
+  (`docs/BitLockerMandatoryTicket-Plan.md`).
 - Each module with a ticket field gets its own on/off switch in Module Config
   (per-module, not global). Off (the default): any non-blank ticket is accepted as
-  plain audit metadata - today's behavior. On: the ticket must validate.
-- No ServiceNow API access exists yet, so no ServiceNow client is built yet. Until
-  the integration exists, a module switched On refuses ticket-gated operations with
-  a message naming the unconfigured integration - fail closed and visible, never a
-  decorative switch that silently accepts.
-- When the ServiceNow integration is built (its own plan, its own credential via
-  the PAM store - the Constitution already names ServiceNow as a PAM-held
-  service-integration credential), every existing ticket field ties into the
-  validator. That rewiring sweep is future work, not part of the BitLocker plan.
-- The seam stays backend-agnostic (same reasoning as the PAM seam): ServiceNow is
-  the first and only planned backend, but the interface does not hardcode it.
+  plain audit metadata - today's behavior. On: the ticket must actually validate
+  through `ServiceNowService.ValidateTicketAsync`.
+- While `ServiceNow:Enabled` is false (no API access yet), a module switched On
+  refuses ticket-gated operations with a message saying validation is on but the
+  ServiceNow integration is dormant - fail closed and visible, never a decorative
+  switch. The dormant service's own everything-passes behavior is NOT surfaced
+  through a module that claims to validate.
+- When ServiceNow API access arrives, enabling it is deployment config plus one
+  recorded pre-condition: `ServiceNowService` reads `ServiceNow:Password` from
+  appsettings (`ServiceNowService.cs:21`), which the Constitution's credential rule
+  (PAM-held service-integration passwords, ServiceNow named explicitly) does not
+  permit for live use - moving that credential to the PAM store is part of the
+  go-live work, recorded here so it is not lost. Rewiring the eight existing
+  call sites through the per-module validator is the same future sweep.
+- The seam stays backend-agnostic in its interface (same reasoning as the PAM
+  seam), while delegating to `ServiceNowService` as its only backend today.
 
 ### 2026-08-31 - RiskyUsers reads: audited, never alert-emailed (D2 ruled)
 
