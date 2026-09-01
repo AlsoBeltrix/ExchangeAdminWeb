@@ -4,9 +4,11 @@ using System.Text.Json;
 namespace ExchangeAdminWeb.Services;
 
 /// <summary>
-/// Read path for Microsoft Entra ID Protection risky users (docs/RiskyUsersModule-Plan.md, S2).
-/// Graph v1.0, application permission IdentityRiskyUser.Read.All. The write path (dismiss,
-/// confirm safe, confirm compromised) is a later slice of the same plan.
+/// Read and write paths for Microsoft Entra ID Protection risky users
+/// (docs/RiskyUsersModule-Plan.md, S2 and S5). Graph v1.0. Reads use application permission
+/// IdentityRiskyUser.Read.All; the write actions (dismiss, confirm safe, confirm compromised)
+/// use IdentityRiskyUser.ReadWrite.All. The ticket, confirmation, protected-principal, audit
+/// and notification gates around the write actions are page-level (S6), not this service.
 /// </summary>
 public sealed class RiskyUsersService
 {
@@ -127,6 +129,42 @@ public sealed class RiskyUsersService
         return entries;
     }
 
+    /// <summary>
+    /// Dismiss, confirm safe, or confirm compromised for a single risky user (S5). One HTTP call
+    /// per user: all three Graph endpoints accept a userIds array and return one bare 204 for the
+    /// whole batch with no per-user body, so posting more than one id per call would make it
+    /// impossible to say which user succeeded - Known Failure Class 2 written into the API
+    /// itself. Calling once per user gives every caller (the S6 page, one row at a time) its own
+    /// named outcome instead. Does not check riskState or isProcessing before posting - Graph's
+    /// own refusal, if any, is this call's failure result; no client-side eligibility allowlist.
+    /// </summary>
+    public async Task<RiskyUserActionResult> ApplyActionAsync(string userId, RiskyUserAction action)
+    {
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Risky Users Graph credentials not available.");
+
+        var ok = await client.PostNoContentAsync(ActionEndpoint(action), new { userIds = new[] { userId } });
+
+        return ok
+            ? new RiskyUserActionResult(userId, true, $"{ActionDisplayName(action)} succeeded.")
+            : new RiskyUserActionResult(userId, false, $"{ActionDisplayName(action)} failed. Graph rejected the request for this user - check the user's current riskState.");
+    }
+
+    private static string ActionEndpoint(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => $"{RiskyUsersEndpoint}/dismiss",
+        RiskyUserAction.ConfirmSafe => $"{RiskyUsersEndpoint}/confirmSafe",
+        RiskyUserAction.ConfirmCompromised => $"{RiskyUsersEndpoint}/confirmCompromised",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
+    };
+
+    private static string ActionDisplayName(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => "Dismiss",
+        RiskyUserAction.ConfirmSafe => "Confirm safe",
+        RiskyUserAction.ConfirmCompromised => "Confirm compromised",
+        _ => action.ToString()
+    };
+
     private static InvalidOperationException BuildFailure(HttpStatusCode status, string context)
     {
         if (status == HttpStatusCode.Forbidden)
@@ -229,6 +267,18 @@ public sealed class RiskyUsersService
 }
 
 public sealed record RiskyUserFilter(string? RiskLevel, string? RiskState, string? UpnContains);
+
+/// <summary>Outcome of a single-user write action (S5). One per Graph call, never a batch verdict.</summary>
+public sealed record RiskyUserActionResult(string UserId, bool Success, string Message);
+
+/// <summary>The three v1.0 remediation actions this module supports (S5). No riskState-based
+/// eligibility allowlist is derived from this - Graph decides what it will accept.</summary>
+public enum RiskyUserAction
+{
+    Dismiss,
+    ConfirmSafe,
+    ConfirmCompromised
+}
 
 public sealed record RiskyUserPage(
     IReadOnlyList<RiskyUser> Users,

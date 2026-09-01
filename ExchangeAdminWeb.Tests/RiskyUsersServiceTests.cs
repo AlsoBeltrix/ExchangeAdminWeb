@@ -4,37 +4,48 @@ using ExchangeAdminWeb.Services;
 namespace ExchangeAdminWeb.Tests;
 
 /// <summary>
-/// Read-path tests for RiskyUsersService (docs/RiskyUsersModule-Plan.md, S2/S4), driven through
-/// the internal Func&lt;Task&lt;GraphTokenClient?&gt;&gt; seam (RiskyUsersService.cs:34-37) against a
-/// locally declared HTTP stub. GraphTokenClientTests.StubHandler is private sealed to that class
-/// and is not reachable here (plan S2, "the HTTP stub must be declared locally").
+/// Read- and write-path tests for RiskyUsersService (docs/RiskyUsersModule-Plan.md, S2/S4/S5),
+/// driven through the internal Func&lt;Task&lt;GraphTokenClient?&gt;&gt; seam
+/// (RiskyUsersService.cs:34-37) against a locally declared HTTP stub.
+/// GraphTokenClientTests.StubHandler is private sealed to that class and is not reachable here
+/// (plan S2, "the HTTP stub must be declared locally").
 /// </summary>
 public class RiskyUsersServiceTests
 {
     /// <summary>
     /// Serves a canned token for login.microsoftonline.com and a configurable response for every
-    /// Graph call, and records the last Graph request URI so tests can assert on the emitted
-    /// query string (e.g. $top, $filter) without borrowing GraphTokenClientTests' handler.
+    /// Graph call. Records every non-token Graph request (URI and body) so tests can assert on
+    /// the emitted query string (e.g. $top, $filter) or the posted body (e.g. one userIds array
+    /// per call, S5) without borrowing GraphTokenClientTests' handler. GraphResponseForBody, when
+    /// set, lets a test vary the response per call based on the posted body - e.g. to prove one
+    /// user's refusal does not change another user's outcome (Known Failure Class 2).
     /// </summary>
     private sealed class StubHandler : HttpMessageHandler
     {
         public Func<HttpResponseMessage> GraphResponse { get; set; } =
             () => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"value":[]}""") };
 
+        public Func<string?, HttpResponseMessage>? GraphResponseForBody { get; set; }
+
         public Uri? LastGraphRequestUri { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public List<(Uri Uri, string? Body)> GraphRequests { get; } = [];
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host == "login.microsoftonline.com")
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("""{"access_token":"test-token","expires_in":3600}""")
-                });
+                };
             }
 
             LastGraphRequestUri = request.RequestUri;
-            return Task.FromResult(GraphResponse());
+            var body = request.Content == null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            GraphRequests.Add((request.RequestUri, body));
+
+            return GraphResponseForBody != null ? GraphResponseForBody(body) : GraphResponse();
         }
     }
 
@@ -217,5 +228,69 @@ public class RiskyUsersServiceTests
         var sorted = RiskyUsersService.SortRiskyUsers(users);
 
         Assert.Equal(new[] { "3", "4", "1", "2" }, sorted.Select(u => u.Id));
+    }
+
+    // Write path (S5). One user per HTTP call: every action posts a single-element userIds
+    // array to its own endpoint, never a batch.
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss, "/identityProtection/riskyUsers/dismiss")]
+    [InlineData(RiskyUserAction.ConfirmSafe, "/identityProtection/riskyUsers/confirmSafe")]
+    [InlineData(RiskyUserAction.ConfirmCompromised, "/identityProtection/riskyUsers/confirmCompromised")]
+    public async Task ApplyActionAsync_PostsOneUserIdToTheActionsOwnEndpoint(RiskyUserAction action, string expectedPath)
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.ApplyActionAsync("user-1", action);
+
+        Assert.True(result.Success);
+        Assert.Equal("user-1", result.UserId);
+        var (uri, body) = Assert.Single(handler.GraphRequests);
+        Assert.Equal($"https://graph.microsoft.com/v1.0{expectedPath}", uri.ToString());
+        using var doc = System.Text.Json.JsonDocument.Parse(body!);
+        var ids = doc.RootElement.GetProperty("userIds").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal(new[] { "user-1" }, ids);
+    }
+
+    [Fact]
+    public async Task ApplyActionAsync_GraphRejects_ReturnsNamedFailure_DoesNotThrow()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.BadRequest);
+
+        var result = await service.ApplyActionAsync("user-1", RiskyUserAction.Dismiss);
+
+        Assert.False(result.Success);
+        Assert.Equal("user-1", result.UserId);
+        Assert.False(string.IsNullOrWhiteSpace(result.Message));
+    }
+
+    [Fact]
+    public async Task ApplyActionAsync_GraphClientUnavailable_ThrowsRatherThanSilentlySucceeding()
+    {
+        var service = new RiskyUsersService(() => Task.FromResult<GraphTokenClient?>(null));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ApplyActionAsync("user-1", RiskyUserAction.Dismiss));
+    }
+
+    // Known Failure Class 2 (aggregation): a refusal on one user's call must not flip another
+    // user's result to failed, and must not itself be reported as success.
+    [Fact]
+    public async Task ApplyActionAsync_CalledForThreeUsersInTurn_EachGetsItsOwnOutcome()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponseForBody = body =>
+            body != null && body.Contains("user-2")
+                ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+                : new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var r1 = await service.ApplyActionAsync("user-1", RiskyUserAction.Dismiss);
+        var r2 = await service.ApplyActionAsync("user-2", RiskyUserAction.Dismiss);
+        var r3 = await service.ApplyActionAsync("user-3", RiskyUserAction.Dismiss);
+
+        Assert.True(r1.Success);
+        Assert.False(r2.Success);
+        Assert.True(r3.Success);
+        Assert.Equal(3, handler.GraphRequests.Count);
     }
 }
