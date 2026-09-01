@@ -484,6 +484,25 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "RiskyUsers",
+            DisplayName = "Risky Users",
+            Description = "Review Microsoft Entra ID Protection risky users and their risk history.",
+            Route = "risky-users",
+            IconCss = "bi bi-person-fill-nav-menu",
+            Category = "Identity & Access",
+            SortOrder = 745,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            MainPermission = new("Access", "RiskyUsers", FailClosed: true),
+            GranularPermissions = [new("Remediate", "RiskyUsersRemediate", FailClosed: true)],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires IdentityRiskyUser.Read.All, plus IdentityRiskyUser.ReadWrite.All for remediation). Requires Microsoft Entra ID P2."),
+                new("MaxRows", "Max Rows", "Maximum risky users fetched per query (Graph caps at 500)", Required: false, DefaultValue: "500")
+            ]
+        },
+        new()
+        {
             Id = "DhcpAuthorization",
             DisplayName = "DHCP Authorization",
             Description = "Authorize and deauthorize DHCP servers in Active Directory. Requires Enterprise Admin credentials via Secret Server.",

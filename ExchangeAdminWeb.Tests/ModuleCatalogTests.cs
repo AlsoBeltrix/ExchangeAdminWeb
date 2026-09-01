@@ -13,7 +13,43 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(25, _catalog.GetAll().Count); // 25 modules (24 operational + 1 config-only)
+        Assert.Equal(26, _catalog.GetAll().Count); // 26 modules (25 operational + 1 config-only)
+    }
+
+    [Fact]
+    public void Catalog_HasRiskyUsersModule()
+    {
+        var module = _catalog.GetById("RiskyUsers");
+        Assert.NotNull(module);
+        Assert.Equal("risky-users", module!.Route);
+        Assert.Equal("Identity & Access", module.Category);
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+    }
+
+    [Fact]
+    public void Catalog_RiskyUsers_MainPermissionIsFailClosed()
+    {
+        var module = _catalog.GetById("RiskyUsers")!;
+        Assert.Equal("RiskyUsers", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_RiskyUsers_HasFailClosedRemediateGranular()
+    {
+        var module = _catalog.GetById("RiskyUsers")!;
+        var granular = Assert.Single(module.GranularPermissions);
+        Assert.Equal("RiskyUsersRemediate", granular.PolicyAlias);
+        Assert.True(granular.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_RiskyUsers_PolicyAliasesAreConfigurable()
+    {
+        var aliases = _catalog.GetConfigurablePolicyAliases();
+        Assert.Contains("RiskyUsers", aliases);
+        Assert.Contains("RiskyUsersRemediate", aliases);
     }
 
     [Fact]
@@ -106,7 +142,9 @@ public class ModuleCatalogTests
         // Cross-module job administration. Configurable so the groups entitled to see every
         // module's jobs at once are set deliberately, not inherited from another module's grant.
         Assert.Contains("AdminBulkJobs", aliases);
-        Assert.Equal(34, aliases.Count);
+        Assert.Contains("RiskyUsers", aliases);
+        Assert.Contains("RiskyUsersRemediate", aliases);
+        Assert.Equal(36, aliases.Count);
     }
 
     [Fact]

@@ -1,0 +1,375 @@
+@page "/risky-users"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "RiskyUsers")]
+@rendermode InteractiveServer
+@inject RiskyUsersService RiskyUsersService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<RiskyUsers> Logger
+
+<PageTitle>Risky Users</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Every query against Microsoft Entra ID Protection is logged for audit purposes. This page is read-only.</small>
+    </div>
+    <h1 class="mb-4">Risky Users<ModuleVersion /></h1>
+
+    @if (!RiskyUsersService.IsAvailable)
+    {
+        <div class="alert alert-danger">Risky Users module is not configured. Set Graph App Delinea Secret ID in Module Config.</div>
+        return;
+    }
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label mb-1" for="riskLevelFilter">Risk level</label>
+                    <select id="riskLevelFilter" class="form-select" @bind="riskLevelFilter" disabled="@isLoading">
+                        <option value="">Any</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                        <option value="hidden">Hidden</option>
+                        <option value="none">None</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label mb-1" for="riskStateFilter">Risk state</label>
+                    <select id="riskStateFilter" class="form-select" @bind="riskStateFilter" disabled="@isLoading">
+                        <option value="">Any</option>
+                        <option value="atRisk">At risk</option>
+                        <option value="confirmedCompromised">Confirmed compromised</option>
+                        <option value="confirmedSafe">Confirmed safe</option>
+                        <option value="dismissed">Dismissed</option>
+                        <option value="remediated">Remediated</option>
+                        <option value="none">None</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-1" for="upnContains">UPN contains</label>
+                    <input id="upnContains" class="form-control" @bind="upnContains" @bind:event="oninput"
+                           @onkeydown="OnFilterKeyDown" disabled="@isLoading" placeholder="Part of a user principal name" />
+                </div>
+                <div class="col-md-2">
+                    <button class="btn btn-primary w-100" @onclick="LoadRiskyUsersAsync" disabled="@isLoading">
+                        @if (isLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* An in-flight query must SAY it is in flight, in the results area, not only as a button
+       spinner - a blank results area during a Graph round trip reads as a hung page (the
+       BitLocker blr-4 class of defect). *@
+    @if (isLoading)
+    {
+        <div class="alert alert-info d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <span>Querying Microsoft Entra ID Protection...</span>
+        </div>
+    }
+
+    @* hasQueried is cleared at the start of every query, not only the first, and set again only
+       in `finally` once an answer (success or failure) exists - so a second query never leaves
+       the first query's verdict on screen while the second is in flight (AC3). *@
+    @if (hasQueried && !isLoading)
+    {
+        @if (errorMessage != null)
+        {
+            <div class="alert alert-danger">@errorMessage</div>
+        }
+        else if (results.Count == 0)
+        {
+            <div class="alert alert-secondary">No risky users found.</div>
+        }
+        else
+        {
+            @if (truncated)
+            {
+                <div class="alert alert-warning py-2">
+                    <small>Showing the first @requestedMax; more exist. Narrow the filter.</small>
+                </div>
+            }
+
+            <div class="card">
+                <div class="card-header">
+                    <strong>@results.Count risky user(s)</strong>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>UPN</th>
+                                <th>Display name</th>
+                                <th>Risk level</th>
+                                <th>Risk state</th>
+                                <th>Risk detail</th>
+                                <th>Last updated</th>
+                                <th>Flags</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var user in results)
+                            {
+                                <tr>
+                                    <td>@user.UserPrincipalName</td>
+                                    <td>@user.UserDisplayName</td>
+                                    <td><span class="badge @RiskLevelBadgeClass(user.RiskLevel)">@user.RiskLevel</span></td>
+                                    <td>@user.RiskState</td>
+                                    <td><small class="text-muted">@user.RiskDetail</small></td>
+                                    <td class="text-nowrap">@(user.RiskLastUpdatedDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
+                                    <td>
+                                        @if (user.IsProcessing) { <span class="badge bg-secondary me-1">Processing</span> }
+                                        @if (user.IsDeleted) { <span class="badge bg-dark">Deleted</span> }
+                                    </td>
+                                    <td>
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleHistoryAsync(user)">
+                                            @(expandedUserId == user.Id ? "Hide history" : "History")
+                                        </button>
+                                    </td>
+                                </tr>
+                                @if (expandedUserId == user.Id)
+                                {
+                                    <tr>
+                                        <td colspan="8" class="bg-light">
+                                            @if (historyLoading)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-2"></span> <small>Loading history...</small>
+                                            }
+                                            else if (historyError != null)
+                                            {
+                                                <div class="alert alert-danger mb-0 py-2">@historyError</div>
+                                            }
+                                            else if (historyEntries.Count == 0)
+                                            {
+                                                <small class="text-muted">No history entries.</small>
+                                            }
+                                            else
+                                            {
+                                                <table class="table table-sm mb-0">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Risk level</th>
+                                                            <th>Risk state</th>
+                                                            <th>Risk detail</th>
+                                                            <th>Updated</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var entry in historyEntries)
+                                                        {
+                                                            <tr>
+                                                                <td><span class="badge @RiskLevelBadgeClass(entry.RiskLevel)">@entry.RiskLevel</span></td>
+                                                                <td>@entry.RiskState</td>
+                                                                <td><small class="text-muted">@entry.RiskDetail</small></td>
+                                                                <td class="text-nowrap">@(entry.RiskLastUpdatedDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+
+    private string riskLevelFilter = "";
+    private string riskStateFilter = "";
+    private string upnContains = "";
+
+    private bool isLoading;
+    private bool hasQueried;
+    private string? errorMessage;
+    private List<RiskyUser> results = [];
+    private bool truncated;
+    private int requestedMax;
+
+    private string? expandedUserId;
+    private bool historyLoading;
+    private string? historyError;
+    private List<RiskyUserHistoryEntry> historyEntries = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "RiskyUsers");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task OnFilterKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isLoading)
+            await LoadRiskyUsersAsync();
+    }
+
+    private async Task LoadRiskyUsersAsync()
+    {
+        isLoading = true;
+        // Cleared at the start of every query, not only the first (S3 rule 1) - otherwise a
+        // second query would render the first query's now-stale verdict while it is in flight.
+        hasQueried = false;
+        errorMessage = null;
+        results = [];
+        truncated = false;
+        expandedUserId = null;
+        historyEntries = [];
+        historyError = null;
+        await Task.Yield();
+
+        var filter = new RiskyUserFilter(
+            string.IsNullOrWhiteSpace(riskLevelFilter) ? null : riskLevelFilter,
+            string.IsNullOrWhiteSpace(riskStateFilter) ? null : riskStateFilter,
+            string.IsNullOrWhiteSpace(upnContains) ? null : upnContains.Trim());
+        var target = DescribeFilter(filter);
+
+        try
+        {
+            var page = await RiskyUsersService.GetRiskyUsersAsync(filter);
+            results = [.. page.Users];
+            truncated = page.Truncated;
+            requestedMax = page.RequestedMax;
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_List", "RiskyUsers", target, true));
+        }
+        catch (Exception ex)
+        {
+            // A failed request must never render as "no risky users" (S2 rule 1 / AC1) - the
+            // service throws rather than returning an empty page, and that exception is surfaced
+            // here as a distinct alert, never folded into the empty-results branch.
+            errorMessage = ex.Message;
+            Logger.LogError(ex, "Failed to load risky users.");
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_List", "RiskyUsers", target, false, errorDetail: ex.Message));
+        }
+        finally
+        {
+            hasQueried = true;
+            isLoading = false;
+        }
+    }
+
+    private async Task ToggleHistoryAsync(RiskyUser user)
+    {
+        if (expandedUserId == user.Id)
+        {
+            expandedUserId = null;
+            return;
+        }
+
+        expandedUserId = user.Id;
+        historyLoading = true;
+        historyError = null;
+        historyEntries = [];
+        await Task.Yield();
+
+        try
+        {
+            historyEntries = [.. await RiskyUsersService.GetHistoryAsync(user.Id)];
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_History", "RiskyUsers", user.UserPrincipalName, true));
+        }
+        catch (Exception ex)
+        {
+            historyError = ex.Message;
+            Logger.LogError(ex, "Failed to load risky user history for {UserId}.", user.Id);
+
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, "RiskyUsers_History", "RiskyUsers", user.UserPrincipalName, false, errorDetail: ex.Message));
+        }
+        finally
+        {
+            historyLoading = false;
+        }
+    }
+
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write Risky Users audit record.");
+        }
+    }
+
+    /// <summary>
+    /// Human-readable audit target for a RiskyUsers_List query. Pure and static so it can be
+    /// unit-tested without a page instance.
+    /// </summary>
+    internal static string DescribeFilter(RiskyUserFilter filter)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(filter.RiskLevel))
+            parts.Add($"riskLevel={filter.RiskLevel}");
+        if (!string.IsNullOrWhiteSpace(filter.RiskState))
+            parts.Add($"riskState={filter.RiskState}");
+        if (!string.IsNullOrWhiteSpace(filter.UpnContains))
+            parts.Add($"upnContains={filter.UpnContains}");
+
+        return parts.Count == 0 ? "(no filter)" : string.Join(";", parts);
+    }
+
+    /// <summary>
+    /// Badge class for a riskLevel value. Falls through to a neutral badge for any value outside
+    /// the documented set (including "unknownFutureValue") rather than dropping or miscoloring it
+    /// - riskLevel/riskState are stored as plain strings and must render, not be filtered
+    /// (S2 rule 4 / AC5).
+    /// </summary>
+    internal static string RiskLevelBadgeClass(string riskLevel) => riskLevel.ToLowerInvariant() switch
+    {
+        "high" => "bg-danger",
+        "medium" => "bg-warning text-dark",
+        "low" => "bg-info text-dark",
+        "hidden" => "bg-secondary",
+        "none" => "bg-success",
+        _ => "bg-light text-dark border"
+    };
+}
