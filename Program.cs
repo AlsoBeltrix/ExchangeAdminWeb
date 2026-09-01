@@ -125,6 +125,10 @@ try
     builder.Services.AddScoped<ExchangeAdminWeb.Services.Jobs.ConferenceRoomBulkProcessor>();
     builder.Services.AddSingleton<NamedLocationsService>();
     builder.Services.AddSingleton<M365GroupManagementService>();
+    // Risky Users read path (docs/RiskyUsersModule-Plan.md, S2). Singleton like the other Graph
+    // services: no per-request state, and GraphTokenClient is constructed per operation from the
+    // named "MicrosoftGraph" client above.
+    builder.Services.AddSingleton<RiskyUsersService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     // BitLocker recovery. Scoped: the service opens a short-lived SQLite connection per query and
     // holds no state between them. Needs no HttpClient, no Graph registration and no Exchange
