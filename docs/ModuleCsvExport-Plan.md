@@ -1,8 +1,10 @@
 # CSV export for five result-set modules
 
-Status: Draft 2026-08-31; D1 RULED 2026-09-01 (keys ARE in the BitLocker export -
-owner wording in section 1). No owner decision is outstanding. Not started;
-awaiting a go.
+Status: Implemented 2026-09-01 (owner go the same day). D1 RULED 2026-09-01 (keys
+ARE in the BitLocker export - owner wording in section 1). No owner decision is
+outstanding. All seven slices landed (S1-S6 code, S7 README); section 9 below
+completes the traceability check. NOT DEPLOYED - the four manual checks in
+section 8 need a deployed instance and ride the next dev deploy.
 Owner: Michael
 Last verified against code: `72bfaf7` / 2026-08-31
 Versions: five module bumps (`DhcpAuthorization` `1.2.3` -> `1.3.0`,
@@ -311,8 +313,63 @@ confirm PASS.
 
 ## 9. Traceability check
 
-To be completed at implementation time, per `docs/EventLogCsvTicket-Plan.md`
-section 9's shape.
+- AC1 (shared `CsvExport.Write`, `WriteField` quoting, only writer the five
+  modules use): S1 `45f14e5`,
+  `ExchangeAdminWeb.Tests/CsvExportTests.cs`
+  (`Write_QuotesCommaQuoteNewlineCells`, `Write_HeaderThenRowsInOrder`,
+  `Write_MismatchedRowThrows`, `Write_EmptyRowsYieldsHeaderOnly`). "Only writer"
+  half: each module's `BuildCsv` (S2-S6 below) calls `CsvExport.Write` and no
+  module writes CSV any other way - verified per slice at implementation.
+- AC1b (formula-injection neutralization): S1 `45f14e5`,
+  `CsvExportTests.Write_NeutralizesFormulaLeadingCells`.
+- AC2 (Download CSV button absent/disabled when empty, enabled with rows,
+  `downloadFile` JS, `<module>_yyyyMMdd_HHmmss.csv` filename) and AC4 (every
+  export audits `LogModuleAction` with action `ExportCsv`, audit failure does
+  not block the download) together, one source-guard test per module asserting
+  `BuildCsv`, `downloadFile`, the empty-set guard, `"ExportCsv"`, and
+  `LogModuleAction` all appear in that page's `DownloadCsvAsync` body:
+  - DhcpAuthorization: S2 `33ba4ea`, `DhcpAuthorizationCsvTests.DhcpAuthorization_WiresDownloadCsv`.
+  - NamedLocations: S3 `6b96d5c`, `NamedLocationsCsvTests.NamedLocations_WiresDownloadCsv`.
+  - BlockedSenders: S4 `71d25b0`, `BlockedSendersCsvTests.BlockedSenders_WiresDownloadCsv`.
+  - Migration status: S6 `134c90c`, `MigrationCsvTests.Migration_WiresDownloadCsv`.
+  - BitLockerRecovery does not carry the generic `ExportCsv` action - see AC4b.
+- AC3 (each module's CSV columns match section 6's table, produced by an
+  `internal static` per-page projector): S2-S6, each module's
+  `BuildCsv_HeaderMatchesSpec` and `BuildCsv_MapsARow`:
+  `DhcpAuthorizationCsvTests` (S2 `33ba4ea`), `NamedLocationsCsvTests` (S3
+  `6b96d5c`), `BlockedSendersCsvTests` (S4 `71d25b0`),
+  `BitLockerRecoveryCsvTests` (S5 `8061610`), `MigrationCsvTests` (S6
+  `134c90c`).
+- AC4b (BitLocker's distinct bulk-disclosure audit: action
+  `ExportRecoveryKeysCsv`, key count target, `ticketNumber: searchTicket`, and
+  never any key material in the event): S5 `8061610`,
+  `BitLockerRecoveryCsvTests.BitLockerRecovery_WiresDownloadCsv`, which asserts
+  `"ExportRecoveryKeysCsv"`, `LogModuleAction`, `ticketNumber: searchTicket` are
+  present and `RecoveryPassword` is absent from the audited call (the blr-1
+  rule).
+- AC5 (BitLocker CSV contains `RecoveryKey` with `RecoveryPassword` verbatim,
+  unmangled by the AC1b leading-character rule since a recovery password
+  starts with a digit): S5 `8061610`,
+  `BitLockerRecoveryCsvTests.BuildCsv_ContainsRecoveryKeyVerbatim` and
+  `BuildCsv_StampsTicketOnEveryRow`.
+- AC6 (five module version bumps per the header; base app version bumped IN
+  S1; no `ModuleCatalog` permission/alias changes): base app `2.12.0` ->
+  `2.13.0` landed in S1 `45f14e5` (the shared-helper slice, per the csv-2
+  rule). Five module bumps, each in its own slice: `DhcpAuthorization`
+  `1.2.3` -> `1.3.0` (S2 `33ba4ea`), `NamedLocations` `1.0.3` -> `1.1.0` (S3
+  `6b96d5c`), `BlockedSenders` `1.3.0` -> `1.4.0` (S4 `71d25b0`),
+  `BitLockerRecovery` `1.1.0` -> `1.2.0` (S5 `8061610`), `Migration` `1.7.1`
+  -> `1.8.0` (S6 `134c90c`). `ModuleCatalogTests.cs` untouched across all six
+  slices and green (no permission/alias assertions changed).
+- AC7 (README gains one export bullet per module section): S7 `b84cfb5` - one
+  bullet added to the DhcpAuthorization, NamedLocations, BitLockerRecovery,
+  and Migration sections; BlockedSenders had no existing README section (a
+  pre-existing gap unrelated to this plan), so S7 added a minimal one to hold
+  its bullet.
+- Non-vacuity: every slice (S1-S6) was mutation-probed by design at
+  implementation time (each new test's named target reverted, confirmed FAIL,
+  restored, confirmed PASS) before its commit landed. Full suite after S6:
+  1881 passed / 0 failed / 3 skipped.
 
 ## 10. Review log
 

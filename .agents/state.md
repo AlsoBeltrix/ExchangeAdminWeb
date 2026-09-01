@@ -6,6 +6,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
+  NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1
+  `45f14e5` (shared `CsvExport.Write` helper + AC1b formula neutralization, base
+  app `2.12.0` -> `2.13.0`), S2 `33ba4ea` (DhcpAuthorization export, module
+  `1.3.0`), S3 `6b96d5c` (NamedLocations export, module `1.1.0`), S4 `71d25b0`
+  (BlockedSenders export, module `1.4.0`), S5 `8061610` (BitLockerRecovery keys
+  export with ticket, AC4b `ExportRecoveryKeysCsv` bulk-disclosure audit, module
+  `1.2.0`), S6 `134c90c` (Migration status export, module `1.8.0`), S7 `b84cfb5`
+  (README export bullets; BlockedSenders had no existing README section, so a
+  minimal one was added). Every slice mutation-probed by design at
+  implementation. Full suite after S6: 1881 passed / 0 failed / 3 skipped.
+  **D1 honored:** the BitLocker export contains the recovery keys (owner
+  ruling, plan section 1); the download is itself an audited bulk-disclosure
+  event (`ExportRecoveryKeysCsv`, ticket + row count) and the key material
+  never enters the audit log.
+  **NEXT: nothing code-side - the plan's four manual checks (section 8) need a
+  deployed instance and ride the next dev deploy.**
+
 **Review loop CLOSED 2026-08-31.** fsr-1 (`f6a4eb1`) and fsr-2 (`6f4d972`) both closed
 on coder-side proofs under the same-day ruling: reviewer verification rounds are
 CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
@@ -516,14 +534,11 @@ by owner ruling 2026-09-01 (items below shift down one):**
    deployed instance and ride the next dev deploy.** This also unblocks the CSV
    export plan's S5 (item 6/queue item 2, which depends on this stream landing
    first). (Item 7 in the older list below)
-2. CSV export for five modules - PLAN DRAFTED 2026-08-31
-   (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
-   csv-1 and csv-2 folded in - see that plan's Review log). **D1 RULED 2026-09-01:
-   keys ARE in the BitLocker export** (owner: "absolutely needs to contain the actual
-   keys otherwise what's the point"), overruling the drafted no-keys default and the
-   reviewer's endorsement of it; the export is a distinct audited bulk-disclosure
-   event, keys never in the audit itself. No open decision; awaiting a go
-   (item 6 below; S5 depends on item 1 landing first)
+2. CSV export for five modules - **IMPLEMENTED 2026-09-01** (owner go the same
+   day); see `## Now`. All seven slices landed (S1-S6 code, S7 README);
+   `docs/ModuleCsvExport-Plan.md` status is `Implemented`, section 9
+   traceability completed. Manual checks ride the next dev deploy. Do not
+   restart.
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
 5. Sidebar Home link removal - ruled, no plan needed
