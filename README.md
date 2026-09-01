@@ -225,6 +225,11 @@ Disabled by default and fail-closed, because a recovery key decrypts a whole dis
   children, so for retired hardware the archive is the **only** surviving copy
 - Optionally also searches live Active Directory, for a key created since the
   latest export. Noticeably slower, so it is off by default
+- A ticket number is required before any search runs. It is written on the
+  search and reveal audit events (and the Event Log CSV `Ticket` column), and
+  the `ValidateTickets` module switch controls whether it is merely required
+  (default) or validated against ServiceNow -- On while that integration is
+  dormant refuses every search rather than silently validating nothing
 - Results are masked until an operator reveals one. **The reveal is the audited
   security event**, not the search; the recovery key itself never enters an audit
   record, log line, or error message

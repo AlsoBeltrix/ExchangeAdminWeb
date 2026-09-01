@@ -52,6 +52,7 @@ is denied.
 | `ActiveDirectorySearchBase` | No | DN limiting live searches to one AD subtree. |
 | `ActiveDirectoryServer` | No | Domain controller used for live searches. |
 | `SearchResultLimit` | No | Rows per search. Defaults to 50, capped at 500. |
+| `ValidateTickets` | No | Checkbox, default off. Off: any non-blank ticket is accepted and recorded as audit metadata. On: tickets must validate against ServiceNow; while that integration is not enabled on the deployment, every search refuses with a message saying so, rather than silently validating nothing. |
 
 `ArchiveDatabasePath` must be a **local path on the web server**, not a UNC
 path. SQLite's WAL mode needs shared memory that SMB does not provide.
@@ -75,9 +76,32 @@ That account is separate from the module's Delinea credential.
 
 ## Does it mutate data?
 
-No. Read-only. There is therefore no ticket requirement, no protected-principal
-check, and no confirmation dialog: those exist to guard writes, and this module
-performs none.
+No. Read-only. There is therefore no protected-principal check and no
+confirmation dialog: those exist to guard writes, and this module performs none.
+
+## Ticket requirement
+
+A ticket number is required before any search runs -- the one read-only module
+with one, because a result row is one Reveal click away from a working
+disk-decryption key, and every disclosure must be traceable to the call that
+prompted it.
+
+- The Search button and Enter key are disabled without a ticket, and the
+  **service refuses independently of the page** (UI hiding is not security): a
+  directly invoked search without an acceptable ticket fails with the
+  validator's message and is audited as a failed search.
+- The trimmed ticket is written on the search audit events
+  (`BitLockerSearchByName` / `BitLockerSearchByKeyId`) and on `RevealRecoveryKey`.
+  A reveal carries the ticket captured when the displayed result set was
+  produced, not the live contents of the ticket box, which the operator may have
+  edited since. The Event Log CSV export carries it in its `Ticket` column.
+- The ticket box is not cleared between searches: one recovery call is one
+  ticket across several search refinements.
+- Validation is governed by the `ValidateTickets` switch (see the config table).
+  Off accepts any non-blank ticket; On validates against ServiceNow, and while
+  that integration is dormant, On fails closed with a message naming the dormant
+  integration. A stored switch value that is not true/false also refuses rather
+  than silently meaning Off.
 
 ## Protected principals
 
@@ -91,6 +115,9 @@ object.
 | `BitLockerSearchByName` | lookup | A search by computer name |
 | `BitLockerSearchByKeyId` | lookup | A search by recovery-screen identifier |
 | `RevealRecoveryKey` | `BitLockerRecovery` | An operator reveals a key |
+
+All three events carry the operator's ticket number in the `ticket` field (see
+Ticket requirement above).
 
 The **reveal** is the security event, not the search. A search returns masked
 rows; revealing is the moment a recovery key reaches a human, and it records

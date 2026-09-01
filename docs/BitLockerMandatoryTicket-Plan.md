@@ -1,11 +1,15 @@
 # BitLocker Recovery mandatory ticket field + per-module ticket-validation switch
 
-Status: Draft 2026-08-31, revised twice the same day: first for the owner's
+Status: Implemented 2026-09-01. S1 `280311f` (validator, base bump to `2.11.0`),
+S2 `fd7cb1f` (BitLocker gate, page, config field), S3 the commit that set this
+status (module `1.1.0`, docs). The four manual checks in section 8 are NOT run -
+they need a deployed instance and ride the next dev deploy.
+History: Draft 2026-08-31, revised twice the same day: first for the owner's
 ServiceNow ruling (`.agents/decisions.md` 2026-08-31, "ServiceNow ticket validation:
 required later, seam built now, per-module switch"), then corrected against code -
 the first revision asserted no ServiceNow client exists, and one does
-(`Services/ServiceNowService.cs`, dormant). No owner decision is outstanding;
-awaiting a go to implement at S1.
+(`Services/ServiceNowService.cs`, dormant); revised again 2026-09-01 to move the
+base bump into S1 (the csv-2 rule, `5b48b39`).
 Owner: Michael
 Last verified against code: `21870ed` / 2026-08-31
 Versions: `BitLockerRecovery` `1.0.2` -> `1.1.0` AND a base app bump
@@ -414,9 +418,31 @@ confirm PASS. Prove the revert actually applied before trusting the result.
 
 ## 9. Traceability check
 
-To be completed at implementation time: each AC named against the landed test or
-commit, plus the non-vacuity run record, as in `docs/EventLogCsvTicket-Plan.md`
-section 9.
+Completed 2026-09-01. Tests live in `TicketValidationServiceTests.cs` (S1,
+`280311f`) and `BitLockerRecoveryTests.cs` (S2, `fd7cb1f`).
+
+| AC | Landed as |
+|---|---|
+| AC1 | `Off_BlankTicketRejected`, `Off_AnyNonBlankTicketAccepted` (S1) |
+| AC2 | `On_DormantServiceNowUnavailable` (S1) |
+| AC3 | `On_EnabledDelegatesToServiceNow` (S1) |
+| AC4 | `ReadsConfigForTheModuleItIsGiven`, `CorruptConfigUnavailable`, `UnparseableSwitchUnavailable` (S1) |
+| AC5 | `Off_BlankTicketRejected`, `On_BlankTicketStillRejected` (S1) |
+| AC6 | `Search_RejectedTicketRefusesWithoutSearching`, `Search_UnavailableValidatorRefuses` (S2) |
+| AC7 | The pre-existing service suite green in S2 with only the ticket argument and an accepting fake added |
+| AC8 | `SearchAsync_PassesTicketToServiceAndAudit` (S2, source guard) |
+| AC9 | `RevealAsync_AuditsWithCapturedSearchTicket` (S2, source guard) |
+| AC10 | `SearchControls_GateOnTicket` (S2, source guard) + the AC6 service tests for the direct-invocation half |
+| AC11 | Base `2.10.0` -> `2.11.0` in S1 `280311f`; module `1.0.2` -> `1.1.0` in S3 |
+| AC12 | `ValidateTickets` Boolean ConfigField in S2 `fd7cb1f`; `ModuleCatalogTests` green unmodified (its `Catalog_BooleanDefaultedFieldsDeclareBooleanType` tripwire covers the field) |
+| AC13 | `docs/BitLockerRecovery.md` (Ticket requirement section, config table row, audit note) and the README BitLocker bullet, in S3 |
+
+Non-vacuity record: S1 mutation-proven in 3 batches (its commit message carries
+the detail). S2 in 2 batches: the service gate neutered (`if (!gate.Accepted)`
+-> `if (false)` in both methods) failed both AC6 tests; the page wiring removed
+(both `ticketNumber: searchTicket` arguments, `!HasTicket` on the button,
+`HasTicket` in the Enter handler) failed all three source guards; restored,
+53/53 module tests and the full suite 1859/0/3 pass.
 
 ## 10. Review log
 

@@ -510,7 +510,9 @@ public sealed class ModuleCatalog
             SortOrder = 810,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.2",
+            // 1.1.0: mandatory ticket before any search, written on the search and
+            // reveal audit events; ValidateTickets per-module validation switch.
+            Version = "1.1.0",
             // Fail-closed: a recovery key decrypts an entire disk.
             MainPermission = new("Access", "BitLockerRecovery", FailClosed: true),
             ConfigFields = [
