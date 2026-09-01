@@ -487,10 +487,14 @@ each other.
 1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31, REVISED same day for the
    owner's ServiceNow ruling (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner
    decision), CODEX-REVIEWED same day (openreview over `a9b0ebc..533c1fe`,
-   `acceptable_with_changes`; btv-1 folded in - see the plan's Review log), awaiting a
-   go to implement at its S1. Builds the shared ticket-validation seam with a
-   per-module switch (`.agents/decisions.md` 2026-08-31), so it carries a BASE APP
-   BUMP plus the module bump (item 7 in the older list below)
+   `acceptable_with_changes`; btv-1 folded in - see the plan's Review log). **S1
+   IMPLEMENTED 2026-09-01 (owner go the same day), commit `280311f`:**
+   `ITicketValidator`/`TicketValidationService` over the dormant ServiceNow client,
+   `ServiceNowService.Enabled`, DI, 10 tests mutation-proven in 3 batches, base app
+   `2.10.0` -> `2.11.0` (bump moved into S1 per the csv-2 rule, plan revised
+   `5b48b39`). Suite 1852/0/3, format clean. **NEXT: S2 (BitLocker service gate +
+   page + config field) in a fresh session, on its own go per the slice protocol.**
+   (Item 7 in the older list below)
 2. CSV export for five modules - PLAN DRAFTED 2026-08-31
    (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
    csv-1 and csv-2 folded in - see that plan's Review log). **D1 RULED 2026-09-01:
