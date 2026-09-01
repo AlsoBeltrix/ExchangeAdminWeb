@@ -9,6 +9,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<BitLockerRecovery> Logger
+@inject IJSRuntime JS
 
 <PageTitle>BitLocker Recovery</PageTitle>
 
@@ -146,7 +147,10 @@
             }
 
             <div class="card">
-                <div class="card-header"><strong>@results.Count key(s)</strong></div>
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <strong>@results.Count key(s)</strong>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync">Download CSV</button>
+                </div>
                 <div class="card-body p-0">
                     <div style="max-height: calc(100vh - 420px); overflow-y: auto;">
                         <table class="table table-sm table-hover mb-0">
@@ -444,6 +448,57 @@
             BitLockerRecoveryIdentifierKind.KeyIdPrefix => identifier.Value.Value,
             _ => rawIdentifier?.Trim() ?? string.Empty,
         };
+    }
+
+    /// <summary>
+    /// Docs/ModuleCsvExport-Plan.md AC3/AC5: Computer,RecoveryKey,Created,KeyId,
+    /// Source,LastSeenInAd,Ticket, in that order. RecoveryKey carries
+    /// RecoveryPassword verbatim (D1 ruling, section 1) - the export's whole
+    /// purpose is bulk key retrieval. Static and argument-fed so tests call it
+    /// directly without a page instance.
+    /// </summary>
+    internal static string BuildCsv(IReadOnlyList<BitLockerRecoveryKey> rows, string ticket)
+    {
+        var header = new List<string>
+        {
+            "Computer", "RecoveryKey", "Created", "KeyId", "Source", "LastSeenInAd", "Ticket",
+        };
+
+        var csvRows = rows.Select(r => (IReadOnlyList<string>)new List<string>
+        {
+            r.ComputerName,
+            r.RecoveryPassword,
+            r.CreatedUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "",
+            r.KeyId ?? "",
+            r.StatusLabel,
+            r.LastSeenInAdUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "",
+            ticket,
+        });
+
+        return CsvExport.Write(header, csvRows);
+    }
+
+    private async Task DownloadCsvAsync()
+    {
+        if (results.Count == 0)
+            return;
+
+        var csv = BuildCsv(results, searchTicket);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+        var base64 = Convert.ToBase64String(bytes);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        await JS.InvokeVoidAsync("downloadFile", $"BitLockerRecovery_{timestamp}.csv", "text/csv", base64);
+
+        // AC4b (bulk-disclosure audit): a distinct action from the generic ExportCsv,
+        // key count and the search ticket only - never key material (the blr-1 rule).
+        SafeAudit(() => Audit.LogModuleAction(
+            currentUser,
+            clientIpAddress,
+            "ExportRecoveryKeysCsv",
+            "BitLockerRecovery",
+            $"{results.Count} keys",
+            success: true,
+            ticketNumber: searchTicket));
     }
 
     /// <summary>
