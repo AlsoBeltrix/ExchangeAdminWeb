@@ -73,6 +73,13 @@ Settled by higher authority or existing code, not open:
   `WriteField` per cell (the `EventLogCsvFormatter.cs:23-54` quoting contract:
   commas, quotes, newlines in any cell survive round-tripping), and is the only
   CSV writer the five modules use.
+- AC1b (csv-1): `CsvExport.Write` neutralizes CSV/formula injection before
+  quoting: a cell whose first character is `=`, `+`, `-`, `@`, tab, CR, or LF is
+  prefixed with a single quote, matching the repo's existing exporter standard
+  (`Services/MessageTraceDetailReport.cs:216-225`, `CsvEscape`, which documents
+  exactly this rule). Exported cells here carry externally influenced strings
+  (sender addresses, location names, batch names, reasons), and CsvHelper quoting
+  alone does not stop Excel treating a leading `=` as a formula.
 - AC2: Each of the five pages has a Download CSV button that is absent-or-disabled
   when its result set is empty, enabled when at least one row is shown, and
   downloads via the existing global `downloadFile` JS helper
@@ -161,11 +168,18 @@ public static class CsvExport
 ```
 
 The `EventLogCsvFormatter.Write` loop generalized: `StringWriter` + `CsvWriter` +
-`WriteField` per cell, `NextRecord` per row, returns the CSV string. Throws
-`ArgumentException` if a row's cell count differs from the header's - a projector
-bug must fail loudly, not produce a misaligned file. No DI registration (static,
-like `EventLogCsvFormatter`). Used by five modules, so it is shared infrastructure:
+`WriteField` per cell, `NextRecord` per row, returns the CSV string. Before
+`WriteField`, each cell passes the AC1b neutralization (leading `=`/`+`/`-`/`@`/
+tab/CR/LF prefixed with `'` - the `MessageTraceDetailReport.CsvEscape:216-225`
+rule; quoting itself stays CsvHelper's). Throws `ArgumentException` if a row's
+cell count differs from the header's - a projector bug must fail loudly, not
+produce a misaligned file. No DI registration (static, like
+`EventLogCsvFormatter`). Used by five modules, so it is shared infrastructure:
 base app bump (Constitution, Deployment And Versioning).
+
+Recorded, not fixed here (survey is not authorization): `EventLogCsvFormatter`
+itself has no formula neutralization, and Event Log cells carry user/target
+strings. Pre-existing, owner's call whether to schedule.
 
 ### Per-module projector + button (the repeating shape)
 
@@ -239,6 +253,7 @@ bullet per module section (locate by reading).
 | AC1 | `Write_HeaderThenRowsInOrder` | Output line 1 is the header, rows follow in order | Reorder; FAIL |
 | AC1 | `Write_MismatchedRowThrows` | 3-cell row under a 2-cell header throws | Remove the guard; FAIL |
 | AC1 | `Write_EmptyRowsYieldsHeaderOnly` | Header-only string, no trailing garbage | n/a (shape check) |
+| AC1b | `Write_NeutralizesFormulaLeadingCells` | Each of `=`, `+`, `-`, `@`, tab, CR, LF as a cell's first character comes out `'`-prefixed; a mid-cell `=` is untouched | Remove the neutralization; FAIL |
 
 Per module (S2-S6), in each module's existing test file (or a new
 `<Module>CsvTests.cs` where none fits):
