@@ -490,7 +490,8 @@ public sealed class ModuleCatalog
             SortOrder = 800,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.3",
+            // 1.3.0: CSV export of the authorized-server list (docs/ModuleCsvExport-Plan.md).
+            Version = "1.3.0",
             MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
