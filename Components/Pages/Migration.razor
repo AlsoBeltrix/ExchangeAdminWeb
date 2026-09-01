@@ -405,6 +405,12 @@
                             </button>
                         </div>
                     </div>
+                    @* Docs/ModuleCsvExport-Plan.md S6: rendered only once the status view has
+                       loaded rows - no control before then (the plan's failure-behavior table). *@
+                    @if (migrationBatches is { Count: > 0 })
+                    {
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync">Download CSV</button>
+                    }
                     @* The standalone "Clear Completed" sweep was REMOVED (D6): it acted on every
                        completed batch in the table regardless of selection, and it sat beside
                        "Clear selection" sharing a word - one irreversible, one harmless. Its job is
@@ -1814,6 +1820,63 @@
         };
 
         return sorted;
+    }
+
+    /// <summary>
+    /// Docs/ModuleCsvExport-Plan.md AC3: BatchName,Status,Direction,Created,Started,
+    /// Completed,Total,Synced,Finalized,Failed,TargetEndpoint, in that order. Batch-level
+    /// only (plan section 2 non-goal: no per-user rows). Nullable dates map to an empty
+    /// cell; populated dates use the same "MMM dd, yyyy HH:mm" local format the batch
+    /// details view already renders for Created/Started/Completed. Static and
+    /// argument-fed so tests call it directly without a page instance.
+    /// </summary>
+    internal static string BuildCsv(IReadOnlyList<MigrationBatchInfo> rows)
+    {
+        var header = new List<string>
+        {
+            "BatchName", "Status", "Direction", "Created", "Started", "Completed",
+            "Total", "Synced", "Finalized", "Failed", "TargetEndpoint"
+        };
+        var csvRows = rows.Select(r => (IReadOnlyList<string>)new List<string>
+        {
+            r.BatchName,
+            r.Status,
+            r.Direction.ToString(),
+            FormatBatchDate(r.CreatedDateTime),
+            r.StartDateTime.HasValue ? FormatBatchDate(r.StartDateTime.Value) : string.Empty,
+            r.CompletedDateTime.HasValue ? FormatBatchDate(r.CompletedDateTime.Value) : string.Empty,
+            r.TotalCount.ToString(),
+            r.SyncedCount.ToString(),
+            r.FinalizedCount.ToString(),
+            r.FailedCount.ToString(),
+            r.TargetEndpoint ?? string.Empty,
+        });
+        return CsvExport.Write(header, csvRows);
+    }
+
+    private static string FormatBatchDate(DateTime value) => value.ToLocalTime().ToString("MMM dd, yyyy HH:mm");
+
+    private async Task DownloadCsvAsync()
+    {
+        if (migrationBatches is not { Count: > 0 })
+            return;
+
+        var rows = GetSortedBatches().ToList();
+        var csv = BuildCsv(rows);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+        var base64 = Convert.ToBase64String(bytes);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        await JS.InvokeVoidAsync("downloadFile", $"Migration_{timestamp}.csv", "text/csv", base64);
+
+        try
+        {
+            Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "Migration",
+                $"{rows.Count} rows", true);
+        }
+        catch (Exception auditEx)
+        {
+            Logger.LogError(auditEx, "Audit failed for Migration status CSV export");
+        }
     }
 
     private string GetStatusColor(string status)

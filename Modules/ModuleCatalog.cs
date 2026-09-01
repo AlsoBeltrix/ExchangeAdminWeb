@@ -180,7 +180,8 @@ public sealed class ModuleCatalog
             SortOrder = 300,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.7.1",
+            // 1.8.0: CSV export of the migration batch status list (docs/ModuleCsvExport-Plan.md).
+            Version = "1.8.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new("Access", "MigrationCheck", FailClosed: true),
             GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
