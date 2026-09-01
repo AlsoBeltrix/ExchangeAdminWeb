@@ -509,10 +509,13 @@ by owner ruling 2026-09-01 (items below shift down one):**
    `ValidateTickets` Boolean config field (default false). 5 new tests (2
    behavioral + 3 source guards), mutation-proven in 2 batches; suite 1859/0/3,
    format clean. No version bump in S2 by design - base bumped in S1, module bump
-   is S3. **NEXT: S3 (BitLockerRecovery `1.1.0` + docs) in a fresh session, on its
-   own go per the slice protocol.** The plan's four manual checks (section 8) need
-   a deployed instance and ride the next dev deploy. (Item 7 in the older list
-   below)
+   is S3. **S3 IMPLEMENTED 2026-09-01 (owner go the same day, same session),
+   commit `e6534f1`: module `1.1.0`, docs, plan status Implemented with the
+   section 9 traceability completed. ALL SLICES LANDED; NOT DEPLOYED.**
+   **NEXT: nothing code-side - the plan's four manual checks (section 8) need a
+   deployed instance and ride the next dev deploy.** This also unblocks the CSV
+   export plan's S5 (item 6/queue item 2, which depends on this stream landing
+   first). (Item 7 in the older list below)
 2. CSV export for five modules - PLAN DRAFTED 2026-08-31
    (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
    csv-1 and csv-2 folded in - see that plan's Review log). **D1 RULED 2026-09-01:
