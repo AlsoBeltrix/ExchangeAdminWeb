@@ -482,12 +482,16 @@ each other.
 
 1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31, REVISED same day for the
    owner's ServiceNow ruling (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner
-   decision), awaiting a go to implement at its S1. Now also builds the shared
-   ticket-validation seam with a per-module switch (`.agents/decisions.md` 2026-08-31),
-   so it carries a BASE APP BUMP plus the module bump (item 7 in the older list below)
+   decision), CODEX-REVIEWED same day (openreview over `a9b0ebc..533c1fe`,
+   `acceptable_with_changes`; btv-1 folded in - see the plan's Review log), awaiting a
+   go to implement at its S1. Builds the shared ticket-validation seam with a
+   per-module switch (`.agents/decisions.md` 2026-08-31), so it carries a BASE APP
+   BUMP plus the module bump (item 7 in the older list below)
 2. CSV export for five modules - PLAN DRAFTED 2026-08-31
-   (`docs/ModuleCsvExport-Plan.md`; ONE owner decision open: D1, keys in the BitLocker
-   export - recommended NO; item 6 below; S5 depends on item 1 landing first)
+   (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
+   csv-1 and csv-2 folded in - see that plan's Review log; the reviewer endorsed the
+   D1 no-keys default). ONE owner decision open: D1, keys in the BitLocker export -
+   recommended NO (item 6 below; S5 depends on item 1 landing first)
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
 5. Sidebar Home link removal - ruled, no plan needed
