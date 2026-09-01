@@ -24,25 +24,41 @@ public sealed class BitLockerRecoveryService
 
     private readonly ModuleConfigService _moduleConfig;
     private readonly IBitLockerLiveDirectorySearch _liveDirectory;
+    private readonly ITicketValidator _ticketValidator;
     private readonly ILogger<BitLockerRecoveryService> _logger;
 
     public BitLockerRecoveryService(
         ModuleConfigService moduleConfig,
         IBitLockerLiveDirectorySearch liveDirectory,
+        ITicketValidator ticketValidator,
         ILogger<BitLockerRecoveryService> logger)
     {
         _moduleConfig = moduleConfig;
         _liveDirectory = liveDirectory;
+        _ticketValidator = ticketValidator;
         _logger = logger;
     }
 
     /// <summary>
     /// Searches by computer name substring, the way operators search.
     /// </summary>
+    /// <remarks>
+    /// The ticket gate runs before anything else: every key disclosure must be
+    /// tied to a ticket, and the refusal has to hold for any caller, not just
+    /// the page (UI hiding is not security).
+    /// </remarks>
     public async Task<BitLockerSearchResult> SearchByComputerNameAsync(
         string computerName,
+        string ticketNumber,
         bool includeLiveAd = false)
     {
+        var gate = await _ticketValidator.ValidateAsync(ModuleId, ticketNumber);
+        if (!gate.Accepted)
+        {
+            return BitLockerSearchResult.Fail(
+                gate.Message ?? "The ticket could not be validated.");
+        }
+
         if (string.IsNullOrWhiteSpace(computerName))
         {
             return BitLockerSearchResult.Fail("Enter a computer name to search for.");
@@ -79,8 +95,16 @@ public sealed class BitLockerRecoveryService
     /// </remarks>
     public async Task<BitLockerSearchResult> SearchByKeyIdAsync(
         string keyId,
+        string ticketNumber,
         bool includeLiveAd = false)
     {
+        var gate = await _ticketValidator.ValidateAsync(ModuleId, ticketNumber);
+        if (!gate.Accepted)
+        {
+            return BitLockerSearchResult.Fail(
+                gate.Message ?? "The ticket could not be validated.");
+        }
+
         var identifier = BitLockerRecoveryIdentifierParser.Parse(keyId);
         if (identifier is null)
         {

@@ -37,22 +37,28 @@
     <div class="card mb-3">
         <div class="card-body">
             <div class="row g-2 align-items-end">
-                <div class="col-md-5">
+                <div class="col-md-4">
                     <label class="form-label mb-1" for="searchTerm">Computer name</label>
                     <input id="searchTerm" class="form-control" @bind="searchTerm"
                            @bind:event="oninput" @onkeydown="OnSearchKeyDown"
                            placeholder="Name or fragment" />
                 </div>
-                <div class="col-md-5">
+                <div class="col-md-4">
                     <label class="form-label mb-1" for="keyId">or recovery screen value</label>
                     <input id="keyId" class="form-control" @bind="keyId"
                            @bind:event="oninput" @onkeydown="OnSearchKeyDown"
                            placeholder="Key ID or 48-digit recovery key" />
                 </div>
                 <div class="col-md-2">
+                    <label class="form-label mb-1" for="ticketNumber">Ticket (required)</label>
+                    <input id="ticketNumber" class="form-control" @bind="ticketNumber"
+                           @bind:event="oninput" @onkeydown="OnSearchKeyDown"
+                           placeholder="INC/REQ number" />
+                </div>
+                <div class="col-md-2">
                     <button class="btn btn-primary w-100"
                             @onclick="SearchAsync"
-                            disabled="@(isSearching || !HasSearchTerm)">
+                            disabled="@(isSearching || !HasSearchTerm || !HasTicket)">
                         @if (isSearching)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
@@ -63,7 +69,9 @@
             </div>
             <div class="form-text mt-2">
                 Paste the recovery key ID or the 48-digit recovery key when the caller can
-                read their screen but the machine name does not match.
+                read their screen but the machine name does not match. A ticket number is
+                required before any search runs; it is written on the search and reveal
+                audit events.
             </div>
             <div class="form-check mt-3">
                 <input id="includeLiveAd" class="form-check-input" type="checkbox" @bind="includeLiveAd" />
@@ -226,6 +234,13 @@
 
     private string searchTerm = "";
     private string keyId = "";
+    private string ticketNumber = "";
+
+    // The ticket that authorized the DISPLAYED result set. Reveal audits use
+    // this, not the live contents of the ticket box, which the operator may
+    // have edited since the search ran.
+    private string searchTicket = "";
+
     private bool isSearching;
     private bool searched;
     private bool includeLiveAd;
@@ -244,6 +259,8 @@
 
     private bool HasSearchTerm =>
         !string.IsNullOrWhiteSpace(searchTerm) || !string.IsNullOrWhiteSpace(keyId);
+
+    private bool HasTicket => !string.IsNullOrWhiteSpace(ticketNumber);
 
     protected override async Task OnInitializedAsync()
     {
@@ -266,7 +283,7 @@
 
     private async Task OnSearchKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && HasSearchTerm && !isSearching)
+        if (e.Key == "Enter" && HasSearchTerm && HasTicket && !isSearching)
         {
             await SearchAsync();
         }
@@ -310,9 +327,14 @@
 
             searchedLiveAd = includeLiveAd;
 
+            // One recovery call is one ticket across several search refinements,
+            // so the box is not cleared; the value that ran THIS search is
+            // captured for the reveal audit.
+            searchTicket = ticketNumber.Trim();
+
             var result = byKeyId
-                ? await RecoveryService.SearchByKeyIdAsync(keyId, includeLiveAd)
-                : await RecoveryService.SearchByComputerNameAsync(searchTerm, includeLiveAd);
+                ? await RecoveryService.SearchByKeyIdAsync(keyId, searchTicket, includeLiveAd)
+                : await RecoveryService.SearchByComputerNameAsync(searchTerm, searchTicket, includeLiveAd);
 
             searched = true;
 
@@ -335,7 +357,8 @@
                 byKeyId ? "BitLockerSearchByKeyId" : "BitLockerSearchByName",
                 target,
                 result.Success,
-                result.Success ? null : result.Error));
+                result.Success ? null : result.Error,
+                ticketNumber: searchTicket));
         }
         catch (Exception ex)
         {
@@ -361,6 +384,7 @@
             "BitLockerRecovery",
             key.ComputerName,
             success: true,
+            ticketNumber: searchTicket,
             extra: new Dictionary<string, object?>
             {
                 ["KeyId"] = key.KeyId,

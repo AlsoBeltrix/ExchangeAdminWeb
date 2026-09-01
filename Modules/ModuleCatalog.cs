@@ -538,7 +538,17 @@ public sealed class ModuleCatalog
                     "Search Result Limit",
                     "Maximum rows returned by one search. Capped at 500.",
                     Required: false,
-                    DefaultValue: "50")
+                    DefaultValue: "50"),
+                new(
+                    "ValidateTickets",
+                    "Validate Tickets Against ServiceNow",
+                    "Off: any non-blank ticket number is accepted and recorded as audit metadata. " +
+                    "On: the ticket must validate against ServiceNow; while the ServiceNow integration " +
+                    "is not enabled on this deployment, On refuses every search rather than silently " +
+                    "validating nothing. A ticket is required in both modes.",
+                    Required: false,
+                    DefaultValue: "false",
+                    FieldType: ConfigFieldType.Boolean)
             ]
         },
         new()

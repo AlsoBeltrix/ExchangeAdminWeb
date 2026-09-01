@@ -22,6 +22,9 @@ public sealed class BitLockerRecoveryTests : IDisposable
 {
     private const string ModuleId = "BitLockerRecovery";
 
+    // Every search needs a ticket now; one shared constant keeps the call sites readable.
+    private const string Ticket = "INC0000001";
+
     private readonly string _archivePath =
         Path.Combine(Path.GetTempPath(), $"bl-test-{Guid.NewGuid():N}.db");
     private readonly string _configDir =
@@ -81,10 +84,12 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
     private static BitLockerRecoveryService CreateService(
         ModuleConfigService moduleConfig,
-        FakeLiveDirectorySearch? liveDirectory = null) =>
+        FakeLiveDirectorySearch? liveDirectory = null,
+        ITicketValidator? ticketValidator = null) =>
         new(
             moduleConfig,
             liveDirectory ?? new FakeLiveDirectorySearch(),
+            ticketValidator ?? new FakeTicketValidator(),
             NullLogger<BitLockerRecoveryService>.Instance);
 
     private ModuleConfigService CreateArchiveConfig(
@@ -176,6 +181,14 @@ public sealed class BitLockerRecoveryTests : IDisposable
         }
     }
 
+    private sealed class FakeTicketValidator : ITicketValidator
+    {
+        public TicketGateResult Result { get; set; } = new(TicketGateOutcome.Accepted, null);
+
+        public Task<TicketGateResult> ValidateAsync(string moduleId, string? ticketNumber) =>
+            Task.FromResult(Result);
+    }
+
     private sealed class ThrowingConfigStore : IConfigStore
     {
         public long GetChangeToken() => throw new InvalidOperationException("store unreadable");
@@ -219,7 +232,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("ASHLAP12345", "111111-AAAAAA", null, "2024-06-01T00:00:00.0000000Z"));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByComputerNameAsync("LAP");
+        var result = await service.SearchByComputerNameAsync("LAP", Ticket);
 
         Assert.True(result.Success);
         Assert.Single(result.Keys);
@@ -239,7 +252,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC1");
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal(BitLockerRecoveryKeySource.Archive, Assert.Single(result.Keys).ResultSource);
@@ -258,7 +271,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByKeyIdAsync("7A159302");
+        var result = await service.SearchByKeyIdAsync("7A159302", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal("OLDNAME", Assert.Single(result.Keys).ComputerName);
@@ -277,7 +290,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("NEWPC", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("NEWPC", Ticket, includeLiveAd: true);
 
         var key = Assert.Single(result.Keys);
         Assert.True(key.FoundInLiveDirectory);
@@ -296,7 +309,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC1", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket, includeLiveAd: true);
 
         var key = Assert.Single(result.Keys);
         Assert.True(key.FoundInLiveDirectory);
@@ -310,7 +323,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("OLDNAME", "111111-AAAAAA", "7a159302-48bb-435e-9a81-3f1aef9a7a40", null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByKeyIdAsync("7A159302-48BB-435E-9A81-3F1AEF9A7A40");
+        var result = await service.SearchByKeyIdAsync("7A159302-48BB-435E-9A81-3F1AEF9A7A40", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal("OLDNAME", Assert.Single(result.Keys).ComputerName);
@@ -322,7 +335,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("OLDNAME", "111111-AAAAAA", "7a159302-48bb-435e-9a81-3f1aef9a7a40", null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByKeyIdAsync("Recovery key ID: 7A159302");
+        var result = await service.SearchByKeyIdAsync("Recovery key ID: 7A159302", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal("OLDNAME", Assert.Single(result.Keys).ComputerName);
@@ -335,7 +348,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("LOCKEDPC", password, null, null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByKeyIdAsync($"Recovery key: {password}");
+        var result = await service.SearchByKeyIdAsync($"Recovery key: {password}", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal("LOCKEDPC", Assert.Single(result.Keys).ComputerName);
@@ -355,6 +368,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
         var result = await service.SearchByKeyIdAsync(
             "{7A159302-48BB-435E-9A81-3F1AEF9A7A40}",
+            Ticket,
             includeLiveAd: true);
 
         Assert.Equal("7a159302-48bb-435e-9a81-3f1aef9a7a40", live.LastKeyId);
@@ -374,7 +388,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByKeyIdAsync("Recovery key ID: 7A159302", includeLiveAd: true);
+        var result = await service.SearchByKeyIdAsync("Recovery key ID: 7A159302", Ticket, includeLiveAd: true);
 
         Assert.Equal("7a159302", live.LastKeyId);
         Assert.Equal(BitLockerRecoveryIdentifierKind.KeyIdPrefix, live.LastIdentifier?.Kind);
@@ -387,7 +401,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("PC1", "111111-AAAAAA", "7a159302-48bb-435e-9a81-3f1aef9a7a40", null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByKeyIdAsync("{7A159302-48BB-435E-9A81-3F1AEF9A7A40}");
+        var result = await service.SearchByKeyIdAsync("{7A159302-48BB-435E-9A81-3F1AEF9A7A40}", Ticket);
 
         Assert.Single(result.Keys);
     }
@@ -400,8 +414,8 @@ public sealed class BitLockerRecoveryTests : IDisposable
             ("DEADPC", "222222-BBBBBB", null, null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var live = await service.SearchByComputerNameAsync("LIVEPC");
-        var dead = await service.SearchByComputerNameAsync("DEADPC");
+        var live = await service.SearchByComputerNameAsync("LIVEPC", Ticket);
+        var dead = await service.SearchByComputerNameAsync("DEADPC", Ticket);
 
         Assert.True(live.Keys[0].EverSeenInDirectory);
         Assert.False(dead.Keys[0].EverSeenInDirectory);
@@ -418,7 +432,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC1", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket, includeLiveAd: true);
 
         Assert.True(result.Success);
         Assert.Single(result.Keys);
@@ -437,7 +451,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC1");
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket);
 
         Assert.True(result.Success);
         Assert.Single(result.Keys);
@@ -455,7 +469,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByKeyIdAsync("7A159302", includeLiveAd: true);
+        var result = await service.SearchByKeyIdAsync("7A159302", Ticket, includeLiveAd: true);
 
         Assert.True(result.Success);
         Assert.Empty(result.Keys);
@@ -474,7 +488,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC1", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket, includeLiveAd: true);
 
         Assert.True(result.Success);
         Assert.Single(result.Keys);
@@ -500,7 +514,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("PC", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("PC", Ticket, includeLiveAd: true);
 
         Assert.True(result.Success);
         Assert.Equal(2, result.Keys.Count);
@@ -515,7 +529,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
     {
         var service = CreateService(CreateModuleConfig());
 
-        var result = await service.SearchByComputerNameAsync("ANY");
+        var result = await service.SearchByComputerNameAsync("ANY", Ticket);
 
         Assert.False(result.Success);
         Assert.Contains("not configured", result.Error);
@@ -529,7 +543,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         var service = CreateService(
             CreateArchiveConfig(Path.Combine(Path.GetTempPath(), "definitely-absent.db")));
 
-        var result = await service.SearchByComputerNameAsync("ANY");
+        var result = await service.SearchByComputerNameAsync("ANY", Ticket);
 
         Assert.False(result.Success);
         Assert.Contains("not reachable", result.Error);
@@ -542,7 +556,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("PC1", "111111-AAAAAA", null, null));
         var service = CreateService(CreateModuleConfig(corruptStore: true));
 
-        var result = await service.SearchByComputerNameAsync("PC1");
+        var result = await service.SearchByComputerNameAsync("PC1", Ticket);
 
         Assert.False(result.Success);
         Assert.Empty(result.Keys);
@@ -565,7 +579,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(CreateArchiveConfig(_archivePath), live);
 
-        var result = await service.SearchByComputerNameAsync("SAMEPC", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("SAMEPC", Ticket, includeLiveAd: true);
 
         Assert.Equal(3, result.Keys.Count);
         Assert.Equal(3, result.Keys.Select(k => k.RowId).Distinct().Count());
@@ -579,7 +593,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
             ("SAMEPC", "222222-BBBBBB", null, null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByComputerNameAsync("SAMEPC");
+        var result = await service.SearchByComputerNameAsync("SAMEPC", Ticket);
 
         Assert.Equal(2, result.Keys.Count);
         Assert.Equal(2, result.Keys.Select(k => k.RowId).Distinct().Count());
@@ -593,7 +607,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         var service = CreateService(
             CreateArchiveConfig(@"\\server\share\archive.db"));
 
-        var result = await service.SearchByComputerNameAsync("ANY");
+        var result = await service.SearchByComputerNameAsync("ANY", Ticket);
 
         Assert.False(result.Success);
         Assert.Contains("network share", result.Error);
@@ -604,9 +618,9 @@ public sealed class BitLockerRecoveryTests : IDisposable
     {
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        Assert.False((await service.SearchByComputerNameAsync("")).Success);
-        Assert.False((await service.SearchByComputerNameAsync("   ")).Success);
-        Assert.False((await service.SearchByKeyIdAsync("")).Success);
+        Assert.False((await service.SearchByComputerNameAsync("", Ticket)).Success);
+        Assert.False((await service.SearchByComputerNameAsync("   ", Ticket)).Success);
+        Assert.False((await service.SearchByKeyIdAsync("", Ticket)).Success);
     }
 
     [Fact]
@@ -619,7 +633,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
         var service = CreateService(CreateArchiveConfig(_archivePath, ("SearchResultLimit", "5")));
 
-        var result = await service.SearchByComputerNameAsync("PC");
+        var result = await service.SearchByComputerNameAsync("PC", Ticket);
 
         Assert.Equal(5, result.Keys.Count);
         Assert.True(result.Truncated);
@@ -635,7 +649,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
         var service = CreateService(CreateArchiveConfig(_archivePath, ("SearchResultLimit", "5")));
 
-        var result = await service.SearchByComputerNameAsync("PC");
+        var result = await service.SearchByComputerNameAsync("PC", Ticket);
 
         Assert.Equal(5, result.Keys.Count);
         Assert.False(result.Truncated);
@@ -659,7 +673,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         };
         var service = CreateService(config, live);
 
-        var result = await service.SearchByComputerNameAsync("PC", includeLiveAd: true);
+        var result = await service.SearchByComputerNameAsync("PC", Ticket, includeLiveAd: true);
 
         Assert.Equal(2, result.Keys.Count);
         Assert.All(result.Keys, key => Assert.True(key.FoundInLiveDirectory));
@@ -678,7 +692,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
 
         var service = CreateService(CreateArchiveConfig(_archivePath, ("SearchResultLimit", "-1")));
 
-        var result = await service.SearchByComputerNameAsync("PC");
+        var result = await service.SearchByComputerNameAsync("PC", Ticket);
 
         Assert.True(result.Success);
         Assert.Equal(20, result.Keys.Count); // default limit of 50, not unlimited
@@ -692,7 +706,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
             ("PC_00", "222222-BBBBBB", null, null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByComputerNameAsync("PC_0");
+        var result = await service.SearchByComputerNameAsync("PC_0", Ticket);
 
         Assert.Equal("PC_00", Assert.Single(result.Keys).ComputerName);
     }
@@ -705,11 +719,104 @@ public sealed class BitLockerRecoveryTests : IDisposable
         CreateArchive(("PC1", "111111-AAAAAA", null, null));
         var service = CreateService(CreateArchiveConfig(_archivePath));
 
-        var result = await service.SearchByComputerNameAsync("NOSUCHMACHINE");
+        var result = await service.SearchByComputerNameAsync("NOSUCHMACHINE", Ticket);
 
         Assert.True(result.Success);
         Assert.Empty(result.Keys);
         Assert.Null(result.Error);
+    }
+
+    // ---- Ticket gate (AC6) -----------------------------------------------------------------
+    //
+    // The gate lives in the service, not the page: UI hiding is not security, and this repo has
+    // shipped a page-only gate that was bypassed (GroupManagementService.cs:35-40). A refused
+    // ticket must return no rows even when the archive holds a matching key.
+
+    [Fact]
+    public async Task Search_RejectedTicketRefusesWithoutSearching()
+    {
+        CreateArchive(("PC1", "111111-AAAAAA", "7a159302-48bb-435e-9a81-3f1aef9a7a40", null));
+        var validator = new FakeTicketValidator
+        {
+            Result = new(TicketGateOutcome.Rejected, "A ticket number is required."),
+        };
+        var service = CreateService(CreateArchiveConfig(_archivePath), ticketValidator: validator);
+
+        var byName = await service.SearchByComputerNameAsync("PC1", "");
+        var byKeyId = await service.SearchByKeyIdAsync("7A159302", "");
+
+        Assert.False(byName.Success);
+        Assert.Empty(byName.Keys);
+        Assert.Equal("A ticket number is required.", byName.Error);
+        Assert.False(byKeyId.Success);
+        Assert.Empty(byKeyId.Keys);
+        Assert.Equal("A ticket number is required.", byKeyId.Error);
+    }
+
+    [Fact]
+    public async Task Search_UnavailableValidatorRefuses()
+    {
+        // Unavailable is not Rejected: the policy could not be evaluated at all. It must
+        // still refuse (fail closed), with the validator's message surfaced verbatim.
+        CreateArchive(("PC1", "111111-AAAAAA", "7a159302-48bb-435e-9a81-3f1aef9a7a40", null));
+        var validator = new FakeTicketValidator
+        {
+            Result = new(
+                TicketGateOutcome.Unavailable,
+                "Ticket validation is switched on for this module, but the ServiceNow integration is not enabled on this deployment."),
+        };
+        var service = CreateService(CreateArchiveConfig(_archivePath), ticketValidator: validator);
+
+        var byName = await service.SearchByComputerNameAsync("PC1", Ticket);
+        var byKeyId = await service.SearchByKeyIdAsync("7A159302", Ticket);
+
+        Assert.False(byName.Success);
+        Assert.Empty(byName.Keys);
+        Assert.Contains("ServiceNow integration", byName.Error);
+        Assert.False(byKeyId.Success);
+        Assert.Empty(byKeyId.Keys);
+        Assert.Contains("ServiceNow integration", byKeyId.Error);
+    }
+
+    // ---- Ticket wiring on the page (AC8-AC10) ----------------------------------------------
+    //
+    // Source guards, same mechanism and same caveat as blr-3/blr-4: a comment could satisfy
+    // them. The gate itself is behaviorally tested in the service above; these pin the
+    // page-to-audit wiring, which has no behavioral test surface without bUnit. The deploy-time
+    // manual checks are the end-to-end proof.
+
+    [Fact]
+    public void SearchAsync_PassesTicketToServiceAndAudit()
+    {
+        var body = GetPageMethodBody("SearchAsync");
+
+        Assert.Contains("SearchByKeyIdAsync(keyId, searchTicket", body);
+        Assert.Contains("SearchByComputerNameAsync(searchTerm, searchTicket", body);
+        Assert.Contains("ticketNumber: searchTicket", body);
+    }
+
+    [Fact]
+    public void RevealAsync_AuditsWithCapturedSearchTicket()
+    {
+        // The CAPTURED search ticket, not the live ticket box: the operator may have edited
+        // the box since the displayed results were authorized.
+        var body = GetPageMethodBody("RevealAsync");
+
+        Assert.Contains("ticketNumber: searchTicket", body);
+    }
+
+    [Fact]
+    public void SearchControls_GateOnTicket()
+    {
+        var source = ReadPage();
+
+        Assert.Contains(
+            "disabled=\"@(isSearching || !HasSearchTerm || !HasTicket)\"",
+            source,
+            StringComparison.Ordinal);
+
+        var enterHandler = GetPageMethodBody("OnSearchKeyDown");
+        Assert.Contains("HasTicket", enterHandler, StringComparison.Ordinal);
     }
 
     // ---- Audit target redaction (blr-1) ----------------------------------------------------
@@ -918,7 +1025,7 @@ public sealed class BitLockerRecoveryTests : IDisposable
         var source = ReadPage();
 
         var signature = System.Text.RegularExpressions.Regex.Match(source,
-            $@"private\s+async\s+Task(<[^>]+>)?\s+{System.Text.RegularExpressions.Regex.Escape(methodName)}\s*\(");
+            $@"private\s+(async\s+)?Task(<[^>]+>)?\s+{System.Text.RegularExpressions.Regex.Escape(methodName)}\s*\(");
         Assert.True(signature.Success, $"handler '{methodName}' not found");
 
         var start = signature.Index;
