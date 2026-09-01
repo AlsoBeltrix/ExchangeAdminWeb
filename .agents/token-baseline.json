@@ -1,6 +1,6 @@
 {
   "schema": "exchangeadminweb.token-usage/1",
-  "generatedAtUtc": "2026-08-27T18:26:56Z",
+  "generatedAtUtc": "2026-09-01T14:09:36Z",
   "scope": {
     "source": "Claude Code JSONL transcripts",
     "transcriptRoot": "C:\\Users\\mcoelho\\.claude\\projects\\D--source-ExchangeAdminWeb",
@@ -22,27 +22,27 @@
   "groups": [
     {
       "group": "Total",
-      "requests": 5299,
-      "inputTokens": 690809,
-      "cacheWriteTokens": 61797715,
-      "cacheReadTokens": 2095491090,
-      "outputTokens": 3282412,
-      "meanContext": 407243,
-      "maxContext": 954008,
-      "over200K": 3895,
-      "estimatedCostUsd": 1519.5
+      "requests": 5987,
+      "inputTokens": 1128914,
+      "cacheWriteTokens": 69125293,
+      "cacheReadTokens": 2328136072,
+      "outputTokens": 4290315,
+      "meanContext": 400600,
+      "maxContext": 2237968,
+      "over200K": 4409,
+      "estimatedCostUsd": 1709.0
     }
   ],
   "totals": {
     "group": "Total",
-    "requests": 5299,
-    "inputTokens": 690809,
-    "cacheWriteTokens": 61797715,
-    "cacheReadTokens": 2095491090,
-    "outputTokens": 3282412,
-    "meanContext": 407243,
-    "maxContext": 954008,
-    "over200K": 3895,
-    "estimatedCostUsd": 1519.5
+    "requests": 5987,
+    "inputTokens": 1128914,
+    "cacheWriteTokens": 69125293,
+    "cacheReadTokens": 2328136072,
+    "outputTokens": 4290315,
+    "meanContext": 400600,
+    "maxContext": 2237968,
+    "over200K": 4409,
+    "estimatedCostUsd": 1709.0
   }
 }

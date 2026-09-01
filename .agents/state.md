@@ -81,9 +81,13 @@ CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
   costs ~$1.75, the cache TTL is 5 minutes, idle gaps are billed.
   **Haiku 4.5 is permanently disqualified** - 200K context, 72.3% of requests exceed it. Do not
   re-propose. Sonnet 4.6 and every older Opus are strictly dominated on price and capability.
-  **NEXT: regenerate `.agents/token-baseline.json` on or after 2026-09-01** (one tool run,
-  commit the diff) so the full August is captured; the protocol section in
-  `.agents/repo-guidance.md` then governs how the September queue is implemented.
+  **DONE 2026-09-01: baseline regenerated for the full August** (owner go the same day).
+  Full-month totals: 5,987 requests, est $1,709.00 at opus-5 list rates, mean context
+  400.6K, 4,409 requests over 200K; the 2026-08-27 early cut it replaces read 5,299 /
+  $1,519.50, so 08-28..08-31 added ~$190. Canonical figures live in
+  `.agents/token-baseline.json`; re-measure rather than quoting these.
+  **NEXT: nothing on this stream** - the protocol section in `.agents/repo-guidance.md`
+  governs how the September queue is implemented.
 
 - **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
   `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's
