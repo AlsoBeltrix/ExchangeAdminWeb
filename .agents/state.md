@@ -489,9 +489,12 @@ each other.
    BUMP plus the module bump (item 7 in the older list below)
 2. CSV export for five modules - PLAN DRAFTED 2026-08-31
    (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
-   csv-1 and csv-2 folded in - see that plan's Review log; the reviewer endorsed the
-   D1 no-keys default). ONE owner decision open: D1, keys in the BitLocker export -
-   recommended NO (item 6 below; S5 depends on item 1 landing first)
+   csv-1 and csv-2 folded in - see that plan's Review log). **D1 RULED 2026-09-01:
+   keys ARE in the BitLocker export** (owner: "absolutely needs to contain the actual
+   keys otherwise what's the point"), overruling the drafted no-keys default and the
+   reviewer's endorsement of it; the export is a distinct audited bulk-disclosure
+   event, keys never in the audit itself. No open decision; awaiting a go
+   (item 6 below; S5 depends on item 1 landing first)
 3. Risky Users module - S1, all decisions ruled
 4. Intune Devices module - S0, all decisions ruled
 5. Sidebar Home link removal - ruled, no plan needed
@@ -783,8 +786,9 @@ Live backlog only. Items need an approved plan before code unless noted.
    answers to the two questions this item posed: a new shared `CsvExport.Write` static helper
    generalizing the Event Log formatter's WriteField quoting contract (base bump; the Event Log
    formatter itself is untouched), and the BitLocker export's key question is D1 in that plan -
-   the ONE open owner decision, recommended NO keys (metadata + Ticket column only, since the
-   per-row Reveal audit is the disclosure control a bulk CSV would bypass). Interacts with item
+   RULED 2026-09-01: keys ARE exported (the owner overruled the drafted no-keys default; the
+   export is a distinct audited bulk-disclosure event and keys never enter the audit itself).
+   Interacts with item
    7 as planned: the BitLocker export carries the `searchTicket` the ticket plan adds, so its
    S5 waits for item 7's implementation.
 7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`

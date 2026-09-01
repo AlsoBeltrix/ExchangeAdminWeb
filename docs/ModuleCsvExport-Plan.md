@@ -1,9 +1,8 @@
 # CSV export for five result-set modules
 
-Status: Draft 2026-08-31. ONE owner decision OPEN: D1 (does the BitLocker export
-contain recovery keys?). The plan is written to the recommended default - keys
-EXCLUDED - and only S5 changes if the owner rules otherwise. Everything else is
-settled. Not started; awaiting the D1 ruling and a go.
+Status: Draft 2026-08-31; D1 RULED 2026-09-01 (keys ARE in the BitLocker export -
+owner wording in section 1). No owner decision is outstanding. Not started;
+awaiting a go.
 Owner: Michael
 Last verified against code: `72bfaf7` / 2026-08-31
 Versions: five module bumps (`DhcpAuthorization` `1.2.3` -> `1.3.0`,
@@ -24,17 +23,21 @@ flips, S5 must be re-planned, the other slices are unaffected.
 
 ## 1. Owner decisions
 
-**D1 (OPEN): may the BitLocker export contain recovery keys?**
-Recommended: NO - the CSV carries every result column EXCEPT `RecoveryPassword`.
-Why: on screen a key is disclosed one row at a time behind an audited per-row
-Reveal (`Components/Pages/BitLockerRecovery.razor:161-171`, `RevealAsync` audits
-`RevealRecoveryKey` per key). A CSV containing keys would disclose the whole
-result set in one click, bypass the per-key reveal audit, and persist working
-disk-decryption secrets in a Downloads folder outliving the recovery call. The
-export stays useful without keys: it answers "which machines and key IDs did this
-search return", and the operator reveals the one key they need on screen. If the
-owner rules keys IN, S5 adds the column plus a bulk-disclosure audit event naming
-the row count, and the AC5 no-key test inverts.
+**D1 (RULED 2026-09-01): the BitLocker export CONTAINS the recovery keys.**
+Owner, verbatim: *"the bitlocker csv export absolutely needs to contain the
+actual keys otherwise what's the point of the export."* This supersedes both the
+drafting agent's recommendation and the openreview reviewer's endorsement of the
+no-keys default (Review log, 2026-08-31) - the export's purpose IS bulk key
+retrieval.
+What the ruling accepts, recorded so a later reader can weigh it (the owner's
+accepted trade, not an oversight): the file discloses every key in the result set
+in one act rather than through per-row audited Reveals, and it persists working
+disk-decryption secrets wherever the operator's browser saves downloads. The
+compensating controls, binding on S5: the export is itself an audited disclosure
+event (AC4b), it is reachable only behind the module's fail-closed permission and
+the mandatory validated ticket from `docs/BitLockerMandatoryTicket-Plan.md`, and
+the keys still never enter the audit log (row count and computers are audited,
+never key material - the blr-1 rule).
 
 Settled by higher authority or existing code, not open:
 
@@ -45,8 +48,9 @@ Settled by higher authority or existing code, not open:
   `downloadFile` JS path.
 - No new granular permissions. Export rides each module's existing read surface;
   adding aliases would break `ModuleCatalogTests.cs:109` for no security gain -
-  anyone who can see the results can already transcribe them (except BitLocker
-  keys, which D1 governs and the recommended default never exports).
+  anyone who can see the results can already reveal each key on screen and
+  transcribe it; the export changes the ergonomics of that disclosure, not who
+  can perform it. D1 accepts that trade explicitly.
 
 ## 2. Non-goals
 
@@ -89,13 +93,19 @@ Settled by higher authority or existing code, not open:
   sample rows.
 - AC4: Every export writes one audit event via `AuditService.LogModuleAction` -
   action `ExportCsv`, category = the module id, target = a row-count summary
-  (e.g. `12 rows`), success true; BitLocker's additionally passes
-  `ticketNumber: searchTicket`. Audit failure does not block the download
+  (e.g. `12 rows`), success true. Audit failure does not block the download
   (Constitution: audit failure must not mask a completed operation - the
   BitLocker page's `SafeAudit` shape).
-- AC5 (D1 default): the BitLocker CSV never contains a `RecoveryPassword` value:
-  a projector test feeding rows with a known 48-digit key asserts the output
-  does not contain it, and there is no `RecoveryKey` column.
+- AC4b (BitLocker only): its export audit is a distinct bulk-disclosure event -
+  action `ExportRecoveryKeysCsv` (not the generic `ExportCsv`), target the key
+  count, `ticketNumber: searchTicket`, and NEVER any key material in the event
+  (the blr-1 rule: row count and computer names may be audited, keys may not).
+- AC5 (D1, ruled 2026-09-01): the BitLocker CSV contains the `RecoveryKey` column
+  with each row's `RecoveryPassword` verbatim - a projector test feeding rows
+  with a known 48-digit key asserts it appears on its row. The formula-injection
+  rule (AC1b) must not corrupt keys: a recovery password starts with a digit, so
+  the leading-character neutralization never touches it (asserted in the same
+  test).
 - AC6: Five module version bumps per the header; base app version bumped IN S1,
   the slice that lands the shared helper (Constitution: shared infrastructure
   changes bump the base app version - the bump ships with the change, not at the
@@ -207,7 +217,7 @@ Each page gets, in `@code`:
 | DhcpAuthorization | `DnsName,IpAddress` | verbatim |
 | NamedLocations | `Name,Type,Trusted,IpRanges,CountryCodes,IncludeUnknownCountries,Created,Modified` | Type = `Ip`/`Country` enum name; lists joined with `"; "`; booleans `true`/`false`; Created/Modified are the raw strings (on-screen table omits them; the CSV is the better place for them) |
 | BlockedSenders | `SenderAddress,Reason,Blocked` | nulls -> empty cell (not the on-screen em-dash) |
-| BitLockerRecovery | `Computer,Created,KeyId,Source,LastSeenInAd,Ticket` | NO RecoveryPassword column (D1 default). `Source` = `StatusLabel`; dates `yyyy-MM-dd HH:mm` local, matching the on-screen format; `Ticket` = the page's `searchTicket`, same value on every row |
+| BitLockerRecovery | `Computer,RecoveryKey,Created,KeyId,Source,LastSeenInAd,Ticket` | `RecoveryKey` = `RecoveryPassword` verbatim (D1 ruling); `Source` = `StatusLabel`; dates `yyyy-MM-dd HH:mm` local, matching the on-screen format; `Ticket` = the page's `searchTicket`, same value on every row |
 | Migration status | `BatchName,Status,Direction,Created,Started,Completed,Total,Synced,Finalized,Failed,TargetEndpoint` | nullable dates -> empty cell; export the sorted view the operator sees (`GetSortedBatches()`, `Migration.razor:525`) |
 
 The BitLocker `Ticket` column is the queue-item interaction recorded in
@@ -234,11 +244,12 @@ button, audit, `@inject IJSRuntime`, tests; `ModuleCatalog.cs:493` -> `1.3.0`.
 
 **S4 - BlockedSenders export.** Same shape; `ModuleCatalog.cs:276` -> `1.4.0`.
 
-**S5 - BitLockerRecovery export.** Same shape plus: `Ticket` column from
-`searchTicket`, audit passes `ticketNumber: searchTicket`, AC5 no-key test.
-Version -> next minor above whatever the ticket plan set (expected `1.1.0` ->
-`1.2.0`). BLOCKED until `docs/BitLockerMandatoryTicket-Plan.md` is implemented
-and until D1 is ruled.
+**S5 - BitLockerRecovery export.** Same shape plus: `RecoveryKey` column (D1),
+`Ticket` column from `searchTicket`, the AC4b bulk-disclosure audit
+(`ExportRecoveryKeysCsv`, key count, `ticketNumber: searchTicket`, no key
+material), AC5 keys-present test. Version -> next minor above whatever the
+ticket plan set (expected `1.1.0` -> `1.2.0`). BLOCKED until
+`docs/BitLockerMandatoryTicket-Plan.md` is implemented (D1 is ruled).
 
 **S6 - Migration status export.** Same shape; button lives in the status tab
 beside the batch table; exports `GetSortedBatches()`; `ModuleCatalog.cs:183` ->
@@ -266,8 +277,9 @@ Per module (S2-S6), in each module's existing test file (or a new
 |---|---|---|---|
 | AC3 | `BuildCsv_HeaderMatchesSpec` | Exact header per section 6 | Change a name; FAIL |
 | AC3 | `BuildCsv_MapsARow` | One populated sample row lands in the right cells (null handling per the notes) | Swap two cells; FAIL |
-| AC5 | (BitLocker only) `BuildCsv_NeverContainsRecoveryPassword` | Rows carrying a known 48-digit key produce output not containing it | Add the key column; FAIL |
+| AC5 | (BitLocker only) `BuildCsv_ContainsRecoveryKeyVerbatim` | A row carrying a known 48-digit key yields that key, unmodified (no `'` prefix), in its `RecoveryKey` cell | Drop the key column; FAIL |
 | AC3 | (BitLocker only) `BuildCsv_StampsTicketOnEveryRow` | `BuildCsv(rows, "INC0001")` puts `INC0001` on each row | Drop the parameter; FAIL |
+| AC4b | (BitLocker only) `<Page>_WiresDownloadCsv` source guard additionally | Page audits `ExportRecoveryKeysCsv` with `ticketNumber: searchTicket` and the audit call references no key value | Remove either; FAIL |
 | AC2/AC4 | `<Page>_WiresDownloadCsv` (source guard, `EventLogCsvWiringTests` mechanism) | Page contains `BuildCsv`, `downloadFile`, the empty-set guard, and the `LogModuleAction` call with `ExportCsv` | Remove any; FAIL |
 
 Source-guard caveat as in the sibling plans: guards pin wiring, behavior lives in
@@ -278,10 +290,10 @@ Manual checks after deploy (no bUnit):
 1. Each of the five pages: no results -> no enabled export control; produce
    results -> Download CSV yields a file whose columns match section 6 and whose
    rows match the screen.
-2. Open the Admin Event Log after each export: one `ExportCsv` event per download,
-   BitLocker's carrying the ticket.
-3. BitLocker: open the downloaded file and confirm no recovery key appears
-   anywhere in it (D1 default).
+2. Open the Admin Event Log after each export: one `ExportCsv` event per download
+   (BitLocker: `ExportRecoveryKeysCsv`, carrying the ticket and no key material).
+3. BitLocker: open the downloaded file and confirm every row's recovery key is
+   present, unmodified, and matches the on-screen Reveal for a sampled row (D1).
 4. NamedLocations: export a location whose name contains a comma; the file opens
    with columns intact.
 
