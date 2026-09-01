@@ -142,8 +142,9 @@ BitLocker gate:
 
 Versions, config surface, docs:
 
-- AC11: `BitLockerRecovery` catalog version is `1.1.0` and the base app version is
-  bumped (shared validator + `ServiceNowService` property + `Program.cs` DI).
+- AC11: `BitLockerRecovery` catalog version is `1.1.0` (S3) and the base app
+  version is bumped in S1, the slice that lands the shared change (shared
+  validator + `ServiceNowService` property + `Program.cs` DI; the csv-2 rule).
 - AC12: `BitLockerRecovery` gains a `ValidateTickets` ConfigField (Required: false,
   DefaultValue `"false"`) whose description states both modes plainly, that the
   value must be exactly true or false (anything else refuses searches), and the
@@ -307,13 +308,19 @@ can exercise - there is no bUnit harness, so nothing automated renders the page.
 
 One commit per slice; each slice compiles and passes on its own (the ru-2 lesson).
 
-**S1 - `ServiceNowService.Enabled`, shared validator, DI, tests.** Serves AC1-AC5.
+**S1 - `ServiceNowService.Enabled`, shared validator, DI, tests, base app bump.**
+Serves AC1-AC5 and the base-bump half of AC11.
 
 - The one-line `Enabled` property on `ServiceNowService`.
 - `Services/TicketValidationService.cs` as specified in section 6.
 - `Program.cs` DI registration.
 - New `ExchangeAdminWeb.Tests/TicketValidationServiceTests.cs` (section 8).
-- Nothing consumes the validator yet; the app builds and behaves identically.
+- Base app bump: `<VersionPrefix>` + `AssemblyVersion` + `FileVersion` in
+  `ExchangeAdminWeb.csproj`. It lands here, not in S3, per the csv-2 review rule
+  in the sibling plan (`.agents/review/findings/csv-2.md`): the bump ships with
+  the shared-infrastructure change, so no deploy can carry the new shared code
+  under the old base version.
+- Nothing consumes the validator yet; behavior is unchanged.
 
 **S2 - BitLocker gate, page wiring, config field, tests.** Serves AC6-AC10, AC12.
 
@@ -329,11 +336,10 @@ One commit per slice; each slice compiles and passes on its own (the ru-2 lesson
   readable); add the new gate tests (section 8); fix any `ModuleCatalogTests`
   assertion the config field breaks (none expected - no new permission alias).
 
-**S3 - versions and docs.** Serves AC11, AC13.
+**S3 - module version and docs.** Serves the module half of AC11, and AC13.
 
-- `Modules/ModuleCatalog.cs:513` `Version = "1.1.0"`.
-- Base app bump: `<VersionPrefix>` + `AssemblyVersion` + `FileVersion` in
-  `ExchangeAdminWeb.csproj` (read the current number there, then minor-bump).
+- `Modules/ModuleCatalog.cs:513` `Version = "1.1.0"`. (The base app bump already
+  landed in S1.)
 - `docs/BitLockerRecovery.md`: ticket required before any search, recorded on the
   search and reveal audit events; the `ValidateTickets` switch, both modes, and the
   dormant-refusal behavior. README BitLocker Recovery section: one bullet to the
