@@ -96,8 +96,10 @@ Settled by higher authority or existing code, not open:
 - AC5 (D1 default): the BitLocker CSV never contains a `RecoveryPassword` value:
   a projector test feeding rows with a known 48-digit key asserts the output
   does not contain it, and there is no `RecoveryKey` column.
-- AC6: Five module version bumps per the header; base app version bumped once for
-  the shared helper; no ModuleCatalog permission/alias changes
+- AC6: Five module version bumps per the header; base app version bumped IN S1,
+  the slice that lands the shared helper (Constitution: shared infrastructure
+  changes bump the base app version - the bump ships with the change, not at the
+  end; csv-2); no ModuleCatalog permission/alias changes
   (`ModuleCatalogTests.cs:16,109` untouched and green).
 - AC7: README gains one export bullet per module section.
 
@@ -219,9 +221,11 @@ One commit per slice; S2-S6 are independent of each other, all depend on S1.
 Module version bumps land IN the slice that changes the module (one module, one
 commit, its paperwork with it).
 
-**S1 - `Services/CsvExport.cs` + tests.** Serves AC1. No consumer yet; app
-behavior unchanged. No version bump yet (nothing ships a behavior change until a
-consumer exists; the base bump lands in S7 with the last consumer in place).
+**S1 - `Services/CsvExport.cs` + tests + base app bump.** Serves AC1, AC1b, and
+the base-bump half of AC6. The csproj triple (`<VersionPrefix>` +
+`AssemblyVersion` + `FileVersion`) bumps here: the shared helper IS the
+shared-infrastructure change, and a deploy cut after S1 must not carry new shared
+code under the old base version (csv-2; Constitution, Deployment And Versioning).
 
 **S2 - DhcpAuthorization export.** Serves AC2-AC4 for this module. Projector,
 button, audit, `@inject IJSRuntime`, tests; `ModuleCatalog.cs:493` -> `1.3.0`.
@@ -240,8 +244,8 @@ and until D1 is ruled.
 beside the batch table; exports `GetSortedBatches()`; `ModuleCatalog.cs:183` ->
 `1.8.0`.
 
-**S7 - base app bump + README.** Serves AC6-AC7. csproj triple bump; one README
-bullet per module section (locate by reading).
+**S7 - README.** Serves AC7. One README bullet per module section (locate by
+reading). The base bump already landed in S1.
 
 ## 8. Test plan
 
@@ -300,4 +304,15 @@ section 9's shape.
 
 ## 10. Review log
 
-None yet.
+- 2026-08-31: openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+  grade fallback, owner-named dispatch; codex-cli 0.150.1) over `a9b0ebc..533c1fe`
+  (this plan together with `docs/BitLockerMandatoryTicket-Plan.md`): verdict
+  `acceptable_with_changes`, capability_ok, both SHAs echoed. Two findings against
+  this plan, both admitted and folded in: **csv-1 (MEDIUM)** - the shared writer
+  omitted formula-injection neutralization the repo's own
+  `MessageTraceDetailReport.CsvEscape` already standardizes (now AC1b + test);
+  **csv-2 (LOW)** - the base app bump was deferred to S7 past the S1 slice that
+  introduces the shared infrastructure (now bumps in S1). The reviewer endorsed
+  the D1 default (no recovery keys in the BitLocker export: "excluding BitLocker
+  recovery keys unless explicitly approved"). Records:
+  `.agents/review/findings/csv-{1,2}.md`.
