@@ -482,8 +482,14 @@ conversation needed: `docs/RiskyUsersModule-Plan.md` at its S1 and
 `docs/IntuneDeviceManagement-Plan.md` at its S0 - independent of everything else and of
 each other.
 
-**QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"):**
+**QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"), P1 INSERTED
+by owner ruling 2026-09-01 (items below shift down one):**
 
+0. **NEW P1 (owner, 2026-09-01): Boolean config fields render as checkboxes, never
+   free text** - `docs/BooleanConfigControls-Plan.md` (drafted same day, no open
+   decisions, single slice), ruling in `.agents/decisions.md` 2026-09-01
+   ("no compromise"). BitLocker S2 now depends on it (`ValidateTickets` declares the
+   Boolean type). Awaiting a go.
 1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31, REVISED same day for the
    owner's ServiceNow ruling (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner
    decision), CODEX-REVIEWED same day (openreview over `a9b0ebc..533c1fe`,

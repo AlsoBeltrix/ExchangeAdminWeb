@@ -5,6 +5,29 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-01 - Boolean settings must be non-ambiguous controls, never free text
+
+Status: Active. A standing design rule for every admin surface, and the queue's P1.
+
+Owner ruling 2026-09-01, after finding Prevent Self-Grant rendered as a text box
+whose help text says "(true/false)": "that is fucking stupid. it should be
+impossible to 'misspell' a vital security settings. no compromise on that.
+checkboxes or other non-ambiguous controls are the only acceptable controls."
+
+What changes:
+
+- A boolean module/admin setting may never render as a free-text input. Checkbox,
+  toggle, or an equally non-ambiguous control only. This binds every existing and
+  future boolean config field.
+- Work item (queue P1, plan `docs/BooleanConfigControls-Plan.md`): add a Boolean
+  config field type rendered as a checkbox on Module Config. Known instances:
+  `PreventSelfGrant` (`ModuleCatalog.cs:150`, the one live offender - a repo-wide
+  search found no other true/false text field) and the BitLocker plan's upcoming
+  `ValidateTickets`, whose S2 now declares the Boolean type.
+- Server-side parse guards stay: the stored value is still a string a bad deploy or
+  out-of-band edit can corrupt, so fail-closed reads (btv-1) remain the backstop.
+  The control fixes the honest-operator path; the guard covers the rest.
+
 ### 2026-08-31 - ServiceNow ticket validation: required later, seam built now, per-module switch
 
 Status: Active. Satisfies the Constitution's External Integrations clause ("Ticket

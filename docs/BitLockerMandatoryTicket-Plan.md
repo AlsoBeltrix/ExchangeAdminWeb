@@ -146,9 +146,12 @@ Versions, config surface, docs:
   version is bumped in S1, the slice that lands the shared change (shared
   validator + `ServiceNowService` property + `Program.cs` DI; the csv-2 rule).
 - AC12: `BitLockerRecovery` gains a `ValidateTickets` ConfigField (Required: false,
-  DefaultValue `"false"`) whose description states both modes plainly, that the
-  value must be exactly true or false (anything else refuses searches), and the
-  dormant-refusal behavior. Check
+  DefaultValue `"false"`, `FieldType: ConfigFieldType.Boolean` - the owner's
+  2026-09-01 non-ambiguous-controls ruling, `docs/BooleanConfigControls-Plan.md`,
+  which S2 therefore depends on) whose description states both modes plainly and
+  the dormant-refusal behavior. The validator's unparseable-value refusal (AC4)
+  stays regardless: the checkbox fixes the input path, the guard covers stored
+  garbage from any other path. Check
   `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs` for assertions the new field
   breaks (none assert ConfigFields counts today; the alias count at `:109` is
   untouched because no new permission is added).
@@ -329,7 +332,8 @@ Serves AC1-AC5 and the base-bump half of AC11.
 - Page: ticket input, `HasTicket`, button/Enter gating, `searchTicket` capture,
   both audit `ticketNumber:` arguments.
 - Catalog: `ValidateTickets` ConfigField on the `BitLockerRecovery` entry
-  (Required: false, DefaultValue `"false"`).
+  (Required: false, DefaultValue `"false"`, FieldType Boolean per AC12 -
+  requires `docs/BooleanConfigControls-Plan.md` landed first).
 - Tests: update every existing call site in
   `ExchangeAdminWeb.Tests/BitLockerRecoveryTests.cs` to pass a ticket and a fake
   accepting validator (a shared constant like `"INC0000001"` keeps the diff
