@@ -20,6 +20,18 @@ phase with the security-response alerting clause unhonoured and unruled, and its
 two slices would have failed `dotnet build` and `dotnet test` respectively, for three
 unrelated reasons.
 
+**Revision 2026-09-01 (orchestrator, implementation-time):** implementing S1 in
+isolation surfaced that `ModuleCatalogTests.Catalog_RoutesHaveMatchingPagesAndPolicies`
+(`ExchangeAdminWeb.Tests/ModuleCatalogTests.cs:229-244`) asserts every catalog descriptor
+has a matching `@page` / `[Authorize]` page under `Components/Pages/` in the same tree --
+so a commit adding only the descriptor (no page) fails `dotnet test`, and this plan's
+claim that S1 builds and tests green alone was unsatisfiable. This is the `ru-2` finding
+class (a slice must compile and pass green on its own commit) recurring a third time, not
+caught by the two-slice review that produced `ru-1`-`ru-3`. Commit sequencing is
+re-ordered: S2 (service, models, DI seam -- no descriptor) lands first, then S1 and S3
+land together as one commit (descriptor + read page + catalog tests). Scope and design
+are unchanged; only the commit boundaries move, and the invariant test is not weakened.
+
 ## Purpose
 
 Surface Microsoft Entra ID Protection risky users inside ExchangeAdminWeb so an operator
