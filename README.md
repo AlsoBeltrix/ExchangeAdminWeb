@@ -32,6 +32,7 @@ Check migration eligibility and create move batches between Exchange Online and 
 - **Batch actions report what was QUEUED, not what is finished.** `Remove-MigrationBatch` and `Start-MigrationBatch` return when Exchange accepts the request; the batch then sits at `Removing` or `Starting` until Exchange completes it, so the row stays visible for a while. Batches Exchange accepted are unticked automatically; ones it refused stay ticked so they can be retried
 - The ticket field for a single-batch or single-user action appears directly beneath that row, not at the top of the table
 - The per-user `Report` button is available on every user row, not only rows that already look broken
+- Migration Status results can be downloaded as CSV (`BatchName,Status,Direction,Created,Started,Completed,Total,Synced,Finalized,Failed,TargetEndpoint`)
 - Section access keys: `MigrationCheck`, `MigrationCreate`, `MigrationManage`
 
 ### Message Analysis (`/message-analysis`)
@@ -208,6 +209,7 @@ Authorize or deauthorize DHCP servers in Active Directory.
 - Authorize a server by IP/hostname to allow DHCP service in the domain
 - Deauthorize a server to revoke DHCP serving rights
 - Confirmation dialog (high-privilege operation)
+- Results can be downloaded as CSV (`DnsName,IpAddress`)
 - **Requires:** Module-specific Delinea secret (Enterprise Admin credentials)
 - Section access key: `DhcpAuthorization`
 
@@ -236,6 +238,11 @@ Disabled by default and fail-closed, because a recovery key decrypts a whole dis
 - An unreachable source is an error, never an empty result: on a recovery call
   "no key exists" and "I could not look" must not look alike. If live AD fails
   but the archive succeeds, archive rows are shown with a warning
+- Results can be downloaded as CSV (`Computer,RecoveryKey,Created,KeyId,Source,LastSeenInAd,Ticket`),
+  with the recovery keys included in the file -- the export's whole purpose is bulk key
+  retrieval. The download is itself an audited disclosure event (`ExportRecoveryKeysCsv`,
+  recording the search ticket and row count), and as with every other BitLocker audit
+  event the key material itself never enters the audit log
 - **Requires:** `ArchiveDatabasePath` pointing at a **local** path (SQLite WAL
   needs shared memory that SMB does not provide, so UNC paths are refused). Live
   AD fallback additionally needs a module-specific Delinea secret for an account
@@ -252,6 +259,7 @@ Manage Entra ID Conditional Access named locations via Microsoft Graph API.
 - Create, edit, and delete country/region locations
 - Mark locations as trusted
 - Full pagination support for large tenants
+- Results can be downloaded as CSV (`Name,Type,Trusted,IpRanges,CountryCodes,IncludeUnknownCountries,Created,Modified`)
 - **Requires:** Graph app registration with `Policy.ReadWrite.ConditionalAccess` permission
 - Section access key: `NamedLocations`
 
@@ -271,6 +279,19 @@ implicated or scoped domain computers. Disabled by default; both permissions fai
 - **Requires:** module-scoped AD credential (`DelineaSecretId`) with rights to read lockout
   events, query sessions, and log off sessions; WinRM to target machines
 - Section access keys: `AccountLockoutRemediation`, `AccountLockoutRemediationLogoff`
+
+### Blocked Senders (`/blocked-senders`)
+
+View and unblock Exchange Online accounts blocked from sending mail for outbound spam.
+
+- Lists all currently blocked senders with reason and blocked date
+- Unblock a sender; the target is re-checked through the protected-principal check
+  before the unblock runs
+- A configurable protected-principal servicer group can be granted access to unblock
+  otherwise-protected senders for this module only (see Protected Users / Excluded Users)
+- Results can be downloaded as CSV (`SenderAddress,Reason,Blocked`)
+- **Requires:** Exchange Online connection (no module-specific Delinea secret)
+- Section access key: `BlockedSenders` (granular: `BlockedSendersUnblock`)
 
 ### Security & Compliance
 - **Windows Authentication** — Seamless SSO with Active Directory
