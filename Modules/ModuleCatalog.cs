@@ -147,7 +147,7 @@ public sealed class ModuleCatalog
             GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by mailbox permission operations", Required: false),
-                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves - applies to all permission operations (true/false)", Required: false, DefaultValue: "true")
+                new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves - applies to all permission operations", Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
             ]
         },
         new()

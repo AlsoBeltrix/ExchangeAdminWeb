@@ -193,6 +193,39 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_BooleanDefaultedFieldsDeclareBooleanType()
+    {
+        // A boolean setting rendered as a text box can be mistyped, and a mistyped
+        // security switch is the btv-1 failure class. Owner ruling 2026-09-01
+        // (.agents/decisions.md): non-ambiguous controls only. A field whose
+        // default parses as a boolean IS a boolean setting and must say so.
+        foreach (var module in _catalog.GetAll())
+        {
+            foreach (var field in module.ConfigFields)
+            {
+                if (bool.TryParse(field.DefaultValue, out _))
+                {
+                    Assert.True(
+                        field.FieldType == ConfigFieldType.Boolean,
+                        $"{module.Id}.{field.Key} defaults to '{field.DefaultValue}' but is not ConfigFieldType.Boolean.");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void ModuleConfig_RendersBooleanFieldsAsCheckbox()
+    {
+        // Wiring hint only (a comment could satisfy it - blr-3/blr-4); the real
+        // proof is the manual check on a deployed instance. It still catches the
+        // branch being deleted outright, which would silently send Boolean
+        // fields back to the text fallthrough.
+        var text = File.ReadAllText(Path.Combine(GetPagesDirectory(), "ModuleConfig.razor"));
+        Assert.Contains("field.FieldType == ConfigFieldType.Boolean", text);
+        Assert.Contains("SetBooleanConfigValue", text);
+    }
+
+    [Fact]
     public void Catalog_RoutesHaveMatchingPagesAndPolicies()
     {
         var pageRoutes = ReadPageRoutes();

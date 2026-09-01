@@ -1,7 +1,8 @@
 # Boolean config fields render as non-ambiguous controls
 
-Status: Draft 2026-09-01, owner-directed P1 the same day. No owner decision is
-outstanding. Awaiting a go.
+Status: Implemented 2026-09-01 (owner go the same day; single slice, the commit
+that set this status). NOT DEPLOYED; manual checks in section 8 ride the next
+dev deploy.
 Owner: Michael
 Last verified against code: `b4f6047` / 2026-09-01
 Versions: base app bump (shared `ModuleConfigField` type + `ModuleConfig.razor`
@@ -132,7 +133,18 @@ Non-vacuity: revert each named target, FAIL, restore, PASS.
 
 ## 9. Traceability check
 
-To be completed at implementation time.
+- AC1: `ConfigFieldType.Boolean` in `Modules/ModuleConfigField.cs`.
+- AC2/AC3: Boolean branch in `ModuleConfig.razor` (before the text fallthrough)
+  + `SetBooleanConfigValue`; load state via `bool.TryParse`, default per
+  DefaultValue. Source guard `ModuleConfig_RendersBooleanFieldsAsCheckbox`.
+- AC4: `PreventSelfGrant` declared Boolean, "(true/false)" dropped
+  (`ModuleCatalog.cs`, MailboxPermissions entry).
+- AC5: `Catalog_BooleanDefaultedFieldsDeclareBooleanType`.
+- AC6: base `2.11.0` -> `2.12.0`; no module bumps; catalog tests 26/26.
+- AC7: `docs/AdminModuleDeveloperGuide.md` config-field-shape section.
+- Non-vacuity: one probe batch (PreventSelfGrant back to Text + razor branch
+  neutered) failed exactly the 2 new tests; restored, full suite 1854/0/3,
+  format clean. Manual checks NOT run (need a deployed instance).
 
 ## 10. Review log
 

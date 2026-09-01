@@ -448,6 +448,23 @@
                                     <div class="form-text">@field.Description</div>
                                 }
                             }
+                            else if (field.FieldType == ConfigFieldType.Boolean)
+                            {
+                                @* A boolean setting must be impossible to mistype: the checkbox
+                                   writes exactly "true"/"false". Consumers keep their own parse
+                                   guards for values corrupted outside this page. *@
+                                var boolChecked = bool.TryParse(GetConfigValue(field.Key, field.DefaultValue), out var parsedBool) && parsedBool;
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="cfg-bool-@capturedKey"
+                                           checked="@boolChecked"
+                                           @onchange="(e) => SetBooleanConfigValue(capturedKey, e)" />
+                                    <label class="form-check-label" for="cfg-bool-@capturedKey">Enabled</label>
+                                </div>
+                                @if (!string.IsNullOrEmpty(field.Description) && !field.IsSecret)
+                                {
+                                    <div class="form-text">@field.Description</div>
+                                }
+                            }
                             else
                             {
                                 <input type="text"
@@ -891,6 +908,13 @@
         currentConfigState[key] = value;
         dirty.Set(SecConfig, true);
     }
+
+    /// <summary>
+    /// Boolean fields store exactly "true"/"false"; the checkbox is the only
+    /// writer, so no operator-typed variant can reach the store from this page.
+    /// </summary>
+    private void SetBooleanConfigValue(string key, ChangeEventArgs e) =>
+        SetConfigValue(key, (bool)(e.Value ?? false) ? "true" : "false");
 
     private async Task SaveConfigAsync()
     {

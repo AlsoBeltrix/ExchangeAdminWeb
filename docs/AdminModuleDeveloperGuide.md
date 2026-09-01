@@ -241,8 +241,16 @@ public sealed record ModuleConfigField(
     string Description,
     bool Required = true,
     bool IsSecret = false,
-    string DefaultValue = "");
+    string DefaultValue = "",
+    ConfigFieldType FieldType = ConfigFieldType.Text);
 ```
+
+`ConfigFieldType` selects the Module Config control: `Text` (default),
+`AdGroup`/`AdUser`/`OU` (directory pickers), and `Boolean` (checkbox). A
+true/false setting MUST declare `Boolean` - never `Text`. Boolean settings
+rendered as free text can be mistyped, and a mistyped security switch silently
+does the wrong thing (owner ruling 2026-09-01, "no compromise"; a catalog test
+fails any boolean-defaulted field left as text).
 
 Example descriptor:
 
