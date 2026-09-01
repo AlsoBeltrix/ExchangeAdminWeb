@@ -112,8 +112,13 @@ Validator (shared):
   `IsValid=false` maps to Rejected carrying the client's message.
 - AC4: The validator is per-module: it reads config for the `moduleId` it is given,
   and a corrupt module config yields Unavailable (fail closed), not Accepted. An
-  unparseable `ValidateTickets` value behaves as Off - the `PreventSelfGrant`
-  convention (`PermissionValidator.cs:62`).
+  ABSENT or blank `ValidateTickets` value behaves as Off (unset is not a mistype);
+  a NON-EMPTY value that `bool.TryParse` rejects (`yes`, `on`, a typo) yields
+  Unavailable with a message naming the invalid value - fail closed. This
+  deliberately diverges from the `PreventSelfGrant` convention
+  (`PermissionValidator.cs:62`, unparseable -> default): that flag is a behavior
+  preference, this one is a switch an operator believes is enforcing validation,
+  and a mistype must not silently mean Off (review finding btv-1).
 - AC5: A blank ticket is Rejected in BOTH modes; the switch never waives presence.
 
 BitLocker gate:
@@ -140,8 +145,9 @@ Versions, config surface, docs:
 - AC11: `BitLockerRecovery` catalog version is `1.1.0` and the base app version is
   bumped (shared validator + `ServiceNowService` property + `Program.cs` DI).
 - AC12: `BitLockerRecovery` gains a `ValidateTickets` ConfigField (Required: false,
-  DefaultValue `"false"`) whose description states both modes plainly, including
-  the dormant-refusal behavior. Check
+  DefaultValue `"false"`) whose description states both modes plainly, that the
+  value must be exactly true or false (anything else refuses searches), and the
+  dormant-refusal behavior. Check
   `ExchangeAdminWeb.Tests/ModuleCatalogTests.cs` for assertions the new field
   breaks (none assert ConfigFields counts today; the alias count at `:109` is
   untouched because no new permission is added).
@@ -158,6 +164,7 @@ Versions, config surface, docs:
 | Switch On, ServiceNow dormant (the current deployment state) | Validator returns Unavailable; service refuses | Error banner: validation on, integration dormant | Failed search audited; fail closed, not decorative |
 | Switch On, ServiceNow enabled, ticket not found / not active / API error | Client returns `IsValid=false`; validator Rejects with the client's message | Error banner with the ServiceNow reason | Failed search audited |
 | Module config corrupt | Validator returns Unavailable (AC4); the archive path's own corrupt-config refusal (`BitLockerRecoveryService.cs:182-187`) backstops it | Config error banner | Fail closed |
+| `ValidateTickets` mistyped (`yes`, `on`, ...) | Validator returns Unavailable naming the invalid value (AC4, btv-1) | Error banner naming the setting | Fail closed - never silently presence-only |
 | Operator clears/edits the ticket box after a search, then clicks Reveal | Reveal uses the captured search ticket (AC9) | Reveal works normally | Reveal audit carries the ticket that authorized the visible results |
 | Audit write fails | `SafeAudit` unchanged (`BitLockerRecovery.razor:429-439`) | Result unchanged | Audit failure logged separately; never masks the operation (Constitution, Auditing) |
 | The eight existing `ValidateTicketAsync` callers | Untouched - they keep calling the client directly, with its dormant pass-through | No change anywhere else | Per-module isolation preserved; the validator takes `moduleId` explicitly |
@@ -235,8 +242,11 @@ Behavior of `ValidateAsync`, in order:
    unreadable...") - fail closed (Constitution, Configuration).
 2. Blank/whitespace ticket -> Rejected ("A ticket number is required.") - in BOTH
    modes; the switch never waives presence.
-3. Read `GetValue(moduleId, "ValidateTickets")`; absent/blank/unparseable/`false`
-   -> Accepted (presence-only mode; no ServiceNow call).
+3. Read `GetValue(moduleId, "ValidateTickets")`. Absent/blank or `false` ->
+   Accepted (presence-only mode; no ServiceNow call). Non-empty and not parseable
+   as a boolean -> Unavailable ("The ValidateTickets setting for this module is
+   '<value>', which is not true or false. Fix it in Module Config.") - fail
+   closed per AC4.
 4. `true` and `ServiceNowService.Enabled` false -> Unavailable ("Ticket validation
    is switched on for this module, but the ServiceNow integration is not enabled
    on this deployment.").
@@ -348,7 +358,7 @@ dormant cases need no handler at all (`ServiceNow:Enabled` absent -> false).
 | AC3 | `On_EnabledDelegatesToServiceNow` | `ValidateTickets=true` + enabled + stubbed 200 with an active ticket -> Accepted; stubbed not-found -> Rejected with the client message | Bypass delegation, hardcode Accepted; FAIL |
 | AC4 | `ReadsConfigForTheModuleItIsGiven` | Module A On / module B Off validate differently | Hardcode the module id; FAIL |
 | AC4 | `CorruptConfigUnavailable` | Corrupt store -> Unavailable, not Accepted | Fall through to Off on corrupt; FAIL |
-| AC4 | `UnparseableSwitchBehavesAsOff` | `ValidateTickets=banana` -> presence-only | Treat unparseable as On; FAIL |
+| AC4 | `UnparseableSwitchUnavailable` | `ValidateTickets=banana` -> Unavailable, message names `banana`; `ValidateTickets=` (blank) -> presence-only | Treat unparseable as Off; FAIL |
 | AC5 | `On_BlankTicketStillRejected` | Blank + On -> Rejected, before any dormancy/delegation logic | Reorder guards; FAIL |
 
 `ExchangeAdminWeb.Tests/BitLockerRecoveryTests.cs` (S2):
@@ -400,4 +410,14 @@ section 9.
 
 ## 10. Review log
 
-None yet.
+- 2026-08-31: openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+  grade fallback, owner-named dispatch; codex-cli 0.150.1) over `a9b0ebc..533c1fe`
+  (this plan together with `docs/ModuleCsvExport-Plan.md`): verdict
+  `acceptable_with_changes`, capability_ok, both SHAs echoed. One finding against
+  this plan: **btv-1 (HIGH)** - the unparseable-switch rule was fail-open
+  (mistyped `ValidateTickets` silently meant Off). Admitted and folded in: AC4,
+  design step 3, failure table, test table, AC12. The reviewer's alternate remedy
+  (a new Boolean `ConfigFieldType` rendered as a checkbox) was NOT adopted - no
+  such field type exists (`Modules/ModuleConfigField.cs:3-8`) and adding one is
+  Module Config UI scope this plan does not need; the fail-closed parse achieves
+  the safety property. Record: `.agents/review/findings/btv-1.md`.
