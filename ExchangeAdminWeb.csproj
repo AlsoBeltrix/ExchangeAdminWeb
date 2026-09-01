@@ -8,11 +8,11 @@
          It holds loose .cs/.razor files that are not part of the app and do not compile on their
          own; exclude it from all default item globs so a local checkout builds cleanly. -->
     <DefaultItemExcludes>$(DefaultItemExcludes);ExchangeAdminWeb.Tests\**;_not_for_github\**</DefaultItemExcludes>
-    <VersionPrefix>2.10.0</VersionPrefix>
+    <VersionPrefix>2.11.0</VersionPrefix>
     <InformationalVersion>$(VersionPrefix)</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
-    <AssemblyVersion>2.10.0.0</AssemblyVersion>
-    <FileVersion>2.10.0.0</FileVersion>
+    <AssemblyVersion>2.11.0.0</AssemblyVersion>
+    <FileVersion>2.11.0.0</FileVersion>
   </PropertyGroup>
 
   <ItemGroup>

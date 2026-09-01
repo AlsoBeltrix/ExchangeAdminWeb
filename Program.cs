@@ -190,6 +190,7 @@ try
     // one, which is always legal in that direction.
     builder.Services.AddSingleton<ProtectedPrincipalServicerService>();
     builder.Services.AddSingleton<ServiceNowService>();
+    builder.Services.AddSingleton<ITicketValidator, TicketValidationService>();
     builder.Services.AddSingleton<DelineaService>();
     builder.Services.AddSingleton<ExoConnectionPool>();
     builder.Services.AddScoped<MigrationService>();

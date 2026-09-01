@@ -30,6 +30,18 @@ public class ServiceNowService
         }
     }
 
+    /// <summary>
+    /// Whether the ServiceNow integration is enabled on this deployment.
+    /// </summary>
+    /// <remarks>
+    /// When disabled, <see cref="ValidateTicketAsync"/> deliberately passes every
+    /// ticket (the integration is dormant, not failing). A consumer that promises
+    /// real validation - the per-module <see cref="TicketValidationService"/> -
+    /// must be able to see the difference, or its switch silently validates
+    /// nothing.
+    /// </remarks>
+    public bool Enabled => _enabled;
+
     public async Task<TicketValidationResult> ValidateTicketAsync(string ticketNumber)
     {
         if (!_enabled)
