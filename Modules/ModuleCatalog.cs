@@ -453,7 +453,8 @@ public sealed class ModuleCatalog
             SortOrder = 790,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.3",
+            // 1.1.0: CSV export of the named-location list (docs/ModuleCsvExport-Plan.md).
+            Version = "1.1.0",
             MainPermission = new("Access", "NamedLocations", FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (requires Policy.ReadWrite.ConditionalAccess)")

@@ -10,6 +10,7 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<NamedLocations> Logger
+@inject IJSRuntime JS
 
 <PageTitle>Named Locations</PageTitle>
 
@@ -51,6 +52,7 @@
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>Named Locations</strong>
                     <div>
+                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(locations.Count == 0)">Download CSV</button>
                         <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@isLoading">
                             @if (isLoading && editingLocation == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Refresh
@@ -439,6 +441,56 @@
         finally
         {
             isOperating = false;
+        }
+    }
+
+    /// <summary>
+    /// Docs/ModuleCsvExport-Plan.md AC3: Name,Type,Trusted,IpRanges,CountryCodes,
+    /// IncludeUnknownCountries,Created,Modified. Type is the LocationType enum name;
+    /// list-valued cells join with "; "; booleans render lowercase; Created/Modified
+    /// are the raw strings (omitted on screen, kept here). Static and argument-fed
+    /// so tests call it directly without a page instance.
+    /// </summary>
+    internal static string BuildCsv(IReadOnlyList<NamedLocation> rows)
+    {
+        var header = new List<string>
+        {
+            "Name", "Type", "Trusted", "IpRanges", "CountryCodes",
+            "IncludeUnknownCountries", "Created", "Modified"
+        };
+        var csvRows = rows.Select(r => (IReadOnlyList<string>)new List<string>
+        {
+            r.DisplayName ?? "",
+            r.LocationType.ToString(),
+            r.IsTrusted ? "true" : "false",
+            string.Join("; ", r.IpRanges ?? new List<string>()),
+            string.Join("; ", r.CountryCodes ?? new List<string>()),
+            r.IncludeUnknownCountries ? "true" : "false",
+            r.CreatedDateTime ?? "",
+            r.ModifiedDateTime ?? ""
+        });
+        return CsvExport.Write(header, csvRows);
+    }
+
+    private async Task DownloadCsvAsync()
+    {
+        if (locations.Count == 0)
+            return;
+
+        var csv = BuildCsv(locations);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+        var base64 = Convert.ToBase64String(bytes);
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        await JS.InvokeVoidAsync("downloadFile", $"NamedLocations_{timestamp}.csv", "text/csv", base64);
+
+        try
+        {
+            Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "NamedLocations",
+                $"{locations.Count} rows", true);
+        }
+        catch (Exception auditEx)
+        {
+            Logger.LogError(auditEx, "Audit failed for Named Locations CSV export");
         }
     }
 
