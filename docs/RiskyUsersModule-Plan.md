@@ -514,11 +514,15 @@ So use the `MfaReset.razor:262-364` two-branch shape:
 **One improvement over the MfaReset shape, and it is the reason this must not be a
 literal copy.** `MfaReset` only has a UPN, so it passes `EntraObjectId: null`. This
 module has the Entra object id in hand -- `riskyUser.id` IS it. Populate
-`EntraObjectId: user.Id` in the unresolved-branch `ResolvedDirectoryPrincipal`. Verify
-before implementing whether `ProtectedPrincipalService.CheckAsync` actually consults
-`EntraObjectId`; if it does not, populate the field anyway (it costs nothing and lands in
-the audit trail) and record in this file that object-id-based protection matching does
-not exist, rather than implying it works.
+`EntraObjectId: user.Id` in the unresolved-branch `ResolvedDirectoryPrincipal`.
+
+**VERIFIED during S6 (2026-09-01): `CheckAsync` DOES consult `EntraObjectId`.**
+`CheckAsync` -> `CheckDirectUserMatches` -> `MatchesIdentity`
+(`Services/ProtectedPrincipalService.cs:684-720`) compares each protected USER row
+against a candidate list that includes `target.EntraObjectId`, case-insensitively. So
+object-id-based protection matching is real, not aspirational: a protected user row
+holding an Entra object id matches a cloud-only risky user that no address rule would
+catch. This is recorded rather than assumed, per the open question below.
 
 **Servicer override.** Honour `ProtectedServicer:RiskyUsers` through
 `ProtectedPrincipalServicing.NoteFor(...)` / `.Extra(...)`, in BOTH branches --
@@ -533,6 +537,14 @@ that is `pps-3`, and a guard already forbids the shape across `Services/` and
 
 No `ProtectedServicer:RiskyUsers` row will exist in either config store on first deploy.
 That is scope, not oversight -- record it, do not create it.
+
+**S6 also adds `RiskyUsers` to `ModuleConfig.razor`'s
+`ModulesWithProtectedPrincipalServicing` opt-in set.** That list is what makes the
+servicer editor appear for a module, and its own comment requires the entry to land in
+the same commit as the `Evaluate` call it certifies -- which is this slice. Without it the
+grant would be ungrantable and AC12 unreachable by any operator: the `idm-3` / `ru-3`
+decorative-control class. Adding the module to the list creates no grant row; it only
+makes one possible to configure.
 
 ### S7. Docs and version
 
@@ -681,7 +693,9 @@ Manual checks, to be run on dev and each recorded as run or not run:
   S7 cannot close and the read phase cannot be marked `Implemented` until it is ruled and
   the ruled shape is built. Audit-only is the development-time default, not the shipped
   answer.
-- **Does `ProtectedPrincipalService.CheckAsync` consult `EntraObjectId`?** Not verified at
-  the time of writing. Determine during S6 by reading the method, and record the answer
-  here either way. If it does not, S6 still populates the field, and the gap is recorded
-  rather than assumed closed.
+- **Does `ProtectedPrincipalService.CheckAsync` consult `EntraObjectId`?** ANSWERED
+  2026-09-01 during S6, by reading the method: YES. `MatchesIdentity`
+  (`Services/ProtectedPrincipalService.cs:693-710`) includes `target.EntraObjectId` in the
+  candidates each protected USER row is compared against. S6 populates it from
+  `riskyUser.id` on the unresolved branch, so object-id protection genuinely bites here.
+  Closed.

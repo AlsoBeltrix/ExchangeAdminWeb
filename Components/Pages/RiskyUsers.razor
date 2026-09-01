@@ -9,6 +9,10 @@
 @inject NavigationManager Navigation
 @inject ClientInfoService ClientInfo
 @inject ILogger<RiskyUsers> Logger
+@inject EmailService Email
+@inject ServiceNowService ServiceNow
+@inject ProtectedPrincipalService ProtectedPrincipalService
+@inject ProtectedPrincipalServicerService Servicers
 
 <PageTitle>Risky Users</PageTitle>
 
@@ -26,7 +30,11 @@
 
 <div class="container-fluid">
     <div class="alert alert-info py-2 mb-3">
-        <small>Every query against Microsoft Entra ID Protection is logged for audit purposes. This page is read-only.</small>
+        <small>
+            Every query against Microsoft Entra ID Protection is logged for audit purposes. Queries are
+            never alert-emailed; every remediation action is audited AND notified to administrators.
+            Remediation requires the Remediate permission and a ticket number.
+        </small>
     </div>
     <h1 class="mb-4">Risky Users<ModuleVersion /></h1>
 
@@ -129,6 +137,10 @@
                                 <th>Last updated</th>
                                 <th>Flags</th>
                                 <th></th>
+                                @if (canRemediate)
+                                {
+                                    <th>Remediate</th>
+                                }
                             </tr>
                         </thead>
                         <tbody>
@@ -150,11 +162,100 @@
                                             @(expandedUserId == user.Id ? "Hide history" : "History")
                                         </button>
                                     </td>
+                                    @* Action controls exist only for an operator holding the granular
+                                       RiskyUsersRemediate grant (AC13). The handler re-checks the same
+                                       policy before it acts, so hiding the buttons is presentation, not
+                                       the authorization decision.
+
+                                       Deliberately NOT gated on riskState or isProcessing (AC16 / S5):
+                                       no client-side eligibility allowlist is derived from an enum
+                                       Microsoft extends. Graph decides what it will accept, and its
+                                       refusal is reported as this row's own named failure. *@
+                                    @if (canRemediate)
+                                    {
+                                        <td class="text-nowrap">
+                                            <div class="btn-group btn-group-sm" role="group" aria-label="Remediate">
+                                                <button class="btn btn-outline-success" title="Dismiss risk"
+                                                        @onclick="() => BeginAction(user, RiskyUserAction.Dismiss)"
+                                                        disabled="@ActionsDisabled">Dismiss</button>
+                                                <button class="btn btn-outline-primary" title="Confirm safe"
+                                                        @onclick="() => BeginAction(user, RiskyUserAction.ConfirmSafe)"
+                                                        disabled="@ActionsDisabled">Safe</button>
+                                                <button class="btn btn-outline-danger" title="Confirm compromised"
+                                                        @onclick="() => BeginAction(user, RiskyUserAction.ConfirmCompromised)"
+                                                        disabled="@ActionsDisabled">Compromised</button>
+                                            </div>
+                                        </td>
+                                    }
                                 </tr>
+
+                                @* The confirm bar renders BENEATH the acting row, never above the table:
+                                   a top-of-table confirm for row 47 puts the ticket box off-screen while
+                                   that row's buttons go disabled, which reads as the buttons breaking
+                                   (docs/MigrationBatchSelection-Plan.md slice 3). *@
+                                @if (canRemediate && confirmUserId == user.Id && confirmAction is not null)
+                                {
+                                    <tr class="table-warning">
+                                        <td colspan="@DetailColspan">
+                                            <div class="mb-2"><strong>@ConfirmPrompt(confirmAction.Value, user.UserPrincipalName, user.RiskState)</strong></div>
+                                            @if (user.IsProcessing)
+                                            {
+                                                <div class="small text-muted mb-2">
+                                                    Entra is still processing this user's risk state. The action is not blocked; it may be refused.
+                                                </div>
+                                            }
+                                            <div class="row g-2 align-items-end">
+                                                <div class="col-md-4">
+                                                    <label class="form-label mb-1" for="riskyUsersTicket">Ticket number (required)</label>
+                                                    <input id="riskyUsersTicket" class="form-control form-control-sm" @bind="actionTicket"
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingUserId != null)" />
+                                                </div>
+                                                <div class="col-md-8">
+                                                    <button class="btn btn-danger btn-sm me-2"
+                                                            @onclick="() => ExecuteActionAsync(user, confirmAction.Value)"
+                                                            disabled="@(actingUserId != null || string.IsNullOrWhiteSpace(actionTicket))">
+                                                        @ActionLabel(confirmAction.Value)
+                                                    </button>
+                                                    <button class="btn btn-secondary btn-sm" @onclick="CancelAction"
+                                                            disabled="@(actingUserId != null)">Cancel</button>
+                                                </div>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+
+                                @* Per-user outcome (AC10 / Known Failure Class 2): the verdict is keyed by
+                                   the user it belongs to and rendered in that user's own row, naming the
+                                   UPN - so acting on three rows leaves three separately named outcomes and
+                                   a refusal on one never reads as a verdict on another. *@
+                                @if (actingUserId == user.Id)
+                                {
+                                    <tr>
+                                        <td colspan="@DetailColspan">
+                                            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                                            <small>Applying to @user.UserPrincipalName...</small>
+                                        </td>
+                                    </tr>
+                                }
+                                else if (OutcomeFor(user.Id) is { } outcome)
+                                {
+                                    <tr>
+                                        <td colspan="@DetailColspan">
+                                            <div class="alert @(outcome.Success ? "alert-success" : "alert-danger") mb-0 py-2">
+                                                <strong>@outcome.UserPrincipalName</strong> - @outcome.Message
+                                                @if (outcome.Success)
+                                                {
+                                                    <span class="text-muted"> Refresh to see the updated risk state.</span>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+
                                 @if (expandedUserId == user.Id)
                                 {
                                     <tr>
-                                        <td colspan="8" class="bg-light">
+                                        <td colspan="@DetailColspan" class="bg-light">
                                             @if (historyLoading)
                                             {
                                                 <span class="spinner-border spinner-border-sm me-2"></span> <small>Loading history...</small>
@@ -224,6 +325,42 @@
     private string? historyError;
     private List<RiskyUserHistoryEntry> historyEntries = [];
 
+    // ---- write path (S6) ----------------------------------------------------------------------
+
+    /// <summary>Granular RiskyUsersRemediate grant. Controls RENDERING only; every action
+    /// re-checks the same policy immediately before it acts (Spec, Page Authorization item 3).</summary>
+    private bool canRemediate;
+
+    private string? confirmUserId;
+    private RiskyUserAction? confirmAction;
+    private string actionTicket = "";
+    private string? actingUserId;
+
+    /// <summary>One outcome per user id, so three actions leave three separately named verdicts
+    /// and no row can display another row's result (Known Failure Class 2 / AC10).</summary>
+    private readonly Dictionary<string, RowOutcome> rowOutcomes = [];
+
+    internal sealed record RowOutcome(string UserPrincipalName, bool Success, string Message);
+
+    private RowOutcome? OutcomeFor(string userId) =>
+        rowOutcomes.TryGetValue(userId, out var outcome) ? outcome : null;
+
+    private bool ActionsDisabled => isLoading || actingUserId != null;
+
+    /// <summary>Column count for a full-width detail row; tracks the conditional Remediate column.</summary>
+    private int DetailColspan => canRemediate ? 9 : 8;
+
+    /// <summary>Module id for the servicer grant. Must match the catalog descriptor, and must be
+    /// listed in ModuleConfig.razor's ModulesWithProtectedPrincipalServicing or no group can ever
+    /// be granted it.</summary>
+    private const string ServicerModuleId = "RiskyUsers";
+
+    private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
+        ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
+
+    private static Dictionary<string, object?>? ServicedExtra(string? note) =>
+        ProtectedPrincipalServicing.Extra(note);
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -236,6 +373,10 @@
             Navigation.NavigateTo("access-denied", forceLoad: true);
             return;
         }
+
+        // The granular grant layers ON TOP of the main one (Spec, Authorization Layering), so this
+        // is only reached once module access is established.
+        canRemediate = (await AuthorizationService.AuthorizeAsync(user, "RiskyUsersRemediate")).Succeeded;
 
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
@@ -261,6 +402,13 @@
         expandedUserId = null;
         historyEntries = [];
         historyError = null;
+        // Write-path state is retracted with the rest of it: a per-row outcome or an open confirm
+        // bar left over from the previous query would attach to whatever row happens to share that
+        // position or id in the new one (the blr-3 shape - state emptied, one field left behind).
+        confirmUserId = null;
+        confirmAction = null;
+        actionTicket = "";
+        rowOutcomes.Clear();
         await Task.Yield();
 
         var filter = new RiskyUserFilter(
@@ -338,6 +486,286 @@
         {
             Logger.LogError(ex, "Failed to write Risky Users audit record.");
         }
+    }
+
+    private void BeginAction(RiskyUser user, RiskyUserAction action)
+    {
+        // Opening a confirm bar retracts the previous verdict for THAT row only - every other row
+        // keeps its own outcome (AC10).
+        confirmUserId = user.Id;
+        confirmAction = action;
+        actionTicket = "";
+        rowOutcomes.Remove(user.Id);
+    }
+
+    private void CancelAction()
+    {
+        confirmUserId = null;
+        confirmAction = null;
+        actionTicket = "";
+    }
+
+    private void SetOutcome(string userId, string upn, bool success, string message) =>
+        rowOutcomes[userId] = new RowOutcome(upn, success, message);
+
+    /// <summary>
+    /// Applies one remediation action to one user behind every gate S6 requires, in order: granular
+    /// authorization re-check, mandatory ticket, protected-principal check, then the write. Every
+    /// path - refusal, fail-closed protection outcome, exception, success - audits with the ticket,
+    /// the target UPN and the action, and every real attempt notifies administrators from finally.
+    /// </summary>
+    /// <remarks>
+    /// Fail-closed throughout (Known Failure Class 3): no gate falls through to a permissive
+    /// default, and a protection check that cannot be evaluated REFUSES rather than allowing. The
+    /// only way to record a failure here is Refuse, which audits as it refuses - so a refusal path
+    /// added later cannot forget the audit record.
+    /// </remarks>
+    private async Task ExecuteActionAsync(RiskyUser user, RiskyUserAction action)
+    {
+        // Bound before the first await: a slow action must attach its verdict to the row it was
+        // started from, not to whichever row the operator opened while it was in flight.
+        var userId = user.Id;
+        var upn = user.UserPrincipalName;
+        var ticket = actionTicket.Trim();
+        var auditAction = AuditActionFor(action);
+
+        void Refuse(string message, string auditDetail)
+        {
+            SetOutcome(userId, upn, false, message);
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, auditAction, "RiskyUsers", upn, false, ticket,
+                errorDetail: auditDetail));
+        }
+
+        actingUserId = userId;
+        confirmUserId = null;
+        confirmAction = null;
+        rowOutcomes.Remove(userId);
+        await Task.Yield();
+
+        // Set when an authorised servicer overrode a protected-principal refusal, and carried into
+        // the SUCCESS audit's extra below.
+        string? servicedAuditDetail = null;
+        // Notify admins on any real attempt against the identity - success, protected refusal,
+        // fail-closed protection outcome or exception - but not on the trivial authorization and
+        // ticket pre-gates, which never reached it.
+        var notifyAdmins = false;
+        RiskyUserActionResult? result = null;
+
+        try
+        {
+            // 1. Granular authorization, re-checked immediately before execution. The page-load
+            //    check hides the buttons; it is not the decision, because a grant can be revoked
+            //    while the page is open (Spec, Page Authorization item 3 / AC13).
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var remediateCheck = await AuthorizationService.AuthorizeAsync(authState.User, "RiskyUsersRemediate");
+            if (!remediateCheck.Succeeded)
+            {
+                Refuse("Authorization denied. Remediation requires the Risky Users Remediate permission.",
+                    "Authorization denied - RiskyUsersRemediate");
+                return;
+            }
+
+            // 2. Ticket, mandatory. Presence is checked separately from validation because the
+            //    ServiceNow client passes every ticket while the integration is dormant, so
+            //    validation alone would admit a blank ticket on a deployment without it (AC14).
+            if (string.IsNullOrWhiteSpace(ticket))
+            {
+                Refuse("A ticket number is required.", "Ticket number missing");
+                return;
+            }
+
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
+            {
+                Refuse($"Ticket validation failed: {ticketValidation.Message}",
+                    $"Ticket validation failed: {ticketValidation.Message}");
+                return;
+            }
+
+            notifyAdmins = true;
+
+            // 4. Protected-principal check, BEFORE the write and never after it.
+            //
+            //    Risky users are CLOUD identities, and the group, OU and SamAccountName-pattern
+            //    rules are all evaluated from an on-premises DN, so they can never match a
+            //    cloud-only principal (Constitution, Protected Principals, final bullet). Such a
+            //    principal is protected by the protected USER rows, by address, or not at all - so
+            //    an unresolved directory lookup must NOT skip the check. That skip is the defect
+            //    MfaReset shipped before 1.1.0, on a module whose normal input is a cloud identity.
+            try
+            {
+                var (resolved, resolutionStatus) = await ProtectedPrincipalService.ResolveWithExchangeFallbackAsync(upn);
+                if (resolutionStatus is ProtectedPrincipalService.ResolutionStatus.Unavailable or ProtectedPrincipalService.ResolutionStatus.Ambiguous)
+                {
+                    var reason = resolutionStatus == ProtectedPrincipalService.ResolutionStatus.Ambiguous
+                        ? "Identity is ambiguous - it matches multiple directory users."
+                        : "Protection check unavailable.";
+                    Refuse(reason, $"{reason} - blocked");
+                    return;
+                }
+
+                if (resolved != null)
+                {
+                    var protectionCheck = await ProtectedPrincipalService.CheckAsync(resolved);
+                    if (protectionCheck.CheckFailed)
+                    {
+                        Refuse($"Protection check failed: {protectionCheck.Reason}",
+                            $"Protection check failed: {protectionCheck.Reason}");
+                        return;
+                    }
+                    if (protectionCheck.IsProtected)
+                    {
+                        // An authorised servicer may proceed; everyone else is refused. Protection
+                        // is evaluated first and never weakened - this only decides whether THIS
+                        // operator may act on a target already known to be protected.
+                        servicedAuditDetail = ServicerNoteFor(authState.User, protectionCheck.MatchedRules);
+                        if (servicedAuditDetail is null)
+                        {
+                            Refuse("This user is a protected principal. Risk remediation is not permitted.",
+                                $"Protected principal - matched rules: {string.Join(", ", protectionCheck.MatchedRules)}");
+                            return;
+                        }
+                    }
+                }
+                else
+                {
+                    // Unresolved is NOT "nothing to protect". This module mutates an Entra user
+                    // that AD and Exchange may both be unaware of, so the protected USER rows are
+                    // checked against the raw identity rather than skipped.
+                    //
+                    // The one improvement over the MfaReset shape this copies: MfaReset only ever
+                    // holds a UPN, so it leaves the Entra object id unpopulated. Here riskyUser.id
+                    // IS the Entra object id, and ProtectedPrincipalService.MatchesIdentity compares
+                    // EntraObjectId against every protected USER row
+                    // (Services/ProtectedPrincipalService.cs:693-710) - verified, not assumed - so
+                    // populating it makes object-id-based protection genuinely effective here.
+                    var unresolved = new ResolvedDirectoryPrincipal(
+                        Source: "RiskyUsers-Unresolved",
+                        DisplayName: string.IsNullOrWhiteSpace(user.UserDisplayName) ? upn : user.UserDisplayName,
+                        UserPrincipalName: upn,
+                        SamAccountName: null,
+                        PrimarySmtpAddress: upn.Contains('@') ? upn : null,
+                        DistinguishedName: null,
+                        ObjectGuid: null,
+                        EntraObjectId: string.IsNullOrWhiteSpace(userId) ? null : userId);
+
+                    var unresolvedCheck = await ProtectedPrincipalService.CheckAsync(unresolved);
+                    if (unresolvedCheck.CheckFailed)
+                    {
+                        Refuse($"Protection check failed: {unresolvedCheck.Reason}",
+                            $"Protection check failed: {unresolvedCheck.Reason}");
+                        return;
+                    }
+                    if (unresolvedCheck.IsProtected)
+                    {
+                        // Both branches honour the servicer grant, or a cloud-only protected
+                        // identity becomes the one case a servicer cannot service - precisely this
+                        // module's population.
+                        servicedAuditDetail = ServicerNoteFor(authState.User, unresolvedCheck.MatchedRules, "directory-unresolved");
+                        if (servicedAuditDetail is null)
+                        {
+                            Refuse("This user is a protected principal. Risk remediation is not permitted.",
+                                $"Protected principal (directory-unresolved) - matched rules: {string.Join(", ", unresolvedCheck.MatchedRules)}");
+                            return;
+                        }
+                    }
+
+                    Logger.LogInformation(
+                        "No such recipient in Active Directory or Exchange Online for {Upn}; protected user rows matched neither the raw identity nor its Entra object id - proceeding", upn);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Fail closed: an errored check says nothing about the target, so it can never be
+                // read as permission (Known Failure Class 3).
+                Logger.LogWarning(ex, "Protected principal check failed for {Upn} - blocking as precaution", upn);
+                Refuse($"Protection check error: {ex.Message}", $"Protection check exception: {ex.Message}");
+                return;
+            }
+
+            // 5. The write. Reachable only with every gate above passed, and one Graph call per
+            //    user (S5) - so this outcome names exactly one user.
+            var applied = await RiskyUsersService.ApplyActionAsync(userId, action);
+            result = applied;
+            SetOutcome(userId, upn, applied.Success, applied.Message);
+
+            // The serviced note rides extra, never errorDetail: LogModuleAction writes
+            // ["error"] = success ? null : errorDetail (Services/AuditService.cs), so the one field
+            // explaining why a protected user could be acted on would be discarded on exactly the
+            // success path that needs it (pps-3).
+            SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, auditAction, "RiskyUsers", upn, applied.Success, ticket,
+                errorDetail: applied.Success ? null : applied.Message,
+                extra: ServicedExtra(servicedAuditDetail)));
+
+            Logger.LogInformation("User {Admin} applied {Action} to risky user {Target} (ticket {Ticket}): {Result}",
+                currentUser, auditAction, upn, ticket, applied.Message);
+        }
+        catch (Exception ex)
+        {
+            Refuse(ex.Message, ex.Message);
+            Logger.LogError(ex, "Risky user action {Action} failed for {Upn}.", auditAction, upn);
+        }
+        finally
+        {
+            actingUserId = null;
+            actionTicket = "";
+
+            // Mandatory admin notification on every real attempt (Constitution, Notifications),
+            // in finally and wrapped so a send failure cannot change the reported result (AC15).
+            if (notifyAdmins)
+            {
+                var success = result?.Success ?? false;
+                var message = OutcomeFor(userId)?.Message;
+                try
+                {
+                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, auditAction,
+                        success, ticket,
+                        new Dictionary<string, string>
+                        {
+                            ["Target User"] = upn,
+                            ["Entra Object Id"] = userId,
+                            ["Action"] = ActionLabel(action)
+                        },
+                        success ? null : message);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to send Risky Users admin notification for {Upn}", upn);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Audit action name for a remediation action. Each action files under its own name so an
+    /// audit query can tell a dismissal from a confirm-compromised; an unknown member throws
+    /// rather than filing under a generic name that hides which action ran.
+    /// </summary>
+    internal static string AuditActionFor(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => "RiskyUsers_Dismiss",
+        RiskyUserAction.ConfirmSafe => "RiskyUsers_ConfirmSafe",
+        RiskyUserAction.ConfirmCompromised => "RiskyUsers_ConfirmCompromised",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
+    };
+
+    /// <summary>Operator-facing name for a remediation action.</summary>
+    internal static string ActionLabel(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => "Dismiss risk",
+        RiskyUserAction.ConfirmSafe => "Confirm safe",
+        RiskyUserAction.ConfirmCompromised => "Confirm compromised",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
+    };
+
+    /// <summary>
+    /// Confirmation text shown beneath the acting row. Names the action AND the user, so the
+    /// confirm step cannot be satisfied without seeing which user it applies to.
+    /// </summary>
+    internal static string ConfirmPrompt(RiskyUserAction action, string userPrincipalName, string riskState)
+    {
+        var state = string.IsNullOrWhiteSpace(riskState) ? "unknown" : riskState;
+        return $"{ActionLabel(action)} for {userPrincipalName}? Current risk state: {state}.";
     }
 
     /// <summary>
