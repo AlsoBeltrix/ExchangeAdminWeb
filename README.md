@@ -202,6 +202,33 @@ Rapidly disable a compromised user account across on-prem AD and Entra ID with s
 - **Requires:** AD Delinea secret for account disable and Graph Delinea secret for session revocation
 - Section access key: `EmergencyDisable`
 
+### Risky Users (`/risky-users`)
+
+Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph API.
+
+- Filtered read of risky users by risk level, risk state, and UPN contains; results
+  are capped at 500 rows (Graph's own `$top` maximum) and a truncated result is shown
+  as such, never silently cut off
+- Per-row risk history expander
+- Remediation (Dismiss, Confirm Safe, Confirm Compromised) sits behind the
+  `RiskyUsersRemediate` granular permission, fail-closed like the main module
+  permission. Each action is one Graph call per user, never a batch, so a refusal on
+  one row cannot be reported as success or failure for another
+- A ticket number is required before any remediation action runs
+- A protected-principal check runs before every write, using the two-branch model
+  (resolved and unresolved) and the risky user's Entra object id, since risky users
+  are cloud identities with no on-prem AD object; the `ProtectedServicer:RiskyUsers`
+  override applies on both branches
+- Every remediation action produces a named per-user outcome and an admin
+  notification
+- Reads are audited but never alert-emailed (owner ruling 2026-08-31): a triage
+  session that refreshes the list repeatedly does not generate an alert per refresh
+- **Requires:** Microsoft Entra ID P2, and a dedicated Graph app registration
+  (admin-consented `IdentityRiskyUser.Read.All` for reads, plus
+  `IdentityRiskyUser.ReadWrite.All` for remediation) with its own Delinea secret.
+  Outstanding as of this writing -- blocks the first live Graph call, not the code
+- Section access key: `RiskyUsers`
+
 ### DHCP Authorization (`/dhcp-authorization`)
 
 Authorize or deauthorize DHCP servers in Active Directory.
