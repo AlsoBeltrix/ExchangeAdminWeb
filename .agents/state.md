@@ -501,9 +501,18 @@ by owner ruling 2026-09-01 (items below shift down one):**
    `ITicketValidator`/`TicketValidationService` over the dormant ServiceNow client,
    `ServiceNowService.Enabled`, DI, 10 tests mutation-proven in 3 batches, base app
    `2.10.0` -> `2.11.0` (bump moved into S1 per the csv-2 rule, plan revised
-   `5b48b39`). Suite 1852/0/3, format clean. **NEXT: S2 (BitLocker service gate +
-   page + config field) in a fresh session, on its own go per the slice protocol.**
-   (Item 7 in the older list below)
+   `5b48b39`). Suite 1852/0/3, format clean. **S2 IMPLEMENTED 2026-09-01 (owner go
+   the same day), commit `fd7cb1f`:** ticket gate first-statement in both search
+   methods (Rejected AND Unavailable refuse before the archive opens), page ticket
+   input with button/Enter gating, `searchTicket` captured at search time so the
+   reveal audit carries the ticket that authorized the visible results,
+   `ValidateTickets` Boolean config field (default false). 5 new tests (2
+   behavioral + 3 source guards), mutation-proven in 2 batches; suite 1859/0/3,
+   format clean. No version bump in S2 by design - base bumped in S1, module bump
+   is S3. **NEXT: S3 (BitLockerRecovery `1.1.0` + docs) in a fresh session, on its
+   own go per the slice protocol.** The plan's four manual checks (section 8) need
+   a deployed instance and ride the next dev deploy. (Item 7 in the older list
+   below)
 2. CSV export for five modules - PLAN DRAFTED 2026-08-31
    (`docs/ModuleCsvExport-Plan.md`), CODEX-REVIEWED same day (same openreview pass;
    csv-1 and csv-2 folded in - see that plan's Review log). **D1 RULED 2026-09-01:
