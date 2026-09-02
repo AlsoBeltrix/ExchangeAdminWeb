@@ -20,9 +20,30 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   non-blank (`f42fdf0`, base `2.17.0`; spec and dev guide updated). Two permissions were
   found to grant nothing and now say so on screen: `ExchangeOnline` (no page or code
   consumes it) and `AdminSettings` (built from `Security:AdminGroups`, not section access)
-  - recorded, not changed; owner's call whether to remove them. Suite 2169/0/3.
-  **NEXT: owner deploys dev, grants a group on `IntuneDevices` and `RiskyUsers` Access,
-  sets both `GraphDelineaSecretId` values, then runs the manual checks.**
+  - recorded, not changed; owner's call whether to remove them.
+  **Second round, same day, after the owner tested `2.17.0` on dev (both Graph app
+  registrations PROVEN live: Risky Users search returned rows, a blank Intune search
+  returned 50 devices):** (4) Self-Service Groups could not remove the cross-domain
+  nested `Organization Management` (WINROOT) from `ExchangeWebAdmins` - the remove path
+  resolved the member by GUID with no -Server (the listing was fixed for this 2026-08-28,
+  the remove was not); fixed by threading the row's DN and routing the resolve, the
+  membership pre-check (which asked the MEMBER for a back-link it cannot have and would
+  have no-op'd silently) and the write to the owning domains, in BOTH group modules
+  (`8d0710a`, SelfServiceGroups `1.7.0`, GroupManagement `2.7.0`). (5) Risky Users
+  actions "Dismiss | Safe | Compromised" were ambiguous for L2 - now "Close as handled /
+  This was the real user / Account was breached" with a one-line consequence in the
+  confirm bar (`cf4c691`, RiskyUsers `1.1.0`). (6) Intune search was exact-match `eq`
+  and found nothing for a real UPN - now `startswith` on deviceName and UPN, `eq` on
+  serial, plus a plain-language "What do these actions do?" panel, button tooltips and
+  a consequence line per confirm bar for Delete/Retire/Wipe/Entra/email (`f17ecfd`,
+  IntuneDevices `1.2.0`). **The `startswith` filter form is UNCONFIRMED against the live
+  tenant** - if a dev search reports a failed search naming a 400, the filter needs a
+  per-field split. Also found: `GraphTokenClient.GetWithStatusAsync` discards the error
+  body on non-success, so a rejected filter cannot quote Graph's reason without a base
+  bump - recorded, not changed. Suite 2200/0/3.
+  **NEXT: owner deploys dev (carries `2.17.0` + these three), then: remove Organization
+  Management from ExchangeWebAdmins in self-service and re-add it via Group Management;
+  an Intune prefix search and a full-UPN search; read the Risky Users labels.**
 
 - **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
   NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1
@@ -54,12 +75,10 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   harness + tripwires), probe: both gates neutered, 5 tests failed, restored.
   **NEXT: rides the next dev deploy; then select a protected group as a non-servicer
   and confirm the immediate refusal with no member list.**
-  **Two adjacent PRE-EXISTING gaps found while reading, NOT fixed (survey is not
-  authorization): (1) `ResolveGroupForWrite` LDAP-filters sam/name/mail with no
-  -Server, so a WINROOT group likely cannot be written to (or now, checked) from the
-  admin module - its resolve fails local-only; (2) `GetMembersAsync` reads the group
-  by DN with no -Server either, so opening a WINROOT group's members likely fails too.
-  Both predate today; owner decides whether to schedule.**
+  **Two adjacent PRE-EXISTING gaps found while reading - BOTH CLOSED as of `8d0710a`
+  (2026-09-02): the DN paths were already routed by fsr-1, and the name-only fallback of
+  `ResolveGroupForWrite` now resolves through the forest global catalog and re-reads the
+  single match in its own domain. See the DEV VALIDATION FIXES entry.**
 
 - **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
   2026-08-31 (the `2.10.0` deploy); NOT on prod.**
