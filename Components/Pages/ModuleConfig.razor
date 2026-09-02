@@ -181,6 +181,10 @@
                             <strong style="font-size: 0.8rem;">@capturedAlias</strong>
                             <span class="text-muted" style="font-size: 0.72rem;">@aliasGroups.Count group(s)</span>
                         </div>
+                        @* The alias alone told an admin nothing about what they were approving
+                           (owner ruling 2026-09-02). The descriptor sentence says what a member of
+                           the groups below can DO, on the row where the grant is made. *@
+                        <div class="text-muted mb-1" style="font-size: 0.72rem;">@PermissionDescriptionFor(capturedAlias)</div>
                         <table class="adm-tbl">
                             <thead>
                                 <tr>
@@ -747,6 +751,32 @@
 
         return !accessState.TryGetValue(module.MainPermission.PolicyAlias, out var moduleGroups)
             || !moduleGroups.Contains(groupValue, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The operator-facing sentence for one policy alias on the Access tab.
+    /// </summary>
+    /// <remarks>
+    /// Looked up from the descriptor rather than stored alongside policyAliases, so the sentence
+    /// shown here is the same one the catalog declares and cannot drift from it. Every alias in
+    /// policyAliases except the servicer key resolves; the servicer key never reaches this method
+    /// (it renders in its own section, with its own warning), so an empty string is the correct
+    /// answer for an alias with no descriptor rather than a placeholder that reads as a permission.
+    /// </remarks>
+    private string PermissionDescriptionFor(string alias)
+    {
+        if (module == null) return string.Empty;
+
+        if (string.Equals(module.MainPermission.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+            return module.MainPermission.Description;
+
+        foreach (var gp in module.GranularPermissions)
+        {
+            if (string.Equals(gp.PolicyAlias, alias, StringComparison.OrdinalIgnoreCase))
+                return gp.Description;
+        }
+
+        return string.Empty;
     }
 
     /// <summary>The group name without its domain prefix, for the Group column.</summary>

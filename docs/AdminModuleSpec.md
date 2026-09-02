@@ -24,7 +24,8 @@ new AdminModuleDescriptor
     EnabledByDefault = false,           // Enabled on fresh installs
     IsSystemModule = false,             // true = cannot disabled
     Version = "1.0.0",                  // Module version (not app version)
-    MainPermission = new ModulePermission("Access", "MyModule", FailClosed: true),
+    MainPermission = new ModulePermission("Access", "MyModule",
+        "Open the module and do the thing it does, to these objects.", FailClosed: true),
     DependsOn = null,                   // Module ID depends on, or null
     IsConfigOnly = false,               // true = config-only, no page
     GranularPermissions = [],
@@ -41,11 +42,19 @@ new AdminModuleDescriptor
 ### ModulePermission
 
 ```csharp
-public sealed record ModulePermission(string Name, string PolicyAlias, bool FailClosed = false);
+public sealed record ModulePermission(string Name, string PolicyAlias, string Description, bool FailClosed = false);
 ```
 
 - **Name**: Logical permission name (e.g., "Access", "OnPrem", "Create", "Manage")
 - **PolicyAlias**: The string used in `[Authorize(Policy = "...")]` and the `section_access` table in `config/exchangeadmin.db`
+- **Description**: REQUIRED, no default. The operator-facing sentence rendered under this
+  permission's heading on the Module Config Access tab. One sentence saying what a member of
+  the groups listed there can DO - verbs and objects, and the blast radius where the action is
+  destructive. Add a second short sentence only where that blast radius needs spelling out.
+  Never restate the alias or the permission name: "IntuneDevicesPrivileged grants privileged
+  access" tells an approver nothing, which is why the field exists (owner ruling 2026-09-02).
+  Where a permission grants nothing - an inert alias, or a system module gated by
+  `Security:AdminGroups` - say so plainly instead of inventing a capability.
 - **FailClosed**: If true, this permission denies all users when no section access is configured (instead of falling back to AllowedGroups)
 
 ### Authorization Layering
@@ -91,7 +100,9 @@ Table: `section_access` in `config/exchangeadmin.db`
 | `MyModule` | `DOMAIN\MyModuleUsers` |
 | `MyModuleAdmin` | `DOMAIN\MyModuleAdmins` |
 
-Managed on each module's config page (`/module-config/{ModuleId}`). Each PolicyAlias appears there.
+Managed on each module's config page (`/module-config/{ModuleId}`). Each PolicyAlias appears
+there, with its `Description` rendered underneath so an admin granting the group can see what
+the grant does.
 
 - No rows for alias: fail-closed (deny)
 - Store unreadable: fail-closed (deny all)

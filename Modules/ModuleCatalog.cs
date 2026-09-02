@@ -123,7 +123,10 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             IsConfigOnly = true,
             Version = "1.0.1",
-            MainPermission = new("Access", "ExchangeOnline"),
+            MainPermission = new(
+                "Access",
+                "ExchangeOnline",
+                "Nothing on its own - no page or code checks this permission; the Exchange Online connection settings page is reached through Admin Settings access instead."),
             ConfigFields = [
                 new("AppId", "App Registration ID (GUID)", "Azure AD app registration for EXO PowerShell"),
                 new("Organization", "Organization", "e.g. contoso.onmicrosoft.com"),
@@ -143,8 +146,16 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.1.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "MailboxPermissions", FailClosed: true),
-            GranularPermissions = [new("OnPrem", "MailboxPermissionsOnPrem", FailClosed: true)],
+            MainPermission = new(
+                "Access",
+                "MailboxPermissions",
+                "Open the module, look up a mailbox, and grant or revoke Full Access and Send As on Exchange Online mailboxes.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("OnPrem", "MailboxPermissionsOnPrem",
+                    "Also grant or revoke those permissions when the mailbox lives on the on-premises Exchange servers; without it, on-premises targets are refused and the operator is told to escalate.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by mailbox permission operations", Required: false),
                 new("PreventSelfGrant", "Prevent Self-Grant", "Block users from granting permissions to themselves - applies to all permission operations", Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
@@ -163,8 +174,16 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.1.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "CalendarPermissions", FailClosed: true),
-            GranularPermissions = [new("OnPrem", "CalendarPermissionsOnPrem", FailClosed: true)],
+            MainPermission = new(
+                "Access",
+                "CalendarPermissions",
+                "Open the module and set or remove calendar sharing permissions on Exchange Online mailboxes.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("OnPrem", "CalendarPermissionsOnPrem",
+                    "Also set or remove calendar permissions when the mailbox lives on the on-premises Exchange servers; without it, on-premises targets are refused and the operator is told to escalate.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by calendar permission operations", Required: false)
             ]
@@ -183,8 +202,19 @@ public sealed class ModuleCatalog
             // 1.8.0: CSV export of the migration batch status list (docs/ModuleCsvExport-Plan.md).
             Version = "1.8.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "MigrationCheck", FailClosed: true),
-            GranularPermissions = [new("Create", "MigrationCreate", FailClosed: true), new("Manage", "MigrationManage", FailClosed: true)],
+            MainPermission = new(
+                "Access",
+                "MigrationCheck",
+                "Open the module, test whether a mailbox is eligible to migrate, and read the migration batch list; no batch is created or changed.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("Create", "MigrationCreate",
+                    "Create migration batches for eligible mailboxes, singly or from a bulk list, which starts real mailbox moves.",
+                    FailClosed: true),
+                new("Manage", "MigrationManage",
+                    "Complete, stop, resume and delete existing migration batches, singly or in bulk; deleting a batch cancels the moves in it.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("HybridEndpoint", "Hybrid Endpoint", "Migration endpoint name", DefaultValue: "hybrid1"),
                 new("CloudTargetDeliveryDomain", "Cloud Target Domain", "e.g. contoso.mail.onmicrosoft.com"),
@@ -208,7 +238,10 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.0.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "DelegationReport")
+            MainPermission = new(
+                "Access",
+                "DelegationReport",
+                "Open the module and read who holds Full Access, Send As and calendar rights on any mailbox; read-only, nothing is changed.")
         },
         new()
         {
@@ -223,7 +256,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.4.1",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "MessageTrace", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "MessageTrace",
+                "Open the module and trace any user's mail, reading senders, recipients, subjects, headers and transport log detail.",
+                FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by message tracking", Required: false)
             ]
@@ -241,7 +278,10 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.0.2",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "RecipientLookup"),
+            MainPermission = new(
+                "Access",
+                "RecipientLookup",
+                "Open the module and read mailbox details such as size, quotas, archive state and recipient type; read-only."),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem Exchange Delinea Secret ID", "Secret Server ID for the on-prem Exchange credential used by recipient lookup", Required: false)
             ]
@@ -259,7 +299,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.1.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "OutOfOffice", FailClosed: true)
+            MainPermission = new(
+                "Access",
+                "OutOfOffice",
+                "Open the module and read or change any mailbox's automatic reply state, schedule and reply text.",
+                FailClosed: true)
         },
         new()
         {
@@ -277,8 +321,16 @@ public sealed class ModuleCatalog
             // 1.4.0: CSV export of the blocked-sender list (docs/ModuleCsvExport-Plan.md).
             Version = "1.4.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "BlockedSenders", FailClosed: true),
-            GranularPermissions = [new("Unblock", "BlockedSendersUnblock", FailClosed: true)]
+            MainPermission = new(
+                "Access",
+                "BlockedSenders",
+                "Open the module and read which accounts Exchange Online has blocked from sending mail for outbound spam; read-only on its own.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("Unblock", "BlockedSendersUnblock",
+                    "Unblock a listed account, restoring its ability to send mail before the outbound spam that blocked it has necessarily been dealt with.",
+                    FailClosed: true)
+            ]
         },
         new()
         {
@@ -302,8 +354,16 @@ public sealed class ModuleCatalog
             // at selection and never sees members; servicers see a Protected badge. The
             // write-path gates stay as the backstop.
             Version = "2.6.0",
-            MainPermission = new("Access", "GroupManagement", FailClosed: true),
-            GranularPermissions = [new("OnPrem", "GroupManagementOnPrem", FailClosed: true)],
+            MainPermission = new(
+                "Access",
+                "GroupManagement",
+                "Open the module and search on-premises Active Directory groups across the forest and read their membership; read-only on its own.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("OnPrem", "GroupManagementOnPrem",
+                    "Add and remove members on any on-premises Active Directory group found here - the only permission in this module that writes to the directory.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used by group membership operations", Required: false)
             ]
@@ -320,7 +380,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.3.0",
-            MainPermission = new("Access", "M365GroupManagement", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "M365GroupManagement",
+                "Open the module and create, rename, delete Microsoft 365 groups and change their members and owners through Graph; deleting a group is the destructive action here.",
+                FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires Group.ReadWrite.All)")
             ]
@@ -337,7 +401,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.2.0",
-            MainPermission = new("Access", "Comms10k", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "Comms10k",
+                "Open the module and replace the entire membership of the company-wide broadcast distribution list from an uploaded CSV; anyone absent from the file is removed.",
+                FailClosed: true),
             ConfigFields = [
                 new("TargetGroupName", "Target Group", "AD group name to manage", FieldType: ConfigFieldType.AdGroup),
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by Comms-10k operations")
@@ -366,7 +434,11 @@ public sealed class ModuleCatalog
             // owners always edit owned groups here; eligibility already means native AD write
             // rights, so the app-side refusal was inconvenience, not security.
             Version = "1.6.0",
-            MainPermission = new("Access", "SelfServiceGroups", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "SelfServiceGroups",
+                "Open the module and add or remove members on only those on-premises Active Directory groups the signed-in operator already owns or has directory write rights to.",
+                FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "On-Prem AD Delinea Secret ID", "Secret Server ID for the AD credential used to read group ownership/ACLs and write membership")
             ]
@@ -386,7 +458,11 @@ public sealed class ModuleCatalog
             // cloud-only user as "no AD object" and skipped the check, which for a Graph module is
             // the normal case - so protection was close to inert here.
             Version = "1.2.0",
-            MainPermission = new("Access", "MfaReset", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "MfaReset",
+                "Open the module and clear a user's registered multi-factor authentication methods, which locks them out of sign-in until they re-register.",
+                FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields")
             ]
@@ -403,9 +479,15 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.2.0",
-            MainPermission = new("Access", "AccountLockoutRemediation", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "AccountLockoutRemediation",
+                "Open the module and read domain controller lockout events to find which machines are locking an account out; investigation only, nothing is changed.",
+                FailClosed: true),
             GranularPermissions = [
-                new("Logoff", "AccountLockoutRemediationLogoff", FailClosed: true)
+                new("Logoff", "AccountLockoutRemediationLogoff",
+                    "Log the account off the implicated or scoped computers over WinRM, ending its live sessions there along with any unsaved work in them.",
+                    FailClosed: true)
             ],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to read lockout events, query computer sessions, and log off target sessions"),
@@ -426,7 +508,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "2.5.0",
             DependsOn = "ExchangeOnline",
-            MainPermission = new("Access", "ConferenceRooms", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "ConferenceRooms",
+                "Open the module and change room metadata, room lists, booking policies, calendar permissions and room-type templates, which decides who may book each room.",
+                FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the on-prem AD credential used to write dir-synced room attributes (City/State/Country) via Set-ADUser during Room Finder apply"),
                 new("DefaultArbiterGroup", "Default Arbiter Group", "Default group with editor permissions on room calendars (e.g. room-admins@example.com)"),
@@ -457,7 +543,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.1.0: CSV export of the named-location list (docs/ModuleCsvExport-Plan.md).
             Version = "1.1.0",
-            MainPermission = new("Access", "NamedLocations", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "NamedLocations",
+                "Open the module and create, edit or delete the Conditional Access named locations - the IP ranges and countries tenant sign-in policies are evaluated against.",
+                FailClosed: true),
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (requires Policy.ReadWrite.ConditionalAccess)")
             ]
@@ -474,7 +564,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.2.0",
-            MainPermission = new("Access", "EmergencyDisable", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "EmergencyDisable",
+                "Open the module and disable a user in on-premises AD and Entra ID, reset their password and revoke their sign-in sessions in one run - the user is locked out immediately.",
+                FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential with account disable and password reset permissions"),
@@ -494,8 +588,16 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.0.0",
-            MainPermission = new("Access", "RiskyUsers", FailClosed: true),
-            GranularPermissions = [new("Remediate", "RiskyUsersRemediate", FailClosed: true)],
+            MainPermission = new(
+                "Access",
+                "RiskyUsers",
+                "Open the module and read which users Entra ID Protection considers risky, with their risk level, state and detection history; read-only.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("Remediate", "RiskyUsersRemediate",
+                    "Dismiss a user's risk, or mark them confirmed safe or confirmed compromised, changing the risk state that Conditional Access policies are evaluated against.",
+                    FailClosed: true)
+            ],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID", "Secret Server secret with fields: Tenant ID, Application ID, Client Secret (requires IdentityRiskyUser.Read.All, plus IdentityRiskyUser.ReadWrite.All for remediation). Requires Microsoft Entra ID P2."),
                 new("MaxRows", "Max Rows", "Maximum risky users fetched per query (Graph caps at 500)", Required: false, DefaultValue: "500")
@@ -514,7 +616,11 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             // 1.3.0: CSV export of the authorized-server list (docs/ModuleCsvExport-Plan.md).
             Version = "1.3.0",
-            MainPermission = new("Access", "DhcpAuthorization", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "DhcpAuthorization",
+                "Open the module and authorize or deauthorize DHCP servers in Active Directory; deauthorizing a live server stops it issuing address leases.",
+                FailClosed: true),
             ConfigFields = [
                 new("DelineaSecretId", "Enterprise Admin Delinea Secret ID", "Secret Server ID for the Enterprise Admin credential used for DHCP operations")
             ]
@@ -537,7 +643,11 @@ public sealed class ModuleCatalog
             // reveal audit events; ValidateTickets per-module validation switch.
             Version = "1.2.0",
             // Fail-closed: a recovery key decrypts an entire disk.
-            MainPermission = new("Access", "BitLockerRecovery", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "BitLockerRecovery",
+                "Open the module and search for and reveal BitLocker recovery keys, each of which decrypts a whole disk; a ticket is required and every search and reveal is audited.",
+                FailClosed: true),
             ConfigFields = [
                 new(
                     "ArchiveDatabasePath",
@@ -592,11 +702,21 @@ public sealed class ModuleCatalog
             IsSystemModule = false,
             Version = "1.1.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
-            MainPermission = new("Access", "IntuneDevices", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "IntuneDevices",
+                "Open the module, search Intune managed devices, and view device detail. Required before any other Intune Devices permission has effect.",
+                FailClosed: true),
             GranularPermissions = [
-                new("Delete", "IntuneDevicesDelete", FailClosed: true),
-                new("Privileged", "IntuneDevicesPrivileged", FailClosed: true),
-                new("EntraDelete", "IntuneDevicesEntraDelete", FailClosed: true)
+                new("Delete", "IntuneDevicesDelete",
+                    "Delete a device's Intune management record. Company data stays on the device until it next checks in; the Entra ID device object is untouched.",
+                    FailClosed: true),
+                new("Privileged", "IntuneDevicesPrivileged",
+                    "Retire (remove company data and management) or Wipe (factory reset) a device. The destructive tier.",
+                    FailClosed: true),
+                new("EntraDelete", "IntuneDevicesEntraDelete",
+                    "Also remove the device's Entra ID directory object via the checkbox beside each action. Backed by a directory-wide Graph scope.",
+                    FailClosed: true)
             ],
             ConfigFields = [
                 new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
@@ -623,7 +743,11 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.1.0",
-            MainPermission = new("Access", "LicensingUpdates", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "LicensingUpdates",
+                "Open the module and bulk-write the Exchange licensing value (extensionAttribute11) onto every user named in an uploaded CSV, in one run.",
+                FailClosed: true),
             GranularPermissions = [],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used to write extensionAttribute11"),
@@ -642,11 +766,21 @@ public sealed class ModuleCatalog
             EnabledByDefault = false,
             IsSystemModule = false,
             Version = "1.4.0",
-            MainPermission = new("Access", "ADAttributeEditor", FailClosed: true),
+            MainPermission = new(
+                "Access",
+                "ADAttributeEditor",
+                "Open the module and look up an on-premises user; no attribute can be edited until one of the level permissions below is also granted.",
+                FailClosed: true),
             GranularPermissions = [
-                new("Level1", "ADAttributeEditorLevel1", FailClosed: true),
-                new("Level2", "ADAttributeEditorLevel2", FailClosed: true),
-                new("Level3", "ADAttributeEditorLevel3", FailClosed: true)
+                new("Level1", "ADAttributeEditorLevel1",
+                    "Edit the allowlisted attributes marked level 1 on this module's Editable Attributes tab - the least sensitive tier.",
+                    FailClosed: true),
+                new("Level2", "ADAttributeEditorLevel2",
+                    "Edit the allowlisted attributes marked level 1 or level 2; the levels are cumulative, so this includes everything level 1 allows.",
+                    FailClosed: true),
+                new("Level3", "ADAttributeEditorLevel3",
+                    "Edit every allowlisted attribute at any level - the widest directory write this module offers.",
+                    FailClosed: true)
             ],
             ConfigFields = [
                 new("DelineaSecretId", "AD Delinea Secret ID", "Secret Server ID for the AD credential used by attribute read/write operations"),
@@ -667,7 +801,10 @@ public sealed class ModuleCatalog
             // 1.2.0: the protected-principals panel gains the Protected Group Targets list
             // (docs/ProtectedGroupWriteTarget-Plan.md T0) - pgwt-8.
             Version = "1.2.0",
-            MainPermission = new("Access", "AdminSettings")
+            MainPermission = new(
+                "Access",
+                "AdminSettings",
+                "Nothing on its own - this page answers to the Security:AdminGroups setting in configuration, not to groups listed here.")
         },
         new()
         {
@@ -681,8 +818,16 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             Version = "1.1.0",
-            MainPermission = new("Access", "EventLog", FailClosed: true),
-            GranularPermissions = [new("Undo", "UndoAuditedActions", FailClosed: true)]
+            MainPermission = new(
+                "Access",
+                "EventLog",
+                "Read the audit trail of every action any operator has taken in any module, including targets, tickets and outcomes from modules the reader cannot otherwise open.",
+                FailClosed: true),
+            GranularPermissions = [
+                new("Undo", "UndoAuditedActions",
+                    "Reverse an audited action from the log, which writes the previous value back to the live target; the undo is itself audited.",
+                    FailClosed: true)
+            ]
         },
         new()
         {
@@ -700,7 +845,11 @@ public sealed class ModuleCatalog
             // and per-row outcomes across section-access boundaries. That aggregation is exactly
             // what those boundaries exist to prevent leaking, so a failure to evaluate the policy
             // must deny. Same reasoning as AdminEventLog.
-            MainPermission = new("Access", "AdminBulkJobs", FailClosed: true)
+            MainPermission = new(
+                "Access",
+                "AdminBulkJobs",
+                "Open the module and read, cancel or remove background bulk jobs from every module, including their submitters, tickets, targets and per-row outcomes.",
+                FailClosed: true)
         }
     ];
 

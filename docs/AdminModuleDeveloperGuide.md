@@ -229,8 +229,15 @@ Current permission shape:
 public sealed record ModulePermission(
     string Name,
     string PolicyAlias,
+    string Description,
     bool FailClosed = false);
 ```
+
+`Description` is required and has no default. It is the sentence rendered under the
+permission's heading on the Module Config Access tab, so it must say what a member of
+the groups listed there can DO - verbs and objects, plus the blast radius where the
+action is destructive - and must never restate the alias. See
+`docs/AdminModuleSpec.md` (Permission Model) for the full rule.
 
 Current config field shape:
 
@@ -267,7 +274,11 @@ new()
     EnabledByDefault = false,
     IsSystemModule = false,
     Version = "1.0.0",
-    MainPermission = new("Access", "NamedLocations", FailClosed: true),
+    MainPermission = new(
+        "Access",
+        "NamedLocations",
+        "Open the module and create, edit or delete the Conditional Access named locations - the IP ranges and countries tenant sign-in policies are evaluated against.",
+        FailClosed: true),
     ConfigFields = [
         new(
             "GraphDelineaSecretId",

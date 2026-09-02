@@ -297,6 +297,59 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_EveryPermissionCarriesAnOperatorFacingDescription()
+    {
+        // The Module Config Access tab used to list a module's permissions by internal alias
+        // alone - "IntuneDevicesPrivileged  0 group(s)" - so an admin granting a group could not
+        // tell what they were approving (owner ruling 2026-09-02). Every permission now carries a
+        // sentence, and this is the tripwire that keeps the next module from shipping without one.
+        //
+        // Restating the Name or the PolicyAlias is the specific failure worth failing on: it
+        // satisfies "non-blank" while telling the approver nothing, which is the state this
+        // whole field exists to end.
+        foreach (var module in _catalog.GetAll())
+        {
+            var permissions = new[] { module.MainPermission }.Concat(module.GranularPermissions);
+            foreach (var permission in permissions)
+            {
+                var where = $"{module.Id}.{permission.PolicyAlias}";
+
+                Assert.False(
+                    string.IsNullOrWhiteSpace(permission.Description),
+                    $"{where} has no permission description. The Access tab would show the alias alone.");
+
+                Assert.False(
+                    string.Equals(permission.Description.Trim(), permission.Name, StringComparison.OrdinalIgnoreCase),
+                    $"{where} restates its permission name instead of describing what a member can do.");
+
+                Assert.False(
+                    string.Equals(permission.Description.Trim(), permission.PolicyAlias, StringComparison.OrdinalIgnoreCase),
+                    $"{where} restates its policy alias instead of describing what a member can do.");
+
+                Assert.EndsWith(".", permission.Description.Trim(), StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
+    public void ModuleConfig_AccessTab_RendersEachPermissionsDescription()
+    {
+        // Source-text guard, not behavioural coverage: there is no bUnit harness in this repo, so
+        // no test can render the Access tab. It still catches the render or its lookup being
+        // deleted, which would put the page back to listing bare aliases - the exact state the
+        // owner ruled invalid.
+        var text = File.ReadAllText(Path.Combine(GetPagesDirectory(), "ModuleConfig.razor"));
+
+        Assert.Contains("@PermissionDescriptionFor(capturedAlias)", text, StringComparison.Ordinal);
+        Assert.Contains("private string PermissionDescriptionFor(string alias)", text, StringComparison.Ordinal);
+
+        // Pins WHERE the sentence comes from. A hardcoded string or a second copy on the page
+        // could drift from the catalog, and a stale description is worse than none.
+        Assert.Contains("module.MainPermission.Description", text, StringComparison.Ordinal);
+        Assert.Contains("gp.Description", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Catalog_BooleanDefaultedFieldsDeclareBooleanType()
     {
         // A boolean setting rendered as a text box can be mistyped, and a mistyped
