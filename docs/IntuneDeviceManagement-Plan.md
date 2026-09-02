@@ -1,7 +1,16 @@
 # Intune Device Management Module - Plan
 
-Status: Draft - awaiting owner go to implement. D1, D2 and D3 all ruled 2026-08-14. No owner
-decision is outstanding.
+Status: Implemented 2026-09-01 (owner go the same day). D1, D2 and D3 all ruled
+2026-08-14; no owner decision was outstanding at implementation. All seven slices
+landed: S0 `aa31d49` (status-returning Graph mutation helpers; base app version
+2.14.0), S1 `d26906e` (models and read-only service), S2 `5d0d308` (catalog entry, page,
+read-only UI; module `1.0.0`), S3 `c339e83` (Delete), S4 `723d7c0` (Retire and Wipe), S5
+`931294c` (Entra ID device object removal), S6 `080273a` (affected-user notification).
+Module `IntuneDevices` stays `1.0.0` -- all seven slices landed before any deploy, so it
+ships once (the versioning rule below). Full suite after S6: 2162 passed / 0 failed / 3
+skipped. NOT DEPLOYED -- the external prerequisite (a dedicated Entra app registration
+and its own Delinea secret) is still outstanding and blocks the first live Graph call;
+the manual checks under Manual dev validation ride the next dev deploy once it lands.
 Reviewed: openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback)
 over `b868e5c..6aef9e3`: `acceptable_with_changes`, three findings, all admitted and folded in
 (`.agents/review/findings/idm-{1,2,3}.md`), plus one material change adopted outside intake.
@@ -601,6 +610,28 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   changes in S0 and S6. Both versioning rules fire; see Versioning.
 - Last slice deliberately: the module doc has to describe the notification and Entra options,
   which do not exist until S5 and S6 land.
+
+## Implementation record 2026-09-01
+
+All seven slices landed, one commit each, in order:
+
+| Slice | Content | SHA |
+|---|---|---|
+| S0 | Status-returning Graph mutation helpers (shared infrastructure); base app version bumped to `2.14.0` | `aa31d49` |
+| S1 | Models and read-only service | `d26906e` |
+| S2 | Catalog entry, page, read-only UI; module version `1.0.0` | `5d0d308` |
+| S3 | Delete, behind `IntuneDevicesDelete` | `c339e83` |
+| S4 | Retire and Wipe, behind `IntuneDevicesPrivileged` | `723d7c0` |
+| S5 | Entra ID device object removal, behind `IntuneDevicesEntraDelete` (D3) | `931294c` |
+| S6 | Affected-user notification (D2) | `080273a` |
+
+Full suite after S6: 2162 passed / 0 failed / 3 skipped. Module `IntuneDevices` reads
+`1.0.0` and the base app version reads `2.14.0` in `ExchangeAdminWeb.csproj` -- both
+verified against the live catalog and csproj at close, neither changed by this record.
+NOT DEPLOYED. The external prerequisite (dedicated Entra app registration with the four
+scopes named above, admin-consented, plus its own Delinea secret) remains outstanding
+and blocks the first live Graph call; the manual checks in this file ride the next dev
+deploy once it lands.
 
 ## Acceptance criteria
 

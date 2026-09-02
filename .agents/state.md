@@ -107,96 +107,64 @@ CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
   **NEXT: nothing on this stream** - the protocol section in `.agents/repo-guidance.md`
   governs how the September queue is implemented.
 
-- **INTUNE DEVICES MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
-  `docs/IntuneDeviceManagement-Plan.md` (`6aef9e3`, revised through `74c36b9` - the plan file's
-  own last content revision; commits after it touch this file and the review records, not the
-  plan).
+- **INTUNE DEVICES MODULE: IMPLEMENTED 2026-09-01 (owner go the same day). NOT DEPLOYED.**
+  `docs/IntuneDeviceManagement-Plan.md` (Status now `Implemented 2026-09-01`). All seven
+  slices landed: S0 `aa31d49` (status-returning Graph mutation helpers; base app version
+  bumped to `2.14.0`), S1 `d26906e` (models and read-only service), S2 `5d0d308` (catalog
+  entry + read-only UI; module `IntuneDevices 1.0.0`), S3 `c339e83` (Delete), S4 `723d7c0`
+  (Retire and Wipe), S5 `931294c` (Entra ID device object removal), S6 `080273a`
+  (affected-user notification with suppression visibility). Versions: base app `2.14.0`
+  (bumped in S0), module `IntuneDevices 1.0.0` (all seven slices landed before any deploy,
+  so it ships once). Full suite 2162/0/3.
   Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
-  device details, and deleting"*, then *"review the plan with codex"*.
-  New module `IntuneDevices`, Microsoft Graph v1.0 Intune device management. Independent of
-  the three plans below - no shared code, no ordering constraint.
-  **D1 IS RULED (owner, 2026-08-14): all three destructive actions, at two permission tiers.**
-  *"options for all of the above with different permission levels for 1 and 2+3. Two permission
-  levels."* Delete the Intune record sits behind `IntuneDevicesDelete`; Retire and Wipe share
-  `IntuneDevicesPrivileged`; read sits behind the main `IntuneDevices` permission. All three
-  fail closed. **I asked this one before drafting because it decides which Graph permissions
-  the app registration needs**, and those are three genuinely distinct scopes.
-  **The distinction the question existed to surface, and it is the operator-facing one:**
-  Intune "Delete" removes the management record only. Company data stays on the device until it
-  next checks in, and if it never checks in, forever. The Entra ID device object survives all
-  three actions - Microsoft's own guidance is to remove it as a separate step.
-  **All endpoints are v1.0**, verified against Microsoft Learn 2026-08-14, so
-  `GraphTokenClient`'s hardcoded base URL needs no change and no NuGet package is added.
-  **D2 IS RULED (owner, 2026-08-14) and the ruling is a standing design rule for this module,
-  not just an answer:** *"anything that can be an option should be an option. do not build in
-  restraints. make email the user an option."* **All three fixed alternatives I offered were
-  rejected as written, because each hardcoded one answer.** Notifying the primary user is now
-  three config fields (one per action) setting a deployment default, plus a per-action checkbox
-  the operator can change at the moment of acting, plus an audit record of what actually
-  happened. Defaults: off for delete, on for retire and wipe.
-  **The same ruling reopened something the plan had closed off unasked one revision earlier.**
-  `idm-2`'s fix pinned the wipe flags to a fixed body and put operator choice out of scope -
-  exactly the built-in restraint the owner removed. Every parameter Graph accepts on `wipe` is
-  now an operator control. The half of `idm-2` that survives is the half that was right: the
-  body is always explicit and asserted, defaults are a full reset, and the audit names the exact
-  flag set so a `keepUserData` wipe and a full reset are distinguishable afterwards.
-  **The trap this ruling creates, pinned in the plan:** `EmailService` gates every affected-user
-  send on an app-wide `_notifyUsers` switch (`EmailService.cs:176-180`) which outranks anything
-  the module sets. A ticked box on a deployment with user notifications off must say so on
-  screen and in the audit, or the control is decorative - the unreachable-capability shape from
-  the other direction.
-  **A SECOND openreview pass covered the post-ruling half** (`codex`, same pair, over
-  `6aef9e3..236b91b`): `acceptable_with_changes`, two findings, **both durable-record hygiene and
-  neither touching the plan's substance** - `idm-4` (this file anchored the work five commits
-  stale and carried a commit count that rots on every commit) and `idm-5` (the idm-1..3 records
-  kept placeholder SHAs). Both fixed. **No part of this plan is unreviewed now**, and the
-  destructive half the second pass was commissioned to scrutinise came back sound.
-  **D3 IS RULED (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
-  *"yes, add it as an option."* New slice S5, own granular permission
-  `IntuneDevicesEntraDelete`, checkbox beside each Intune action plus a standalone action,
-  defaulted off. **Its own permission rather than riding `IntuneDevicesPrivileged` because
-  `Device.ReadWrite.All` is a DIRECTORY scope covering every device object in the tenant** - the
-  widest grant in the module, and not an Intune scope at all.
-  **The trap in that slice, verified against Learn before it was written:**
-  `managedDevice.azureADDeviceId` is the Entra **`deviceId`**, not the directory **object id**,
-  and `DELETE /devices/{id}` wants the object id - Learn's own `device: get` example shows both
-  GUIDs on one device. The path form would 404 against a device that is present and fine. The
-  plan pins the alternate-key form `DELETE /devices(deviceId='...')`, which takes what the
-  module has. This is the same class as the three review findings and was caught the same way.
-  **Ordering pinned as Known Failure Class 2:** the Intune action runs first, `azureADDeviceId`
-  is captured BEFORE it (a deleted Intune record cannot be read for it afterwards), and the two
-  outcomes are reported and audited separately. The half-finished case is the one an operator
-  must be able to see.
-  **One external prerequisite, not code: a dedicated Entra app registration** with
-  `DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All` and -
-  after D3 - `Device.ReadWrite.All`, admin-consented, plus its own Delinea secret. **Do not
-  collapse the four scopes** - an app registration that never receives
-  `PrivilegedOperations.All` cannot wipe a machine even if the code is wrong, and one without
-  `Device.ReadWrite.All` cannot touch the directory. That is the point of the split.
-  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `b868e5c..6aef9e3`:
-  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
-  `.agents/review/findings/idm-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`. A fourth
-  material change (`$select` at the request boundary, OData escaping) was adopted outside
-  intake as correctness inside scope.
-  **All three findings were the plan asserting something about code it had not read.** idm-1
-  (HIGH): `DeleteAsync` and `PostNoContentAsync` return a bare bool, so the plan's required
-  "403 vs 404 vs 5xx are distinct outcomes" was unwritable against the client it named.
-  idm-2 (HIGH): the plan said wipe sends no body "which is a full factory reset" - an inference
-  stated as verified fact, on the one action that destroys a machine. idm-3 (MEDIUM): AC8
-  required a `ProtectedServicer:IntuneDevices` grant that no operator could ever create,
-  because `ModuleConfig.razor:650-657` is a hardcoded list this module was not on.
-  **idm-3 is the THIRD time this repo has nearly shipped a capability its operators could not
-  reach**, after `ppsvc-1` and `pgwt-1`.
-  **idm-1 changed a different decision, which is the part worth carrying forward.** Its fix
-  adds slice S0 to `GraphTokenClient`, so **the base app version now bumps** - and that
-  withdrew the cost argument D2 had been resting on. D2 had been framed to the owner as "no
-  email is cheaper because it avoids a base bump"; after S0 that is simply untrue, and D2 is
-  now a question about what the affected person should be told and nothing else.
-  **NEXT: a go to implement, starting at S0.** No owner decision blocks the start - D1 and D2
-  are ruled and D3 has a working default. Versions when the work lands: new module
-  `IntuneDevices 1.0.0`, and the **base app version DOES bump** (S0 touches `GraphTokenClient`
-  and S6 touches `EmailService`) - the one case so far where adding a module coincides with a
-  shared change, so both versioning rules fire on the same work.
+  device details, and deleting"*, then *"review the plan with codex"*. New module,
+  Microsoft Graph v1.0 Intune device management, independent of the plans around it -- no
+  shared code, no ordering constraint.
+  **D1 (owner, 2026-08-14): all three destructive actions, at two permission tiers.**
+  *"options for all of the above with different permission levels for 1 and 2+3. Two
+  permission levels."* Delete the Intune record sits behind `IntuneDevicesDelete`; Retire
+  and Wipe share `IntuneDevicesPrivileged`; read sits behind the main `IntuneDevices`
+  permission. All three fail closed. **The distinction the question existed to surface, and
+  it is the operator-facing one:** Intune "Delete" removes the management record only.
+  Company data stays on the device until it next checks in, and if it never checks in,
+  forever. The Entra ID device object survives all three actions - Microsoft's own guidance
+  is to remove it as a separate step. Implemented in S3+S4.
+  **D2 (owner, 2026-08-14), a standing design rule for this module, not just an answer:**
+  *"anything that can be an option should be an option. do not build in restraints. make
+  email the user an option."* Three config fields (`NotifyUserOnDelete` false;
+  `NotifyUserOnRetire`/`NotifyUserOnWipe` true) set the deployment default; a per-action
+  checkbox lets the operator override at the moment of acting; the audit event records what
+  actually happened. `EmailService`'s app-wide `_notifyUsers` switch outranks anything the
+  module sets - a ticked box on a deployment with user notifications off states so on
+  screen and in the audit, rather than reading as decorative. Implemented in S6.
+  **D3 (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
+  *"yes, add it as an option."* Its own granular permission `IntuneDevicesEntraDelete`
+  (never riding `IntuneDevicesPrivileged`), because `Device.ReadWrite.All` is a DIRECTORY
+  scope covering every device object in the tenant - the widest grant in the module, and
+  not an Intune scope at all. Implemented in S5.
+  **The azureADDeviceId-vs-object-id trap, verified against Learn before S5 was written and
+  worth remembering if this area is touched again:** `managedDevice.azureADDeviceId` is the
+  Entra **`deviceId`**, not the directory **object id** - Learn's own `device: get` example
+  shows both GUIDs on one device. `DELETE /devices/{id}` wants the object id; passing the
+  `deviceId` to it 404s against a device that is present and fine. S5 addresses the object
+  by its alternate key, `DELETE /devices(deviceId='...')`, the only form that takes what
+  the module has. `azureADDeviceId` is captured before the Intune action runs, since a
+  deleted Intune record cannot be read for it afterward; the Intune and Entra outcomes are
+  reported and audited independently, so a half-finished result is never a plain success.
+  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback), two passes, both
+  `acceptable_with_changes`, five findings total, all admitted and folded in** -
+  `.agents/review/findings/idm-{1,2,3}.md` over `b868e5c..6aef9e3` (idm-1 HIGH forced S0
+  onto the plan and with it the base version bump; idm-2 HIGH withdrew an unverified claim
+  that wipe's default body was a full factory reset; idm-3 MEDIUM was the third
+  `ppsvc-1`/`pgwt-1`-shaped unreachable-capability finding, fixed by adding `IntuneDevices`
+  to `ModuleConfig.razor`'s servicer opt-in set in S3), and `idm-{4,5}.md` over
+  `6aef9e3..236b91b` (both durable-record hygiene, neither touching the plan's substance).
+  No part of this plan is unreviewed.
+  **NEXT: owner-side app registration + Delinea secret**
+  (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All`,
+  and `Device.ReadWrite.All`, admin-consented, kept as four distinct scopes on purpose -
+  blocks the first live Graph call, not any code), **then the plan's manual checks ride the
+  next dev deploy.**
 
 - **MIGRATION SIZE CHECK: FIXED AND DEPLOYED 2026-08-13** (`b4029c6`). Migration `1.7.0` ->
   `1.7.1`. No base app bump (module-scoped behaviour only).
@@ -467,10 +435,10 @@ owner-side, none of them needing an agent:
 
 1. ~~A go on `docs/ProtectedGroupWriteTarget-Plan.md`~~ - **DONE: implemented 2026-08-28**
    (see `## Now`); nothing owner-side remains on it except the deploy-time manual checks.
-2. **A D2 ruling on `docs/RiskyUsersModule-Plan.md`** - do risky-user reads alert
-   administrators? Three options are written out in that plan's `## Owner decisions`.
-   It is a pre-ship gate, so leaving it unruled would stall the work at the very end
-   rather than the start.
+2. ~~A D2 ruling on `docs/RiskyUsersModule-Plan.md`~~ - **DONE: D2 ruled 2026-08-31**
+   (reads are audited, never alert-emailed; `.agents/decisions.md` 2026-08-31). The
+   module is now implemented (see `## Now`); nothing owner-side remains on it except
+   the app registration below and the deploy-time manual checks.
 3. **The Risky Users Entra app registration** plus its Delinea secret
    (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
    first live Graph call. S1-S4 can be built and tested without it.
@@ -528,7 +496,9 @@ by owner ruling 2026-09-01 (items below shift down one):**
    `## Now`. All seven slices landed; `docs/RiskyUsersModule-Plan.md` status is
    `Implemented`. NOT DEPLOYED - the app registration and Delinea secret still block
    the first live Graph call; manual checks ride the next dev deploy. Do not restart.
-4. Intune Devices module - S0, all decisions ruled
+4. Intune Devices module - **IMPLEMENTED 2026-09-01**; see `## Now`. NOT DEPLOYED - the
+   app registration and Delinea secret still block the first live Graph call; manual
+   checks ride the next dev deploy. Do not restart.
 5. Sidebar Home link removal - ruled, no plan needed
 Each still starts on its own explicit go, one fresh session per slice.
 
@@ -541,9 +511,10 @@ Each still starts on its own explicit go, one fresh session per slice.
 3. `docs/RiskyUsersModule-Plan.md` - **IMPLEMENTED 2026-09-01** (see `## Now`); all
    seven slices landed. NOT DEPLOYED - manual checks ride the next dev deploy. Do not
    restart.
-4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go. D1, D2 and D3 all
-   ruled; no owner decision is outstanding.** New module, independent of 1-3. Start at S0.
-   See the entry in `## Now`.
+4. `docs/IntuneDeviceManagement-Plan.md` - **IMPLEMENTED 2026-09-01** (see `## Now`); all
+   seven slices landed. NOT DEPLOYED - the app registration and Delinea secret still
+   block the first live Graph call; manual checks ride the next dev deploy. Do not
+   restart.
 5. `docs/TokenBudget-Plan.md` - **Draft, awaiting a go. D1 ruled, D2 withdrawn; no owner
    decision is outstanding.** Not a feature: how the other four get implemented, plus
    `tools/Get-TokenUsage.ps1` and a tracked baseline. Independent of 1-4 and worth landing
