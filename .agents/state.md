@@ -550,13 +550,19 @@ review was ever obtained.
 - **App version:** owned by `<VersionPrefix>` in `ExchangeAdminWeb.csproj` -- read the number
   there, never from here. The per-release history of that number is archived verbatim in
   `docs/history/state-archive.md` (Archived 2026-08-14).
-- **Deployed: dev `2.10.0` (DLL written 2026-08-31 08:42), prod `2.8.1` (unchanged,
-  2026-08-13 16:52:57)** -- re-verified from both assemblies 2026-08-31. **The 2026-08-31
-  deploy was DEV ONLY.** Dev `2.10.0` carries
-  over prod: nesting (app 2.9.0 work), the Event Log CSV ticket column, the cross-domain
-  member-listing fix with the lst-1..3 review fixes, and the protected write-target feature
-  with the pgwt-4..9 review fixes. Prod promotion is the owner's call after the dev manual
-  checks.
+- **Deployed: dev `2.15.0` (DLL written 2026-09-02 09:13), prod `2.8.1` (unchanged,
+  2026-08-13 16:52:57)** -- dev re-verified from the assembly 2026-09-02 after the owner's
+  deploy. **The 2026-09-02 deploy was DEV ONLY.** Dev `2.15.0` carries over `2.10.0`:
+  boolean config checkboxes (2.12.0), BitLocker mandatory ticket (2.11.0 + module 1.1.0),
+  CSV export for five modules (2.13.0 + five module bumps), the Risky Users module (1.0.0),
+  the Intune Devices module (1.0.0, Graph status helpers 2.14.0), and the sidebar Home link
+  removal (2.15.0). Their manual checks are now runnable; none has been run yet. The two new
+  Graph modules also need `GraphDelineaSecretId` set in Module Config (owner, in progress
+  2026-09-02 - both app registrations exist, Delinea secrets being created). Dev `2.10.0`
+  carried over prod: nesting (app 2.9.0 work), the Event Log CSV ticket column, the
+  cross-domain member-listing fix with the lst-1..3 review fixes, and the protected
+  write-target feature with the pgwt-4..9 review fixes. Prod promotion is the owner's call
+  after the dev manual checks.
   **That timestamp is the 2026-08-13 Migration size-check deploy, and it is on BOTH hosts** --
   the question `## Now` records the owner as never having answered. This is assembly-timestamp
   evidence only; the Migration module version was not read off either host, and the app version
