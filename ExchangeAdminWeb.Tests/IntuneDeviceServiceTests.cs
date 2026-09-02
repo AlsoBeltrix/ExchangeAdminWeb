@@ -1,5 +1,11 @@
 using System.Net;
+using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
+using ExchangeAdminWeb.Services.Storage;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -24,18 +30,33 @@ public class IntuneDeviceServiceTests
 
         public Uri? LastGraphRequestUri { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        /// <summary>Method and body of the last non-token request, so the write tests can assert the
+        /// verb and the exact serialized payload (S4 / AC16) rather than only the URL.</summary>
+        public HttpMethod? LastGraphRequestMethod { get; private set; }
+
+        /// <summary>Null when the request carried no content at all - which is what retire must send
+        /// (plan S4: "Retire sends no body, ever"), and is distinguishable here from an empty body.</summary>
+        public string? LastGraphRequestBody { get; private set; }
+
+        public int GraphRequestCount { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.Host == "login.microsoftonline.com")
             {
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent("""{"access_token":"test-token","expires_in":3600}""")
-                });
+                };
             }
 
             LastGraphRequestUri = request.RequestUri;
-            return Task.FromResult(GraphResponse());
+            LastGraphRequestMethod = request.Method;
+            LastGraphRequestBody = request.Content == null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            GraphRequestCount++;
+            return GraphResponse();
         }
     }
 
@@ -294,5 +315,231 @@ public class IntuneDeviceServiceTests
         var service = new IntuneDeviceService(() => Task.FromResult<GraphTokenClient?>(null));
 
         Assert.False(service.IsAvailable);
+    }
+
+    // ---- S3: delete ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task DeleteDeviceAsync_NoContent_ReportsSuccessAndSaysWhatSurvives()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.DeleteDeviceAsync("dev-1");
+
+        Assert.True(result.Success);
+        Assert.Null(result.SafeError);
+        // T3 / AC11: delete removes the Intune record only.
+        Assert.Contains("company data stays on the device", result.Message);
+        Assert.Contains("Entra ID object still exists", result.Message);
+    }
+
+    [Fact]
+    public async Task DeleteDeviceAsync_TargetsTheManagedDeviceRecordWithDelete()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        await service.DeleteDeviceAsync("dev-1");
+
+        Assert.Equal(HttpMethod.Delete, handler.LastGraphRequestMethod);
+        Assert.Equal("/v1.0/deviceManagement/managedDevices/dev-1", handler.LastGraphRequestUri!.AbsolutePath);
+    }
+
+    // AC15: 403, 404 and 5xx are three DISTINCT outcomes carrying the sanitized Graph error, never
+    // one bare "failed". Reverting DeleteWithStatusAsync to the bool-returning DeleteAsync must fail
+    // these, because a bool cannot carry the status.
+    [Fact]
+    public async Task DeleteDeviceAsync_Forbidden_NamesTheReadWriteConsentAndCarriesTheGraphError()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""{"error":{"code":"Forbidden","message":"Insufficient privileges."}}""")
+        };
+
+        var result = await service.DeleteDeviceAsync("dev-1");
+
+        Assert.False(result.Success);
+        Assert.Contains("403", result.Message);
+        Assert.Contains("DeviceManagementManagedDevices.ReadWrite.All", result.Message);
+        Assert.Equal("Forbidden: Insufficient privileges.", result.SafeError);
+    }
+
+    [Fact]
+    public async Task DeleteDeviceAsync_NotFound_SaysTheDeviceIsAlreadyGoneFromIntune()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NotFound);
+
+        var result = await service.DeleteDeviceAsync("dev-1");
+
+        Assert.False(result.Success);
+        Assert.Contains("404", result.Message);
+        Assert.Contains("no longer in Intune", result.Message);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task DeleteDeviceAsync_ServerError_SaysNothingWasDoneAndCanBeRetried(HttpStatusCode status)
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(status);
+
+        var result = await service.DeleteDeviceAsync("dev-1");
+
+        Assert.False(result.Success);
+        Assert.Contains(((int)status).ToString(), result.Message);
+        Assert.Contains("retry", result.Message);
+    }
+
+    [Fact]
+    public async Task DeleteDeviceAsync_EveryFailureStatusProducesADifferentMessage()
+    {
+        // The point of AC15 stated as one assertion: a caller reading only Message can still tell a
+        // missing permission from an already-deleted device from an outage.
+        var messages = new List<string>();
+        foreach (var status in new[]
+                 {
+                     HttpStatusCode.Forbidden, HttpStatusCode.NotFound,
+                     HttpStatusCode.ServiceUnavailable, HttpStatusCode.TooManyRequests
+                 })
+        {
+            var (service, handler) = CreateService();
+            handler.GraphResponse = () => new HttpResponseMessage(status);
+            var result = await service.DeleteDeviceAsync("dev-1");
+            Assert.False(result.Success);
+            messages.Add(result.Message);
+        }
+
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task DeleteDeviceAsync_NonJsonErrorBody_DoesNotEchoTheBody()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html>gateway exploded, token=abc123</html>")
+        };
+
+        var result = await service.DeleteDeviceAsync("dev-1");
+
+        Assert.False(result.Success);
+        Assert.Null(result.SafeError);
+        Assert.DoesNotContain("abc123", result.Message);
+    }
+
+    [Fact]
+    public async Task DeleteDeviceAsync_GraphClientUnavailable_Throws()
+    {
+        var service = new IntuneDeviceService(() => Task.FromResult<GraphTokenClient?>(null));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteDeviceAsync("dev-1"));
+    }
+
+    // ---- GetGraphClientAsync credential path (plan Test plan) ---------------------------------
+
+    [Fact]
+    public void ExtractGraphCredentials_AllThreeFieldsPresent_ReturnsThem()
+    {
+        var credentials = IntuneDeviceService.ExtractGraphCredentials(new Dictionary<string, string>
+        {
+            ["Tenant ID"] = "t",
+            ["Application ID"] = "a",
+            ["Client Secret"] = "s"
+        });
+
+        Assert.NotNull(credentials);
+        Assert.Equal(("t", "a", "s"), (credentials.Value.TenantId, credentials.Value.ClientId, credentials.Value.ClientSecret));
+    }
+
+    [Fact]
+    public void ExtractGraphCredentials_SecretUnreadable_ReturnsNull()
+    {
+        Assert.Null(IntuneDeviceService.ExtractGraphCredentials(null));
+    }
+
+    [Theory]
+    [InlineData("Client Secret")]
+    [InlineData("Tenant ID")]
+    [InlineData("Application ID")]
+    public void ExtractGraphCredentials_SecretMissingOneField_ReturnsNull(string missingField)
+    {
+        // AC14: a secret carrying two of the three fields yields NO client, rather than a
+        // GraphTokenClient built over an empty credential that then fails at token acquisition.
+        var fields = new Dictionary<string, string>
+        {
+            ["Tenant ID"] = "t",
+            ["Application ID"] = "a",
+            ["Client Secret"] = "s"
+        };
+        fields.Remove(missingField);
+
+        Assert.Null(IntuneDeviceService.ExtractGraphCredentials(fields));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-number")]
+    [InlineData("0")]
+    [InlineData("-3")]
+    public async Task GetGraphClientAsync_SecretIdUnsetOrNonNumeric_ReportsUnavailableAndRefusesToRead(string? secretId)
+    {
+        // The real config path (not the seam): with GraphDelineaSecretId unset or unparseable the
+        // module reports unavailable and falls back to NOTHING - no other module's credential, and
+        // no silent empty result (AC14 / T7).
+        using var temp = new TempDir();
+        var service = CreateConfiguredService(temp.Path, secretId);
+
+        Assert.False(service.IsAvailable);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SearchDevicesAsync("laptop-1"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteDeviceAsync("dev-1"));
+    }
+
+    /// <summary>
+    /// The DI-constructed service over a real ModuleConfigService and DelineaService, following
+    /// MfaResetServiceConfigTests. Only the id-parsing half of GetGraphClientAsync is reachable this
+    /// way: DelineaService.GetSecretFieldsAsync returns null before issuing any HTTP request when the
+    /// Secret Server bootstrap credential is absent from Windows Credential Manager, so the
+    /// field-level cases are covered directly against ExtractGraphCredentials above instead of
+    /// through a stub that would pass for the wrong reason.
+    /// </summary>
+    private static IntuneDeviceService CreateConfiguredService(string contentRoot, string? secretId)
+    {
+        var store = TestConfigStore.Create(contentRoot);
+        var values = new Dictionary<string, string>();
+        if (secretId != null)
+            values["GraphDelineaSecretId"] = secretId;
+        new ModuleConfigRepository(store).SaveModule("IntuneDevices", values);
+
+        var env = Substitute.For<IWebHostEnvironment>();
+        env.ContentRootPath.Returns(contentRoot);
+
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env,
+            new ModuleConfigRepository(store), Substitute.For<ILogger<ModuleConfigService>>());
+
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Delinea:SecretServerUrl"] = "https://fake.local",
+                ["Audit:LogRoot"] = contentRoot
+            })
+            .Build();
+
+        var httpClientFactory = Substitute.For<IHttpClientFactory>();
+        httpClientFactory.CreateClient(Arg.Any<string>()).Returns(new HttpClient());
+
+        var jsonlLog = new JsonlLogService(config, Substitute.For<ILogger<JsonlLogService>>());
+        var operationTrace = new OperationTraceService(config, jsonlLog);
+        var extendedLog = new ExtendedLogService(config, env, TestConfigStore.CreateAppSettings(contentRoot),
+            Substitute.For<ILogger<ExtendedLogService>>());
+        var delinea = new DelineaService(httpClientFactory, config, Substitute.For<ILogger<DelineaService>>(),
+            extendedLog, operationTrace);
+
+        return new IntuneDeviceService(moduleConfig, delinea, httpClientFactory);
     }
 }

@@ -57,3 +57,14 @@ public sealed record IntuneDeviceSearchResult(
 /// <summary>Outcome of a single device action. SafeError carries only the sanitized Graph
 /// error.code/message (never a token or raw body) so a refusal can be shown and audited.</summary>
 public sealed record IntuneDeviceActionResult(bool Success, string Message, string? SafeError);
+
+/// <summary>
+/// One destructive action against one device. Each member carries its own audit action name and its
+/// own granular policy (D1's two tiers), so the page never has a generic "device action" path that
+/// could file a wipe under a delete's permission or a delete's audit name.
+/// </summary>
+public enum IntuneDeviceAction
+{
+    /// <summary>Delete the Intune management record. Tier 1, IntuneDevicesDelete (S3).</summary>
+    Delete
+}

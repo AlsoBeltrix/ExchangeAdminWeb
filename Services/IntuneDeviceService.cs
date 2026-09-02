@@ -51,7 +51,32 @@ public sealed class IntuneDeviceService
             return null;
 
         var fields = await _delineaService.GetSecretFieldsAsync(secretId);
-        if (fields == null) return null;
+        var credentials = ExtractGraphCredentials(fields);
+        if (credentials == null)
+            return null;
+
+        return new GraphTokenClient(credentials.Value.TenantId, credentials.Value.ClientId, credentials.Value.ClientSecret,
+            _httpClientFactory.CreateClient("MicrosoftGraph"));
+    }
+
+    /// <summary>
+    /// The three fields this module's own Delinea secret must carry, or null when the secret was
+    /// unreadable or is short of any one of them - a secret missing "Client Secret" yields no client
+    /// at all rather than a GraphTokenClient built over an empty credential (AC14).
+    /// </summary>
+    /// <remarks>
+    /// Extracted from GetGraphClientAsync as an internal seam because the surrounding path is not
+    /// exercisable in a test: DelineaService.GetSecretFieldsAsync returns null before it issues any
+    /// HTTP request when the Secret Server bootstrap credential is absent from Windows Credential
+    /// Manager, so a "secret present but missing Client Secret" test driven through the real service
+    /// would pass for the wrong reason. This is the field-level half of that case, tested directly
+    /// (plan Test plan, GetGraphClientAsync).
+    /// </remarks>
+    internal static (string TenantId, string ClientId, string ClientSecret)? ExtractGraphCredentials(
+        IReadOnlyDictionary<string, string>? fields)
+    {
+        if (fields == null)
+            return null;
 
         var tenantId = fields.GetValueOrDefault("Tenant ID") ?? "";
         var clientId = fields.GetValueOrDefault("Application ID") ?? "";
@@ -60,7 +85,7 @@ public sealed class IntuneDeviceService
         if (string.IsNullOrEmpty(tenantId) || string.IsNullOrEmpty(clientId) || string.IsNullOrEmpty(clientSecret))
             return null;
 
-        return new GraphTokenClient(tenantId, clientId, clientSecret, _httpClientFactory.CreateClient("MicrosoftGraph"));
+        return (tenantId, clientId, clientSecret);
     }
 
     public bool IsAvailable
@@ -138,6 +163,63 @@ public sealed class IntuneDeviceService
 
         using var responseDoc = doc;
         return ParseDevice(responseDoc.RootElement);
+    }
+
+    // ---- write path (S3) ----------------------------------------------------------------------
+
+    private const string ReadWritePermission = "DeviceManagementManagedDevices.ReadWrite.All";
+
+    /// <summary>
+    /// Deletes one device's Intune management record (S3), over S0's status-returning DELETE so a
+    /// 403, a 404 and a 5xx are three distinct reported outcomes rather than one bare "failed"
+    /// (T7 / AC15). Removes the Intune record ONLY: company data stays on the device and the Entra
+    /// ID device object survives (T3 / D3), which the success message states in words.
+    /// </summary>
+    public async Task<IntuneDeviceActionResult> DeleteDeviceAsync(string deviceId)
+    {
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Intune Devices Graph credentials not available.");
+
+        var (ok, status, safeError) = await client.DeleteWithStatusAsync($"{DevicesEndpoint}/{Uri.EscapeDataString(deviceId)}");
+
+        return ok
+            ? new IntuneDeviceActionResult(true, DeleteSuccessMessage, null)
+            : BuildActionFailure("delete of the Intune record", ReadWritePermission, status, safeError);
+    }
+
+    /// <summary>
+    /// T3 / AC11: delete is immediate on the Intune record, and that record is all it removes. The
+    /// operator must see the two things that survive, or they will believe the device is gone from
+    /// the tenant.
+    /// </summary>
+    internal const string DeleteSuccessMessage =
+        "Deleted the Intune record. This removes the Intune record only - company data stays on the device, "
+        + "and the device's Entra ID object still exists. Both are separate actions.";
+
+    /// <summary>
+    /// Maps a failed device mutation onto one of four distinct outcomes (T7 / AC15): a 403 names the
+    /// consent the app registration is missing, a 404 says the device is already gone from Intune and
+    /// nothing was done, a 5xx says Intune was unavailable and the action can be retried, and
+    /// anything else reports its own status. The sanitized Graph error travels in both the message
+    /// and SafeError. A bare "failed" would hide a misconfigured app registration, which is the one
+    /// failure this module's permission split exists to expose.
+    /// </summary>
+    internal static IntuneDeviceActionResult BuildActionFailure(
+        string actionDescription, string requiredPermission, HttpStatusCode status, string? safeError)
+    {
+        var detail = string.IsNullOrWhiteSpace(safeError) ? "" : $" Graph error: {safeError}";
+
+        var message = status switch
+        {
+            HttpStatusCode.Forbidden =>
+                $"Graph refused the {actionDescription} (403 Forbidden) - verify the app registration's {requiredPermission} consent.{detail}",
+            HttpStatusCode.NotFound =>
+                $"Graph reports this device is no longer in Intune (404 Not Found), so no {actionDescription} was performed.{detail}",
+            _ when (int)status >= 500 =>
+                $"Intune was unavailable for the {actionDescription} ({(int)status} {status}) - nothing was performed; retry.{detail}",
+            _ => $"Graph rejected the {actionDescription} ({(int)status} {status}).{detail}"
+        };
+
+        return new IntuneDeviceActionResult(false, message, safeError);
     }
 
     private static InvalidOperationException BuildFailure(HttpStatusCode status, string context)
