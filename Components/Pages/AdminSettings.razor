@@ -301,8 +301,9 @@
         </div>
 
     @* One save bar for all three panes, replacing three separate buttons that gave no sign
-       another section was still unsaved. It names the dirty section: "1 unsaved change" alone
-       tells an operator something is wrong but not where. *@
+       another section was still unsaved. It counts the pending edits and names the sections
+       holding them: a count alone tells an operator something is wrong but not where, and a
+       section name alone leaves ten edits reading as one. *@
     <div class="adm-bar">
         @if (dirty.IsDirty)
         {
@@ -326,6 +327,12 @@
     private bool statusIsError;
 
     private Dictionary<string, bool> moduleEnablement = new();
+
+    // What the page loaded, so the save bar can count the modules ACTUALLY changed rather than
+    // tallying clicks. Plain copy, deliberately: it inherits the store dictionary's own comparer,
+    // where re-keying it case-insensitively would throw on a store holding two casings of one id.
+    private Dictionary<string, bool> moduleEnablementBaseline = new();
+
     private bool enablementStoreCorrupt;
     private string selectedLogLevel = "None";
 
@@ -384,7 +391,24 @@
     private void ToggleModule(string moduleId, bool enabled)
     {
         moduleEnablement[moduleId] = enabled;
-        dirty.Set(SectionModules, true);
+        RecountModules();
+    }
+
+    /// <summary>
+    /// Counts the modules whose enablement differs from what the page loaded.
+    /// </summary>
+    /// <remarks>
+    /// Counting choice for this section: a DIFF against the load, not one edit per click. The page
+    /// holds the whole enablement dictionary, so it can say exactly how many modules changed --
+    /// and a module toggled on and then back off has to net to zero, which a running tally cannot
+    /// do.
+    /// </remarks>
+    private void RecountModules()
+    {
+        var changes = moduleEnablement.Count(kv =>
+            !moduleEnablementBaseline.TryGetValue(kv.Key, out var loaded) || loaded != kv.Value);
+
+        dirty.SetCount(SectionModules, changes);
     }
 
     /// <summary>
@@ -395,7 +419,48 @@
     private void RemovePp(List<string> list, string value)
     {
         if (list.Remove(value))
-            dirty.Set(SectionProtected, true);
+            RecountProtected();
+    }
+
+    /// <summary>
+    /// Counts protected entries added and removed against what the page loaded, across all five
+    /// kinds.
+    /// </summary>
+    /// <remarks>
+    /// Counting choice for this section: a DIFF against the load, not one edit per click. The page
+    /// holds the five working lists, so ten added groups read as ten changes, and an entry added
+    /// and then removed before saving stops counting. Re-adding a renamed group target is two
+    /// changes (its old row leaves, its new row arrives), which is what the save will actually do.
+    /// </remarks>
+    private void RecountProtected()
+    {
+        var changes =
+            EntryDelta(ppUsers, ppUsersBaseline)
+            + EntryDelta(ppGroups, ppGroupsBaseline)
+            + EntryDelta(ppOus, ppOusBaseline)
+            + EntryDelta(ppPatterns, ppPatternsBaseline)
+            + EntryDelta(ppTargets, ppTargetsBaseline);
+
+        dirty.SetCount(SectionProtected, changes);
+    }
+
+    /// <summary>Additions plus removals between a working list and the one that was loaded.</summary>
+    private static int EntryDelta(List<string> current, List<string> loaded) =>
+        current.Except(loaded, StringComparer.OrdinalIgnoreCase).Count()
+        + loaded.Except(current, StringComparer.OrdinalIgnoreCase).Count();
+
+    /// <summary>Re-baselines the protected lists, after a load or a successful save.</summary>
+    /// <remarks>
+    /// Required after saving, not merely tidy: this save does not reload the page, so a stale
+    /// baseline would count the edits just persisted all over again on the next one.
+    /// </remarks>
+    private void SnapshotProtectedBaseline()
+    {
+        ppUsersBaseline = new List<string>(ppUsers);
+        ppGroupsBaseline = new List<string>(ppGroups);
+        ppOusBaseline = new List<string>(ppOus);
+        ppPatternsBaseline = new List<string>(ppPatterns);
+        ppTargetsBaseline = new List<string>(ppTargets);
     }
 
     private List<string> ppUsers = new();
@@ -403,6 +468,11 @@
     private List<string> ppOus = new();
     private List<string> ppPatterns = new();
     private List<string> ppTargets = new();
+    private List<string> ppUsersBaseline = new();
+    private List<string> ppGroupsBaseline = new();
+    private List<string> ppOusBaseline = new();
+    private List<string> ppPatternsBaseline = new();
+    private List<string> ppTargetsBaseline = new();
     private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "", ppNewTarget = "";
     private string ppDirectoryReadSecretId = "";
     private string? ppLoadError;
@@ -433,6 +503,7 @@
 
         enablementStoreCorrupt = Enablement.IsStoreCorrupt();
         moduleEnablement = Enablement.GetAllEnablement();
+        moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement);
         selectedLogLevel = ExtendedLog.CurrentLevel;
         LoadProtectedPrincipals();
         authChecked = true;
@@ -499,6 +570,7 @@
             // Clear BEFORE the reload below, or the guard fires on our own navigation and asks
             // the operator to confirm leaving a page they just saved.
             dirty.ClearSection(SectionModules);
+            moduleEnablementBaseline = new Dictionary<string, bool>(moduleEnablement);
             statusMessage = "Module enablement saved. Refreshing...";
             statusIsError = false;
             await Task.Delay(500);
@@ -566,6 +638,7 @@
             ppTargets = cfg.GroupTargets.ToList();
         }
         ppDirectoryReadSecretId = ProtectedPrincipalService.GetDirectoryReadSecretId()?.ToString() ?? "";
+        SnapshotProtectedBaseline();
     }
 
     // Only Patterns keeps a keydown handler. Users, Groups and OUs all use
@@ -730,13 +803,13 @@
                 if (!string.IsNullOrEmpty(newGuid) && target.RemoveAll(x => string.Equals(
                         ProtectedGroupTargetEntry.Parse(x).ObjectGuid, newGuid,
                         StringComparison.OrdinalIgnoreCase)) > 0)
-                    dirty.Set(SectionProtected, true);
+                    RecountProtected();
             }
 
             if (!target.Contains(toAdd, StringComparer.OrdinalIgnoreCase))
             {
                 target.Add(toAdd);
-                dirty.Set(SectionProtected, true);
+                RecountProtected();
             }
         }
 
@@ -791,6 +864,7 @@
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for protected principals change"); }
 
             dirty.ClearSection(SectionProtected);
+            SnapshotProtectedBaseline();
             statusMessage = "Protected principals saved. Changes are effective immediately.";
             statusIsError = false;
             ppLoadError = null;

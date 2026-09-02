@@ -114,7 +114,7 @@
                     <input class="form-check-input" type="checkbox" id="module-enabled"
                            checked="@moduleEnabled"
                            disabled="@(!isGlobalAdmin || saving)"
-                           @onchange="(e) => { moduleEnabled = (bool)(e.Value ?? false); dirty.Set(SecStatus, true); }" />
+                           @onchange="(e) => ToggleModuleEnabled((bool)(e.Value ?? false))" />
                     <label class="form-check-label fw-semibold" for="module-enabled">
                         @(moduleEnabled ? "Enabled" : "Disabled")
                     </label>
@@ -619,8 +619,9 @@
     }
 
     @* One save bar for all five panes, replacing five separate buttons that gave no sign another
-       section was still unsaved. It names the dirty section: "1 unsaved change" alone tells an
-       operator something is wrong but not where. *@
+       section was still unsaved. It counts the pending edits and names the sections holding them:
+       a count alone tells an operator something is wrong but not where, and a section name alone
+       leaves ten edits reading as one. *@
     <div class="adm-bar">
         @if (dirty.IsDirty)
         {
@@ -650,6 +651,15 @@
     private Dictionary<string, string> currentConfigState = new();
     private List<string> moduleAdminGroups = new();
     private string newAdminGroup = string.Empty;
+
+    // What the page loaded. The save bar counts ACTUAL pending edits, so every section holding a
+    // working copy of stored state counts its own diff against these rather than tallying events.
+    // Plain copies, deliberately: they inherit each store dictionary's own comparer, where
+    // re-keying case-insensitively would throw on a store holding two casings of one key.
+    private Dictionary<string, string> configBaseline = new();
+    private Dictionary<string, List<string>> accessBaseline = new();
+    private List<string> moduleAdminGroupsBaseline = new();
+    private bool moduleEnabledBaseline;
 
     private List<string> policyAliases = new();
 
@@ -854,6 +864,10 @@
         moduleEnabled = Enablement.IsModuleRawEnabled(module.Id);
         moduleAdminGroups = ModuleAdmin.GetModuleAdmins(module.Id).ToList();
 
+        configBaseline = new Dictionary<string, string>(currentConfigState);
+        moduleEnabledBaseline = moduleEnabled;
+        moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
+
         policyAliases = new List<string> { module.MainPermission.PolicyAlias };
         foreach (var gp in module.GranularPermissions)
             policyAliases.Add(gp.PolicyAlias);
@@ -876,6 +890,7 @@
             accessState[alias] = new List<string>(SectionAccess.GetGroupsForSection(alias));
             accessInputs[alias] = string.Empty;
         }
+        SnapshotAccessBaseline();
 
         // Display names are cosmetic, so a store that cannot supply them must not break the page:
         // DisplayNameFor falls back to the stored value.
@@ -901,12 +916,81 @@
 
     /// <summary>
     /// Every config field edit funnels through here, so this is the one place the Configuration
-    /// section needs to be marked unsaved.
+    /// section needs to be recounted.
     /// </summary>
     private void SetConfigValue(string key, string value)
     {
         currentConfigState[key] = value;
-        dirty.Set(SecConfig, true);
+        RecountConfig();
+    }
+
+    /// <summary>
+    /// Counts the config keys whose value differs from what the page loaded.
+    /// </summary>
+    /// <remarks>
+    /// Counting choice for this section: a DIFF against the load, not one edit per event. It is
+    /// forced, not merely preferred -- the text fields fire on every input event, so a running
+    /// tally would count keystrokes. The diff is the same comparison SaveConfigAsync uses
+    /// to decide what to audit, so the number in the save bar is the number of changes the audit
+    /// entry will name.
+    /// </remarks>
+    private void RecountConfig()
+    {
+        var keys = configBaseline.Keys.Union(currentConfigState.Keys, StringComparer.OrdinalIgnoreCase);
+        var changes = keys.Count(k =>
+            (configBaseline.GetValueOrDefault(k, "") ?? "") != (currentConfigState.GetValueOrDefault(k, "") ?? ""));
+
+        dirty.SetCount(SecConfig, changes);
+    }
+
+    /// <summary>
+    /// Counts section-access groups granted and revoked against what the page loaded, across
+    /// every alias this module owns.
+    /// </summary>
+    /// <remarks>
+    /// Counting choice for this section: a DIFF against the load, not one edit per click. The page
+    /// holds every alias's working list, so five granted groups read as five, and a group granted
+    /// and then revoked before saving stops counting.
+    /// </remarks>
+    private void RecountAccess()
+    {
+        var changes = accessState.Sum(kv =>
+            GroupDelta(kv.Value, accessBaseline.GetValueOrDefault(kv.Key) ?? new List<string>()));
+
+        dirty.SetCount(SecAccess, changes);
+    }
+
+    /// <summary>
+    /// Counts module-admin groups added and removed against what the page loaded.
+    /// </summary>
+    /// <remarks>
+    /// Counting choice for this section: a DIFF against the load, same reasoning as Section
+    /// Access -- the page holds the whole working list.
+    /// </remarks>
+    private void RecountAdmins() =>
+        dirty.SetCount(SecAdmins, GroupDelta(moduleAdminGroups, moduleAdminGroupsBaseline));
+
+    /// <summary>Additions plus removals between a working group list and the one that was loaded.</summary>
+    private static int GroupDelta(List<string> current, List<string> loaded) =>
+        current.Except(loaded, StringComparer.OrdinalIgnoreCase).Count()
+        + loaded.Except(current, StringComparer.OrdinalIgnoreCase).Count();
+
+    /// <summary>Re-baselines the section-access lists, after a load or a successful save.</summary>
+    /// <remarks>
+    /// Required after saving, not merely tidy: the access save does not reload the page, so a
+    /// stale baseline would count the grants just persisted all over again on the next edit.
+    /// </remarks>
+    private void SnapshotAccessBaseline() =>
+        accessBaseline = accessState.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value));
+
+    /// <summary>
+    /// Toggling the module's enabled switch. The section holds one boolean, so its pending-edit
+    /// count is a comparison with the loaded value -- switching it back nets to zero.
+    /// </summary>
+    private void ToggleModuleEnabled(bool enabled)
+    {
+        moduleEnabled = enabled;
+        dirty.SetCount(SecStatus, moduleEnabled == moduleEnabledBaseline ? 0 : 1);
     }
 
     /// <summary>
@@ -962,6 +1046,9 @@
             }
 
             dirty.ClearSection(SecConfig);
+            // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
+            // baseline would count the values just persisted all over again on the next edit.
+            configBaseline = new Dictionary<string, string>(currentConfigState);
             statusMessage = "Configuration saved.";
             statusIsError = false;
         }
@@ -1017,6 +1104,7 @@
             }
 
             dirty.ClearSection(SecStatus);
+            moduleEnabledBaseline = moduleEnabled;
             statusMessage = "Module status saved. Refreshing...";
             statusIsError = false;
             await Task.Delay(500);
@@ -1094,6 +1182,7 @@
             }
 
             dirty.ClearSection(SecAccess);
+            SnapshotAccessBaseline();
             statusMessage = "Section access saved.";
             statusIsError = false;
         }
@@ -1134,6 +1223,9 @@
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for module admin change"); }
 
             dirty.ClearSection(SecAdmins);
+            // Re-baseline here, not merely tidy: this save does not reload the page, so a stale
+            // baseline would count the groups just persisted all over again on the next edit.
+            moduleAdminGroupsBaseline = new List<string>(moduleAdminGroups);
             statusMessage = "Module admins saved.";
             statusIsError = false;
         }
@@ -1179,7 +1271,7 @@
         if (!accessState[alias].Contains(input, StringComparer.OrdinalIgnoreCase))
         {
             accessState[alias].Add(input);
-            dirty.Set(SecAccess, true);
+            RecountAccess();
         }
         accessInputs[alias] = string.Empty;
     }
@@ -1274,7 +1366,7 @@
     private void RemoveAccessGroup(string alias, string group)
     {
         if (accessState[alias].Remove(group))
-            dirty.Set(SecAccess, true);
+            RecountAccess();
     }
 
     private void HandleAccessKeyDown(KeyboardEventArgs e, string alias)
@@ -1289,7 +1381,7 @@
         if (!moduleAdminGroups.Contains(input, StringComparer.OrdinalIgnoreCase))
         {
             moduleAdminGroups.Add(input);
-            dirty.Set(SecAdmins, true);
+            RecountAdmins();
         }
         newAdminGroup = string.Empty;
     }
@@ -1297,7 +1389,7 @@
     private void RemoveModuleAdmin(string group)
     {
         if (moduleAdminGroups.Remove(group))
-            dirty.Set(SecAdmins, true);
+            RecountAdmins();
     }
 
     private void HandleAdminKeyDown(KeyboardEventArgs e)
@@ -1334,9 +1426,17 @@
         allowlistError = null;
     }
 
+    // Counting choice for the Editable Attributes section: ONE EDIT PER ACTION, not a diff. The
+    // other four sections diff a working copy against what they loaded; these rows cannot, because
+    // a row has no identity to diff by -- an operator adds a blank row and types its name in, so
+    // "the same row, changed" and "a different row" are indistinguishable, and a removal in the
+    // middle of the table would read as a change to every row below it. A tally is safe here in
+    // the way it would not be for Configuration: every field in this table commits on change
+    // (blur or selection), never on input, so one counted edit is one committed edit rather than
+    // one keystroke. The cost is that typing a value and then typing it back counts twice.
     private void AddAttribute()
     {
-        dirty.Set(SecAttrs, true);
+        dirty.Increment(SecAttrs);
         allowlistAttributes.Add(new AllowlistRow
         {
             Name = "", Label = "", Type = "String",
@@ -1346,24 +1446,24 @@
 
     private void RemoveAttribute(int index)
     {
-        dirty.Set(SecAttrs, true);
+        dirty.Increment(SecAttrs);
         if (index >= 0 && index < allowlistAttributes.Count)
             allowlistAttributes.RemoveAt(index);
     }
 
-    private void UpdateAttrName(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Name = e.Value?.ToString() ?? ""; dirty.Set(SecAttrs, true); }
-    private void UpdateAttrLabel(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Label = e.Value?.ToString() ?? ""; dirty.Set(SecAttrs, true); }
-    private void UpdateAttrType(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Type = e.Value?.ToString() ?? "String"; dirty.Set(SecAttrs, true); }
-    private void UpdateAttrRequired(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Required = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Set(SecAttrs, true); }
-    private void UpdateAttrAllowClear(int idx, ChangeEventArgs e) { allowlistAttributes[idx].AllowClear = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Set(SecAttrs, true); }
+    private void UpdateAttrName(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Name = e.Value?.ToString() ?? ""; dirty.Increment(SecAttrs); }
+    private void UpdateAttrLabel(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Label = e.Value?.ToString() ?? ""; dirty.Increment(SecAttrs); }
+    private void UpdateAttrType(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Type = e.Value?.ToString() ?? "String"; dirty.Increment(SecAttrs); }
+    private void UpdateAttrRequired(int idx, ChangeEventArgs e) { allowlistAttributes[idx].Required = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Increment(SecAttrs); }
+    private void UpdateAttrAllowClear(int idx, ChangeEventArgs e) { allowlistAttributes[idx].AllowClear = bool.TryParse(e.Value?.ToString(), out var v) && v; dirty.Increment(SecAttrs); }
     private void UpdateAttrMaxLength(int idx, ChangeEventArgs e)
     {
-        dirty.Set(SecAttrs, true);
+        dirty.Increment(SecAttrs);
         allowlistAttributes[idx].MaxLength = int.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null;
     }
     private void UpdateAttrChoices(int idx, ChangeEventArgs e)
     {
-        dirty.Set(SecAttrs, true);
+        dirty.Increment(SecAttrs);
         var raw = e.Value?.ToString() ?? "";
         var parsed = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         allowlistAttributes[idx].Choices = parsed.Length > 0 ? parsed : null;
@@ -1436,7 +1536,7 @@
 
     private void UpdateAttrLevel(int idx, ChangeEventArgs e)
     {
-        dirty.Set(SecAttrs, true);
+        dirty.Increment(SecAttrs);
         allowlistAttributes[idx].Level = int.TryParse(e.Value?.ToString(), out var v) && v >= 1 && v <= 3 ? v : 1;
     }
 
@@ -1553,7 +1653,10 @@
 
     private void ToggleOU(string dn, bool isChecked)
     {
-        dirty.Set(SecConfig, true);
+        // Recount rather than tally: a tick in the OU browser is not a config edit until
+        // ApplySelectedOUs writes DefaultSearchBase, so this reflects committed values only -
+        // closing the browser without applying now correctly leaves the section clean.
+        RecountConfig();
         if (isChecked)
             ouSelectedDNs.Add(dn);
         else
