@@ -13,6 +13,155 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-09-02 (drift sweep)
+
+Rotated out of `.agents/state.md` verbatim: four `## Now` entries that were fully landed
+with nothing further outstanding on their own stream (as distinct from the 2026-09-01
+implemented-but-not-deployed streams, which stay live because their manual checks are
+still pending), plus a superseded `## Next` queue list and a stale reviewer-transport
+note.
+
+### Rotated from `## Now`
+
+- **Review loop CLOSED 2026-08-31.** fsr-1 (`f6a4eb1`) and fsr-2 (`6f4d972`) both closed
+on coder-side proofs under the same-day ruling: reviewer verification rounds are
+CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
+
+- **GROUP SEARCH FOREST SCOPE: IMPLEMENTED 2026-08-31 (owner go: "make this search work
+  first"). ON DEV since 2026-08-31 (third same-day deploy) and VERIFIED live: the
+  "domain admins" search returns rows from BOTH domains with the Domain column (AD and
+  WINROOT), checked browser-side after the owner's deploy.** Group Management's group
+  search previously queried only the app
+  credential's home domain and showed no domain per row - the owner hit it validating
+  protected targets on dev ("Domain Admins" ambiguous, other domains unreachable). The
+  search now queries the forest global catalog (same success-only-cache and ":3268"
+  guard as `ADDirectorySearchService.ResolveGlobalCatalog`, fail-soft to local) and
+  results carry a Domain column. `GroupManagement 2.5.0`, no base bump. 7 new tests
+  (pure DomainLabel + wiring tripwires), non-vacuity probed (wiring reverted, tripwire
+  failed, restored). **The owner deferred replacing the search with an autocomplete
+  ("not sure about autocomplete yet") - noted, not planned.**
+  **NEXT: nothing - dev check done 2026-08-31. Prod promotion is the owner's call.**
+
+- **TOKEN BUDGET: IMPLEMENTED 2026-08-27 (owner go the same day; S1-S4 all landed).**
+  Baseline correction `b2b2887` first (the plan's August figures had counted transcript lines,
+  not billed requests); S1 tool + `transcript-root:` entry in `.agents/machines.md` `fb2a44b`;
+  S2 Pester (17 tests, four-mutation non-vacuity proof) `be97436`; S3 baseline + log `fe1c7bf`;
+  S4 is the Token Budget section in `.agents/repo-guidance.md`, landed in the commit that set
+  the plan's status to Implemented.
+  `docs/TokenBudget-Plan.md` (`c2ae60c`, revised `5b54222`). Owner request 2026-08-14: a
+  token-budget-friendly implementation approach for September, with usage tracking built in.
+  Canonical detail is in the plan; do not duplicate it here.
+  **D1 RULED 2026-08-14, AMENDED by the owner 2026-08-27: Fable 5 implements end to end,**
+  one fresh session per slice; codex/GPT-5.5 reviews, Gemini reserved as an owner-dispatched
+  third harness. Rationale and the Sonnet fallback live in `.agents/decisions.md` (2026-08-27).
+  **D2 WITHDRAWN - `.agents/playbooks/drift.md` already owns it.** Reducing this file is the
+  sweep's first checklist item, and it rotates `## Now` entries **verbatim** to
+  `docs/history/state-archive.md` rather than rewriting them. Invoke with `playbook drift`, or
+  `catchup` which offers it. It was put to the owner as a decision in error - the owner caught
+  it. **A push-status paragraph was deleted from this file at the same time**, per the same
+  playbook's 2026-07-11 deleted-on-sight ruling. **Size, the volatile figure this argument rests
+  on:** 138 KB / ~51,800 tokens (roughly 18% of every request) when the plan was written; 58 KB
+  after the 2026-08-14 drift sweep. Re-measure rather than quoting either number.
+  **Measured baselines: CORRECTED 2026-08-27 - the 2026-08-14 figures counted transcript
+  lines, not billed requests** (one request writes 1-5 identical-usage JSONL lines). Canonical
+  corrected numbers live in the plan's "Correction 2026-08-27" under Measured baseline
+  (`b2b2887`), and in `.agents/token-baseline.json` once S3 lands; do not quote the old
+  7,876-request / ~$2,311 figures. Per-request unit facts stand: a re-prime at 280K context
+  costs ~$1.75, the cache TTL is 5 minutes, idle gaps are billed.
+  **Haiku 4.5 is permanently disqualified** - 200K context, 72.3% of requests exceed it. Do not
+  re-propose. Sonnet 4.6 and every older Opus are strictly dominated on price and capability.
+  **DONE 2026-09-01: baseline regenerated for the full August** (owner go the same day).
+  Full-month totals: 5,987 requests, est $1,709.00 at opus-5 list rates, mean context
+  400.6K, 4,409 requests over 200K; the 2026-08-27 early cut it replaces read 5,299 /
+  $1,519.50, so 08-28..08-31 added ~$190. Canonical figures live in
+  `.agents/token-baseline.json`; re-measure rather than quoting these.
+  **NEXT: nothing on this stream** - the protocol section in `.agents/repo-guidance.md`
+  governs how the September queue is implemented.
+
+- **MIGRATION SIZE CHECK: FIXED AND DEPLOYED 2026-08-13** (`b4029c6`). Migration `1.7.0` ->
+  `1.7.1`. No base app bump (module-scoped behaviour only).
+  **WHICH ENVIRONMENTS was never stated by the owner. Measured 2026-08-14 instead: BOTH.** Each
+  host's `ExchangeAdminWeb.dll` was written 2026-08-13 16:52:57, dev and prod alike - see the
+  `Deployed:` entry under `## Blockers`. That is assembly-timestamp evidence, not a module-version
+  read. **The app version is unchanged at `2.8.1`, so the sidebar cannot tell this build from the
+  previous one**; the only way to confirm which host carries the fix from inside the app is the
+  Migration module version reading `1.7.1` in Module Config.
+  **The deploy also carried everything else outstanding at the time**, including the Migration
+  batch selection and favicon work already on both hosts and the five Risky Users PLAN commits
+  (docs only, no code).
+  Owner: *"it blocks users whose combined mail + archive size > 100GB, but that's wrong.
+  both can be up to 99GB. not combined."* Then: *"fix the size check to be per mailbox,
+  not total archive+primary. each mailbox needs to be 99gb or less. combined can be
+  whatever."*
+  **The rule now lives in ONE place** - `MigrationEligibilityResult.MailboxExceedsQuota` /
+  `ArchiveExceedsQuota` / `ExceedsQuota` in `Models/MigrationModels.cs`. The service sets the
+  sizes and reads those properties rather than doing its own arithmetic, so the page badge and
+  the eligibility verdict cannot drift apart. `CloudQuotaGB` default is now `99` in BOTH places
+  that carried `100` (`ModuleCatalog.cs` DefaultValue and the `MigrationService.cs:35` fallback).
+  **A STORED CONFIG VALUE STILL WINS AND WAS NOT CHECKED.** If dev or prod has `CloudQuotaGB`
+  set in `config/exchangeadmin.db`, it overrides the new default and a stored `100` would allow <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
+  a 100 GB mailbox. Read it on both hosts and set it to 99 if present.
+  **9 new tests in `MigrationQuotaTests.cs`, proven non-vacuous**: reverting the model to the
+  combined rule fails 6 of the 9; restored, all 9 pass. 1701 passed / 0 failed / 3 skipped
+  (pre-existing AD skips), build + format + `git diff --check` + ASCII clean.
+  **What this fix deliberately did NOT touch, because the go named the size check only:** the
+  size-lookup failure path at `MigrationService.cs:185-189,201-208` still marks a user
+  **Ineligible** when the on-prem size cannot be read. Since size is not a criterion in the
+  source script at all, that is arguably a second invented block - an on-prem connection hiccup
+  currently reads to the operator as "this user cannot migrate". Unraised as work; owner's call.
+  **Provenance finding worth keeping: the size gate has no basis in the source script.**
+  `D:\source\scripts\Exchange\CheckMigrationElligibility.ps1` checks five things - migration in
+  progress, already a cloud mailbox, `SEC_ITAR_USERS` membership, not-a-cloud-mailbox on
+  move-back, and `AuxArchive` on move-back. All five are implemented. There is NO size check in
+  it, and no plan or decision in this repo ever asked for one; it appears in
+  `docs/MigrationEligibilityProtectedFlag-Plan.md:48` as an already-existing fact. The owner
+  kept the gate and corrected its arithmetic rather than removing it.
+  **The one check the script has that the module does not: an on-prem AD account precondition.**
+  The script wraps its whole body in `if ($ntid.SamAccountName)` after a `Get-Recipient`, so a
+  mail contact, mail user, distribution group or cloud-only object gets no verdict at all. The
+  module has no `Get-Recipient` and no SamAccountName gate - it uses the address it is given -
+  so those objects receive a normal Eligible/Ineligible answer. Recorded, not worked.
+  **Also recorded, not worked: `ExchangeServiceBase.cs:605-609` looks the user up in AD by
+  `UserPrincipalName -eq <the email address typed in>`, where the script used SamAccountName.**
+  Where a UPN differs from the primary SMTP address the lookup returns nobody, `:614` returns,
+  and the excluded-group check is silently skipped for that person - a fail-open on the only
+  compliance-motivated rule in the script. The owner confirmed 2026-08-13 that ITAR users ARE
+  currently excluded, which is consistent with this: it works for everyone whose UPN matches
+  their email and silently misses everyone else. Unproven either way. To settle it, run the
+  eligibility check on a `SEC_ITAR_USERS` member whose UPN is not their primary SMTP address.
+  **NEXT: nothing on this stream.** Deploy is the owner's call and carries the earlier
+  Migration/favicon work with it.
+
+### Rotated from `## Next`
+
+- **Queue status (corrected 2026-08-28, pgwt-9):**
+
+1. `docs/GroupMemberNesting-Plan.md` - **IMPLEMENTED 2026-08-27** (see `## Now`); manual
+   checks ride the next deploy. Do not restart.
+2. `docs/ProtectedGroupWriteTarget-Plan.md` - **IMPLEMENTED 2026-08-28** (see `## Now`);
+   manual checks ride the next deploy. Do not restart.
+3. `docs/RiskyUsersModule-Plan.md` - **IMPLEMENTED 2026-09-01** (see `## Now`); all
+   seven slices landed. NOT DEPLOYED - manual checks ride the next dev deploy. Do not
+   restart.
+4. `docs/IntuneDeviceManagement-Plan.md` - **IMPLEMENTED 2026-09-01** (see `## Now`); all
+   seven slices landed. NOT DEPLOYED - the app registration and Delinea secret still
+   block the first live Graph call; manual checks ride the next dev deploy. Do not
+   restart.
+5. `docs/TokenBudget-Plan.md` - **Draft, awaiting a go. D1 ruled, D2 withdrawn; no owner
+   decision is outstanding.** Not a feature: how the other four get implemented, plus
+   `tools/Get-TokenUsage.ps1` and a tracked baseline. Independent of 1-4 and worth landing
+   first, since it changes what the others cost. Start at S1. See the entry in `## Now`.
+
+All of the above are docs-only so far. (Stale even when archived: item 5 no longer
+matched the Token Budget entry in `## Now`, which was DONE by the time this was rotated.)
+
+- **Do not re-derive the reviewer transport.** `.agents/review/harnesses.local.json` was a
+current cache hit for `codex-cli 0.147.0`; both openreview passes that session ran clean
+through it. The `refresh_token ... revoked` line on stderr was documented noise on the
+API-key path and did not affect either run (exit 0, `capability_ok: true` both times).
+**Superseded 2026-09-02: `.agents/machines.md` now records `codex-cli 0.152.0`** - re-verify
+against that file rather than this archived version number.
+
 ## Archived 2026-08-14 (drift sweep)
 
 Rotated out of `.agents/state.md` verbatim. The first two entries came from `## Now`
