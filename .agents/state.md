@@ -499,8 +499,11 @@ by owner ruling 2026-09-01 (items below shift down one):**
 4. Intune Devices module - **IMPLEMENTED 2026-09-01**; see `## Now`. NOT DEPLOYED - the
    app registration and Delinea secret still block the first live Graph call; manual
    checks ride the next dev deploy. Do not restart.
-5. Sidebar Home link removal - ruled, no plan needed
-Each still starts on its own explicit go, one fresh session per slice.
+5. Sidebar Home link removal - IMPLEMENTED 2026-09-01 (`2128610`, base `2.15.0`; see
+   item 5 in `## Next up`). NOT DEPLOYED.
+Queue complete 2026-09-01: every item above is implemented and unpushed. The owner
+ruled the same day that one session may run all slices (fresh-session-per-slice
+protocol withdrawn), with Sonnet/Opus subagents doing the coding.
 
 **Queue status (corrected 2026-08-28, pgwt-9):**
 
@@ -773,7 +776,12 @@ Live backlog only. Items need an approved plan before code unless noted.
    `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
    user-notification question is parked with it and will be decided only if the module is picked
    back up. Not to be worked on or raised as next.
-5. **Remove the redundant sidebar Home link** (owner, 2026-08-27). `NavMenu.razor:14` (the brand
+5. **Remove the redundant sidebar Home link - IMPLEMENTED 2026-09-01 (owner goal-directive
+   the same day), commit `2128610`, base `2.14.0` -> `2.15.0`, no module bump.** The `Home`
+   NavLink and both dead `.nav-home` CSS rules (`NavMenu.razor.css`, `app.css`) are gone; the
+   brand link stays. One source-guard test, probe-proven. Suite 2163/0/3. NOT DEPLOYED -
+   eyeball the sidebar on the next dev deploy (no bUnit harness). Original ruling follows.
+   (owner, 2026-08-27). `NavMenu.razor:14` (the brand
    link, `Application:Name` falling back to "Admin Portal") and `NavMenu.razor:23` (the `Home`
    `NavLink`) both target `href=""` -- two controls, one destination. Owner's call is to drop
    `Home` and keep the brand link. Shared layout, so this is a base app version bump and no
