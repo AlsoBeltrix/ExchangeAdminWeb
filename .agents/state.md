@@ -6,6 +6,24 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
+  `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**
+  (1) The admin save bar counted dirty SECTIONS and called them "changes" - it now counts
+  actual pending edits by diffing each section against what was loaded (`ad73573`, base
+  `2.16.0`; `AdminPageDirtyState` per-section counts), plus the pre-existing gap that a
+  protected-principal PATTERN add or directory-read secret-id edit never marked the
+  section dirty (`31c720a`). (2) Intune notify/Entra-removal defaults left Module Config
+  for act-time-only choice (`50f466d`, module `1.1.0`; see the Intune entry's D2 note).
+  (3) Module permissions carried no explanation, so the Access tab showed bare aliases -
+  `ModulePermission` now requires a `Description`, all 42 permissions across 27 modules
+  have one, the Access tab renders it under each heading, a catalog tripwire enforces
+  non-blank (`f42fdf0`, base `2.17.0`; spec and dev guide updated). Two permissions were
+  found to grant nothing and now say so on screen: `ExchangeOnline` (no page or code
+  consumes it) and `AdminSettings` (built from `Security:AdminGroups`, not section access)
+  - recorded, not changed; owner's call whether to remove them. Suite 2169/0/3.
+  **NEXT: owner deploys dev, grants a group on `IntuneDevices` and `RiskyUsers` Access,
+  sets both `GraphDelineaSecretId` values, then runs the manual checks.**
+
 - **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
   NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1
   `45f14e5` (shared `CsvExport.Write` helper + AC1b formula neutralization, base
@@ -76,10 +94,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   is to remove it as a separate step. Implemented in S3+S4.
   **D2 (owner, 2026-08-14), a standing design rule for this module, not just an answer:**
   *"anything that can be an option should be an option. do not build in restraints. make
-  email the user an option."* Three config fields (`NotifyUserOnDelete` false;
-  `NotifyUserOnRetire`/`NotifyUserOnWipe` true) set the deployment default; a per-action
-  checkbox lets the operator override at the moment of acting; the audit event records what
-  actually happened. `EmailService`'s app-wide `_notifyUsers` switch outranks anything the
+  email the user an option."* **Config half SUPERSEDED 2026-09-02 (owner, during dev
+  validation: "the email options should not live in global module settings"): the four
+  Boolean config fields are gone (`50f466d`, module `1.1.0`, `.agents/decisions.md`
+  2026-09-02); the per-action checkbox stays, starting off for Delete, on for Retire and
+  Wipe, and the Entra-removal checkbox starts off.** The operator decides at the moment of
+  acting; the audit event records what actually happened. `EmailService`'s app-wide `_notifyUsers` switch outranks anything the
   module sets - a ticked box on a deployment with user notifications off states so on
   screen and in the audit, rather than reading as decorative. Implemented in S6.
   **D3 (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
