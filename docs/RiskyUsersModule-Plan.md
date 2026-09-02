@@ -1,10 +1,14 @@
 # Risky Users Module (Microsoft Entra ID Protection)
 
-Status: Scope settled, awaiting a go to implement. **D1 is RULED (owner, 2026-08-12):
-the full module including remediation is in scope -- S5-S7 are live, not deferred.** D2
-(read alerting) remains open and is a PRE-SHIP GATE, not a start gate: S7 cannot close
-and no phase may be marked `Implemented` until D2 is ruled and built. No code has been
-written; implementation waits on its own go.
+Status: Implemented 2026-09-01 (owner go the same day). **D1 is RULED (owner,
+2026-08-12): the full module including remediation is in scope -- S5-S7 are live, not
+deferred.** **D2 (read alerting) is RULED (owner, 2026-08-31): reads are AUDITED, never
+alert-emailed** (`.agents/decisions.md` 2026-08-31) -- the pre-ship gate is satisfied.
+All seven slices landed: plan revision `42d736f` (re-sequencing, recorded below), S2
+`e003af9`, S1+S3 `c68c7b6`, S4 `962cf38`, S5 `dee1add`, S6 `930d762`, S7 `3602859`.
+Module `RiskyUsers` stays `1.0.0` (all slices landed before any deploy, per Versioning
+below). NOT DEPLOYED -- the manual checks under `## Verification` need a deployed
+instance and ride the next dev deploy.
 
 New module `RiskyUsers`. No base app version bump (Constitution, Deployment And
 Versioning: adding a module is not a shared-infrastructure change) unless S4a is taken,

@@ -252,75 +252,60 @@ CRITICAL-only and each needs an explicit owner go (`.agents/decisions.md`).
   **NEXT: nothing on this stream.** Deploy is the owner's call and carries the earlier
   Migration/favicon work with it.
 
-- **RISKY USERS MODULE: PLAN DRAFTED AND REVIEWED, AWAITING OWNER GO, NO CODE.**
-  `docs/RiskyUsersModule-Plan.md` (`a2c4c77`, revised through `a00f250`).
+- **RISKY USERS MODULE: IMPLEMENTED 2026-09-01 (owner go the same day). NOT DEPLOYED.**
+  `docs/RiskyUsersModule-Plan.md` (plan revision `42d736f`; status now `Implemented`).
+  All seven slices landed: plan revision `42d736f` (re-sequencing S2 ahead of S1+S3),
+  S2 `e003af9`, S1+S3 `c68c7b6`, S4 `962cf38`, S5 `dee1add`, S6 `930d762`, S7 `3602859`
+  (README + token-log). Module `RiskyUsers` stays `1.0.0` - all seven slices landed
+  before any deploy, so it ships once (the plan's own versioning rule). Full suite
+  1951/0/3.
   Owner request 2026-08-12: *"explore adding a module to this app that can managed Risky
   Users in Azure"*, then *"plan it, review the plan with codex, and add it to the list of
-  things to implement."*
-  New module `RiskyUsers`, Entra ID Protection via Graph v1.0. Independent of the two
-  group plans - no shared code, no ordering constraint either way.
-  **Two external prerequisites, neither of them code. One is settled, one is not.**
-  (1) **Microsoft Entra ID P2 - SATISFIED, owner-confirmed 2026-08-12.** The API requires
-  it and errors without it. **I raised it as a thing to verify and the owner's answer was
-  that asking was the mistake: *"that's why I asked module. if we didn't have risky users
-  to manage, I wouldn't building manage risky users module."*** The request for the
-  module was itself the evidence. Do not re-open this. (2) A **dedicated app
-  registration** with `IdentityRiskyUser.Read.All` (plus `.ReadWrite.All` only if D1
-  takes the write phase), admin-consented, and its own Delinea secret. **This one is
-  genuinely outstanding** and blocks S2.
-  **All endpoints are v1.0**, so `GraphTokenClient`'s hardcoded base URL
-  (`Services/GraphTokenClient.cs:16`) needs no change and no NuGet package is added.
-  Verified against Microsoft Learn 2026-08-12, not from memory.
-  **D1 IS RULED (owner, 2026-08-12): remediation IS in scope.** *"yes, manage means
-  manage, not read-only view."* S5-S7 are live slices, and
-  `IdentityRiskyUser.ReadWrite.All` is a required permission rather than a conditional
-  one. **My read-only-first recommendation was offered twice and declined twice** - the
-  word "manage" was in the original request and was reaffirmed when the narrower option
-  was put explicitly. Slice ORDER is unchanged (S1-S4 before S5-S7, because the write UI
-  attaches to rendered rows); what changed is that shipping the read phase alone is not a
-  finished deliverable. Do not re-propose the split.
+  things to implement."* New module, Entra ID Protection via Graph v1.0, independent of
+  every other stream.
+  **D1 RULED (owner, 2026-08-12): remediation IS in scope** - *"yes, manage means
+  manage, not read-only view."* The full module shipped: read (list/history) plus
+  Dismiss/Confirm Safe/Confirm Compromised behind `RiskyUsersRemediate`, one Graph call
+  per user (the three action endpoints take `userIds` as an array and return one bare
+  `204` for the whole batch, so a per-user call is the only way to get a per-user
+  outcome - Known Failure Class 2 written into the API itself).
   **D2 RULED 2026-08-31 (owner: "it should be logged, but not alert emailed"): reads
   audit, never alert-email.** Recorded in `.agents/decisions.md` 2026-08-31; AC17
-  asserts the audit-only shape. The pre-ship gate is cleared - the module waits only
-  on an implementation go and the owner-side Entra app registration.
-  **The design constraint that shaped the plan: risky users are CLOUD identities.** The
-  repo's group, OU and SamAccountName protection rules all evaluate from an on-prem DN
-  and structurally cannot match a cloud-only principal (Constitution, Protected
-  Principals, final bullet). `MfaReset` hit this exactly - its catalog comment records
-  that before `1.2.0` an AD-only lookup reported every cloud-only user as "no AD object"
-  and skipped the check, leaving protection "close to inert" in a Graph module whose
-  normal input is a cloud identity. The write phase must use the `MfaReset.razor:262-364`
-  two-branch shape, and can improve on it: `riskyUser.id` IS the Entra object id, which
-  `MfaReset` never has.
-  **Two API-shape traps the plan pins.** The three action endpoints take `userIds` as an
-  ARRAY and return one bare `204` for the whole batch with no per-user body - Known
-  Failure Class 2 written into the API itself, so this module calls them one user per
-  request. And `GraphTokenClient` prepends a base URL to a relative path while
-  `@odata.nextLink` is ABSOLUTE, so lists past the 500 cap are unreachable; the plan
-  makes truncation visible rather than teaching the shared client to page, because that
-  would be a base-app-version change to a file two other modules use.
+  asserts the audit-only shape and it is implemented that way - `EmailService` is not
+  reachable from the read path.
+  **The identity-model constraint that shaped the write phase: risky users are CLOUD
+  identities.** The repo's group, OU and SamAccountName protection rules all evaluate
+  from an on-prem DN and structurally cannot match a cloud-only principal (Constitution,
+  Protected Principals, final bullet). S6 uses the `MfaReset.razor:262-364` two-branch
+  protected-principal shape and improves on it: `riskyUser.id` IS the Entra object id,
+  populated into `EntraObjectId` on the unresolved branch. Verified during S6 that
+  `ProtectedPrincipalService.CheckAsync` -> `MatchesIdentity`
+  (`Services/ProtectedPrincipalService.cs:684-720`) actually consults `EntraObjectId`, so
+  object-id protection genuinely bites here, not just in principle. The servicer override
+  (`ProtectedServicer:RiskyUsers`) is honoured on both branches; no such row exists in
+  either config store on first deploy - scope, not oversight.
+  **S6 judgment call, recorded rather than silently diverging: RiskyUsers validates its
+  ticket through `ServiceNowService.ValidateTicketAsync` directly**
+  (`Components/Pages/RiskyUsers.razor:577`), not through the `ITicketValidator` /
+  `TicketValidationService` seam and per-module `ValidateTickets` Boolean switch that
+  `docs/BitLockerMandatoryTicket-Plan.md` S1 introduced the same day. Both are valid
+  shapes and they were not reconciled with each other. The owner may want the newer seam
+  adopted here later; unscheduled, not a defect.
   **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `d877294..a2c4c77`:
   `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
-  `.agents/review/findings/ru-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`.
-  **ru-1 (HIGH) is the one worth reading: the plan argued correctly that this module
-  meets the alerting clause, then listed D2 as "Blocks nothing".** An interim default and
-  a shipped answer one line apart in the same document. D2 is now a pre-ship gate carried
-  in three places. ru-2 (MEDIUM): S1 registered `AddSingleton<RiskyUsersService>()` while
-  S2 introduced the type, so the first commit would fail CS0246 - a slice boundary drawn
-  on conceptual grouping instead of compilation order. ru-3 (MEDIUM): the test plan
-  pointed at `GraphTokenClientTests.StubHandler`, which is `private sealed`, and never
-  mentioned that the descriptor breaks the hardcoded module and alias counts at
-  `ModuleCatalogTests.cs:16,109` - the plan reasoned about tests to ADD and not about
-  tests the change BREAKS.
-  **All three would have been paid for during implementation, not before it.** Two of
-  them are compile and test failures on the very first commit.
-  **NEXT: a go to implement, starting at S1.** No owner decision blocks the start - D1 is
-  ruled and D2 is a pre-ship gate, not a start gate. Two things are outstanding but
-  neither stops S1-S4: the app registration plus its Delinea secret (blocks S2's first
-  live call, not the code), and D2 (blocks marking anything `Implemented`).
-  Versions when the work lands: new module `RiskyUsers 1.0.0` if S1-S7 land before any
-  deploy, else `1.1.0` for the remediation half; base app version UNCHANGED (adding a
-  module does not bump it).
+  `.agents/review/findings/ru-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`. ru-1
+  (HIGH): the plan argued this module meets the alerting clause, then listed D2 as
+  "blocks nothing" - fixed by making D2 an explicit pre-ship gate, now satisfied. ru-2
+  (MEDIUM): a slice boundary drawn on conceptual grouping instead of compile order -
+  fixed by the `42d736f` re-sequencing (S2 before S1+S3). ru-3 (MEDIUM): the test plan
+  pointed at a `private sealed` test helper and missed that the descriptor breaks the
+  hardcoded catalog/alias counts - both fixed in the S1+S3 commit.
+  **External prerequisite, still outstanding: the dedicated Entra app registration**
+  (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented) plus its own
+  Delinea secret. Blocks the first live Graph call, not any code - all seven slices were
+  built and tested entirely against the seamed test harness.
+  **NEXT: owner-side app registration + Delinea secret** (blocks the first live Graph
+  call), **then the plan's manual checks ride the next dev deploy.**
 
 - **NESTED GROUP MEMBERSHIP: IMPLEMENTED 2026-08-27 (owner goal-directive the same day). ON
   DEV since 2026-08-31 (the `2.10.0` deploy); NOT on prod.** S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`, S5a `ba3b6c8`,
@@ -539,7 +524,10 @@ by owner ruling 2026-09-01 (items below shift down one):**
    `docs/ModuleCsvExport-Plan.md` status is `Implemented`, section 9
    traceability completed. Manual checks ride the next dev deploy. Do not
    restart.
-3. Risky Users module - S1, all decisions ruled
+3. Risky Users module - **IMPLEMENTED 2026-09-01** (owner go the same day); see
+   `## Now`. All seven slices landed; `docs/RiskyUsersModule-Plan.md` status is
+   `Implemented`. NOT DEPLOYED - the app registration and Delinea secret still block
+   the first live Graph call; manual checks ride the next dev deploy. Do not restart.
 4. Intune Devices module - S0, all decisions ruled
 5. Sidebar Home link removal - ruled, no plan needed
 Each still starts on its own explicit go, one fresh session per slice.
@@ -550,9 +538,9 @@ Each still starts on its own explicit go, one fresh session per slice.
    checks ride the next deploy. Do not restart.
 2. `docs/ProtectedGroupWriteTarget-Plan.md` - **IMPLEMENTED 2026-08-28** (see `## Now`);
    manual checks ride the next deploy. Do not restart.
-3. `docs/RiskyUsersModule-Plan.md` - **Scope settled, awaiting a go to implement.** New
-   module, independent of 1 and 2. D1 ruled (remediation in scope); D2 open but a
-   pre-ship gate, not a start gate. Start at S1. See the entry in `## Now`.
+3. `docs/RiskyUsersModule-Plan.md` - **IMPLEMENTED 2026-09-01** (see `## Now`); all
+   seven slices landed. NOT DEPLOYED - manual checks ride the next dev deploy. Do not
+   restart.
 4. `docs/IntuneDeviceManagement-Plan.md` - **Draft, reviewed, awaiting a go. D1, D2 and D3 all
    ruled; no owner decision is outstanding.** New module, independent of 1-3. Start at S0.
    See the entry in `## Now`.
