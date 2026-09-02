@@ -1,0 +1,358 @@
+@page "/intune-devices"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "IntuneDevices")]
+@rendermode InteractiveServer
+@inject IntuneDeviceService IntuneDeviceService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<IntuneDevices> Logger
+
+<PageTitle>Intune Devices</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>
+            Every search and device lookup is logged for audit purposes.
+            Delete, retire and wipe are not available in this release.
+            Deleting a device's Intune record does not remove company data from the device and
+            does not remove the device's Entra ID object - both are separate actions.
+        </small>
+    </div>
+    <h1 class="mb-4">Intune Devices<ModuleVersion /></h1>
+
+    @if (!IntuneDeviceService.IsAvailable)
+    {
+        <div class="alert alert-danger">Intune Devices module is not configured. Set Graph App Delinea Secret ID in Module Config.</div>
+        return;
+    }
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label mb-1" for="searchTerm">Device name, serial number, or user principal name</label>
+                    <input id="searchTerm" class="form-control" @bind="searchTerm"
+                           @bind:event="oninput" @onkeydown="OnSearchKeyDown" disabled="@isSearching"
+                           placeholder="Part or all of a device name, serial number, or UPN" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@isSearching">
+                        @if (isSearching)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Search
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* An in-flight search must SAY it is in flight in the results area, not only as a button
+       spinner - a blank results area during a Graph round trip reads as a hung page. *@
+    @if (isSearching)
+    {
+        <div class="alert alert-info d-flex align-items-center">
+            <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+            <span>Searching Intune managed devices...</span>
+        </div>
+    }
+
+    @* hasSearched is cleared at the start of every search, not only the first, and set again only
+       in `finally` once an answer (success or failure) exists - so a second search never leaves
+       the first search's verdict on screen while the second is in flight. *@
+    @if (hasSearched && !isSearching)
+    {
+        @if (errorMessage != null)
+        {
+            <div class="alert alert-danger">@errorMessage</div>
+        }
+        else if (devices.Count == 0)
+        {
+            @if (truncated)
+            {
+                <div class="alert alert-warning py-2">
+                    <small>No match in the first @searchedCount device(s) searched; more devices exist. Narrow the search.</small>
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-secondary">No matching devices found.</div>
+            }
+        }
+        else
+        {
+            @if (truncated)
+            {
+                <div class="alert alert-warning py-2">
+                    <small>Showing matches from the first @searchedCount device(s) searched; more devices exist. Narrow the search.</small>
+                </div>
+            }
+
+            <div class="card">
+                <div class="card-header">
+                    <strong>@devices.Count device(s)</strong>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                            <tr>
+                                <th>Device name</th>
+                                <th>User</th>
+                                <th>OS</th>
+                                <th>Compliance</th>
+                                <th>Last sync</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var device in devices)
+                            {
+                                <tr>
+                                    <td>@device.DeviceName</td>
+                                    <td>@device.UserPrincipalName</td>
+                                    <td>@device.OperatingSystem @device.OsVersion</td>
+                                    <td><span class="badge @ComplianceBadgeClass(device.ComplianceState)">@device.ComplianceState</span></td>
+                                    <td class="text-nowrap">@(device.LastSyncDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
+                                    <td>
+                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetailAsync(device)">
+                                            @(expandedDeviceId == device.Id ? "Hide detail" : "Detail")
+                                        </button>
+                                    </td>
+                                </tr>
+
+                                @if (expandedDeviceId == device.Id)
+                                {
+                                    <tr>
+                                        <td colspan="6" class="bg-light">
+                                            @if (detailLoading)
+                                            {
+                                                <span class="spinner-border spinner-border-sm me-2"></span> <small>Loading detail...</small>
+                                            }
+                                            else if (detailError != null)
+                                            {
+                                                <div class="alert alert-danger mb-0 py-2">@detailError</div>
+                                            }
+                                            else if (detailDevice != null)
+                                            {
+                                                <dl class="row mb-0 small">
+                                                    <dt class="col-sm-3">Managed device name</dt><dd class="col-sm-9">@detailDevice.ManagedDeviceName</dd>
+                                                    <dt class="col-sm-3">User display name</dt><dd class="col-sm-9">@detailDevice.UserDisplayName</dd>
+                                                    <dt class="col-sm-3">Manufacturer / model</dt><dd class="col-sm-9">@detailDevice.Manufacturer @detailDevice.Model</dd>
+                                                    <dt class="col-sm-3">Serial number</dt><dd class="col-sm-9">@detailDevice.SerialNumber</dd>
+                                                    <dt class="col-sm-3">IMEI / MEID</dt><dd class="col-sm-9">@detailDevice.Imei @detailDevice.Meid</dd>
+                                                    <dt class="col-sm-3">Wi-Fi / Ethernet MAC</dt><dd class="col-sm-9">@detailDevice.WiFiMacAddress @detailDevice.EthernetMacAddress</dd>
+                                                    <dt class="col-sm-3">Enrolled</dt><dd class="col-sm-9">@(detailDevice.EnrolledDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</dd>
+                                                    <dt class="col-sm-3">Last sync</dt><dd class="col-sm-9">@(detailDevice.LastSyncDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</dd>
+                                                    <dt class="col-sm-3">Management agent</dt><dd class="col-sm-9">@detailDevice.ManagementAgent</dd>
+                                                    <dt class="col-sm-3">Owner type</dt><dd class="col-sm-9">@detailDevice.ManagedDeviceOwnerType</dd>
+                                                    <dt class="col-sm-3">Enrollment type</dt><dd class="col-sm-9">@detailDevice.DeviceEnrollmentType</dd>
+                                                    <dt class="col-sm-3">Registration state</dt><dd class="col-sm-9">@detailDevice.DeviceRegistrationState</dd>
+                                                    <dt class="col-sm-3">Encrypted</dt><dd class="col-sm-9">@(detailDevice.IsEncrypted ? "Yes" : "No")</dd>
+                                                    <dt class="col-sm-3">Supervised</dt><dd class="col-sm-9">@(detailDevice.IsSupervised ? "Yes" : "No")</dd>
+                                                    <dt class="col-sm-3">Jailbroken / rooted</dt><dd class="col-sm-9">@(detailDevice.JailBroken ? "Yes" : "No")</dd>
+                                                    <dt class="col-sm-3">Entra ID device id</dt><dd class="col-sm-9">@(string.IsNullOrWhiteSpace(detailDevice.AzureADDeviceId) ? "(none)" : detailDevice.AzureADDeviceId)</dd>
+                                                    <dt class="col-sm-3">Entra ID registered</dt><dd class="col-sm-9">@(detailDevice.AzureADRegistered ? "Yes" : "No")</dd>
+                                                    <dt class="col-sm-3">Storage</dt><dd class="col-sm-9">@FormatStorage(detailDevice.FreeStorageSpaceInBytes, detailDevice.TotalStorageSpaceInBytes)</dd>
+                                                    <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">@(string.IsNullOrWhiteSpace(detailDevice.Notes) ? "(none)" : detailDevice.Notes)</dd>
+                                                </dl>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private string currentUser = "";
+    private string clientIpAddress = "Unknown";
+    private bool authChecked;
+
+    private string searchTerm = "";
+    private bool isSearching;
+    private bool hasSearched;
+    private string? errorMessage;
+    private List<IntuneDevice> devices = [];
+    private bool truncated;
+    private int searchedCount;
+
+    private string? expandedDeviceId;
+    private bool detailLoading;
+    private string? detailError;
+    private IntuneDevice? detailDevice;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "IntuneDevices");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !isSearching)
+            await SearchAsync();
+    }
+
+    private async Task SearchAsync()
+    {
+        isSearching = true;
+        // Cleared at the start of every search, not only the first - otherwise a second search
+        // would render the first search's now-stale verdict while it is in flight.
+        hasSearched = false;
+        errorMessage = null;
+        devices = [];
+        truncated = false;
+        searchedCount = 0;
+        expandedDeviceId = null;
+        detailDevice = null;
+        detailError = null;
+        await Task.Yield();
+
+        var target = DescribeSearch(searchTerm);
+
+        try
+        {
+            var result = await IntuneDeviceService.SearchDevicesAsync(searchTerm);
+            devices = [.. result.Devices];
+            truncated = result.Truncated;
+            searchedCount = result.SearchedCount;
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Search", target, true));
+        }
+        catch (Exception ex)
+        {
+            // A failed request must never render as "no devices found" (T7) - the service throws
+            // rather than returning an empty result, and that exception is surfaced here as a
+            // distinct alert, never folded into the empty-results branch.
+            errorMessage = ex.Message;
+            Logger.LogError(ex, "Failed to search Intune devices.");
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Search", target, false, ex.Message));
+        }
+        finally
+        {
+            hasSearched = true;
+            isSearching = false;
+        }
+    }
+
+    private async Task ToggleDetailAsync(IntuneDevice device)
+    {
+        if (expandedDeviceId == device.Id)
+        {
+            expandedDeviceId = null;
+            return;
+        }
+
+        expandedDeviceId = device.Id;
+        detailLoading = true;
+        detailError = null;
+        detailDevice = null;
+        await Task.Yield();
+
+        var target = $"{device.DeviceName} ({device.Id})";
+
+        try
+        {
+            detailDevice = await IntuneDeviceService.GetDeviceAsync(device.Id);
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Detail", target, true));
+        }
+        catch (Exception ex)
+        {
+            detailError = ex.Message;
+            Logger.LogError(ex, "Failed to load Intune device detail for {DeviceId}.", device.Id);
+
+            SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Detail", target, false, ex.Message));
+        }
+        finally
+        {
+            detailLoading = false;
+        }
+    }
+
+    private void SafeAudit(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to write Intune Devices audit record.");
+        }
+    }
+
+    /// <summary>
+    /// Human-readable audit target for an IntuneDevices_Search lookup. Pure and static so it can
+    /// be unit-tested without a page instance.
+    /// </summary>
+    internal static string DescribeSearch(string? searchTerm) =>
+        string.IsNullOrWhiteSpace(searchTerm) ? "(no search term)" : searchTerm.Trim();
+
+    /// <summary>
+    /// Badge class for a managedDevice complianceState value. Falls through to a neutral badge
+    /// for any value outside the documented set (including a future Graph value) rather than
+    /// dropping or miscoloring it - complianceState is stored as a plain string and must render,
+    /// not be filtered.
+    /// </summary>
+    internal static string ComplianceBadgeClass(string complianceState) => complianceState.ToLowerInvariant() switch
+    {
+        "compliant" => "bg-success",
+        "noncompliant" => "bg-danger",
+        "conflict" => "bg-warning text-dark",
+        "error" => "bg-danger",
+        "ingraceperiod" => "bg-warning text-dark",
+        "configmanager" => "bg-info text-dark",
+        "unknown" => "bg-secondary",
+        _ => "bg-light text-dark border"
+    };
+
+    /// <summary>
+    /// Human-readable free/total storage for the detail panel. Pure and static so it can be
+    /// unit-tested without a page instance. A device that never reported total storage (0) shows
+    /// "(unknown)" rather than a misleading "0.0 GB of 0.0 GB".
+    /// </summary>
+    internal static string FormatStorage(long freeBytes, long totalBytes)
+    {
+        if (totalBytes <= 0)
+            return "(unknown)";
+
+        static double ToGb(long bytes) => bytes / 1024.0 / 1024.0 / 1024.0;
+        return $"{ToGb(freeBytes):0.0} GB free of {ToGb(totalBytes):0.0} GB";
+    }
+}

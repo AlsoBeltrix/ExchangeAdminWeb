@@ -13,7 +13,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(26, _catalog.GetAll().Count); // 26 modules (25 operational + 1 config-only)
+        Assert.Equal(27, _catalog.GetAll().Count); // 27 modules (26 operational + 1 config-only)
     }
 
     [Fact]
@@ -50,6 +50,64 @@ public class ModuleCatalogTests
         var aliases = _catalog.GetConfigurablePolicyAliases();
         Assert.Contains("RiskyUsers", aliases);
         Assert.Contains("RiskyUsersRemediate", aliases);
+    }
+
+    [Fact]
+    public void Catalog_HasIntuneDevicesModule()
+    {
+        var module = _catalog.GetById("IntuneDevices");
+        Assert.NotNull(module);
+        Assert.Equal("intune-devices", module!.Route);
+        Assert.Equal("Infrastructure", module.Category);
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+    }
+
+    [Fact]
+    public void Catalog_IntuneDevices_MainPermissionIsFailClosed()
+    {
+        var module = _catalog.GetById("IntuneDevices")!;
+        Assert.Equal("IntuneDevices", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_IntuneDevices_HasThreeFailClosedGranularPermissions()
+    {
+        // D1 (Delete / Privileged) and D3 (EntraDelete): three separately gated destructive
+        // actions, all fail-closed. All three aliases are declared here in S2, even though
+        // Privileged and EntraDelete are not consumed until S4/S5 - a policy alias is data in a
+        // list and creates no compile dependency (ru-2).
+        var module = _catalog.GetById("IntuneDevices")!;
+        Assert.Equal(3, module.GranularPermissions.Count);
+        Assert.Contains(module.GranularPermissions, p => p.Name == "Delete" && p.PolicyAlias == "IntuneDevicesDelete" && p.FailClosed);
+        Assert.Contains(module.GranularPermissions, p => p.Name == "Privileged" && p.PolicyAlias == "IntuneDevicesPrivileged" && p.FailClosed);
+        Assert.Contains(module.GranularPermissions, p => p.Name == "EntraDelete" && p.PolicyAlias == "IntuneDevicesEntraDelete" && p.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_IntuneDevices_PolicyAliasesAreConfigurable()
+    {
+        var aliases = _catalog.GetConfigurablePolicyAliases();
+        Assert.Contains("IntuneDevices", aliases);
+        Assert.Contains("IntuneDevicesDelete", aliases);
+        Assert.Contains("IntuneDevicesPrivileged", aliases);
+        Assert.Contains("IntuneDevicesEntraDelete", aliases);
+    }
+
+    [Fact]
+    public void Catalog_IntuneDevices_NotificationAndEntraDefaultFieldsDeclareBooleanType()
+    {
+        // The plan's descriptor text predates the boolean-checkbox tripwire
+        // (Catalog_BooleanDefaultedFieldsDeclareBooleanType, base 2.12.0) - current code, not the
+        // older plan wording, governs. Pinned here by name so the four D2/D3 default fields are
+        // never quietly reverted to free text.
+        var module = _catalog.GetById("IntuneDevices")!;
+        foreach (var key in new[] { "NotifyUserOnDelete", "NotifyUserOnRetire", "NotifyUserOnWipe", "RemoveEntraObjectByDefault" })
+        {
+            var field = Assert.Single(module.ConfigFields, f => f.Key == key);
+            Assert.Equal(ConfigFieldType.Boolean, field.FieldType);
+        }
     }
 
     [Fact]
@@ -144,7 +202,11 @@ public class ModuleCatalogTests
         Assert.Contains("AdminBulkJobs", aliases);
         Assert.Contains("RiskyUsers", aliases);
         Assert.Contains("RiskyUsersRemediate", aliases);
-        Assert.Equal(36, aliases.Count);
+        Assert.Contains("IntuneDevices", aliases);
+        Assert.Contains("IntuneDevicesDelete", aliases);
+        Assert.Contains("IntuneDevicesPrivileged", aliases);
+        Assert.Contains("IntuneDevicesEntraDelete", aliases);
+        Assert.Equal(40, aliases.Count);
     }
 
     [Fact]

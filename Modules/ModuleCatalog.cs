@@ -578,6 +578,48 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "IntuneDevices",
+            DisplayName = "Intune Devices",
+            Description = "Search Intune managed devices, view device detail, and delete, retire or wipe a device.",
+            Route = "intune-devices",
+            // Reused deliberately, same reason as BitLockerRecovery above: no device/laptop icon
+            // class exists in wwwroot/app.css today and the package validator rejects an icon
+            // class it cannot find. Adding one is a separate change.
+            IconCss = "bi bi-gear-fill-nav-menu",
+            Category = "Infrastructure",
+            SortOrder = 820,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
+            MainPermission = new("Access", "IntuneDevices", FailClosed: true),
+            GranularPermissions = [
+                new("Delete", "IntuneDevicesDelete", FailClosed: true),
+                new("Privileged", "IntuneDevicesPrivileged", FailClosed: true),
+                new("EntraDelete", "IntuneDevicesEntraDelete", FailClosed: true)
+            ],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
+                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
+                new("SearchResultLimit", "Search Result Limit",
+                    "Devices returned per search. Defaults to 50, capped at 500.",
+                    Required: false, DefaultValue: "50"),
+                new("NotifyUserOnDelete", "Email User On Delete",
+                    "Default for the per-action checkbox: email the device's primary user when its Intune record is deleted. Nothing changes on the device, so this defaults off.",
+                    Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
+                new("NotifyUserOnRetire", "Email User On Retire",
+                    "Default for the per-action checkbox: email the device's primary user when company data is removed from the device.",
+                    Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean),
+                new("NotifyUserOnWipe", "Email User On Wipe",
+                    "Default for the per-action checkbox: email the device's primary user when the device is factory reset. Suppressed app-wide if user notifications are disabled.",
+                    Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean),
+                new("RemoveEntraObjectByDefault", "Also Remove Entra ID Object By Default",
+                    "Default for the 'also remove the Entra ID device record' checkbox offered beside each action. Off by default: it is a second, separately permissioned deletion against a different object.",
+                    Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean)
+            ]
+        },
+        new()
+        {
             Id = "LicensingUpdates",
             DisplayName = "Licensing Updates",
             Description = "Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.",
