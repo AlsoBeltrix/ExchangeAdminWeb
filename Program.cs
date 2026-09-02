@@ -111,6 +111,7 @@ try
     builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();
     builder.Services.AddSingleton<MfaResetService>();
+    builder.Services.AddSingleton<IntuneDeviceService>();
     builder.Services.AddSingleton<Comms10kService>();
     builder.Services.AddScoped<ConferenceRoomService>();
     // Single protected-principal enforcement point for every ConferenceRooms room-mutating write
