@@ -229,6 +229,49 @@ Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph 
   Outstanding as of this writing -- blocks the first live Graph call, not the code
 - Section access key: `RiskyUsers`
 
+### Intune Devices (`/intune-devices`)
+
+Search Microsoft Intune managed devices, view device detail, and delete, retire or
+wipe a device via Microsoft Graph API.
+
+- Search by device name, serial number, or user principal name, capped at 500 rows
+  (`SearchResultLimit`, defaults to 50); a truncated result is shown as such, never
+  silently cut off
+- Full device detail, including compliance state, encryption state, and enrollment
+  info; the activation lock bypass code is excluded at the request boundary and never
+  rendered, audited, or logged
+- Three destructive actions at two permission tiers:
+  - **Delete** (`IntuneDevicesDelete`) removes the Intune management record only.
+    Company data stays on the device until its next check-in -- forever if it never
+    checks in again -- and the device's Entra ID object survives
+  - **Retire** and **Wipe** (`IntuneDevicesPrivileged`) queue the action at Intune;
+    Graph returns `204` when the request is accepted, not when the device carries it
+    out, so results read "queued", never "done". Every parameter Graph's wipe endpoint
+    accepts (keep user data, keep enrollment state, macOS recovery PIN and
+    obliteration behaviour, keep eSIM data plan) is an operator control, defaulting to
+    a full reset
+- Optional removal of the device's Entra ID object (`IntuneDevicesEntraDelete`),
+  offered beside each action and standalone. Addressed by its alternate key
+  (`azureADDeviceId`), captured before the Intune action runs since a deleted Intune
+  record cannot be read afterward; the Intune and Entra outcomes are reported and
+  audited independently, so a half-finished result is never shown as a plain success
+- Per-action "email the affected user" checkbox, seeded from three config defaults
+  (off for Delete, on for Retire and Wipe) and changeable by the operator at the
+  moment of acting; if the deployment has user notifications disabled app-wide, the
+  suppression is stated on screen and recorded in the audit event rather than
+  silently sending nothing
+- A protected-principal check runs before every write, against the device's primary
+  user, with the `ProtectedServicer:IntuneDevices` override
+- A ticket number is required before any action runs
+- **Requires:** a dedicated Entra app registration, admin-consented, with
+  `DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, and
+  `.PrivilegedOperations.All`, plus `Device.ReadWrite.All` for the Entra removal --
+  that last one is a directory scope covering every device object in the tenant, the
+  widest grant in the module, worth weighing before consenting -- and its own Delinea
+  secret. Outstanding as of this writing -- blocks the first live Graph call, not the
+  code
+- Section access key: `IntuneDevices`
+
 ### DHCP Authorization (`/dhcp-authorization`)
 
 Authorize or deauthorize DHCP servers in Active Directory.
