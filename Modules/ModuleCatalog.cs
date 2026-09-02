@@ -708,7 +708,7 @@ public sealed class ModuleCatalog
             SortOrder = 820,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.1.0",
+            Version = "1.2.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

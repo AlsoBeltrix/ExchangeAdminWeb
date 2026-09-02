@@ -52,10 +52,19 @@
         <div class="card-body">
             <div class="row g-2 align-items-end">
                 <div class="col-md-8">
-                    <label class="form-label mb-1" for="searchTerm">Device name, serial number, or user principal name</label>
+                    <label class="form-label mb-1" for="searchTerm">Start of a device name or user principal name, or an exact serial number</label>
                     <input id="searchTerm" class="form-control" @bind="searchTerm"
                            @bind:event="oninput" @onkeydown="OnSearchKeyDown" disabled="@isSearching"
-                           placeholder="Part or all of a device name, serial number, or UPN" />
+                           placeholder="Start of a device name or UPN, or a full serial number" />
+                    @* The label and this line say which kind of match each field gets, because the
+                       three differ: Intune accepts a prefix match on the two name fields and only
+                       an exact match on the serial (IntuneDeviceService.BuildFilterExpression). An
+                       operator typing the middle of a device name would otherwise read the empty
+                       result as "no such device". *@
+                    <div class="form-text">
+                        Device name and user principal name match from the START of the value - typing the middle of a
+                        name finds nothing. A serial number must be exact.
+                    </div>
                 </div>
                 <div class="col-md-4">
                     <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@isSearching">
@@ -111,6 +120,39 @@
                 </div>
             }
 
+            @* Owner ruling 2026-09-02: this module is headed for L2 support desk staff, so what
+               delete, retire and wipe actually DO is stated on the page in plain words instead of
+               assumed. It sits at the top of the actions area, closed by default and one click to
+               open, and is drawn only for an operator who has at least one of the actions - nobody
+               is asked to read about buttons they cannot see. Every line comes from ActionHelp /
+               NotifyUserHelp, the same source as the button tooltips and the confirmation bar. *@
+            @if (CanActAtAll || canEntraDelete)
+            {
+                <div class="card mb-3">
+                    <div class="card-body py-2">
+                        <button class="btn btn-link btn-sm p-0 text-decoration-none" type="button"
+                                @onclick="() => showActionHelp = !showActionHelp"
+                                aria-expanded="@(showActionHelp ? "true" : "false")" aria-controls="intuneActionHelp">
+                            What do these actions do?@(showActionHelp ? " (hide)" : "")
+                        </button>
+                        <div id="intuneActionHelp" class="@(showActionHelp ? "collapse show" : "collapse")">
+                            <dl class="row mb-0 mt-2 small">
+                                <dt class="col-sm-3">@ActionLabel(IntuneDeviceAction.Delete)</dt>
+                                <dd class="col-sm-9">@ActionHelp(IntuneDeviceAction.Delete)</dd>
+                                <dt class="col-sm-3">@ActionLabel(IntuneDeviceAction.Retire)</dt>
+                                <dd class="col-sm-9">@ActionHelp(IntuneDeviceAction.Retire)</dd>
+                                <dt class="col-sm-3">@ActionLabel(IntuneDeviceAction.Wipe)</dt>
+                                <dd class="col-sm-9">@ActionHelp(IntuneDeviceAction.Wipe)</dd>
+                                <dt class="col-sm-3">Also remove Entra ID entry</dt>
+                                <dd class="col-sm-9">@ActionHelp(IntuneDeviceAction.EntraDelete)</dd>
+                                <dt class="col-sm-3">Email the user</dt>
+                                <dd class="col-sm-9">@NotifyUserHelp</dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            }
+
             <div class="card">
                 <div class="card-header">
                     <strong>@devices.Count device(s)</strong>
@@ -149,20 +191,25 @@
                                     {
                                         <td>
                                             @* No two action buttons share a leading verb and none is a bare
-                                               "Remove" (MigrationBatchSelection-Plan.md D6). *@
+                                               "Remove" (MigrationBatchSelection-Plan.md D6). Each carries its
+                                               action's first help sentence as a title tooltip, so the
+                                               consequence is reachable without opening the help panel. *@
                                             <div class="btn-group btn-group-sm">
                                                 @if (canDelete)
                                                 {
                                                     <button class="btn btn-outline-danger"
+                                                            title="@ActionHelpSummary(IntuneDeviceAction.Delete, 1)"
                                                             @onclick="() => BeginAction(device, IntuneDeviceAction.Delete)"
                                                             disabled="@ActionsDisabled">Delete record</button>
                                                 }
                                                 @if (canPrivileged)
                                                 {
                                                     <button class="btn btn-outline-warning"
+                                                            title="@ActionHelpSummary(IntuneDeviceAction.Retire, 1)"
                                                             @onclick="() => BeginAction(device, IntuneDeviceAction.Retire)"
                                                             disabled="@ActionsDisabled">Retire</button>
                                                     <button class="btn btn-danger"
+                                                            title="@ActionHelpSummary(IntuneDeviceAction.Wipe, 1)"
                                                             @onclick="() => BeginAction(device, IntuneDeviceAction.Wipe)"
                                                             disabled="@ActionsDisabled">Wipe</button>
                                                 }
@@ -181,6 +228,13 @@
                                     <tr class="table-warning">
                                         <td colspan="@DetailColspan">
                                             <div class="mb-2"><strong>@ConfirmPrompt(confirmAction.Value, DeviceLabel(device))</strong></div>
+
+                                            @* The plain-English consequence again, right above the ticket and
+                                               confirm controls (owner ruling 2026-09-02): the operator reads what
+                                               the action does at the moment of committing to it, not only if they
+                                               happened to open the help panel first. Same source text as the panel
+                                               and the button tooltip, first two sentences. *@
+                                            <div class="mb-2 small">@ActionHelpSummary(confirmAction.Value, 2)</div>
 
                                             @* Every parameter Graph's wipe action accepts is an operator control
                                                (D2), with full-reset defaults, and every non-default choice is
@@ -485,6 +539,15 @@
     private string searchTerm = "";
     private bool isSearching;
     private bool hasSearched;
+
+    /// <summary>
+    /// Whether the "What do these actions do?" panel is open. Closed by default (owner ruling
+    /// 2026-09-02) and toggled from C#, NOT by data-bs-toggle: this app ships Bootstrap's
+    /// stylesheet only (Components/App.razor loads bootstrap.min.css and no bootstrap JS), so a
+    /// data-bs-toggle button would render and do nothing. The markup still uses Bootstrap's
+    /// .collapse / .show classes, which are pure CSS.
+    /// </summary>
+    private bool showActionHelp;
     private string? errorMessage;
     private List<IntuneDevice> devices = [];
     private bool truncated;
@@ -1367,6 +1430,70 @@
         IntuneDeviceAction.EntraDelete => "Remove Entra ID object",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
+
+    /// <summary>
+    /// Plain-English explanation of what one action actually does, written for L2 support desk
+    /// staff and deliberately simpler than Microsoft's own wording (owner ruling 2026-09-02).
+    /// One canonical text per action: the help panel renders the whole block, each action button's
+    /// title tooltip renders its first sentence, and the confirmation bar renders its first two -
+    /// all three from HERE, so no wording can drift between them. The EntraDelete text serves both
+    /// the standalone action and the "also remove the Entra ID object" checkbox, which do the same
+    /// thing to the same object.
+    /// </summary>
+    internal static string ActionHelp(IntuneDeviceAction action) => action switch
+    {
+        IntuneDeviceAction.Delete =>
+            "Removes the device from Intune only. Company data and apps stay on the device until it next checks in, "
+            + "and if it never checks in, they stay forever. The device's Entra ID entry is not touched. "
+            + "Use this to clean up a device that is already gone.",
+        IntuneDeviceAction.Retire =>
+            "Tells the device to remove company data, apps and settings, and to leave Intune management. "
+            + "Personal data stays. Happens the next time the device checks in, which for a powered-off device may "
+            + "be never. Use this for a device leaving the company that the person keeps.",
+        IntuneDeviceAction.Wipe =>
+            "Factory reset. Everything on the device is erased, personal and company, the next time it checks in. "
+            + "Cannot be undone. Use this for a lost, stolen, or reassigned device.",
+        IntuneDeviceAction.EntraDelete =>
+            "Also deletes the device's entry in Entra ID, which is separate from Intune. Do this only when the "
+            + "device is gone for good; a device still in use will lose its sign-in and may need to be re-joined.",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
+    };
+
+    /// <summary>
+    /// Same plain-English treatment for the "email the affected user" checkbox, which is an
+    /// option rather than an action and so has no IntuneDeviceAction to hang off.
+    /// </summary>
+    internal const string NotifyUserHelp =
+        "Sends the device's primary user a plain notice that the action was taken and which ticket authorized it.";
+
+    /// <summary>
+    /// The first <paramref name="sentences"/> sentences of an action's help text - one for a
+    /// button tooltip, two for the confirmation bar. Derived rather than duplicated so a reworded
+    /// block cannot leave a stale tooltip behind.
+    /// </summary>
+    internal static string ActionHelpSummary(IntuneDeviceAction action, int sentences) =>
+        FirstSentences(ActionHelp(action), sentences);
+
+    /// <summary>
+    /// First N sentences of a text, splitting on ". " only - a block with fewer sentences than
+    /// asked for returns whole rather than empty, and the final period is kept. None of the
+    /// ActionHelp texts contains an abbreviation with a period, so this cannot cut mid-sentence.
+    /// </summary>
+    internal static string FirstSentences(string text, int sentences)
+    {
+        var end = 0;
+        for (var found = 0; found < sentences; found++)
+        {
+            var next = text.IndexOf(". ", end, StringComparison.Ordinal);
+            if (next < 0)
+                return text;
+
+            // Keep the period, drop the space that follows it.
+            end = next + 1;
+        }
+
+        return text[..end];
+    }
 
     /// <summary>Human-readable permission name for a refusal message.</summary>
     internal static string PermissionLabel(IntuneDeviceAction action) => action switch

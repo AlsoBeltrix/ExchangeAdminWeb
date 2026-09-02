@@ -93,6 +93,24 @@ public class IntuneDeviceServiceTests
         Assert.Contains("DeviceManagementManagedDevices.Read.All", ex.Message);
     }
 
+    /// <summary>
+    /// T7 for the case the prefix filter actually risks: Graph rejecting a $filter comes back as a
+    /// 400, and the operator must read that as a FAILED search rather than as a device that does
+    /// not exist. Graph's own error text cannot be quoted - GraphTokenClient's GET helper drops the
+    /// response body on a non-success status - so the message says which way to read the 400.
+    /// </summary>
+    [Fact]
+    public async Task SearchDevicesAsync_BadRequest_SaysTheSearchFailedRatherThanFoundNothing()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.BadRequest);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SearchDevicesAsync("laptop-1"));
+
+        Assert.Contains("400 Bad Request", ex.Message);
+        Assert.Contains("failed search", ex.Message);
+    }
+
     // Inverse of the failure tests: a genuinely empty result must still succeed.
     [Fact]
     public async Task SearchDevicesAsync_EmptyValueArray_ReturnsEmptySuccessNotFailure()
@@ -185,16 +203,39 @@ public class IntuneDeviceServiceTests
     }
 
     [Fact]
-    public async Task SearchDevicesAsync_WithSearchTerm_EmitsFilterAcrossThreeFields()
+    public async Task SearchDevicesAsync_WithSearchTerm_EmitsPrefixFilterAcrossThreeFields()
     {
         var (service, handler) = CreateService();
 
         await service.SearchDevicesAsync("laptop-1");
 
         var query = Uri.UnescapeDataString(handler.LastGraphRequestUri!.Query);
-        Assert.Contains("deviceName eq 'laptop-1'", query);
+        Assert.Contains("startswith(deviceName,'laptop-1')", query);
+        Assert.Contains("startswith(userPrincipalName,'laptop-1')", query);
         Assert.Contains("serialNumber eq 'laptop-1'", query);
-        Assert.Contains("userPrincipalName eq 'laptop-1'", query);
+    }
+
+    /// <summary>
+    /// The whole filter, exactly (plan T2 Revision 2026-09-02, owner finding 2026-09-02): the two
+    /// name fields are PREFIX matches because an exact-match-only box is not a search box - a full
+    /// UPN typed against the old `eq` form returned nothing on dev. serialNumber stays `eq`.
+    /// </summary>
+    [Fact]
+    public void BuildFilterExpression_PrefixMatchesNamesAndExactMatchesSerial()
+    {
+        Assert.Equal(
+            "startswith(deviceName,'laptop-1') or startswith(userPrincipalName,'laptop-1') or serialNumber eq 'laptop-1'",
+            IntuneDeviceService.BuildFilterExpression("laptop-1"));
+    }
+
+    /// <summary>
+    /// `contains` is NOT usable on managedDevices - Graph answers 400 - so no substring operator
+    /// may creep into the expression, on any field.
+    /// </summary>
+    [Fact]
+    public void BuildFilterExpression_NeverUsesContains()
+    {
+        Assert.DoesNotContain("contains", IntuneDeviceService.BuildFilterExpression("laptop-1"), StringComparison.OrdinalIgnoreCase);
     }
 
     // T4c: a single quote in the search value is doubled, never interpolated raw.
@@ -203,7 +244,9 @@ public class IntuneDeviceServiceTests
     {
         var expression = IntuneDeviceService.BuildFilterExpression("O'Brien-Laptop");
 
-        Assert.Equal("deviceName eq 'O''Brien-Laptop' or serialNumber eq 'O''Brien-Laptop' or userPrincipalName eq 'O''Brien-Laptop'", expression);
+        Assert.Equal(
+            "startswith(deviceName,'O''Brien-Laptop') or startswith(userPrincipalName,'O''Brien-Laptop') or serialNumber eq 'O''Brien-Laptop'",
+            expression);
     }
 
     [Fact]

@@ -110,11 +110,11 @@ public sealed class IntuneDeviceService
         "azureADDeviceId,azureADRegistered,totalStorageSpaceInBytes,freeStorageSpaceInBytes,notes";
 
     /// <summary>
-    /// Bounded search across deviceName, serialNumber and userPrincipalName. Which of these
-    /// Graph will actually accept in $filter eq is not yet verified against a live tenant (T2) -
-    /// a device search that will not filter server-side does not read as "no matches" here,
-    /// because a non-success status throws (T7) rather than being swallowed; a 400 for an
-    /// unsupported filter property surfaces as a failed search, not an empty one.
+    /// Bounded search: a PREFIX match on deviceName and userPrincipalName, an exact match on
+    /// serialNumber (see BuildFilterExpression; plan T2 Revision 2026-09-02). A device search
+    /// whose filter Graph will not accept does not read as "no matches" here, because a
+    /// non-success status throws (T7) rather than being swallowed; a 400 for an unsupported
+    /// filter surfaces as a failed search naming the status, not an empty one.
     /// </summary>
     public async Task<IntuneDeviceSearchResult> SearchDevicesAsync(string? searchTerm)
     {
@@ -498,6 +498,18 @@ public sealed class IntuneDeviceService
         if (status == HttpStatusCode.NotFound)
             return new InvalidOperationException($"{context} not found.");
 
+        // 400 is the status a rejected $filter comes back as, and the search now leans on
+        // startswith (T2 Revision 2026-09-02). The generic message below names only the number,
+        // which reads as "something broke" - this one tells the operator the search FAILED and
+        // was not an empty result, which is the whole point of T7. GraphTokenClient's GET helper
+        // discards the response body on a non-success status, so Graph's own error text is not
+        // available to quote here.
+        if (status == HttpStatusCode.BadRequest)
+            return new InvalidOperationException(
+                $"Graph rejected the request for {context}: 400 Bad Request. On a search this means Graph would not "
+                + "accept the search filter, so this is a failed search and not a device that does not exist - "
+                + "report the exact term searched.");
+
         return new InvalidOperationException($"Graph request for {context} failed: {(int)status} {status}.");
     }
 
@@ -515,12 +527,16 @@ public sealed class IntuneDeviceService
     }
 
     /// <summary>
-    /// Builds the $filter expression that matches searchTerm against deviceName, serialNumber or
-    /// userPrincipalName (T2 - none of the three is yet verified filterable; Graph rejecting the
-    /// clause is a failed request via GetWithStatusAsync, never a silent empty list). A single
-    /// quote in the value is doubled per the OData literal-escaping shape
+    /// Builds the $filter expression that matches searchTerm against deviceName,
+    /// userPrincipalName or serialNumber. deviceName and userPrincipalName are PREFIX matches:
+    /// an exact-match-only search box is not a search box, and dev proved on 2026-09-02 that a
+    /// full UPN typed against the previous `eq` form returned nothing usable (plan T2, Revision
+    /// 2026-09-02). serialNumber stays `eq` - a serial is copied whole, never typed as a prefix.
+    /// `contains` is deliberately NOT used: managedDevices rejects it with a 400.
+    /// A single quote in the value is doubled per the OData literal-escaping shape
     /// (M365GroupManagementService.cs:74, T4c) rather than interpolated raw; the caller
-    /// Uri.EscapeDataString's the whole expression as a query parameter.
+    /// Uri.EscapeDataString's the whole expression as a query parameter. Graph rejecting the
+    /// clause is a failed request via GetWithStatusAsync (T7), never a silent empty list.
     /// </summary>
     internal static string? BuildFilterExpression(string? searchTerm)
     {
@@ -528,7 +544,7 @@ public sealed class IntuneDeviceService
             return null;
 
         var escaped = EscapeODataLiteral(searchTerm);
-        return $"deviceName eq '{escaped}' or serialNumber eq '{escaped}' or userPrincipalName eq '{escaped}'";
+        return $"startswith(deviceName,'{escaped}') or startswith(userPrincipalName,'{escaped}') or serialNumber eq '{escaped}'";
     }
 
     private static string EscapeODataLiteral(string value) => value.Replace("'", "''");

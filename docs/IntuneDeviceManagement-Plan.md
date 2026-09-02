@@ -279,6 +279,29 @@ as "no match in the first N devices" with the truncation stated.
 Do not reach for `/users/{id}/managedDevices` without verifying it first; it was not
 confirmed during planning (the Learn URL for it 404'd) and nothing here depends on it.
 
+**Revision 2026-09-02 (dev validation, module 1.1.0 on dev).** Partly settled, partly still
+open:
+
+- **`eq` is accepted** on `deviceName`, `serialNumber` and `userPrincipalName` - the tenant
+  returns `200`, not a `400`, for the three-way `eq` filter the module shipped with. The
+  fallback above (fetch a bounded page and match client-side) is therefore NOT needed and was
+  never used.
+- **`eq` alone is useless as a search box**, which is the finding that matters: an exact match
+  means a device is findable only by its full, exactly-cased-and-spelled name, and a full UPN
+  the owner typed came back `200` with an empty `value` array.
+- **`startswith` is now used** on `deviceName` and `userPrincipalName`, with `serialNumber`
+  left on `eq` (a serial is copied whole, never typed as a prefix). Graph documents
+  `startswith` as supported in `$filter` on this resource. **Still to confirm on the owner's
+  next dev search** - this revision records the change, not a live result.
+- **`contains` is NOT used and must not be.** It is unsupported on `managedDevices` and
+  answers `400`.
+
+T7 still carries the failure case: a filter Graph will not accept is a `400`, which
+`BuildFailure` turns into a named failed search ("Graph rejected the request ... 400 Bad
+Request ... this is a failed search and not a device that does not exist"), never an empty
+list. Graph's own error text is not quoted there because `GraphTokenClient.GetWithStatusAsync`
+discards the response body on a non-success status.
+
 ### T3 - the destructive verbs are asynchronous, and 204 is acceptance not completion
 
 `retire`, `wipe` and `delete` return `204 No Content`. For retire and wipe that means Intune

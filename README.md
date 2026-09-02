@@ -242,9 +242,31 @@ Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph 
 Search Microsoft Intune managed devices, view device detail, and delete, retire or
 wipe a device via Microsoft Graph API.
 
-- Search by device name, serial number, or user principal name, capped at 500 rows
+- Search by device name, user principal name, or serial number, capped at 500 rows
   (`SearchResultLimit`, defaults to 50); a truncated result is shown as such, never
-  silently cut off
+  silently cut off. Device name and UPN match from the **start** of the value
+  (`startswith`); a serial number must be exact. Typing the middle of a device name
+  finds nothing, which the search box says on screen. Intune does not support a
+  substring (`contains`) filter on managed devices
+- **What the actions do** -- the same wording appears on the page in a collapsible
+  "What do these actions do?" panel, closed by default, plus a tooltip on each button
+  and the first two sentences above each confirmation's ticket box:
+  - *Delete record* -- Removes the device from Intune only. Company data and apps stay
+    on the device until it next checks in, and if it never checks in, they stay
+    forever. The device's Entra ID entry is not touched. Use this to clean up a device
+    that is already gone
+  - *Retire* -- Tells the device to remove company data, apps and settings, and to
+    leave Intune management. Personal data stays. Happens the next time the device
+    checks in, which for a powered-off device may be never. Use this for a device
+    leaving the company that the person keeps
+  - *Wipe* -- Factory reset. Everything on the device is erased, personal and company,
+    the next time it checks in. Cannot be undone. Use this for a lost, stolen, or
+    reassigned device
+  - *Also remove Entra ID entry* (checkbox) -- Also deletes the device's entry in Entra
+    ID, which is separate from Intune. Do this only when the device is gone for good; a
+    device still in use will lose its sign-in and may need to be re-joined
+  - *Email the user* (checkbox) -- Sends the device's primary user a plain notice that
+    the action was taken and which ticket authorized it
 - Full device detail, including compliance state, encryption state, and enrollment
   info; the activation lock bypass code is excluded at the request boundary and never
   rendered, audited, or logged

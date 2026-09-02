@@ -1047,6 +1047,186 @@ public class IntuneDevicesPageTests
             new ExchangeAdminWeb.Models.IntuneDevice { Id = "dev-1", DeviceName = "laptop-1" }));
     }
 
+    // ---- plain-language action help (owner finding 2026-09-02) --------------------------------
+
+    /// <summary>
+    /// The exact operator-facing wording, one test per action. Exact-string assertions on purpose:
+    /// this text is the whole deliverable of the owner's finding - it is written for L2 support
+    /// desk staff and deliberately simpler than Microsoft's - so a silent reword must fail here
+    /// rather than reach the support desk unreviewed.
+    /// </summary>
+    [Fact]
+    public void ActionHelp_Delete_SaysIntuneOnlyAndThatCompanyDataStays()
+    {
+        Assert.Equal(
+            "Removes the device from Intune only. Company data and apps stay on the device until it next checks in, "
+            + "and if it never checks in, they stay forever. The device's Entra ID entry is not touched. "
+            + "Use this to clean up a device that is already gone.",
+            IntuneDevices.ActionHelp(IntuneDeviceAction.Delete));
+    }
+
+    [Fact]
+    public void ActionHelp_Retire_SaysCompanyDataGoesPersonalStaysAndItWaitsForCheckIn()
+    {
+        Assert.Equal(
+            "Tells the device to remove company data, apps and settings, and to leave Intune management. "
+            + "Personal data stays. Happens the next time the device checks in, which for a powered-off device may "
+            + "be never. Use this for a device leaving the company that the person keeps.",
+            IntuneDevices.ActionHelp(IntuneDeviceAction.Retire));
+    }
+
+    [Fact]
+    public void ActionHelp_Wipe_SaysFactoryResetAndCannotBeUndone()
+    {
+        Assert.Equal(
+            "Factory reset. Everything on the device is erased, personal and company, the next time it checks in. "
+            + "Cannot be undone. Use this for a lost, stolen, or reassigned device.",
+            IntuneDevices.ActionHelp(IntuneDeviceAction.Wipe));
+    }
+
+    [Fact]
+    public void ActionHelp_EntraDelete_SaysItIsSeparateFromIntuneAndCostsTheDeviceItsSignIn()
+    {
+        Assert.Equal(
+            "Also deletes the device's entry in Entra ID, which is separate from Intune. Do this only when the "
+            + "device is gone for good; a device still in use will lose its sign-in and may need to be re-joined.",
+            IntuneDevices.ActionHelp(IntuneDeviceAction.EntraDelete));
+    }
+
+    [Fact]
+    public void NotifyUserHelp_SaysWhatTheMailTellsTheUser()
+    {
+        Assert.Equal(
+            "Sends the device's primary user a plain notice that the action was taken and which ticket authorized it.",
+            IntuneDevices.NotifyUserHelp);
+    }
+
+    /// <summary>
+    /// The tooltip text (one sentence) and the confirmation-bar text (two) are DERIVED from the
+    /// block, not second copies of it - a reworded block cannot leave a stale tooltip behind.
+    /// </summary>
+    [Fact]
+    public void ActionHelpSummary_FirstSentence_IsTheTooltipText()
+    {
+        Assert.Equal("Removes the device from Intune only.",
+            IntuneDevices.ActionHelpSummary(IntuneDeviceAction.Delete, 1));
+        Assert.Equal("Factory reset.",
+            IntuneDevices.ActionHelpSummary(IntuneDeviceAction.Wipe, 1));
+    }
+
+    [Fact]
+    public void ActionHelpSummary_FirstTwoSentences_IsTheConfirmationBarText()
+    {
+        Assert.Equal(
+            "Removes the device from Intune only. Company data and apps stay on the device until it next checks in, "
+            + "and if it never checks in, they stay forever.",
+            IntuneDevices.ActionHelpSummary(IntuneDeviceAction.Delete, 2));
+        Assert.Equal(
+            "Factory reset. Everything on the device is erased, personal and company, the next time it checks in.",
+            IntuneDevices.ActionHelpSummary(IntuneDeviceAction.Wipe, 2));
+    }
+
+    /// <summary>
+    /// A block with fewer sentences than asked for returns whole rather than empty or truncated -
+    /// the Entra text is two sentences and the notification text is one, so both hit this path.
+    /// </summary>
+    [Fact]
+    public void FirstSentences_FewerSentencesThanAsked_ReturnsTheWholeText()
+    {
+        Assert.Equal(IntuneDevices.ActionHelp(IntuneDeviceAction.EntraDelete),
+            IntuneDevices.ActionHelpSummary(IntuneDeviceAction.EntraDelete, 2));
+        Assert.Equal(IntuneDevices.NotifyUserHelp, IntuneDevices.FirstSentences(IntuneDevices.NotifyUserHelp, 1));
+    }
+
+    [Fact]
+    public void ActionHelp_EveryActionHasText_NoneEmpty()
+    {
+        foreach (var action in Enum.GetValues<IntuneDeviceAction>())
+            Assert.False(string.IsNullOrWhiteSpace(IntuneDevices.ActionHelp(action)),
+                $"no help text for {action}.");
+    }
+
+    /// <summary>
+    /// Source guard: the help panel exists, is CLOSED by default, and renders all five blocks from
+    /// the helpers above rather than from hand-copied markup.
+    /// </summary>
+    [Fact]
+    public void IntuneDevices_RendersACollapsibleActionHelpPanelClosedByDefault()
+    {
+        var text = PageSource();
+
+        Assert.Contains("What do these actions do?", text);
+        Assert.Contains("id=\"intuneActionHelp\"", text);
+        // Closed by default: the flag it is bound to starts false, and the open state is the
+        // conditional branch rather than the literal class.
+        Assert.Contains("private bool showActionHelp;", text);
+        Assert.Contains("showActionHelp ? \"collapse show\" : \"collapse\"", text);
+
+        var panel = Between(text, "id=\"intuneActionHelp\"", "</dl>");
+        Assert.Contains("ActionHelp(IntuneDeviceAction.Delete)", panel);
+        Assert.Contains("ActionHelp(IntuneDeviceAction.Retire)", panel);
+        Assert.Contains("ActionHelp(IntuneDeviceAction.Wipe)", panel);
+        Assert.Contains("ActionHelp(IntuneDeviceAction.EntraDelete)", panel);
+        Assert.Contains("NotifyUserHelp", panel);
+    }
+
+    /// <summary>
+    /// Source guard: this app ships Bootstrap's stylesheet with no Bootstrap JS, so the panel must
+    /// NOT be toggled by data-bs-toggle - that would render a button that does nothing.
+    /// </summary>
+    [Fact]
+    public void IntuneDevices_ActionHelpPanel_IsToggledFromCSharpNotByBootstrapJs()
+    {
+        var text = PageSource();
+
+        // The attribute form, not the string: the page's own comment explains why data-bs-toggle
+        // is not used, and a bare substring check would fire on that explanation.
+        Assert.DoesNotContain("data-bs-toggle=", text);
+        Assert.DoesNotContain("data-bs-target=", text);
+        Assert.Contains("showActionHelp = !showActionHelp", text);
+    }
+
+    /// <summary>Source guard: each action button carries its first help sentence as a tooltip.</summary>
+    [Fact]
+    public void IntuneDevices_EveryActionButton_CarriesItsHelpSentenceAsATitleTooltip()
+    {
+        var text = PageSource();
+
+        Assert.Contains("title=\"@ActionHelpSummary(IntuneDeviceAction.Delete, 1)\"", text);
+        Assert.Contains("title=\"@ActionHelpSummary(IntuneDeviceAction.Retire, 1)\"", text);
+        Assert.Contains("title=\"@ActionHelpSummary(IntuneDeviceAction.Wipe, 1)\"", text);
+    }
+
+    /// <summary>
+    /// Source guard: the confirmation bar states the consequence in plain words ABOVE the ticket
+    /// and confirm controls, so the operator reads it at the moment of committing.
+    /// </summary>
+    [Fact]
+    public void IntuneDevices_ConfirmationBar_ShowsThePlainLanguageConsequenceAboveTheTicketBox()
+    {
+        var confirmBar = Between(
+            PageSource(),
+            "confirmDeviceId == device.Id && confirmAction is not null",
+            "Ticket number (required)");
+
+        Assert.Contains("ActionHelpSummary(confirmAction.Value, 2)", confirmBar);
+    }
+
+    /// <summary>
+    /// Source guard for the owner's search finding: the box must SAY that the two name fields
+    /// match from the start and that a serial must be exact, because
+    /// IntuneDeviceService.BuildFilterExpression cannot do a substring match on this resource.
+    /// </summary>
+    [Fact]
+    public void IntuneDevices_SearchBox_SaysItMatchesTheStartOfANameAndAnExactSerial()
+    {
+        var searchCard = Between(PageSource(), "for=\"searchTerm\"", "@onclick=\"SearchAsync\"");
+
+        Assert.Contains("Start of a device name or user principal name, or an exact serial number", searchCard);
+        Assert.Contains("match from the START of the value", searchCard);
+        Assert.Contains("A serial number must be exact.", searchCard);
+    }
+
     // ---- harness ------------------------------------------------------------------------------
 
     private static string PageSource() =>
