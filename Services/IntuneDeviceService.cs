@@ -195,6 +195,16 @@ public sealed class IntuneDeviceService
         "Deleted the Intune record. This removes the Intune record only - company data stays on the device, "
         + "and the device's Entra ID object still exists. Both are separate actions.";
 
+    /// <summary>
+    /// The delete result when the Entra ID removal ran alongside it and SUCCEEDED (S5, AC11's
+    /// conditional half). The standing claim that the Entra ID object survives is false on that
+    /// path, and a result that keeps making it would be telling the operator the opposite of what
+    /// happened. Company data still stays on the device, which no action here changes.
+    /// </summary>
+    internal const string DeleteSuccessMessageEntraRemoved =
+        "Deleted the Intune record, and the device's Entra ID object was removed as well - "
+        + "company data still stays on the device.";
+
     // ---- write path (S4) ----------------------------------------------------------------------
 
     private const string PrivilegedPermission = "DeviceManagementManagedDevices.PrivilegedOperations.All";
@@ -283,6 +293,111 @@ public sealed class IntuneDeviceService
         return body;
     }
 
+    // ---- write path (S5): the Entra ID device object -------------------------------------------
+
+    /// <summary>
+    /// The consent this half needs, and the widest grant in the module (D3): Device.ReadWrite.All is
+    /// a DIRECTORY scope, conferring write access over every device object in the tenant, including
+    /// devices this module would never show because they are not Intune-managed. Named in the 403
+    /// message so a missing consent is diagnosable rather than reading as "it failed".
+    /// </summary>
+    internal const string EntraDeletePermission = "Device.ReadWrite.All";
+
+    /// <summary>
+    /// The Entra ID device object's URL, addressed by the ALTERNATE KEY and never by path id.
+    /// </summary>
+    /// <remarks>
+    /// This is the trap in S5, and it fails SILENTLY if you get it wrong. managedDevice's
+    /// azureADDeviceId holds the Entra deviceId, while DELETE /devices/{id} expects the directory
+    /// OBJECT id - two different GUIDs on the same device (Learn's `device: get` example returns
+    /// id: 000005c3-... alongside deviceId: 6fa60d52-...). Passing the former into the latter's form
+    /// yields a 404 against a real, still-present device, which reads to an operator as "already
+    /// gone". Both forms are documented in Graph v1.0; only the alternate key takes what this module
+    /// actually has. A test asserts this URL, so building the path form must fail it (AC22).
+    ///
+    /// The value is escaped as an OData literal (T4c) even though IsUsableEntraDeviceId has already
+    /// established it is a GUID - the same two-barrier habit as the activationLockBypassCode
+    /// exclusion, so neither guard alone is load-bearing.
+    /// </remarks>
+    internal static string EntraDeviceEndpoint(string azureAdDeviceId) =>
+        $"/devices(deviceId='{EscapeODataLiteral(azureAdDeviceId.Trim())}')";
+
+    /// <summary>
+    /// Whether a managedDevice's azureADDeviceId can address an Entra ID device object at all. A
+    /// device that is not Entra-joined carries it absent, empty, or as the all-zero GUID (S5), and
+    /// the option is then not OFFERED with the reason stated, never offered-and-silently-skipped
+    /// (AC24). A value that is not a GUID is refused for the same fail-closed reason.
+    /// </summary>
+    internal static bool IsUsableEntraDeviceId(string? azureAdDeviceId) =>
+        Guid.TryParse((azureAdDeviceId ?? "").Trim(), out var parsed) && parsed != Guid.Empty;
+
+    /// <summary>
+    /// Removes one device's Entra ID device object (S5 / D3), behind IntuneDevicesEntraDelete and
+    /// over S0's status-returning DELETE, with the same distinct-outcome reporting as the Intune
+    /// actions. No Intune action removes this object - Microsoft's own guidance is to remove it as a
+    /// separate step, which is why it is a separate result here and never folded into an Intune
+    /// action's verdict (Known Failure Class 2).
+    /// </summary>
+    /// <remarks>
+    /// Takes the azureADDeviceId the CALLER captured from the device detail before running any
+    /// Intune action: after a successful delete of the Intune record there is nothing left to read
+    /// it from. An unusable id is refused before any request is issued.
+    /// </remarks>
+    public async Task<IntuneDeviceActionResult> RemoveEntraDeviceAsync(string? azureAdDeviceId)
+    {
+        if (!IsUsableEntraDeviceId(azureAdDeviceId))
+            return new IntuneDeviceActionResult(false, NoEntraDeviceIdMessage, null);
+
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Intune Devices Graph credentials not available.");
+
+        var (ok, status, safeError) = await client.DeleteWithStatusAsync(EntraDeviceEndpoint(azureAdDeviceId!));
+
+        return ok
+            ? new IntuneDeviceActionResult(true, EntraDeleteSuccessMessage, null)
+            : BuildActionFailure("removal of the Entra ID device object", EntraDeletePermission, status, safeError,
+                notFoundMessage:
+                "Graph reports no Entra ID device object with this device id (404 Not Found), so nothing was removed. "
+                + "Any Intune action performed alongside it is unaffected.");
+    }
+
+    /// <summary>
+    /// Deployment default for the "also remove the Entra ID device record" checkbox, from this
+    /// module's own RemoveEntraObjectByDefault config field. Off unless the deployment says
+    /// otherwise: it is a second, separately permissioned deletion against a different object.
+    /// </summary>
+    public bool RemoveEntraObjectByDefault =>
+        ParseBooleanConfig(_moduleConfig?.GetValue("IntuneDevices", "RemoveEntraObjectByDefault"), false);
+
+    /// <summary>
+    /// Parses a Boolean module-config field, falling back to the descriptor's DefaultValue when the
+    /// field is unset (ModuleConfigService.GetValue returns null then, it does not apply the
+    /// descriptor default) or holds something that is not true/false.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT TicketValidationService's refuse-on-mistype shape. That switch is a safety
+    /// gate whose state nothing else reveals, so a mistype there must refuse. These fields only seed
+    /// a checkbox the operator sees and can change at the moment of acting, and the outcome they
+    /// influence is reported on screen and recorded in the audit event - so a mistype cannot
+    /// silently mislead anyone, and falling back to the documented default is the least surprising
+    /// answer.
+    /// </remarks>
+    internal static bool ParseBooleanConfig(string? raw, bool fallback) =>
+        bool.TryParse((raw ?? "").Trim(), out var parsed) ? parsed : fallback;
+
+    /// <summary>Refusal when the device carries no usable azureADDeviceId - stated, never silent.</summary>
+    internal const string NoEntraDeviceIdMessage =
+        "This device has no usable Entra ID device id, so it has no Entra ID device object to remove. "
+        + "Nothing was attempted.";
+
+    /// <summary>
+    /// Unlike retire and wipe this one is immediate rather than queued: the directory object is gone
+    /// when Graph answers. It also says what it does NOT do, because removing the directory object
+    /// neither removes the Intune record nor touches data on the device.
+    /// </summary>
+    internal const string EntraDeleteSuccessMessage =
+        "Removed the device's Entra ID device object. This affects how the device authenticates, and is the "
+        + "step conditional access and compliance reporting notice. Company data on the device is unaffected.";
+
     /// <summary>
     /// Maps a failed device mutation onto one of four distinct outcomes (T7 / AC15): a 403 names the
     /// consent the app registration is missing, a 404 says the device is already gone from Intune and
@@ -290,9 +405,14 @@ public sealed class IntuneDeviceService
     /// anything else reports its own status. The sanitized Graph error travels in both the message
     /// and SafeError. A bare "failed" would hide a misconfigured app registration, which is the one
     /// failure this module's permission split exists to expose.
+    ///
+    /// notFoundMessage overrides the 404 wording, because the Entra half's 404 is about a DIRECTORY
+    /// object and saying "no longer in Intune" there would name the wrong object - and a 404 is
+    /// exactly the symptom of addressing it by the wrong key (see EntraDeviceEndpoint).
     /// </summary>
     internal static IntuneDeviceActionResult BuildActionFailure(
-        string actionDescription, string requiredPermission, HttpStatusCode status, string? safeError)
+        string actionDescription, string requiredPermission, HttpStatusCode status, string? safeError,
+        string? notFoundMessage = null)
     {
         var detail = string.IsNullOrWhiteSpace(safeError) ? "" : $" Graph error: {safeError}";
 
@@ -301,7 +421,9 @@ public sealed class IntuneDeviceService
             HttpStatusCode.Forbidden =>
                 $"Graph refused the {actionDescription} (403 Forbidden) - verify the app registration's {requiredPermission} consent.{detail}",
             HttpStatusCode.NotFound =>
-                $"Graph reports this device is no longer in Intune (404 Not Found), so no {actionDescription} was performed.{detail}",
+                (notFoundMessage
+                 ?? $"Graph reports this device is no longer in Intune (404 Not Found), so no {actionDescription} was performed.")
+                + detail,
             _ when (int)status >= 500 =>
                 $"Intune was unavailable for the {actionDescription} ({(int)status} {status}) - nothing was performed; retry.{detail}",
             _ => $"Graph rejected the {actionDescription} ({(int)status} {status}).{detail}"

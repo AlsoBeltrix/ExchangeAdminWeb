@@ -653,6 +653,186 @@ public class IntuneDeviceServiceTests
         return handler.LastGraphRequestBody!;
     }
 
+    // ---- S5: the Entra ID device object -------------------------------------------------------
+
+    /// <summary>A real-shaped pair from Learn's own `device: get` example, which returns the object
+    /// id and the deviceId as two DIFFERENT GUIDs for the same device. managedDevice carries only
+    /// the second one.</summary>
+    private const string EntraDeviceId = "6fa60d52-01e7-4b18-8fc7-8f9d1b9b1a5c";
+
+    // AC22, the trap in this slice: the DELETE must address the ALTERNATE KEY. azureADDeviceId is
+    // the Entra deviceId, while /devices/{id} wants the directory OBJECT id, so the path form 404s
+    // against a real, still-present device - a silent wrong answer. Building the path form here must
+    // fail this test.
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_AddressesTheAlternateKeyNotThePathId()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        await service.RemoveEntraDeviceAsync(EntraDeviceId);
+
+        Assert.Equal(HttpMethod.Delete, handler.LastGraphRequestMethod);
+        Assert.Equal($"/v1.0/devices(deviceId='{EntraDeviceId}')", handler.LastGraphRequestUri!.AbsolutePath);
+        Assert.NotEqual($"/v1.0/devices/{EntraDeviceId}", handler.LastGraphRequestUri!.AbsolutePath);
+    }
+
+    [Fact]
+    public void EntraDeviceEndpoint_IsTheAlternateKeyForm()
+    {
+        // The URL builder on its own, so the assertion above cannot be satisfied by a coincidence in
+        // Uri parsing, and so a future caller cannot reintroduce the path form somewhere else.
+        var endpoint = IntuneDeviceService.EntraDeviceEndpoint(EntraDeviceId);
+
+        Assert.Equal($"/devices(deviceId='{EntraDeviceId}')", endpoint);
+        Assert.DoesNotContain($"/devices/{EntraDeviceId}", endpoint);
+    }
+
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_NoContent_ReportsSuccessAndSaysWhatItDoesNotDo()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.RemoveEntraDeviceAsync(EntraDeviceId);
+
+        Assert.True(result.Success);
+        Assert.Null(result.SafeError);
+        Assert.Contains("Removed the device's Entra ID device object", result.Message);
+        Assert.Contains("Company data on the device is unaffected", result.Message);
+    }
+
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_Forbidden_NamesTheDirectoryScopeConsent()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}""")
+        };
+
+        var result = await service.RemoveEntraDeviceAsync(EntraDeviceId);
+
+        Assert.False(result.Success);
+        Assert.Contains("403", result.Message);
+        // D3: the widest grant in the module, so a missing consent must be diagnosable by name.
+        Assert.Contains("Device.ReadWrite.All", result.Message);
+        Assert.Equal("Authorization_RequestDenied: Insufficient privileges.", result.SafeError);
+    }
+
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_NotFound_NamesTheDirectoryObjectNotTheIntuneRecord()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NotFound);
+
+        var result = await service.RemoveEntraDeviceAsync(EntraDeviceId);
+
+        Assert.False(result.Success);
+        Assert.Contains("404", result.Message);
+        Assert.Contains("no Entra ID device object", result.Message);
+        // Saying "no longer in Intune" here would name the wrong object entirely.
+        Assert.DoesNotContain("no longer in Intune", result.Message);
+    }
+
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_EveryFailureStatusProducesADifferentMessage()
+    {
+        // AC15's shape for this half: 403, 404 and 5xx are three distinct outcomes, never one bare
+        // "failed" - a bool-returning DELETE could not tell them apart.
+        var messages = new List<string>();
+        foreach (var status in new[]
+                 {
+                     HttpStatusCode.Forbidden, HttpStatusCode.NotFound,
+                     HttpStatusCode.ServiceUnavailable, HttpStatusCode.TooManyRequests
+                 })
+        {
+            var (service, handler) = CreateService();
+            handler.GraphResponse = () => new HttpResponseMessage(status);
+            var result = await service.RemoveEntraDeviceAsync(EntraDeviceId);
+            Assert.False(result.Success);
+            messages.Add(result.Message);
+        }
+
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+    }
+
+    // AC24: an unusable azureADDeviceId is refused BEFORE any request is issued - the option is
+    // never offered-and-silently-skipped, and no malformed DELETE reaches the tenant.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    [InlineData("not-a-guid")]
+    public async Task RemoveEntraDeviceAsync_UnusableDeviceId_RefusesBeforeAnyRequest(string? azureAdDeviceId)
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.RemoveEntraDeviceAsync(azureAdDeviceId);
+
+        Assert.False(result.Success);
+        Assert.Contains("no usable Entra ID device id", result.Message);
+        Assert.Contains("Nothing was attempted", result.Message);
+        Assert.Equal(0, handler.GraphRequestCount);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    [InlineData("   ", false)]
+    [InlineData("00000000-0000-0000-0000-000000000000", false)]
+    [InlineData("not-a-guid", false)]
+    [InlineData("6fa60d52-01e7-4b18-8fc7-8f9d1b9b1a5c", true)]
+    [InlineData("  6fa60d52-01e7-4b18-8fc7-8f9d1b9b1a5c  ", true)]
+    public void IsUsableEntraDeviceId_OnlyARealGuidIsUsable(string? azureAdDeviceId, bool expected)
+    {
+        Assert.Equal(expected, IntuneDeviceService.IsUsableEntraDeviceId(azureAdDeviceId));
+    }
+
+    [Fact]
+    public async Task RemoveEntraDeviceAsync_GraphClientUnavailable_Throws()
+    {
+        var service = new IntuneDeviceService(() => Task.FromResult<GraphTokenClient?>(null));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RemoveEntraDeviceAsync(EntraDeviceId));
+    }
+
+    [Fact]
+    public void DeleteSuccessMessages_DifferOnWhetherTheEntraObjectSurvived()
+    {
+        // AC11's conditional half at the source: the two messages cannot both be right, so they must
+        // not be the same string.
+        Assert.Contains("Entra ID object still exists", IntuneDeviceService.DeleteSuccessMessage);
+        Assert.Contains("Entra ID object was removed as well", IntuneDeviceService.DeleteSuccessMessageEntraRemoved);
+        Assert.DoesNotContain("still exists", IntuneDeviceService.DeleteSuccessMessageEntraRemoved);
+    }
+
+    // The fallback carries the descriptor's DefaultValue, because ModuleConfigService.GetValue
+    // returns null for an unset field rather than applying it.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("nonsense")]
+    public void ParseBooleanConfig_UnsetOrUnparseable_TakesTheFallbackInBothDirections(string? raw)
+    {
+        Assert.False(IntuneDeviceService.ParseBooleanConfig(raw, false));
+        Assert.True(IntuneDeviceService.ParseBooleanConfig(raw, true));
+    }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("True", true)]
+    [InlineData(" true ", true)]
+    [InlineData("false", false)]
+    [InlineData("FALSE", false)]
+    public void ParseBooleanConfig_ExplicitValue_WinsOverTheFallback(string raw, bool expected)
+    {
+        Assert.Equal(expected, IntuneDeviceService.ParseBooleanConfig(raw, !expected));
+    }
+
     // ---- GetGraphClientAsync credential path (plan Test plan) ---------------------------------
 
     [Fact]

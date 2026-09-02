@@ -72,7 +72,17 @@ public enum IntuneDeviceAction
     Retire,
 
     /// <summary>Factory reset the device. Tier 2, IntuneDevicesPrivileged (S4).</summary>
-    Wipe
+    Wipe,
+
+    /// <summary>
+    /// Remove the device's Entra ID device object, standalone from the detail panel. Its OWN tier,
+    /// IntuneDevicesEntraDelete (S5 / D3): it acts on a different object through a DIRECTORY scope
+    /// (Device.ReadWrite.All), the widest grant in the module, so an operator entitled to wipe a
+    /// phone is not automatically entitled to remove directory records. Also offered as a checkbox
+    /// beside the three Intune actions, which runs the same removal as a separately reported and
+    /// separately audited second step.
+    /// </summary>
+    EntraDelete
 }
 
 /// <summary>

@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Models;
+using ExchangeAdminWeb.Services;
 using Xunit;
 
 namespace ExchangeAdminWeb.Tests;
@@ -84,20 +85,20 @@ public class IntuneDevicesPageTests
     }
 
     [Fact]
-    public void IntuneDevices_HasTheThreeIntuneActionsAndNotTheEntraOneInThisSlice()
+    public void IntuneDevices_HasAllFourActionsEachBehindItsOwnAlias()
     {
-        // S3 added Delete behind IntuneDevicesDelete; S4 adds Retire and Wipe behind
-        // IntuneDevicesPrivileged. The Entra ID device removal is S5; this page must not reach ahead
-        // of its own slice.
+        // S3 Delete behind IntuneDevicesDelete; S4 Retire and Wipe behind IntuneDevicesPrivileged;
+        // S5 the Entra ID device object removal behind IntuneDevicesEntraDelete. Three aliases, four
+        // actions - and the Entra one never rides the privileged alias (D3).
         var text = PageSource();
 
         Assert.Contains("DeleteDeviceAsync", text);
         Assert.Contains("RetireDeviceAsync", text);
         Assert.Contains("WipeDeviceAsync", text);
+        Assert.Contains("RemoveEntraDeviceAsync", text);
         Assert.Contains("IntuneDevicesDelete\"", text);
         Assert.Contains("IntuneDevicesPrivileged\"", text);
-        Assert.DoesNotContain("RemoveEntraDeviceAsync", text);
-        Assert.DoesNotContain("IntuneDevicesEntraDelete\"", text);
+        Assert.Contains("IntuneDevicesEntraDelete\"", text);
     }
 
     [Fact]
@@ -526,15 +527,16 @@ public class IntuneDevicesPageTests
     [Fact]
     public void ActionLabel_NoTwoActionsShareALeadingVerbAndNoneIsABareRemove()
     {
-        // docs/MigrationBatchSelection-Plan.md D6, now assertable across all three.
+        // docs/MigrationBatchSelection-Plan.md D6, now assertable across all four.
         var labels = new[]
         {
             IntuneDevices.ActionLabel(IntuneDeviceAction.Delete),
             IntuneDevices.ActionLabel(IntuneDeviceAction.Retire),
-            IntuneDevices.ActionLabel(IntuneDeviceAction.Wipe)
+            IntuneDevices.ActionLabel(IntuneDeviceAction.Wipe),
+            IntuneDevices.ActionLabel(IntuneDeviceAction.EntraDelete)
         };
 
-        Assert.Equal(["Delete record", "Retire", "Wipe"], labels);
+        Assert.Equal(["Delete record", "Retire", "Wipe", "Remove Entra ID object"], labels);
         var leadingVerbs = labels.Select(l => l.Split(' ')[0]).ToArray();
         Assert.Equal(leadingVerbs.Length, leadingVerbs.Distinct().Count());
         Assert.DoesNotContain("Remove", labels);
@@ -702,7 +704,7 @@ public class IntuneDevicesPageTests
         // saying "finally" would otherwise move the window past the code being asserted.
         var finallyIndex = body.IndexOf("finally", WriteIndex(body), StringComparison.Ordinal);
         Assert.True(finallyIndex > 0, "ExecuteActionAsync no longer has a finally block after the write.");
-        Assert.Contains("ResetWipeOptions();", body[finallyIndex..]);
+        Assert.Contains("ResetActionOptions();", body[finallyIndex..]);
     }
 
     [Fact]
@@ -712,6 +714,209 @@ public class IntuneDevicesPageTests
 
         Assert.Contains("SummarizeWipeFlags(wipeOptions)", details);
         Assert.DoesNotContain("MacOsUnlockCode", details);
+    }
+
+    // ---- S5: the Entra ID device object -------------------------------------------------------
+
+    [Fact]
+    public void PolicyFor_EntraDelete_IsItsOwnAliasAndNotThePrivilegedOne()
+    {
+        // D3 / AC3b: an operator with Privileged can wipe and cannot remove directory records, which
+        // is only true if the Entra action asks a different policy.
+        Assert.Equal("IntuneDevicesEntraDelete", IntuneDevices.PolicyFor(IntuneDeviceAction.EntraDelete));
+        Assert.NotEqual(
+            IntuneDevices.PolicyFor(IntuneDeviceAction.Wipe),
+            IntuneDevices.PolicyFor(IntuneDeviceAction.EntraDelete));
+        Assert.NotEqual(
+            IntuneDevices.PolicyFor(IntuneDeviceAction.Delete),
+            IntuneDevices.PolicyFor(IntuneDeviceAction.EntraDelete));
+    }
+
+    [Fact]
+    public void AuditActionFor_EntraDelete_FilesUnderItsOwnActionName()
+    {
+        Assert.Equal("IntuneDevices_EntraDelete", IntuneDevices.AuditActionFor(IntuneDeviceAction.EntraDelete));
+    }
+
+    [Fact]
+    public void ConfirmPrompt_EntraDelete_SaysItRemovesTheDirectoryRecordOnly()
+    {
+        var prompt = IntuneDevices.ConfirmPrompt(IntuneDeviceAction.EntraDelete, "laptop-1");
+
+        Assert.Contains("laptop-1", prompt);
+        Assert.Contains("directory record only", prompt);
+        Assert.Contains("authenticates", prompt);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_CapturesTheEntraDeviceIdBeforeTheIntuneWrite()
+    {
+        // The ordering pinned by S5 and Known Failure Class 2: after a successful delete of the
+        // Intune record there is nothing left to read azureADDeviceId from, so it must be captured
+        // BEFORE the Intune action runs. Moving the capture after the write must fail this.
+        var body = MethodBody("ExecuteActionAsync");
+
+        var captureIndex = body.IndexOf("var entraDeviceId = device.AzureADDeviceId;", StringComparison.Ordinal);
+        Assert.True(captureIndex >= 0, "the Entra device id is no longer captured in ExecuteActionAsync.");
+        Assert.True(WriteIndex(body) > captureIndex,
+            "the Entra device id is captured AFTER the Intune write - a deleted Intune record cannot be read.");
+
+        // And it is never re-read from the device afterwards, which would be the same defect with an
+        // extra step.
+        Assert.DoesNotContain("device.AzureADDeviceId", body[WriteIndex(body)..]);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_RunsTheEntraRemovalAfterTheIntuneActionAndOnlyOnSuccess()
+    {
+        var body = MethodBody("ExecuteActionAsync");
+
+        var entraIndex = body.IndexOf("RemoveEntraObjectAsync(authState.User, entraDeviceId)", StringComparison.Ordinal);
+        Assert.True(entraIndex > WriteIndex(body), "the Entra removal does not run after the Intune action.");
+        // Conditional on the first step succeeding: the operator's intent was conditional, and
+        // removing the directory object after a failed retire leaves a device that cannot
+        // authenticate and still holds company data.
+        Assert.Contains("if (removeEntraObject && applied.Success)", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_ReChecksTheEntraGrantImmediatelyBeforeTheEntraWrite()
+    {
+        // T6 for the SECOND write and its own, wider permission: it is never inherited from the
+        // Intune action's check at step 1. Removing this re-check must fail here.
+        var body = MethodBody("RemoveEntraObjectAsync");
+
+        var checkIndex = body.IndexOf("AuthorizeAsync(user, PolicyFor(IntuneDeviceAction.EntraDelete))", StringComparison.Ordinal);
+        Assert.True(checkIndex >= 0, "the Entra half no longer re-checks IntuneDevicesEntraDelete before writing.");
+
+        var writeIndex = body.IndexOf("RemoveEntraDeviceAsync(entraDeviceId)", StringComparison.Ordinal);
+        Assert.True(writeIndex > checkIndex, "the Entra grant is re-checked after the Entra write.");
+        Assert.Contains("!entraCheck.Succeeded", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_EntraHalfNeverThrowsIntoTheIntuneAuditPath()
+    {
+        // Known Failure Class 1: an exception escaping the Entra half would reach
+        // ExecuteActionAsync's catch, which Refuses - reporting the whole action as failed even
+        // though the Intune half succeeded, and skipping the Intune audit write entirely.
+        var body = MethodBody("RemoveEntraObjectAsync");
+
+        Assert.Contains("catch (Exception ex)", body);
+        Assert.Contains("could not be removed", body);
+        Assert.DoesNotContain("throw", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_ReportsTheTwoHalvesSeparatelyAndNeverAsOneVerdict()
+    {
+        // AC23: an Intune action that succeeded followed by an Entra removal that failed must report
+        // BOTH outcomes. Merging them into one message or one audit event must fail this.
+        var text = PageSource();
+        var body = MethodBody("ExecuteActionAsync");
+
+        // Two distinct outcome fields on the record, not one message with text appended.
+        Assert.Contains("string? EntraMessage = null, bool? EntraSuccess = null", text);
+        Assert.Contains("entraResult?.Message, entraResult?.Success", body);
+
+        // Two audit events after the write: the Intune action's own name, and the Entra one's.
+        var afterWrite = body[WriteIndex(body)..];
+        Assert.Matches(
+            new Regex(@"LogModuleAction\([^;]*?auditAction,\s*""IntuneDevices"",\s*target,\s*applied\.Success", RegexOptions.Singleline),
+            afterWrite);
+        Assert.Matches(
+            new Regex(@"LogModuleAction\([^;]*?AuditActionFor\(IntuneDeviceAction\.EntraDelete\),\s*""IntuneDevices"",\s*EntraAuditTarget\(", RegexOptions.Singleline),
+            afterWrite);
+        Assert.Equal(2, Regex.Matches(afterWrite, @"Audit\.LogModuleAction\(").Count);
+
+        // And on screen: its own alert, with its own success styling.
+        Assert.Contains("outcome.EntraMessage != null", text);
+        Assert.Contains("outcome.EntraSuccess == true", text);
+    }
+
+    [Fact]
+    public void IntuneDevices_ExecuteAction_EntraHalfGetsItsOwnAdminNotification()
+    {
+        // AC13: an administrator notification on every audited action, and two audited actions here.
+        var body = MethodBody("ExecuteActionAsync");
+        var finallyIndex = body.LastIndexOf("finally", StringComparison.Ordinal);
+        var tail = body[finallyIndex..];
+
+        Assert.Equal(2, Regex.Matches(tail, @"Email\.SendAdminNotificationAsync\(").Count);
+        Assert.Contains("AuditActionFor(IntuneDeviceAction.EntraDelete), entraResult.Success", tail);
+        Assert.Contains("Failed to send Intune Devices Entra removal admin notification", tail);
+    }
+
+    [Fact]
+    public void IntuneMessageFor_DeleteWithTheEntraObjectRemoved_StopsClaimingItSurvives()
+    {
+        // AC11's conditional half: the standing claim is false once the Entra removal succeeded, and
+        // a result that kept making it would tell the operator the opposite of what happened.
+        var withEntra = IntuneDevices.IntuneMessageFor(
+            IntuneDeviceAction.Delete, IntuneDeviceService.DeleteSuccessMessage, entraRemoved: true);
+        var withoutEntra = IntuneDevices.IntuneMessageFor(
+            IntuneDeviceAction.Delete, IntuneDeviceService.DeleteSuccessMessage, entraRemoved: false);
+
+        Assert.DoesNotContain("Entra ID object still exists", withEntra);
+        Assert.Contains("Entra ID object was removed as well", withEntra);
+        Assert.Equal(IntuneDeviceService.DeleteSuccessMessage, withoutEntra);
+
+        // Retire and wipe never make that claim, so their messages pass through untouched.
+        Assert.Equal("queued", IntuneDevices.IntuneMessageFor(IntuneDeviceAction.Retire, "queued", entraRemoved: true));
+        Assert.Equal("queued", IntuneDevices.IntuneMessageFor(IntuneDeviceAction.Wipe, "queued", entraRemoved: true));
+    }
+
+    [Fact]
+    public void EntraAuditTarget_NamesTheDeviceAndTheDeviceIdUsed()
+    {
+        // S5: the audit target is the device name plus the deviceId the DELETE actually addressed.
+        var target = IntuneDevices.EntraAuditTarget("laptop-1", "6fa60d52-01e7-4b18-8fc7-8f9d1b9b1a5c");
+
+        Assert.Contains("laptop-1", target);
+        Assert.Contains("6fa60d52-01e7-4b18-8fc7-8f9d1b9b1a5c", target);
+        Assert.Contains("(none)", IntuneDevices.EntraAuditTarget("laptop-1", "  "));
+    }
+
+    [Fact]
+    public void IntuneDevices_EntraCheckboxIsSeededFromConfigAndGatedOnTheGrantForRenderingOnly()
+    {
+        // AC18's shape for this option: the deployment sets the default, the operator may change it
+        // at the moment of acting, and the rendering gate is not the decision.
+        var text = PageSource();
+
+        Assert.Contains("AuthorizeAsync(user, \"IntuneDevicesEntraDelete\")", text);
+        Assert.Contains("@if (confirmAction != IntuneDeviceAction.EntraDelete && canEntraDelete)", text);
+        Assert.Contains("@bind=\"alsoRemoveEntra\"", text);
+        Assert.Contains(
+            "alsoRemoveEntra = action != IntuneDeviceAction.EntraDelete && IntuneDeviceService.RemoveEntraObjectByDefault;",
+            MethodBody("BeginAction"));
+        // Reset with every other per-confirm option, so a choice made for one device never rides
+        // along into the next one.
+        Assert.Contains("alsoRemoveEntra = false;", MethodBody("ResetActionOptions"));
+    }
+
+    [Fact]
+    public void IntuneDevices_DeviceWithNoUsableEntraId_IsNotOfferedTheOptionAndIsToldWhy()
+    {
+        // AC24: not offered-and-silently-skipped. The reason is on screen, in both places the option
+        // would otherwise appear.
+        var text = PageSource();
+
+        Assert.Contains("EntraIdUsable(device)", text);
+        Assert.Contains("EntraIdUsable(detailDevice)", text);
+        Assert.Contains("no usable Entra ID device id", text);
+        Assert.Contains("IntuneDeviceService.IsUsableEntraDeviceId(device.AzureADDeviceId)", text);
+    }
+
+    [Fact]
+    public void IntuneDevices_EntraRemovalIsRunnableOnItsOwnFromTheDetailPanel()
+    {
+        // S5: the Entra record often outlives the Intune one, so an operator cleaning up must not
+        // have to run a second Intune action to reach it. Same handler, so the same gate chain.
+        var text = PageSource();
+
+        Assert.Contains("BeginAction(device, IntuneDeviceAction.EntraDelete)", text);
+        Assert.Contains("Remove Entra ID object</button>", text);
     }
 
     [Fact]

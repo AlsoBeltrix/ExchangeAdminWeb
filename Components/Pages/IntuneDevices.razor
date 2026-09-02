@@ -36,6 +36,8 @@
             powered-off or offline device may not act for a long time.
             Deleting a device's Intune record does not remove company data from the device and
             does not remove the device's Entra ID object - both are separate actions.
+            Removing the Entra ID device object is offered separately, needs its own permission,
+            and is reported and audited on its own.
         </small>
     </div>
     <h1 class="mb-4">Intune Devices<ModuleVersion /></h1>
@@ -231,6 +233,41 @@
                                                 </div>
                                             }
 
+                                            @* S5 / D3: the Entra ID device object is a SECOND deletion, against a
+                                               different object, through a directory scope - so it is its own
+                                               permission, its own checkbox (defaulted from config, off unless the
+                                               deployment says otherwise), and its own reported outcome. A device
+                                               that is not Entra-joined is told why instead of being offered a box
+                                               that would silently skip (AC24). *@
+                                            @if (confirmAction != IntuneDeviceAction.EntraDelete && canEntraDelete)
+                                            {
+                                                <div class="mb-2">
+                                                    @if (EntraIdUsable(device))
+                                                    {
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="alsoRemoveEntra"
+                                                                   @bind="alsoRemoveEntra" disabled="@(actingDeviceId != null)" />
+                                                            <label class="form-check-label" for="alsoRemoveEntra">
+                                                                Also remove this device's Entra ID device object
+                                                            </label>
+                                                            <div class="form-text">
+                                                                A second deletion against a different object, in a directory scope. It runs
+                                                                after the Intune action and is reported and audited separately, so a
+                                                                half-finished result says which half failed. It changes how the device
+                                                                authenticates; data on the device is unaffected.
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="form-text">
+                                                            The Entra ID device object cannot be removed for this device.
+                                                            Intune holds no usable Entra ID device id for it, so it is not Entra-joined.
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+
                                             <div class="row g-2 align-items-end">
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="intuneDeviceTicket">Ticket number (required)</label>
@@ -292,6 +329,16 @@
                                             <div class="alert @(outcome.Success ? "alert-success" : "alert-danger") mb-0 py-2">
                                                 <strong>@outcome.DeviceName</strong> - @outcome.Message
                                             </div>
+                                            @* The Entra half is its OWN verdict and is never folded into the Intune
+                                               one (S5, Known Failure Class 2). The half-finished case - Intune record
+                                               deleted, Entra ID object still there - is the one an operator must be
+                                               able to see and retry, so it reads as two results, not one. *@
+                                            @if (outcome.EntraMessage != null)
+                                            {
+                                                <div class="alert @(outcome.EntraSuccess == true ? "alert-success" : "alert-danger") mb-0 mt-2 py-2">
+                                                    <strong>Entra ID device object</strong> - @outcome.EntraMessage
+                                                </div>
+                                            }
                                             @* The macOS recovery PIN is shown back exactly once, here: the operator
                                                must give it to the device owner and Intune does not return it later.
                                                It is never written to the audit record or the notification. *@
@@ -341,6 +388,32 @@
                                                     <dt class="col-sm-3">Storage</dt><dd class="col-sm-9">@FormatStorage(detailDevice.FreeStorageSpaceInBytes, detailDevice.TotalStorageSpaceInBytes)</dd>
                                                     <dt class="col-sm-3">Notes</dt><dd class="col-sm-9">@(string.IsNullOrWhiteSpace(detailDevice.Notes) ? "(none)" : detailDevice.Notes)</dd>
                                                 </dl>
+
+                                                @* S5: the Entra ID record often outlives the Intune one, so its removal
+                                                   is runnable ON ITS OWN - an operator cleaning up must not have to run
+                                                   a second Intune action to reach it. Same handler, same gate chain. *@
+                                                @if (canEntraDelete)
+                                                {
+                                                    <div class="mt-3">
+                                                        @if (EntraIdUsable(detailDevice))
+                                                        {
+                                                            <button class="btn btn-outline-danger btn-sm"
+                                                                    @onclick="() => BeginAction(device, IntuneDeviceAction.EntraDelete)"
+                                                                    disabled="@ActionsDisabled">Remove Entra ID object</button>
+                                                            <div class="form-text">
+                                                                Removes the directory record only. The Intune record and the data on the
+                                                                device are unaffected.
+                                                            </div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="form-text">
+                                                                No Entra ID device object to remove for this device.
+                                                                Intune holds no usable Entra ID device id for it.
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
                                             }
                                         </td>
                                     </tr>
@@ -380,6 +453,13 @@
     /// RENDERING only, exactly as canDelete does.</summary>
     private bool canPrivileged;
 
+    /// <summary>Granular IntuneDevicesEntraDelete grant (S5 / D3). Its own tier because
+    /// Device.ReadWrite.All is a DIRECTORY scope - the widest grant in the module - and an operator
+    /// entitled to wipe a phone is not automatically entitled to remove directory records. Controls
+    /// RENDERING only: the handler re-checks this same policy immediately before the Entra write,
+    /// including when it runs as the second half of an Intune action (T6).</summary>
+    private bool canEntraDelete;
+
     /// <summary>Module id for the servicer grant. Must match the catalog descriptor, and must be
     /// listed in ModuleConfig.razor's ModulesWithProtectedPrincipalServicing or no group can ever
     /// be granted it.</summary>
@@ -402,12 +482,27 @@
     /// re-enrolling, a wipe destroys the machine's contents.</summary>
     private string wipeConfirmName = "";
 
+    /// <summary>
+    /// The per-action "also remove the Entra ID device object" choice (S5 / D3), seeded from the
+    /// module's RemoveEntraObjectByDefault config field when the confirm bar opens and changeable
+    /// before confirming. Rendering-only, like the wipe flags: the handler re-checks the Entra
+    /// permission before it acts on this.
+    /// </summary>
+    private bool alsoRemoveEntra;
+
     /// <summary>One outcome per device id, so acting on several rows leaves several separately named
     /// verdicts and no row can display another row's result (Known Failure Class 2).</summary>
     private readonly Dictionary<string, DeviceOutcome> deviceOutcomes = [];
 
+    /// <summary>
+    /// One device's verdict. EntraMessage and EntraSuccess are SEPARATE fields rather than text
+    /// merged into Message: the Intune half and the Entra half are two acts against two objects, and
+    /// collapsing them would hide the half-finished case (S5, Known Failure Class 2). Null
+    /// EntraMessage means the Entra step never ran.
+    /// </summary>
     internal sealed record DeviceOutcome(
-        string DeviceName, bool Success, string Message, string? ServicedNote, string? MacOsUnlockCodeShownOnce = null);
+        string DeviceName, bool Success, string Message, string? ServicedNote, string? MacOsUnlockCodeShownOnce = null,
+        string? EntraMessage = null, bool? EntraSuccess = null);
 
     private DeviceOutcome? OutcomeFor(string deviceId) =>
         deviceOutcomes.TryGetValue(deviceId, out var outcome) ? outcome : null;
@@ -421,8 +516,20 @@
 
     /// <summary>Rendering-time grant for one action. The handler re-checks the same policy before it
     /// writes (T6); this only decides whether the control is drawn.</summary>
-    private bool CanAct(IntuneDeviceAction action) =>
-        action == IntuneDeviceAction.Delete ? canDelete : canPrivileged;
+    private bool CanAct(IntuneDeviceAction action) => action switch
+    {
+        IntuneDeviceAction.Delete => canDelete,
+        IntuneDeviceAction.EntraDelete => canEntraDelete,
+        _ => canPrivileged
+    };
+
+    /// <summary>
+    /// Whether this device has an Entra ID device object the module can address at all (S5 / AC24).
+    /// A device that is not Entra-joined carries azureADDeviceId absent, empty or all-zero, and the
+    /// option is then not offered WITH THE REASON STATED - never offered-and-silently-skipped.
+    /// </summary>
+    private static bool EntraIdUsable(IntuneDevice device) =>
+        IntuneDeviceService.IsUsableEntraDeviceId(device.AzureADDeviceId);
 
     /// <summary>
     /// True unless this is a wipe whose typed device name does not match. Any action other than wipe
@@ -439,7 +546,12 @@
         ObliterationBehavior: string.IsNullOrWhiteSpace(wipeObliterationBehavior) ? null : wipeObliterationBehavior,
         PersistEsimDataPlan: wipePersistEsimDataPlan);
 
-    private void ResetWipeOptions()
+    /// <summary>
+    /// Every per-confirm option back to its default: the wipe flag set and the Entra ID add-on
+    /// choice. One method so no option can be left behind when the confirm bar opens, is cancelled,
+    /// or finishes - the blr-3 shape (state emptied, one field forgotten).
+    /// </summary>
+    private void ResetActionOptions()
     {
         wipeKeepUserData = false;
         wipeKeepEnrollmentData = false;
@@ -447,6 +559,7 @@
         wipeMacOsUnlockCode = "";
         wipeObliterationBehavior = "";
         wipeConfirmName = "";
+        alsoRemoveEntra = false;
     }
 
     private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
@@ -472,6 +585,7 @@
         // is only reached once module access is established.
         canDelete = (await AuthorizationService.AuthorizeAsync(user, "IntuneDevicesDelete")).Succeeded;
         canPrivileged = (await AuthorizationService.AuthorizeAsync(user, "IntuneDevicesPrivileged")).Succeeded;
+        canEntraDelete = (await AuthorizationService.AuthorizeAsync(user, "IntuneDevicesEntraDelete")).Succeeded;
 
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
@@ -504,7 +618,7 @@
         confirmDeviceId = null;
         confirmAction = null;
         actionTicket = "";
-        ResetWipeOptions();
+        ResetActionOptions();
         deviceOutcomes.Clear();
         await Task.Yield();
 
@@ -594,7 +708,11 @@
         actionTicket = "";
         // Wipe options start from their defaults on every confirm, so a choice made for one device
         // never rides along into the next one.
-        ResetWipeOptions();
+        ResetActionOptions();
+        // The Entra add-on is seeded from the deployment's default AFTER the reset (S5 / D2's
+        // config-default-then-operator-override shape), and never for the standalone Entra action,
+        // where removing the object IS the action.
+        alsoRemoveEntra = action != IntuneDeviceAction.EntraDelete && IntuneDeviceService.RemoveEntraObjectByDefault;
         deviceOutcomes.Remove(device.Id);
     }
 
@@ -603,12 +721,13 @@
         confirmDeviceId = null;
         confirmAction = null;
         actionTicket = "";
-        ResetWipeOptions();
+        ResetActionOptions();
     }
 
     private void SetOutcome(string deviceId, string deviceName, bool success, string message, string? servicedNote,
-        string? macOsUnlockCodeShownOnce = null) =>
-        deviceOutcomes[deviceId] = new DeviceOutcome(deviceName, success, message, servicedNote, macOsUnlockCodeShownOnce);
+        string? macOsUnlockCodeShownOnce = null, string? entraMessage = null, bool? entraSuccess = null) =>
+        deviceOutcomes[deviceId] = new DeviceOutcome(deviceName, success, message, servicedNote, macOsUnlockCodeShownOnce,
+            entraMessage, entraSuccess);
 
     /// <summary>
     /// Runs one destructive action against one device behind every gate S3 requires, in order:
@@ -636,6 +755,17 @@
         // Bound with the rest of the request: the operator's chosen flag set is what gets sent,
         // audited and reported, even if the panel is re-rendered while the call is in flight.
         var wipeOptions = action == IntuneDeviceAction.Wipe ? CurrentWipeOptions() : null;
+        // S5: azureADDeviceId is captured HERE, BEFORE any Intune action runs, and never read back
+        // afterwards - a deleted Intune record cannot be read, so there would be nothing left to
+        // take it from. This ordering is the slice's Known Failure Class 2 requirement and a test
+        // asserts the capture precedes the write.
+        var entraDeviceId = device.AzureADDeviceId;
+        // The Entra add-on rides on an Intune action only; the standalone action performs the same
+        // removal through PerformActionAsync instead. The permission is NOT consulted here - this is
+        // the operator's request, and RemoveEntraObjectAsync re-checks the grant before it writes.
+        var removeEntraObject = action != IntuneDeviceAction.EntraDelete
+            && alsoRemoveEntra
+            && IntuneDeviceService.IsUsableEntraDeviceId(entraDeviceId);
 
         void Refuse(string message, string auditDetail)
         {
@@ -658,6 +788,9 @@
         // ticket pre-gates, which never reached the device.
         var notifyAdmins = false;
         IntuneDeviceActionResult? result = null;
+        // Non-null only when the Entra half actually ran, so its verdict, its audit event and its
+        // admin notification exist exactly when there was a second act to report (S5).
+        IntuneDeviceActionResult? entraResult = null;
 
         try
         {
@@ -803,14 +936,29 @@
             }
 
             // 4. The write. Reachable only with every gate above passed.
-            var applied = await PerformActionAsync(action, deviceId, wipeOptions);
+            var applied = await PerformActionAsync(action, deviceId, wipeOptions, entraDeviceId);
             result = applied;
-            SetOutcome(deviceId, deviceName, applied.Success, applied.Message,
+
+            // 5. The Entra ID device object, SECOND and only when the Intune action actually
+            //    succeeded - the operator's intent was conditional on the first step, and removing
+            //    the directory object after a failed retire would leave a device that cannot
+            //    authenticate and still holds company data. It cannot throw (see
+            //    RemoveEntraObjectAsync), so the audit writes below stay reachable.
+            if (removeEntraObject && applied.Success)
+                entraResult = await RemoveEntraObjectAsync(authState.User, entraDeviceId);
+
+            SetOutcome(deviceId, deviceName, applied.Success,
+                // AC11's conditional half: a delete that removed the Entra ID object too must stop
+                // claiming that object survives.
+                IntuneMessageFor(action, applied.Message, entraResult?.Success == true),
                 applied.Success ? servicedAuditDetail : null,
                 // The macOS recovery PIN is shown back exactly once, and only on the path where the
                 // wipe was actually queued - the operator must hand it to the device owner and Intune
                 // will not return it later.
-                applied.Success ? wipeOptions?.MacOsUnlockCode : null);
+                applied.Success ? wipeOptions?.MacOsUnlockCode : null,
+                // Separate fields, never text merged into the Intune message: two acts against two
+                // objects report two verdicts (Known Failure Class 2).
+                entraResult?.Message, entraResult?.Success);
 
             // The serviced note rides extra, never errorDetail: LogModuleAction writes
             // ["error"] = success ? null : errorDetail (Services/AuditService.cs), so the one field
@@ -821,6 +969,20 @@
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, auditAction, "IntuneDevices", target, applied.Success, ticket,
                 errorDetail: applied.Success ? null : applied.Message,
                 extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail)));
+
+            // The Entra half's OWN audit event, under its own action name and against a target naming
+            // the deviceId the DELETE actually used (S5 / AC23). Two events, never one merged
+            // verdict: "Intune record deleted, Entra ID object not removed" must be readable from
+            // the audit trail afterwards, not inferred.
+            if (entraResult != null)
+            {
+                var entraOutcome = entraResult;
+                SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress,
+                    AuditActionFor(IntuneDeviceAction.EntraDelete), "IntuneDevices",
+                    EntraAuditTarget(deviceName, entraDeviceId), entraOutcome.Success, ticket,
+                    errorDetail: entraOutcome.Success ? null : entraOutcome.Message,
+                    extra: ActionAuditExtra(IntuneDeviceAction.EntraDelete, null, servicedAuditDetail)));
+            }
 
             Logger.LogInformation("User {Admin} ran {Action} against Intune device {Target} (ticket {Ticket}): {Result}",
                 currentUser, auditAction, target, ticket, applied.Message);
@@ -836,7 +998,7 @@
             actionTicket = "";
             // The panel's controls are retracted, but the outcome (including the one-time PIN
             // display) keeps its own copy, so this cannot erase what the operator still needs.
-            ResetWipeOptions();
+            ResetActionOptions();
 
             // Mandatory admin notification on every real attempt (Constitution, Notifications), in
             // finally and wrapped so a send failure cannot change the reported result (AC13).
@@ -856,19 +1018,106 @@
                     Logger.LogError(ex, "Failed to send Intune Devices admin notification for {DeviceId}", deviceId);
                 }
             }
+
+            // The Entra half's own admin notification, when it ran (AC13: an administrator
+            // notification on every audited action). Separately wrapped, so neither send can change
+            // either reported result, and neither can suppress the other.
+            if (entraResult != null)
+            {
+                try
+                {
+                    await Email.SendAdminNotificationAsync(currentUser, clientIpAddress,
+                        AuditActionFor(IntuneDeviceAction.EntraDelete), entraResult.Success, ticket,
+                        EntraNotificationDetails(device, deviceName, entraDeviceId),
+                        entraResult.Success ? null : entraResult.Message);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to send Intune Devices Entra removal admin notification for {DeviceId}", deviceId);
+                }
+            }
         }
     }
+
+    /// <summary>
+    /// The Entra ID device object removal, run as the SECOND half of an Intune action.
+    /// </summary>
+    /// <remarks>
+    /// T6 applies to this write on its own terms: IntuneDevicesEntraDelete is re-checked immediately
+    /// before it, never inherited from the Intune action's check at step 1. Device.ReadWrite.All is a
+    /// directory scope and the widest grant in the module, so an operator who may delete an Intune
+    /// record must not reach this by ticking a box.
+    ///
+    /// Never throws. An exception escaping here would reach ExecuteActionAsync's catch, which calls
+    /// Refuse and would report the WHOLE action as failed - including an Intune half that already
+    /// succeeded - and would skip the Intune audit write entirely (Known Failure Class 1). It
+    /// becomes this half's own failed outcome instead, which is the honest report.
+    /// </remarks>
+    private async Task<IntuneDeviceActionResult> RemoveEntraObjectAsync(
+        System.Security.Claims.ClaimsPrincipal user, string? entraDeviceId)
+    {
+        try
+        {
+            var entraCheck = await AuthorizationService.AuthorizeAsync(user, PolicyFor(IntuneDeviceAction.EntraDelete));
+            if (!entraCheck.Succeeded)
+            {
+                return new IntuneDeviceActionResult(false,
+                    $"Authorization denied. Removing the Entra ID device object requires the "
+                    + $"{PermissionLabel(IntuneDeviceAction.EntraDelete)} permission; the Intune action above was unaffected.",
+                    null);
+            }
+
+            return await IntuneDeviceService.RemoveEntraDeviceAsync(entraDeviceId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to remove the Entra ID device object {EntraDeviceId}", entraDeviceId);
+            return new IntuneDeviceActionResult(false,
+                $"The Entra ID device object could not be removed: {ex.Message}", null);
+        }
+    }
+
+    /// <summary>
+    /// AC11's conditional half: the delete result must stop claiming the device's Entra ID object
+    /// survives once the Entra removal ran alongside it and succeeded. Retire and wipe never make
+    /// that claim, and the standalone Entra action reports its own message, so both pass through.
+    /// </summary>
+    internal static string IntuneMessageFor(IntuneDeviceAction action, string intuneMessage, bool entraRemoved) =>
+        action == IntuneDeviceAction.Delete && entraRemoved
+            ? IntuneDeviceService.DeleteSuccessMessageEntraRemoved
+            : intuneMessage;
+
+    /// <summary>Audit target for the Entra half: the device name plus the deviceId the DELETE
+    /// actually addressed (S5), so the record names the exact alternate key used.</summary>
+    internal static string EntraAuditTarget(string deviceName, string? entraDeviceId) =>
+        $"{deviceName} (Entra deviceId {(string.IsNullOrWhiteSpace(entraDeviceId) ? "(none)" : entraDeviceId.Trim())})";
+
+    /// <summary>Fields the Entra half's administrator notification carries. Its own set, because it
+    /// is a different act against a different object and is reported separately.</summary>
+    private static Dictionary<string, string> EntraNotificationDetails(
+        IntuneDevice device, string deviceName, string? entraDeviceId) => new()
+    {
+        ["Device"] = deviceName,
+        ["Managed Device Id"] = device.Id,
+        ["Entra Device Id"] = string.IsNullOrWhiteSpace(entraDeviceId) ? "(none)" : entraDeviceId.Trim(),
+        ["Primary User"] = string.IsNullOrWhiteSpace(device.UserPrincipalName) ? "(none)" : device.UserPrincipalName,
+        ["Action"] = ActionLabel(IntuneDeviceAction.EntraDelete)
+    };
 
     /// <summary>
     /// The single Graph write for this action. A switch rather than a direct call so each action
     /// keeps its own service method and no action can be run through another's endpoint.
     /// </summary>
-    private Task<IntuneDeviceActionResult> PerformActionAsync(IntuneDeviceAction action, string deviceId, IntuneWipeOptions? wipeOptions) => action switch
+    private Task<IntuneDeviceActionResult> PerformActionAsync(IntuneDeviceAction action, string deviceId,
+        IntuneWipeOptions? wipeOptions, string? entraDeviceId) => action switch
     {
         IntuneDeviceAction.Delete => IntuneDeviceService.DeleteDeviceAsync(deviceId),
         IntuneDeviceAction.Retire => IntuneDeviceService.RetireDeviceAsync(deviceId),
         IntuneDeviceAction.Wipe => IntuneDeviceService.WipeDeviceAsync(deviceId,
             wipeOptions ?? throw new ArgumentNullException(nameof(wipeOptions), "A wipe must carry an explicit flag set.")),
+        // The standalone Entra removal (S5). It reaches this only after step 1 re-checked
+        // IntuneDevicesEntraDelete, which PolicyFor maps this action to.
+        IntuneDeviceAction.EntraDelete => IntuneDeviceService.RemoveEntraDeviceAsync(entraDeviceId),
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -934,6 +1183,9 @@
     {
         IntuneDeviceAction.Delete => "IntuneDevicesDelete",
         IntuneDeviceAction.Retire or IntuneDeviceAction.Wipe => "IntuneDevicesPrivileged",
+        // Its OWN tier, not the privileged one (D3): a directory scope over every device object in
+        // the tenant is not the same entitlement as wiping one phone.
+        IntuneDeviceAction.EntraDelete => "IntuneDevicesEntraDelete",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -946,6 +1198,7 @@
         IntuneDeviceAction.Delete => "IntuneDevices_Delete",
         IntuneDeviceAction.Retire => "IntuneDevices_Retire",
         IntuneDeviceAction.Wipe => "IntuneDevices_Wipe",
+        IntuneDeviceAction.EntraDelete => "IntuneDevices_EntraDelete",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -956,6 +1209,9 @@
         IntuneDeviceAction.Delete => "Delete record",
         IntuneDeviceAction.Retire => "Retire",
         IntuneDeviceAction.Wipe => "Wipe",
+        // Names the object it acts on, so it is not a bare "Remove" and shares no leading verb with
+        // the other three.
+        IntuneDeviceAction.EntraDelete => "Remove Entra ID object",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -964,6 +1220,7 @@
     {
         IntuneDeviceAction.Delete => "Intune Devices Delete",
         IntuneDeviceAction.Retire or IntuneDeviceAction.Wipe => "Intune Devices Privileged",
+        IntuneDeviceAction.EntraDelete => "Intune Devices Entra Delete",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -983,6 +1240,10 @@
         IntuneDeviceAction.Wipe =>
             $"Factory reset {deviceName}? The device is wiped at its next check-in and its contents are destroyed. "
             + "Type the device name below to confirm.",
+        IntuneDeviceAction.EntraDelete =>
+            $"Remove the Entra ID device object for {deviceName}? This removes the directory record only - the Intune "
+            + "record and the data on the device are unaffected. It changes how the device authenticates, and "
+            + "conditional access and compliance reporting notice it.",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
