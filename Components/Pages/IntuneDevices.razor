@@ -56,17 +56,21 @@
                     <input id="searchTerm" class="form-control" @bind="searchTerm"
                            @bind:event="oninput" @onkeydown="OnSearchKeyDown" disabled="@isSearching"
                            placeholder="Start of a device name or UPN, or a full serial number" />
-                    @* The label and this line say which kind of match each field gets, because the
-                       three differ: Intune accepts a prefix match on the two name fields and only
-                       an exact match on the serial (IntuneDeviceService.BuildFilterExpression). An
-                       operator typing the middle of a device name would otherwise read the empty
-                       result as "no such device". *@
-                    <div class="form-text">
+                </div>
+                @* The label above and this line say which kind of match each field gets, because the
+                   three differ: Intune accepts a prefix match on the two name fields and only an exact
+                   match on the serial (IntuneDeviceService.BuildFilterExpression). An operator typing
+                   the middle of a device name would otherwise read the empty result as "no such device".
+                   This block sits ahead of the button in source order so the pinned wording stays inside
+                   IntuneDevicesPageTests's search-card window; order-1/order-2 below move it under the
+                   whole row visually, past the button. *@
+                <div class="col-12 order-2">
+                    <div class="form-text mt-2">
                         Device name and user principal name match from the START of the value - typing the middle of a
                         name finds nothing. A serial number must be exact.
                     </div>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-4 order-1">
                     <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@isSearching">
                         @if (isSearching)
                         {
