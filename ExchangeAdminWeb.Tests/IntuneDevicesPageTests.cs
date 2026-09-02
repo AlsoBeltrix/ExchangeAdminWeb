@@ -361,7 +361,7 @@ public class IntuneDevicesPageTests
         var body = MethodBody("ExecuteActionAsync");
         var successAudit = body[WriteIndex(body)..];
 
-        Assert.Contains("extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail)", successAudit);
+        Assert.Contains("extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail, notification.Note)", successAudit);
         Assert.DoesNotContain("errorDetail: ActionAuditExtra", successAudit);
         Assert.DoesNotContain("errorDetail: servicedAuditDetail", successAudit);
         // ActionAuditExtra is the one place the serviced note is wrapped, so the note still travels.
@@ -917,6 +917,123 @@ public class IntuneDevicesPageTests
 
         Assert.Contains("BeginAction(device, IntuneDeviceAction.EntraDelete)", text);
         Assert.Contains("Remove Entra ID object</button>", text);
+    }
+
+    // ---- S6: affected-user notification -------------------------------------------------------
+
+    [Fact]
+    public void NotificationOffered_TheThreeIntuneActionsOfferItAndTheEntraRemovalDoesNot()
+    {
+        // D2 defines exactly three config fields, one per Intune action. The standalone Entra
+        // removal changes nothing the user can observe on their device.
+        Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Delete));
+        Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Retire));
+        Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Wipe));
+        Assert.False(IntuneDevices.NotificationOffered(IntuneDeviceAction.EntraDelete));
+    }
+
+    [Fact]
+    public void IntuneDevices_NotifyCheckboxIsSeededFromTheConfigDefaultAndOverridableAtActTime()
+    {
+        // AC18: the config field for THIS action sets the default; the operator's change at the
+        // moment of acting is what takes effect, so the choice is bound with the request.
+        var text = PageSource();
+
+        Assert.Contains("@bind=\"notifyPrimaryUser\"", text);
+        Assert.Contains("notifyPrimaryUser = IntuneDeviceService.NotifyUserByDefault(action);", MethodBody("BeginAction"));
+        Assert.Contains("notifyPrimaryUser = false;", MethodBody("ResetActionOptions"));
+
+        var body = MethodBody("ExecuteActionAsync");
+        var bindIndex = body.IndexOf("var notifyRequested = notifyPrimaryUser;", StringComparison.Ordinal);
+        Assert.True(bindIndex >= 0, "the notification choice is no longer bound with the request.");
+        Assert.True(WriteIndex(body) > bindIndex, "the notification choice is bound after the write.");
+        // The default travels too, so the audit can say WHICH not-sent reason applied.
+        Assert.Contains("var notifyDefault = IntuneDeviceService.NotifyUserByDefault(action);", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_SendsTheUserNotificationThroughEmailServiceAfterTheWrite()
+    {
+        // The send lives in NotifyPrimaryUserAsync and runs after the device action, because there is
+        // nothing to tell the user about until it happened.
+        var body = MethodBody("ExecuteActionAsync");
+        var notifyIndex = body.IndexOf("await NotifyPrimaryUserAsync(", StringComparison.Ordinal);
+
+        Assert.True(notifyIndex > WriteIndex(body), "the user notification does not run after the write.");
+        Assert.Contains("Email.SendDeviceActionUserNotificationAsync(", MethodBody("NotifyPrimaryUserAsync"));
+    }
+
+    [Fact]
+    public void IntuneDevices_SuppressedSendIsStatedOnScreenNotOnlyInTheAuditLog()
+    {
+        // AC19 / the S6 trap: EmailService's app-wide _notifyUsers switch outranks this module, so a
+        // ticked box on a deployment with user notifications off must SAY nothing was sent - on
+        // screen as well as in the audit event. Without this the checkbox silently does nothing,
+        // which is the decorative-control defect from the other direction. Removing either the
+        // outcome note or the confirm-time warning must fail here.
+        var text = PageSource();
+
+        Assert.Contains("outcome.NotificationNote != null", text);
+        Assert.Contains("@outcome.NotificationNote", text);
+        Assert.Contains("outcome.NotificationSent", text);
+        Assert.Contains("@if (!Email.UserNotificationsEnabled)", text);
+        Assert.Contains("Nothing will be sent even if this is ticked", text);
+        // The page reads the switch from EmailService - the same field that gates the send - so the
+        // statement and the send cannot disagree.
+        Assert.Contains("Email.UserNotificationsEnabled", MethodBody("NotifyPrimaryUserAsync"));
+    }
+
+    [Fact]
+    public void IntuneDevices_NotificationOutcomeIsRecordedInTheAuditEvent()
+    {
+        // AC19 / AC20: notified, or not notified and why - the same sentence the operator saw.
+        var extra = MethodBody("ActionAuditExtra");
+
+        Assert.Contains("extra[\"userNotification\"] = userNotificationNote;", extra);
+        Assert.Contains("userNotificationNote", MethodBody("ActionAuditExtra"));
+
+        // And it reaches that audit event: the notification is attempted BEFORE the audit write.
+        var body = MethodBody("ExecuteActionAsync");
+        var notifyIndex = body.IndexOf("await NotifyPrimaryUserAsync(", StringComparison.Ordinal);
+        var auditIndex = body.IndexOf("extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail, notification.Note)",
+            StringComparison.Ordinal);
+        Assert.True(notifyIndex >= 0 && auditIndex > notifyIndex,
+            "the audit event is written before the notification outcome exists, so it cannot record it.");
+    }
+
+    [Fact]
+    public void IntuneDevices_NotificationFailureNeverChangesTheReportedResult()
+    {
+        // Constitution, Notifications / plan S6: the device is already wiped by then, so a mail
+        // failure is caught and logged and the action still reports what it did.
+        var body = MethodBody("NotifyPrimaryUserAsync");
+
+        Assert.Contains("catch (Exception ex)", body);
+        Assert.Contains("could not be sent", body);
+        Assert.Contains("The action itself completed.", body);
+        Assert.DoesNotContain("throw", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_DeviceWithNoPrimaryUserAddress_IsNotOfferedTheNotification()
+    {
+        // AC20: not offered, and the reason is on screen - never offered-and-silently-skipped.
+        var text = PageSource();
+
+        Assert.Contains("@if (NotificationOffered(confirmAction.Value))", text);
+        Assert.Contains("string.IsNullOrWhiteSpace(device.UserPrincipalName)", text);
+        Assert.Contains("Intune holds no primary user address for it", text);
+    }
+
+    [Fact]
+    public void IntuneDevices_FailedActionWithATickedBox_StillSaysNothingWasSent()
+    {
+        // A ticked box whose action failed must still get an answer, or the operator is left
+        // assuming their user was told.
+        var body = MethodBody("NotifyPrimaryUserAsync");
+
+        Assert.Contains("if (!actionSucceeded)", body);
+        Assert.Contains("the action did not succeed", body);
     }
 
     [Fact]

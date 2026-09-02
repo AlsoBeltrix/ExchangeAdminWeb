@@ -86,6 +86,45 @@ public enum IntuneDeviceAction
 }
 
 /// <summary>
+/// Why the device's primary user was, or was not, emailed about an action
+/// (docs/IntuneDeviceManagement-Plan.md S6 / D2). Every not-sent case carries its own member,
+/// because "was the user told?" is an audit question and a silent no is indistinguishable from a
+/// failure. The four not-sent reasons are exactly D2's list: config default, operator unticked, no
+/// address on the device, suppressed app-wide.
+/// </summary>
+public enum IntuneUserNotificationOutcome
+{
+    /// <summary>Every condition met: the mail is to be sent.</summary>
+    Send,
+
+    /// <summary>The module's config default for this action is not to email, and the operator did
+    /// not ask for one.</summary>
+    NotRequestedByDefault,
+
+    /// <summary>The config default for this action IS to email, and the operator cleared the box -
+    /// the lost-or-stolen case the per-action checkbox exists for.</summary>
+    NotRequestedByOperator,
+
+    /// <summary>The operator asked, but affected-user mail is disabled for the whole deployment
+    /// (EmailService's _notifyUsers gate), which outranks anything this module sets. Must be said on
+    /// screen as well as audited, or the checkbox is decorative.</summary>
+    SuppressedAppWide,
+
+    /// <summary>The operator asked, but the device has no primary user address to send to (a shared,
+    /// kiosk or Autopilot pre-provisioned device).</summary>
+    NoAddress
+}
+
+/// <summary>
+/// The notification decision and the reason for it, in words fit for both the screen and the audit
+/// record. Pure, so the whole matrix is testable without a mail server (plan Test plan).
+/// </summary>
+public sealed record IntuneUserNotificationDecision(IntuneUserNotificationOutcome Outcome, string Reason)
+{
+    public bool ShouldSend => Outcome == IntuneUserNotificationOutcome.Send;
+}
+
+/// <summary>
 /// Every parameter Graph's managedDevice wipe action accepts, as an operator choice (D2: "anything
 /// that can be an option should be an option"). The defaults are the full-reset reading of the
 /// button's own label.

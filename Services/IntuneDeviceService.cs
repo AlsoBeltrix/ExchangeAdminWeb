@@ -398,6 +398,83 @@ public sealed class IntuneDeviceService
         "Removed the device's Entra ID device object. This affects how the device authenticates, and is the "
         + "step conditional access and compliance reporting notice. Company data on the device is unaffected.";
 
+    // ---- affected-user notification (S6 / D2) -------------------------------------------------
+
+    /// <summary>
+    /// The deployment's default for the per-action "email the user" checkbox, from this module's own
+    /// config field for that action (D2: three fields, one per action, rather than one hardcoded
+    /// answer). The operator may change it at the moment of acting; this only seeds the box.
+    /// </summary>
+    public bool NotifyUserByDefault(IntuneDeviceAction action)
+    {
+        var (key, fallback) = NotifyUserConfig(action);
+        return key != null && ParseBooleanConfig(_moduleConfig?.GetValue("IntuneDevices", key), fallback);
+    }
+
+    /// <summary>
+    /// The config field name and descriptor default behind each action's notification checkbox.
+    /// </summary>
+    /// <remarks>
+    /// The fallbacks mirror the descriptor's DefaultValue exactly, because
+    /// ModuleConfigService.GetValue returns null for a field nobody has saved. D2's reasoning for
+    /// them: delete off (nothing changes on the user's device, so a mail would confuse), retire and
+    /// wipe on.
+    ///
+    /// EntraDelete has NO field and no notification. D2 rules exactly three, and removing a
+    /// directory object changes nothing the user can observe on their device - unlike a retire or a
+    /// wipe. A null key here is what makes that absence deliberate rather than forgotten.
+    /// </remarks>
+    internal static (string? Key, bool Fallback) NotifyUserConfig(IntuneDeviceAction action) => action switch
+    {
+        IntuneDeviceAction.Delete => ("NotifyUserOnDelete", false),
+        IntuneDeviceAction.Retire => ("NotifyUserOnRetire", true),
+        IntuneDeviceAction.Wipe => ("NotifyUserOnWipe", true),
+        IntuneDeviceAction.EntraDelete => (null, false),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
+    };
+
+    /// <summary>
+    /// Whether to email the device's primary user, and why not when the answer is no (S6 / D2 /
+    /// AC18-AC20). Pure, so every branch is testable without a mail server.
+    /// </summary>
+    /// <remarks>
+    /// The app-wide gate is evaluated BEFORE the address, deliberately: on a deployment with
+    /// affected-user mail switched off, "nothing is sent here at all" is the operator's actionable
+    /// answer, and it is true of every device rather than of this one. userNotificationsEnabled
+    /// comes from EmailService.UserNotificationsEnabled - the same field that gates the send - so
+    /// the on-screen statement and the send cannot disagree.
+    /// </remarks>
+    internal static IntuneUserNotificationDecision DecideUserNotification(
+        bool configuredDefault, bool operatorRequested, bool userNotificationsEnabled, string? primaryUserAddress)
+    {
+        if (!operatorRequested)
+        {
+            return configuredDefault
+                ? new(IntuneUserNotificationOutcome.NotRequestedByOperator,
+                    "No email was sent to the device's primary user: this module emails the user for this action by "
+                    + "default, and the operator cleared that choice before confirming.")
+                : new(IntuneUserNotificationOutcome.NotRequestedByDefault,
+                    "No email was sent to the device's primary user: this module's configuration does not email the "
+                    + "user for this action, and the operator did not ask for one.");
+        }
+
+        if (!userNotificationsEnabled)
+        {
+            return new(IntuneUserNotificationOutcome.SuppressedAppWide,
+                "No email was sent to the device's primary user: user notifications are disabled for this whole "
+                + "deployment (Email:NotifyUsersOnPermissionGrant), which overrides this module's setting. "
+                + "An administrator must enable them before this option can do anything.");
+        }
+
+        if (string.IsNullOrWhiteSpace(primaryUserAddress) || !primaryUserAddress.Contains('@'))
+        {
+            return new(IntuneUserNotificationOutcome.NoAddress,
+                "No email was sent: this device has no primary user address to send to.");
+        }
+
+        return new(IntuneUserNotificationOutcome.Send, $"Emailing the device's primary user at {primaryUserAddress.Trim()}.");
+    }
+
     /// <summary>
     /// Maps a failed device mutation onto one of four distinct outcomes (T7 / AC15): a 403 names the
     /// consent the app registration is missing, a 404 says the device is already gone from Intune and

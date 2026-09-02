@@ -833,6 +833,197 @@ public class IntuneDeviceServiceTests
         Assert.Equal(expected, IntuneDeviceService.ParseBooleanConfig(raw, !expected));
     }
 
+    // ---- S6: affected-user notification -------------------------------------------------------
+
+    /// <summary>
+    /// An EmailService over an in-memory configuration, so the app-wide affected-user switch is the
+    /// REAL gate (Email:NotifyUsersOnPermissionGrant, EmailService.cs) rather than a bare bool
+    /// invented by the test. No SMTP is reachable and none is needed: only the switch is read.
+    /// </summary>
+    private static EmailService EmailWithUserNotifications(bool? enabled)
+    {
+        var settings = new Dictionary<string, string?> { ["Email:AdminNotificationEmail"] = "admin@contoso.com" };
+        if (enabled.HasValue)
+            settings["Email:NotifyUsersOnPermissionGrant"] = enabled.Value ? "true" : "false";
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return new EmailService(config, Substitute.For<ILogger<EmailService>>());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(null, false)]
+    public void UserNotificationsEnabled_ReflectsTheDeploymentSwitchAndDefaultsOff(bool? configured, bool expected)
+    {
+        Assert.Equal(expected, EmailWithUserNotifications(configured).UserNotificationsEnabled);
+    }
+
+    [Fact]
+    public void NotifyUserConfig_KeysAndDefaultsMatchTheDescriptorFieldForEachAction()
+    {
+        // D2's three fields, cross-checked against the catalog: a renamed field or a changed default
+        // in either place must fail here, or the checkbox would silently seed from nothing.
+        var module = new ModuleCatalog().GetById("IntuneDevices")!;
+
+        foreach (var (action, expectedKey) in new[]
+                 {
+                     (IntuneDeviceAction.Delete, "NotifyUserOnDelete"),
+                     (IntuneDeviceAction.Retire, "NotifyUserOnRetire"),
+                     (IntuneDeviceAction.Wipe, "NotifyUserOnWipe")
+                 })
+        {
+            var (key, fallback) = IntuneDeviceService.NotifyUserConfig(action);
+            Assert.Equal(expectedKey, key);
+
+            var field = Assert.Single(module.ConfigFields, f => f.Key == expectedKey);
+            Assert.Equal(bool.Parse(field.DefaultValue), fallback);
+        }
+
+        // Delete off, retire and wipe on - D2's "safe and least-surprising" defaults.
+        Assert.False(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Delete).Fallback);
+        Assert.True(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Retire).Fallback);
+        Assert.True(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Wipe).Fallback);
+
+        // The standalone Entra removal has no field and no notification, deliberately.
+        Assert.Null(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.EntraDelete).Key);
+    }
+
+    // AC18: the config default decides when the operator changes nothing, and the operator's change
+    // at the moment of acting is what takes effect - in BOTH directions.
+    [Fact]
+    public void DecideUserNotification_ConfigDefaultDecidesWhenTheOperatorChangesNothing()
+    {
+        var offByDefault = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: false, operatorRequested: false, userNotificationsEnabled: true, "user@contoso.com");
+        var onByDefault = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: true, operatorRequested: true, userNotificationsEnabled: true, "user@contoso.com");
+
+        Assert.Equal(IntuneUserNotificationOutcome.NotRequestedByDefault, offByDefault.Outcome);
+        Assert.False(offByDefault.ShouldSend);
+        Assert.Equal(IntuneUserNotificationOutcome.Send, onByDefault.Outcome);
+        Assert.True(onByDefault.ShouldSend);
+    }
+
+    [Fact]
+    public void DecideUserNotification_OperatorOverridesTheDefaultInBothDirections()
+    {
+        var tickedOnADefaultOffAction = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: false, operatorRequested: true, userNotificationsEnabled: true, "user@contoso.com");
+        var clearedOnADefaultOnAction = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: true, operatorRequested: false, userNotificationsEnabled: true, "user@contoso.com");
+
+        Assert.Equal(IntuneUserNotificationOutcome.Send, tickedOnADefaultOffAction.Outcome);
+        // The lost-or-stolen case: the reason must say the OPERATOR cleared it, not that config did.
+        Assert.Equal(IntuneUserNotificationOutcome.NotRequestedByOperator, clearedOnADefaultOnAction.Outcome);
+        Assert.Contains("operator cleared", clearedOnADefaultOnAction.Reason);
+    }
+
+    // AC19, and the S6 trap: EmailService gates every affected-user send on an app-wide switch that
+    // outranks anything this module sets. A ticked box on a deployment with that switch off must
+    // produce a SUPPRESSED outcome with a reason - never a Send. Removing that branch must fail here.
+    [Fact]
+    public void DecideUserNotification_AppWideSwitchOff_SuppressesAndSaysSoRatherThanSending()
+    {
+        var email = EmailWithUserNotifications(false);
+
+        var decision = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: true, operatorRequested: true,
+            userNotificationsEnabled: email.UserNotificationsEnabled, "user@contoso.com");
+
+        Assert.Equal(IntuneUserNotificationOutcome.SuppressedAppWide, decision.Outcome);
+        Assert.False(decision.ShouldSend);
+        Assert.Contains("disabled for this whole deployment", decision.Reason);
+        Assert.Contains("NotifyUsersOnPermissionGrant", decision.Reason);
+    }
+
+    [Fact]
+    public void DecideUserNotification_AppWideSwitchOn_AllowsTheSend()
+    {
+        // The inverse of the suppression test, so "always suppressed" cannot pass both.
+        var email = EmailWithUserNotifications(true);
+
+        var decision = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: true, operatorRequested: true,
+            userNotificationsEnabled: email.UserNotificationsEnabled, "user@contoso.com");
+
+        Assert.Equal(IntuneUserNotificationOutcome.Send, decision.Outcome);
+        Assert.Contains("user@contoso.com", decision.Reason);
+    }
+
+    // AC20: a device with no primary user address offers no notification and records why - it does
+    // not fail the action and does not look like a successful send.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-an-address")]
+    public void DecideUserNotification_NoPrimaryUserAddress_RecordsWhyRatherThanSending(string? address)
+    {
+        var decision = IntuneDeviceService.DecideUserNotification(
+            configuredDefault: true, operatorRequested: true, userNotificationsEnabled: true, address);
+
+        Assert.Equal(IntuneUserNotificationOutcome.NoAddress, decision.Outcome);
+        Assert.False(decision.ShouldSend);
+        Assert.Contains("no primary user address", decision.Reason);
+    }
+
+    [Fact]
+    public void DecideUserNotification_EveryNotSentCaseIsDistinguishableFromTheSentCase()
+    {
+        // D2: "a silent no is indistinguishable from a failure." Four not-sent reasons, one sent
+        // reason, five distinct sentences and five distinct outcomes.
+        var decisions = new[]
+        {
+            IntuneDeviceService.DecideUserNotification(false, false, true, "user@contoso.com"),
+            IntuneDeviceService.DecideUserNotification(true, false, true, "user@contoso.com"),
+            IntuneDeviceService.DecideUserNotification(true, true, false, "user@contoso.com"),
+            IntuneDeviceService.DecideUserNotification(true, true, true, ""),
+            IntuneDeviceService.DecideUserNotification(true, true, true, "user@contoso.com")
+        };
+
+        Assert.Equal(5, decisions.Select(d => d.Outcome).Distinct().Count());
+        Assert.Equal(5, decisions.Select(d => d.Reason).Distinct().Count());
+        Assert.Single(decisions, d => d.ShouldSend);
+    }
+
+    [Fact]
+    public void BuildDeviceActionUserBody_NamesTheDeviceTheActionAndTheTicketAndNothingElse()
+    {
+        // D2's body rule: the mail may be read by the wrong person - on a wipe it may reach a mailbox
+        // the user can now only open elsewhere, and on a lost device whoever holds it may read it.
+        var body = EmailService.BuildDeviceActionUserBody("laptop-1", "Wipe", "INC0012345");
+
+        Assert.Contains("laptop-1", body);
+        Assert.Contains("Wipe", body);
+        Assert.Contains("INC0012345", body);
+        // No operator identity, no primary user address, no action parameters.
+        Assert.DoesNotContain("Performed", body);
+        Assert.DoesNotContain("keepUserData", body);
+        Assert.DoesNotContain("@contoso", body);
+    }
+
+    [Fact]
+    public void BuildDeviceActionUserBody_EncodesInterpolatedValues()
+    {
+        var body = EmailService.BuildDeviceActionUserBody("<script>x</script>", "Wipe", "INC1");
+
+        Assert.DoesNotContain("<script>", body);
+        Assert.Contains("&lt;script&gt;", body);
+    }
+
+    [Fact]
+    public async Task SendDeviceActionUserNotificationAsync_AppWideSwitchOff_ReportsThatItDidNotSend()
+    {
+        // The send itself honours the same gate and RETURNS whether it actually sent, so a caller can
+        // record a suppressed send instead of assuming one happened (plan S6).
+        var email = EmailWithUserNotifications(false);
+
+        var sent = await email.SendDeviceActionUserNotificationAsync("user@contoso.com", "laptop-1", "Wipe", "INC1");
+
+        Assert.False(sent);
+    }
+
     // ---- GetGraphClientAsync credential path (plan Test plan) ---------------------------------
 
     [Fact]

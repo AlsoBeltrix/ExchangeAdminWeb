@@ -233,6 +233,46 @@
                                                 </div>
                                             }
 
+                                            @* S6 / D2: emailing the affected user is an OPTION - seeded from this
+                                               module's config default for this action and changeable at the moment of
+                                               acting, which is what the lost-or-stolen case needs. A deployment with
+                                               user notifications switched off says so HERE, before the operator ticks
+                                               a box that would do nothing, and the outcome says so afterwards
+                                               (AC19). *@
+                                            @if (NotificationOffered(confirmAction.Value))
+                                            {
+                                                <div class="mb-2">
+                                                    @if (string.IsNullOrWhiteSpace(device.UserPrincipalName))
+                                                    {
+                                                        <div class="form-text">
+                                                            No email can be sent for this device.
+                                                            Intune holds no primary user address for it.
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="notifyPrimaryUser"
+                                                                   @bind="notifyPrimaryUser" disabled="@(actingDeviceId != null)" />
+                                                            <label class="form-check-label" for="notifyPrimaryUser">
+                                                                Email the device's primary user (@device.UserPrincipalName)
+                                                            </label>
+                                                            <div class="form-text">
+                                                                The mail names the device, the action and the ticket, and nothing else -
+                                                                on a lost or stolen device whoever holds it may read it.
+                                                            </div>
+                                                            @if (!Email.UserNotificationsEnabled)
+                                                            {
+                                                                <div class="form-text text-danger">
+                                                                    User notifications are disabled for this whole deployment.
+                                                                    Nothing will be sent even if this is ticked, and the result will say so.
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+
                                             @* S5 / D3: the Entra ID device object is a SECOND deletion, against a
                                                different object, through a directory scope - so it is its own
                                                permission, its own checkbox (defaulted from config, off unless the
@@ -337,6 +377,15 @@
                                             {
                                                 <div class="alert @(outcome.EntraSuccess == true ? "alert-success" : "alert-danger") mb-0 mt-2 py-2">
                                                     <strong>Entra ID device object</strong> - @outcome.EntraMessage
+                                                </div>
+                                            }
+                                            @* S6 / AC19-AC20: what happened to the user notification is stated ON
+                                               SCREEN, not only in the audit record. A send the operator asked for and
+                                               the deployment suppressed must never look like a send. *@
+                                            @if (outcome.NotificationNote != null)
+                                            {
+                                                <div class="alert @(outcome.NotificationSent ? "alert-secondary" : "alert-warning") mb-0 mt-2 py-2">
+                                                    <small>@outcome.NotificationNote</small>
                                                 </div>
                                             }
                                             @* The macOS recovery PIN is shown back exactly once, here: the operator
@@ -490,6 +539,13 @@
     /// </summary>
     private bool alsoRemoveEntra;
 
+    /// <summary>
+    /// The per-action "email the device's primary user" choice (S6 / D2), seeded from this module's
+    /// NotifyUserOn{Delete,Retire,Wipe} config field when the confirm bar opens and changeable
+    /// before confirming - the lost-or-stolen case is why it cannot live in config alone.
+    /// </summary>
+    private bool notifyPrimaryUser;
+
     /// <summary>One outcome per device id, so acting on several rows leaves several separately named
     /// verdicts and no row can display another row's result (Known Failure Class 2).</summary>
     private readonly Dictionary<string, DeviceOutcome> deviceOutcomes = [];
@@ -502,7 +558,8 @@
     /// </summary>
     internal sealed record DeviceOutcome(
         string DeviceName, bool Success, string Message, string? ServicedNote, string? MacOsUnlockCodeShownOnce = null,
-        string? EntraMessage = null, bool? EntraSuccess = null);
+        string? EntraMessage = null, bool? EntraSuccess = null,
+        string? NotificationNote = null, bool NotificationSent = false);
 
     private DeviceOutcome? OutcomeFor(string deviceId) =>
         deviceOutcomes.TryGetValue(deviceId, out var outcome) ? outcome : null;
@@ -560,6 +617,7 @@
         wipeObliterationBehavior = "";
         wipeConfirmName = "";
         alsoRemoveEntra = false;
+        notifyPrimaryUser = false;
     }
 
     private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
@@ -713,6 +771,9 @@
         // config-default-then-operator-override shape), and never for the standalone Entra action,
         // where removing the object IS the action.
         alsoRemoveEntra = action != IntuneDeviceAction.EntraDelete && IntuneDeviceService.RemoveEntraObjectByDefault;
+        // Same shape for the affected-user notification (S6 / AC18): the deployment's config field
+        // for THIS action sets the default, and the operator may change it before confirming.
+        notifyPrimaryUser = IntuneDeviceService.NotifyUserByDefault(action);
         deviceOutcomes.Remove(device.Id);
     }
 
@@ -725,9 +786,10 @@
     }
 
     private void SetOutcome(string deviceId, string deviceName, bool success, string message, string? servicedNote,
-        string? macOsUnlockCodeShownOnce = null, string? entraMessage = null, bool? entraSuccess = null) =>
+        string? macOsUnlockCodeShownOnce = null, string? entraMessage = null, bool? entraSuccess = null,
+        string? notificationNote = null, bool notificationSent = false) =>
         deviceOutcomes[deviceId] = new DeviceOutcome(deviceName, success, message, servicedNote, macOsUnlockCodeShownOnce,
-            entraMessage, entraSuccess);
+            entraMessage, entraSuccess, notificationNote, notificationSent);
 
     /// <summary>
     /// Runs one destructive action against one device behind every gate S3 requires, in order:
@@ -766,6 +828,11 @@
         var removeEntraObject = action != IntuneDeviceAction.EntraDelete
             && alsoRemoveEntra
             && IntuneDeviceService.IsUsableEntraDeviceId(entraDeviceId);
+        // S6: the operator's notification choice and the config default it was seeded from are both
+        // bound here, before the first await. The default travels so the audit record can say WHICH
+        // not-sent reason applied - config default, or the operator clearing a ticked box (D2).
+        var notifyRequested = notifyPrimaryUser;
+        var notifyDefault = IntuneDeviceService.NotifyUserByDefault(action);
 
         void Refuse(string message, string auditDetail)
         {
@@ -947,6 +1014,14 @@
             if (removeEntraObject && applied.Success)
                 entraResult = await RemoveEntraObjectAsync(authState.User, entraDeviceId);
 
+            // 6. The affected-user notification (S6 / D2), attempted BEFORE the audit write so the
+            //    audit event records what actually happened - "was the user told?" is an audit
+            //    question and a silent no is indistinguishable from a failure. It cannot throw and
+            //    never changes the reported result of the device action: the device is already wiped
+            //    by then (Constitution, Notifications).
+            var notification = await NotifyPrimaryUserAsync(
+                action, upn, deviceName, ticket, notifyRequested, notifyDefault, applied.Success);
+
             SetOutcome(deviceId, deviceName, applied.Success,
                 // AC11's conditional half: a delete that removed the Entra ID object too must stop
                 // claiming that object survives.
@@ -958,7 +1033,9 @@
                 applied.Success ? wipeOptions?.MacOsUnlockCode : null,
                 // Separate fields, never text merged into the Intune message: two acts against two
                 // objects report two verdicts (Known Failure Class 2).
-                entraResult?.Message, entraResult?.Success);
+                entraResult?.Message, entraResult?.Success,
+                // AC19: a suppressed send is stated on screen, never reported as a send.
+                notification.Note, notification.Sent);
 
             // The serviced note rides extra, never errorDetail: LogModuleAction writes
             // ["error"] = success ? null : errorDetail (Services/AuditService.cs), so the one field
@@ -968,7 +1045,7 @@
             // anyone will ask about afterwards (AC21).
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, auditAction, "IntuneDevices", target, applied.Success, ticket,
                 errorDetail: applied.Success ? null : applied.Message,
-                extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail)));
+                extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail, notification.Note)));
 
             // The Entra half's OWN audit event, under its own action name and against a target naming
             // the deviceId the DELETE actually used (S5 / AC23). Two events, never one merged
@@ -1078,6 +1155,71 @@
     }
 
     /// <summary>
+    /// Decides, attempts, and REPORTS the affected-user notification for one action (S6 / D2 /
+    /// AC18-AC20). Returns the sentence shown on screen and written to the audit record, and whether
+    /// a mail actually went.
+    /// </summary>
+    /// <remarks>
+    /// Never throws and never changes the device action's reported result (Constitution,
+    /// Notifications; plan S6): the device is already wiped by the time this runs.
+    ///
+    /// The app-wide gate is read from EmailService.UserNotificationsEnabled - the same field that
+    /// gates the send - so the statement and the send cannot disagree. A ticked box on a deployment
+    /// with user notifications off returns the suppression reason, which the caller puts on screen
+    /// AND in the audit event; without that the checkbox would be a control that silently does
+    /// nothing (AC19).
+    /// </remarks>
+    private async Task<(string? Note, bool Sent)> NotifyPrimaryUserAsync(
+        IntuneDeviceAction action, string upn, string deviceName, string ticket, bool requested, bool configuredDefault,
+        bool actionSucceeded)
+    {
+        // The standalone Entra removal has no user notification (D2 defines three fields, one per
+        // Intune action), so it reports nothing rather than an empty not-sent note.
+        if (!NotificationOffered(action))
+            return (null, false);
+
+        if (!actionSucceeded)
+        {
+            // Silence only when nobody asked. A ticked box whose action failed still gets an answer,
+            // or an operator is left assuming their user was told.
+            return (requested
+                ? "No email was sent to the device's primary user: the action did not succeed, so nothing changed for them."
+                : null, false);
+        }
+
+        var decision = IntuneDeviceService.DecideUserNotification(
+            configuredDefault, requested, Email.UserNotificationsEnabled, upn);
+
+        if (!decision.ShouldSend)
+            return (decision.Reason, false);
+
+        try
+        {
+            var sent = await Email.SendDeviceActionUserNotificationAsync(
+                upn.Trim(), deviceName, ActionLabel(action), ticket);
+
+            return sent
+                ? ($"Emailed the device's primary user at {upn.Trim()}.", true)
+                : ("The email to the device's primary user could not be sent; the failure is logged. "
+                    + "The action itself completed.", false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to notify the primary user of Intune device {DeviceName}", deviceName);
+            return ($"The email to the device's primary user could not be sent: {ex.Message} "
+                + "The action itself completed.", false);
+        }
+    }
+
+    /// <summary>
+    /// Whether this action offers the affected-user notification at all. D2 defines exactly three
+    /// config fields, one per Intune action; the standalone Entra removal has none, because removing
+    /// a directory object changes nothing the user can observe on their device.
+    /// </summary>
+    internal static bool NotificationOffered(IntuneDeviceAction action) =>
+        IntuneDeviceService.NotifyUserConfig(action).Key != null;
+
+    /// <summary>
     /// AC11's conditional half: the delete result must stop claiming the device's Entra ID object
     /// survives once the Entra removal ran alongside it and succeeded. Retire and wipe never make
     /// that claim, and the standalone Entra action reports its own message, so both pass through.
@@ -1152,12 +1294,19 @@
     /// - the T4b rule applied to an operator-supplied secret rather than a returned one.
     /// </remarks>
     internal static Dictionary<string, object?>? ActionAuditExtra(
-        IntuneDeviceAction action, IntuneWipeOptions? wipeOptions, string? servicedNote)
+        IntuneDeviceAction action, IntuneWipeOptions? wipeOptions, string? servicedNote,
+        string? userNotificationNote = null)
     {
         var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? [];
 
         if (action == IntuneDeviceAction.Wipe && wipeOptions != null)
             extra["wipeFlags"] = SummarizeWipeFlags(wipeOptions);
+
+        // S6 / AC19-AC20: notified, or not notified and why. The same sentence the operator saw, so
+        // the screen and the audit trail cannot tell two different stories about whether the user
+        // was told.
+        if (!string.IsNullOrWhiteSpace(userNotificationNote))
+            extra["userNotification"] = userNotificationNote;
 
         return extra.Count == 0 ? null : extra;
     }

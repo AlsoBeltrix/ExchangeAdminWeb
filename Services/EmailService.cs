@@ -429,6 +429,84 @@ public class EmailService
     }
 
     /// <summary>
+    /// Whether affected-user mail is enabled for this DEPLOYMENT
+    /// (Email:NotifyUsersOnPermissionGrant). This switch outranks anything a module asks for, so a
+    /// caller that offers the user-notification choice must be able to say on screen that a ticked
+    /// box will send nothing - otherwise the control is decorative
+    /// (docs/IntuneDeviceManagement-Plan.md D2 / S6, the idm-3 class).
+    /// </summary>
+    public virtual bool UserNotificationsEnabled => _notifyUsers;
+
+    /// <summary>
+    /// Tells a device's primary user that an administrator acted on their device
+    /// (docs/IntuneDeviceManagement-Plan.md S6 / D2). Its own method rather than an overload of
+    /// SendUserNotificationAsync or SendGroupMembershipUserNotificationAsync, whose subjects and
+    /// bodies are mailbox- and group-specific.
+    /// </summary>
+    /// <remarks>
+    /// RETURNS WHETHER IT ACTUALLY SENT, so the caller records a suppressed send instead of assuming
+    /// one happened: false when the app-wide _notifyUsers gate is off, and false when the SMTP send
+    /// failed. "Was the user told?" is an audit question, and a silent no is indistinguishable from
+    /// a failure.
+    ///
+    /// The body names the device, the action and the ticket, and NOTHING else - deliberately no
+    /// operator name and no action parameters. On a wipe it may reach a mailbox the user can now only
+    /// open elsewhere, and on a lost or stolen device whoever holds it may read it.
+    /// </remarks>
+    public virtual async Task<bool> SendDeviceActionUserNotificationAsync(
+        string userEmail,
+        string deviceName,
+        string actionLabel,
+        string ticketNumber)
+    {
+        if (!_notifyUsers)
+        {
+            _logger.LogDebug("User notifications disabled, skipping device-action notification to {Email}", userEmail);
+            return false;
+        }
+
+        var subject = $"[Exchange Admin] Device action: {actionLabel} - {deviceName}";
+        var body = BuildDeviceActionUserBody(deviceName, actionLabel, ticketNumber);
+
+        try
+        {
+            // SendEmailOrThrowAsync rather than the swallowing SendEmailAsync: a caller that must
+            // report whether the mail went cannot be handed a true it did not earn.
+            await SendEmailOrThrowAsync(userEmail, subject, body);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send device-action notification to {Email}: {Message}", userEmail, ex.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The affected-user body for a device action. Extracted from the send so it is assertable
+    /// without SMTP. Device, action, ticket - nothing else (D2), every value HTML-encoded.
+    /// </summary>
+    internal static string BuildDeviceActionUserBody(string deviceName, string actionLabel, string ticketNumber)
+    {
+        var h = (string s) => WebUtility.HtmlEncode(s ?? "");
+        return $@"<html>
+<body style=""font-family: Segoe UI, Arial, sans-serif; color: #222;"">
+    <div style=""max-width: 640px; margin: 0 auto;"">
+        <h2>Device action notice</h2>
+        <p>An administrator has carried out the following action on a device registered to you:</p>
+        <table style=""border-collapse: collapse;"" cellpadding=""6"">
+            <tr><td><strong>Device</strong></td><td>{h(deviceName)}</td></tr>
+            <tr><td><strong>Action</strong></td><td>{h(actionLabel)}</td></tr>
+            <tr><td><strong>Ticket</strong></td><td>{h(ticketNumber)}</td></tr>
+        </table>
+        <p>If you were not expecting this, contact the IT Service Desk and quote the ticket number.</p>
+        <p>This is an automated notification from Exchange Admin. Please do not reply to this email.</p>
+    </div>
+</body>
+</html>";
+    }
+
+    /// <summary>
     /// The path of the Downloadable Reports page, relative to the app's base URL. Must stay in step
     /// with the @page directive on Components/Pages/MessageTraceReports.razor.
     /// </summary>
