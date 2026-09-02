@@ -1032,10 +1032,6 @@ h1:focus {
     text-transform: uppercase;
 }
 
-.nav-home .nav-link {
-    padding-left: 0;
-}
-
 .nav-section-children {
     margin-left: 0.85rem;
     padding-left: 0.5rem;
