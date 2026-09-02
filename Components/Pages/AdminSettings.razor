@@ -272,7 +272,13 @@
             <div class="row mt-3">
                 <div class="col-md-4">
                     <label class="form-label fw-semibold">Directory Read Credential (Delinea Secret ID)</label>
-                    <input type="text" class="form-control form-control-sm" @bind="ppDirectoryReadSecretId" @bind:event="oninput" placeholder="Required when groups or OUs are configured" />
+                    @* Explicit value/@oninput rather than @bind: the edit has to reach
+                       RecountProtected, and a plain @bind writes the field behind the section's
+                       back, so a secret-id-only edit read as "No unsaved changes". *@
+                    <input type="text" class="form-control form-control-sm"
+                           value="@ppDirectoryReadSecretId"
+                           @oninput="(e) => SetPpDirectoryReadSecretId(e.Value?.ToString() ?? string.Empty)"
+                           placeholder="Required when groups or OUs are configured" />
                     <small class="text-muted">Read-only AD credential for group membership and OU checks.</small>
                 </div>
             </div>
@@ -431,6 +437,10 @@
     /// holds the five working lists, so ten added groups read as ten changes, and an entry added
     /// and then removed before saving stops counting. Re-adding a renamed group target is two
     /// changes (its old row leaves, its new row arrives), which is what the save will actually do.
+    ///
+    /// The directory-read secret id counts as one change because SaveProtectedPrincipals writes it
+    /// alongside the five lists. Leaving it out made a secret-id-only edit read as "No unsaved
+    /// changes" and leave the page with no warning.
     /// </remarks>
     private void RecountProtected()
     {
@@ -439,7 +449,8 @@
             + EntryDelta(ppGroups, ppGroupsBaseline)
             + EntryDelta(ppOus, ppOusBaseline)
             + EntryDelta(ppPatterns, ppPatternsBaseline)
-            + EntryDelta(ppTargets, ppTargetsBaseline);
+            + EntryDelta(ppTargets, ppTargetsBaseline)
+            + SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline);
 
         dirty.SetCount(SectionProtected, changes);
     }
@@ -448,6 +459,18 @@
     private static int EntryDelta(List<string> current, List<string> loaded) =>
         current.Except(loaded, StringComparer.OrdinalIgnoreCase).Count()
         + loaded.Except(current, StringComparer.OrdinalIgnoreCase).Count();
+
+    /// <summary>
+    /// One change if the directory-read secret id differs from what was loaded, otherwise none.
+    /// </summary>
+    /// <remarks>
+    /// Trimmed on both sides because that is what SaveProtectedPrincipals persists: a stray space
+    /// is not an edit, and counting it would leave the page permanently dirty after a stray
+    /// keystroke that changes nothing stored. Internal so it is unit-testable - the rest of the
+    /// recount reads page fields no test can reach without bUnit.
+    /// </remarks>
+    internal static int SecretIdDelta(string current, string loaded) =>
+        string.Equals((current ?? "").Trim(), (loaded ?? "").Trim(), StringComparison.Ordinal) ? 0 : 1;
 
     /// <summary>Re-baselines the protected lists, after a load or a successful save.</summary>
     /// <remarks>
@@ -461,6 +484,7 @@
         ppOusBaseline = new List<string>(ppOus);
         ppPatternsBaseline = new List<string>(ppPatterns);
         ppTargetsBaseline = new List<string>(ppTargets);
+        ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;
     }
 
     private List<string> ppUsers = new();
@@ -475,6 +499,7 @@
     private List<string> ppTargetsBaseline = new();
     private string ppNewUser = "", ppNewGroup = "", ppNewOu = "", ppNewPattern = "", ppNewTarget = "";
     private string ppDirectoryReadSecretId = "";
+    private string ppDirectoryReadSecretIdBaseline = "";
     private string? ppLoadError;
 
     // Surfaced next to the add controls, not through statusMessage: a refused Add must not
@@ -667,7 +692,35 @@
     /// <summary>The DN half of a stored "guid|DN" target entry, for display.</summary>
     private static string TargetLabel(string stored) => ProtectedGroupTargetEntry.Parse(stored).Label;
 
-    private void AddPpPattern() { var v = ppNewPattern.Trim(); if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase)) ppPatterns.Add(v); ppNewPattern = ""; }
+    /// <summary>
+    /// Adds a SamAccountName pattern and recounts the section. Patterns skip the directory
+    /// validation the other four kinds go through (see the note above), which is why this is the
+    /// one add path that does not run through AddValidatedAsync - and why it has to recount here.
+    /// </summary>
+    private void AddPpPattern()
+    {
+        var v = ppNewPattern.Trim();
+        if (!string.IsNullOrWhiteSpace(v) && !ppPatterns.Contains(v, StringComparer.OrdinalIgnoreCase))
+        {
+            ppPatterns.Add(v);
+            RecountProtected();
+        }
+        ppNewPattern = "";
+    }
+
+    /// <summary>
+    /// Edits the directory-read secret id and recounts the section.
+    /// </summary>
+    /// <remarks>
+    /// Counted by DIFF against what the page loaded, not by tallying events: the field fires on
+    /// every input event, so a running tally would count keystrokes, and typing an edit back to
+    /// the loaded value has to net to clean. Same reasoning as ModuleConfig's RecountConfig.
+    /// </remarks>
+    private void SetPpDirectoryReadSecretId(string value)
+    {
+        ppDirectoryReadSecretId = value;
+        RecountProtected();
+    }
 
     /// <summary>
     /// Marks a saved entry that Active Directory says does not exist. Renders nothing for an

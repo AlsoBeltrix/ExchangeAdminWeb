@@ -1,3 +1,4 @@
+using ExchangeAdminWeb.Components.Pages;
 using ExchangeAdminWeb.Services;
 
 namespace ExchangeAdminWeb.Tests;
@@ -294,5 +295,72 @@ public class AdminPageDirtyStateTests
 
         Assert.Equal(a.Summary(), b.Summary());
         Assert.Equal("3 unsaved changes in Access, Modules", a.Summary());
+    }
+
+    // The Protected section's recount reads page fields, so only its one extractable piece - the
+    // directory-read secret id delta - can be tested purely. The wiring that gets the other two
+    // edit paths into the recount at all is pinned by source guards below.
+
+    [Fact]
+    public void SecretIdDelta_UnchangedSecretIdIsNotAnEdit()
+    {
+        Assert.Equal(0, AdminSettings.SecretIdDelta("4821", "4821"));
+    }
+
+    [Fact]
+    public void SecretIdDelta_ChangedSecretIdIsOneEdit()
+    {
+        // The bug this closes: a secret-id-only edit counted zero, so the save bar read
+        // "No unsaved changes" and the leave guard let the edit go without a warning.
+        Assert.Equal(1, AdminSettings.SecretIdDelta("4822", "4821"));
+    }
+
+    [Fact]
+    public void SecretIdDelta_ClearingOrSettingTheSecretIdIsOneEdit()
+    {
+        Assert.Equal(1, AdminSettings.SecretIdDelta("", "4821"));
+        Assert.Equal(1, AdminSettings.SecretIdDelta("4821", ""));
+    }
+
+    [Fact]
+    public void SecretIdDelta_SurroundingWhitespaceIsNotAnEdit()
+    {
+        // The save trims before persisting, so a stray space changes nothing stored. Counting it
+        // would leave the section permanently dirty after a keystroke with no effect.
+        Assert.Equal(0, AdminSettings.SecretIdDelta("  4821 ", "4821"));
+    }
+
+    [Fact]
+    public void AdminSettings_AddingAPatternRecountsTheProtectedSection()
+    {
+        // AddPpPattern is the one protected-principal add path that does not run through
+        // AddValidatedAsync (patterns are wildcards with no directory object to validate), and it
+        // mutated the list without recounting - so a pattern-only edit showed "No unsaved changes"
+        // and left the page with no leave warning. No bUnit harness exists, so this is a source
+        // guard on the call, bounded to the method so a recount elsewhere cannot satisfy it.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "AdminSettings.razor"));
+
+        var start = page.IndexOf("private void AddPpPattern()", StringComparison.Ordinal);
+        Assert.True(start >= 0, "AddPpPattern not found - tripwire is stale.");
+        var end = page.IndexOf("private void SetPpDirectoryReadSecretId(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound AddPpPattern - update the tripwire.");
+
+        Assert.Contains("RecountProtected()", page[start..end], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminSettings_EditingTheDirectoryReadSecretIdRecountsTheProtectedSection()
+    {
+        // A plain @bind wrote the field behind the section's back, so the edit was never counted.
+        // The input must route through the setter, the recount must include the delta, and the
+        // baseline must be re-snapshotted with the lists - otherwise the edit counts forever.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "AdminSettings.razor"));
+
+        Assert.DoesNotContain("@bind=\"ppDirectoryReadSecretId\"", page, StringComparison.Ordinal);
+        Assert.Contains("SetPpDirectoryReadSecretId(e.Value?.ToString()", page, StringComparison.Ordinal);
+        Assert.Contains("SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline)", page, StringComparison.Ordinal);
+        Assert.Contains("ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;", page, StringComparison.Ordinal);
     }
 }
