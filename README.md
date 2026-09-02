@@ -210,10 +210,18 @@ Review and act on Microsoft Entra ID Protection risky users via Microsoft Graph 
   are capped at 500 rows (Graph's own `$top` maximum) and a truncated result is shown
   as such, never silently cut off
 - Per-row risk history expander
-- Remediation (Dismiss, Confirm Safe, Confirm Compromised) sits behind the
-  `RiskyUsersRemediate` granular permission, fail-closed like the main module
-  permission. Each action is one Graph call per user, never a batch, so a refusal on
-  one row cannot be reported as success or failure for another
+- Remediation sits behind the `RiskyUsersRemediate` granular permission, fail-closed
+  like the main module permission. Each action is one Graph call per user, never a
+  batch, so a refusal on one row cannot be reported as success or failure for another.
+  Button wording is deliberately plainer than Microsoft's own vocabulary (owner
+  ruling 2026-09-02, for L2 support desk staff), each with a tooltip and confirmation
+  line stating the consequence before it commits:
+  - **Close as handled** -- Graph's `dismiss`. Clears the alert; nothing is reported
+    as right or wrong, and it can fire again
+  - **This was the real user** -- Graph's `confirmSafe`. Clears the alert and tells
+    the risk engine this activity is normal for them
+  - **Account was breached** -- Graph's `confirmCompromised`. Raises the user to high
+    risk; their sign-in is blocked or forced to reset their password, immediately
 - A ticket number is required before any remediation action runs
 - A protected-principal check runs before every write, using the two-branch model
   (resolved and unresolved) and the risky user's Entra object id, since risky users

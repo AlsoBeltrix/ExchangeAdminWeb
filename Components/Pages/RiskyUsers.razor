@@ -175,15 +175,15 @@
                                     {
                                         <td class="text-nowrap">
                                             <div class="btn-group btn-group-sm" role="group" aria-label="Remediate">
-                                                <button class="btn btn-outline-success" title="Dismiss risk"
+                                                <button class="btn btn-outline-success" title="@ActionConsequence(RiskyUserAction.Dismiss)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.Dismiss)"
-                                                        disabled="@ActionsDisabled">Dismiss</button>
-                                                <button class="btn btn-outline-primary" title="Confirm safe"
+                                                        disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.Dismiss)</button>
+                                                <button class="btn btn-outline-primary" title="@ActionConsequence(RiskyUserAction.ConfirmSafe)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.ConfirmSafe)"
-                                                        disabled="@ActionsDisabled">Safe</button>
-                                                <button class="btn btn-outline-danger" title="Confirm compromised"
+                                                        disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.ConfirmSafe)</button>
+                                                <button class="btn btn-outline-danger" title="@ActionConsequence(RiskyUserAction.ConfirmCompromised)"
                                                         @onclick="() => BeginAction(user, RiskyUserAction.ConfirmCompromised)"
-                                                        disabled="@ActionsDisabled">Compromised</button>
+                                                        disabled="@ActionsDisabled">@ActionLabel(RiskyUserAction.ConfirmCompromised)</button>
                                             </div>
                                         </td>
                                     }
@@ -197,7 +197,8 @@
                                 {
                                     <tr class="table-warning">
                                         <td colspan="@DetailColspan">
-                                            <div class="mb-2"><strong>@ConfirmPrompt(confirmAction.Value, user.UserPrincipalName, user.RiskState)</strong></div>
+                                            <div class="mb-1"><strong>@ConfirmPrompt(confirmAction.Value, user.UserPrincipalName, user.RiskState)</strong></div>
+                                            <div class="mb-2 text-muted">@ActionConsequence(confirmAction.Value)</div>
                                             @if (user.IsProcessing)
                                             {
                                                 <div class="small text-muted mb-2">
@@ -749,12 +750,30 @@
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
     };
 
-    /// <summary>Operator-facing name for a remediation action.</summary>
+    /// <summary>
+    /// Operator-facing name for a remediation action. Owner ruling (2026-09-02): the module is
+    /// headed for L2 support desk staff, so wording is plain and simpler than Microsoft's own
+    /// vocabulary (Dismiss / Confirm safe / Confirm compromised) rather than reusing it verbatim.
+    /// The Graph endpoint, audit action name and enum member behind each label are unchanged.
+    /// </summary>
     internal static string ActionLabel(RiskyUserAction action) => action switch
     {
-        RiskyUserAction.Dismiss => "Dismiss risk",
-        RiskyUserAction.ConfirmSafe => "Confirm safe",
-        RiskyUserAction.ConfirmCompromised => "Confirm compromised",
+        RiskyUserAction.Dismiss => "Close as handled",
+        RiskyUserAction.ConfirmSafe => "This was the real user",
+        RiskyUserAction.ConfirmCompromised => "Account was breached",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
+    };
+
+    /// <summary>
+    /// Owner-approved (2026-09-02) plain-English consequence line for a remediation action, shown
+    /// as the button tooltip and verbatim in the per-row confirmation bar, so an L2 operator sees
+    /// what will happen before committing rather than a Graph verb.
+    /// </summary>
+    internal static string ActionConsequence(RiskyUserAction action) => action switch
+    {
+        RiskyUserAction.Dismiss => "Clears the alert. Nothing is reported as right or wrong; it can fire again.",
+        RiskyUserAction.ConfirmSafe => "Clears the alert and tells the risk engine this activity is normal for them. Only if you have verified with the user.",
+        RiskyUserAction.ConfirmCompromised => "Raises the user to high risk. Their sign-in will be blocked or forced to reset their password, immediately.",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
     };
 

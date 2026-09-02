@@ -175,6 +175,34 @@ public class RiskyUsersPageTests
         // silently under a name that hides which action ran.
         Assert.Throws<ArgumentOutOfRangeException>(() => { RiskyUsers.AuditActionFor((RiskyUserAction)99); });
         Assert.Throws<ArgumentOutOfRangeException>(() => { RiskyUsers.ActionLabel((RiskyUserAction)99); });
+        Assert.Throws<ArgumentOutOfRangeException>(() => { RiskyUsers.ActionConsequence((RiskyUserAction)99); });
+    }
+
+    // ---- L2-plain wording (owner ruling 2026-09-02) --------------------------------------------
+    //
+    // The Dismiss / Confirm safe / Confirm compromised vocabulary is Microsoft's own, and the
+    // owner ruled it ambiguous for L2 support desk staff. These pin the exact approved strings so
+    // a future edit cannot drift the button label or its consequence line without failing loud.
+
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss, "Close as handled")]
+    [InlineData(RiskyUserAction.ConfirmSafe, "This was the real user")]
+    [InlineData(RiskyUserAction.ConfirmCompromised, "Account was breached")]
+    public void ActionLabel_MatchesTheOwnerApprovedL2Wording(RiskyUserAction action, string expected)
+    {
+        Assert.Equal(expected, RiskyUsers.ActionLabel(action));
+    }
+
+    [Theory]
+    [InlineData(RiskyUserAction.Dismiss,
+        "Clears the alert. Nothing is reported as right or wrong; it can fire again.")]
+    [InlineData(RiskyUserAction.ConfirmSafe,
+        "Clears the alert and tells the risk engine this activity is normal for them. Only if you have verified with the user.")]
+    [InlineData(RiskyUserAction.ConfirmCompromised,
+        "Raises the user to high risk. Their sign-in will be blocked or forced to reset their password, immediately.")]
+    public void ActionConsequence_MatchesTheOwnerApprovedConfirmationLine(RiskyUserAction action, string expected)
+    {
+        Assert.Equal(expected, RiskyUsers.ActionConsequence(action));
     }
 
     [Fact]
@@ -184,7 +212,7 @@ public class RiskyUsersPageTests
         // (S6 item 3).
         var prompt = RiskyUsers.ConfirmPrompt(RiskyUserAction.ConfirmCompromised, "risky@contoso.com", "atRisk");
 
-        Assert.Contains("Confirm compromised", prompt);
+        Assert.Contains("Account was breached", prompt);
         Assert.Contains("risky@contoso.com", prompt);
         Assert.Contains("atRisk", prompt);
     }
@@ -194,7 +222,7 @@ public class RiskyUsersPageTests
     {
         var prompt = RiskyUsers.ConfirmPrompt(RiskyUserAction.Dismiss, "risky@contoso.com", "");
 
-        Assert.Contains("Dismiss risk", prompt);
+        Assert.Contains("Close as handled", prompt);
         Assert.Contains("unknown", prompt);
     }
 
@@ -398,6 +426,38 @@ public class RiskyUsersPageTests
         Assert.DoesNotContain("RiskState", group);
         Assert.DoesNotContain("IsProcessing", group);
         Assert.DoesNotContain("IsDeleted", group);
+    }
+
+    [Fact]
+    public void RiskyUsers_ActionButtons_UseTheOwnerApprovedLabelAndTooltip()
+    {
+        // Owner ruling 2026-09-02: each trigger button shows the L2-plain label as its text and
+        // the matching consequence line as its tooltip, driven off the same static helpers the
+        // confirm bar uses - not a second, driftable copy of the wording.
+        var group = Between(PageSource(), "<div class=\"btn-group btn-group-sm\"", "</div>");
+
+        Assert.Equal(3, Regex.Matches(group, @"title=""@ActionConsequence\(RiskyUserAction\.").Count);
+        Assert.Equal(3, Regex.Matches(group, @">@ActionLabel\(RiskyUserAction\.").Count);
+        Assert.DoesNotContain("Dismiss risk", group);
+        Assert.DoesNotContain("Confirm safe", group);
+        Assert.DoesNotContain("Confirm compromised", group);
+    }
+
+    [Fact]
+    public void RiskyUsers_ConfirmBar_ShowsTheConsequenceLineVerbatimAboveTheTicketControls()
+    {
+        // Owner ruling 2026-09-02, item 2: the exact confirmation line for the chosen action must
+        // appear above the ticket/confirm controls, not folded into or paraphrased by the
+        // action+user prompt line.
+        var text = PageSource();
+
+        var promptIndex = text.IndexOf("@ConfirmPrompt(confirmAction.Value", StringComparison.Ordinal);
+        var consequenceIndex = text.IndexOf("@ActionConsequence(confirmAction.Value)", StringComparison.Ordinal);
+        var ticketIndex = text.IndexOf("riskyUsersTicket", StringComparison.Ordinal);
+
+        Assert.True(promptIndex >= 0, "the confirm bar no longer renders ConfirmPrompt.");
+        Assert.True(consequenceIndex > promptIndex, "the consequence line is not rendered after the prompt line.");
+        Assert.True(ticketIndex > consequenceIndex, "the consequence line does not precede the ticket/confirm controls.");
     }
 
     [Fact]

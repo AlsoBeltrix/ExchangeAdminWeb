@@ -6,9 +6,10 @@ deferred.** **D2 (read alerting) is RULED (owner, 2026-08-31): reads are AUDITED
 alert-emailed** (`.agents/decisions.md` 2026-08-31) -- the pre-ship gate is satisfied.
 All seven slices landed: plan revision `42d736f` (re-sequencing, recorded below), S2
 `e003af9`, S1+S3 `c68c7b6`, S4 `962cf38`, S5 `dee1add`, S6 `930d762`, S7 `3602859`.
-Module `RiskyUsers` stays `1.0.0` (all slices landed before any deploy, per Versioning
-below). NOT DEPLOYED -- the manual checks under `## Verification` need a deployed
-instance and ride the next dev deploy.
+Module `RiskyUsers` stayed `1.0.0` through S7 (all slices landed before any deploy,
+per Versioning below); bumped to `1.1.0` on 2026-09-02 for the L2 wording revision
+(S6, below). NOT DEPLOYED -- the manual checks under `## Verification` need a
+deployed instance and ride the next dev deploy.
 
 New module `RiskyUsers`. No base app version bump (Constitution, Deployment And
 Versioning: adding a module is not a shared-infrastructure change) unless S4a is taken,
@@ -472,6 +473,16 @@ This is D4 of `docs/MigrationBatchSelection-Plan.md` applied here: eligibility d
 exclusion, so an unanticipated state defaults to visible rather than silently vanishing.
 
 ### S6. Write UI and gates (`Components/Pages/RiskyUsers.razor`) -- LIVE, D1 ruled
+
+**Revision 2026-09-02 (owner ruling):** the Dismiss / Confirm safe / Confirm
+compromised wording is Microsoft's own vocabulary and reads ambiguous, and this
+module is headed for L2 support desk staff. Action buttons now read "Close as
+handled" / "This was the real user" / "Account was breached", each with a tooltip
+and a per-row confirmation line stating the consequence in plain English before the
+operator commits (`RiskyUsers.razor`'s `ActionLabel` / `ActionConsequence`). The
+Graph endpoints, audit action names (`RiskyUsers_Dismiss` /
+`RiskyUsers_ConfirmSafe` / `RiskyUsers_ConfirmCompromised`) and the `RiskyUserAction`
+enum are unchanged -- display text only. Module version `1.0.0` -> `1.1.0`.
 
 Per-row action buttons, each requiring in order, and each failing closed:
 

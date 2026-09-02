@@ -157,11 +157,16 @@ public sealed class RiskyUsersService
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown risky user action.")
     };
 
+    /// <summary>
+    /// Owner-approved (2026-09-02) L2-plain wording, matching RiskyUsers.razor's ActionLabel, so
+    /// the outcome message and audit record echo the same label the operator saw and clicked
+    /// rather than the Graph verb.
+    /// </summary>
     private static string ActionDisplayName(RiskyUserAction action) => action switch
     {
-        RiskyUserAction.Dismiss => "Dismiss",
-        RiskyUserAction.ConfirmSafe => "Confirm safe",
-        RiskyUserAction.ConfirmCompromised => "Confirm compromised",
+        RiskyUserAction.Dismiss => "Close as handled",
+        RiskyUserAction.ConfirmSafe => "This was the real user",
+        RiskyUserAction.ConfirmCompromised => "Account was breached",
         _ => action.ToString()
     };
 

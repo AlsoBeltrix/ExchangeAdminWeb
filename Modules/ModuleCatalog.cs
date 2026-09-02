@@ -587,7 +587,7 @@ public sealed class ModuleCatalog
             SortOrder = 745,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.1.0",
             MainPermission = new(
                 "Access",
                 "RiskyUsers",
