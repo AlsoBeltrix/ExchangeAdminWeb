@@ -195,6 +195,94 @@ public sealed class IntuneDeviceService
         "Deleted the Intune record. This removes the Intune record only - company data stays on the device, "
         + "and the device's Entra ID object still exists. Both are separate actions.";
 
+    // ---- write path (S4) ----------------------------------------------------------------------
+
+    private const string PrivilegedPermission = "DeviceManagementManagedDevices.PrivilegedOperations.All";
+
+    /// <summary>
+    /// Retires one device - removes company data, leaving personal data (S4). Behind
+    /// IntuneDevicesPrivileged, over S0's status-returning POST, with the same distinct-outcome
+    /// reporting as delete.
+    /// </summary>
+    /// <remarks>
+    /// Sends NO BODY, ever. Learn is explicit ("Do not supply a request body for this method"), so
+    /// the body argument is omitted rather than passed as an empty object - and a test asserts the
+    /// request carried no content at all, so a shared helper cannot quietly give retire one.
+    /// </remarks>
+    public async Task<IntuneDeviceActionResult> RetireDeviceAsync(string deviceId)
+    {
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Intune Devices Graph credentials not available.");
+
+        var (ok, status, safeError) = await client.PostNoContentWithStatusAsync(
+            $"{DevicesEndpoint}/{Uri.EscapeDataString(deviceId)}/retire");
+
+        return ok
+            ? new IntuneDeviceActionResult(true, RetireQueuedMessage, null)
+            : BuildActionFailure("retire", PrivilegedPermission, status, safeError);
+    }
+
+    /// <summary>
+    /// Wipes one device - factory reset, with the flag set the operator chose (S4). Behind
+    /// IntuneDevicesPrivileged, over S0's status-returning POST, with the same distinct-outcome
+    /// reporting as delete. The body is ALWAYS explicit; see BuildWipeBody.
+    /// </summary>
+    public async Task<IntuneDeviceActionResult> WipeDeviceAsync(string deviceId, IntuneWipeOptions options)
+    {
+        var client = await _graphClientFactory() ?? throw new InvalidOperationException("Intune Devices Graph credentials not available.");
+
+        var (ok, status, safeError) = await client.PostNoContentWithStatusAsync(
+            $"{DevicesEndpoint}/{Uri.EscapeDataString(deviceId)}/wipe", BuildWipeBody(options));
+
+        return ok
+            ? new IntuneDeviceActionResult(true, WipeQueuedMessage, null)
+            : BuildActionFailure("wipe", PrivilegedPermission, status, safeError);
+    }
+
+    /// <summary>
+    /// T3 / AC11: retire and wipe are ASYNCHRONOUS. A 204 is Intune accepting the request, not the
+    /// device having acted - the wording says "queued" and names the check-in, because "Retired" over
+    /// a powered-off machine is the D8 defect from docs/MigrationBatchSelection-Plan.md.
+    /// </summary>
+    internal const string RetireQueuedMessage =
+        "Queued retire of this device. Intune accepted the request; the device removes company data at its next "
+        + "check-in, and a powered-off or offline device may not act for a long time.";
+
+    /// <summary>T3 / AC11, for wipe. See RetireQueuedMessage.</summary>
+    internal const string WipeQueuedMessage =
+        "Queued wipe of this device. Intune accepted the request; the device factory resets at its next check-in, "
+        + "and a powered-off or offline device may not act for a long time.";
+
+    /// <summary>
+    /// The wipe request body, always explicit and never left to a Graph default.
+    /// </summary>
+    /// <remarks>
+    /// keepUserData and keepEnrollmentData are ALWAYS serialized at their chosen values - the
+    /// surviving half of idm-2, because "no body means a full factory reset" was an inference stated
+    /// as fact and withdrawn. The other three are included only when the operator set them: sending
+    /// macOsUnlockCode: "" or an obliteration behaviour to a Windows device is meaningless, and
+    /// present-and-null is not the same wire request as absent. The intent is pinned by the tests
+    /// asserting this serialized body per combination, not by the plan's table.
+    /// </remarks>
+    internal static Dictionary<string, object?> BuildWipeBody(IntuneWipeOptions options)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["keepUserData"] = options.KeepUserData,
+            ["keepEnrollmentData"] = options.KeepEnrollmentData
+        };
+
+        if (!string.IsNullOrWhiteSpace(options.MacOsUnlockCode))
+            body["macOsUnlockCode"] = options.MacOsUnlockCode.Trim();
+
+        if (!string.IsNullOrWhiteSpace(options.ObliterationBehavior))
+            body["obliterationBehavior"] = options.ObliterationBehavior;
+
+        if (options.PersistEsimDataPlan)
+            body["persistEsimDataPlan"] = true;
+
+        return body;
+    }
+
     /// <summary>
     /// Maps a failed device mutation onto one of four distinct outcomes (T7 / AC15): a 403 names the
     /// consent the app registration is missing, a 404 says the device is already gone from Intune and

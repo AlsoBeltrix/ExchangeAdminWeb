@@ -84,18 +84,19 @@ public class IntuneDevicesPageTests
     }
 
     [Fact]
-    public void IntuneDevices_HasOnlyTheDeleteWriteActionInThisSlice()
+    public void IntuneDevices_HasTheThreeIntuneActionsAndNotTheEntraOneInThisSlice()
     {
-        // S3 adds Delete behind IntuneDevicesDelete. Retire/Wipe (S4) and the Entra ID removal (S5)
-        // are later slices; this page must not reach ahead of its own slice.
+        // S3 added Delete behind IntuneDevicesDelete; S4 adds Retire and Wipe behind
+        // IntuneDevicesPrivileged. The Entra ID device removal is S5; this page must not reach ahead
+        // of its own slice.
         var text = PageSource();
 
         Assert.Contains("DeleteDeviceAsync", text);
+        Assert.Contains("RetireDeviceAsync", text);
+        Assert.Contains("WipeDeviceAsync", text);
         Assert.Contains("IntuneDevicesDelete\"", text);
-        Assert.DoesNotContain("RetireDeviceAsync", text);
-        Assert.DoesNotContain("WipeDeviceAsync", text);
+        Assert.Contains("IntuneDevicesPrivileged\"", text);
         Assert.DoesNotContain("RemoveEntraDeviceAsync", text);
-        Assert.DoesNotContain("IntuneDevicesPrivileged\"", text);
         Assert.DoesNotContain("IntuneDevicesEntraDelete\"", text);
     }
 
@@ -359,9 +360,11 @@ public class IntuneDevicesPageTests
         var body = MethodBody("ExecuteActionAsync");
         var successAudit = body[WriteIndex(body)..];
 
-        Assert.Contains("extra: ServicedExtra(servicedAuditDetail)", successAudit);
-        Assert.DoesNotContain("errorDetail: ServicedExtra", successAudit);
+        Assert.Contains("extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail)", successAudit);
+        Assert.DoesNotContain("errorDetail: ActionAuditExtra", successAudit);
         Assert.DoesNotContain("errorDetail: servicedAuditDetail", successAudit);
+        // ActionAuditExtra is the one place the serviced note is wrapped, so the note still travels.
+        Assert.Contains("ProtectedPrincipalServicing.Extra(servicedNote)", MethodBody("ActionAuditExtra"));
     }
 
     [Fact]
@@ -499,6 +502,216 @@ public class IntuneDevicesPageTests
         Assert.Contains("Intune record only", prompt);
         Assert.Contains("company data stays on the device", prompt);
         Assert.Contains("Entra ID object still exists", prompt);
+    }
+
+    // ---- S4: retire and wipe ------------------------------------------------------------------
+
+    [Fact]
+    public void PolicyFor_RetireAndWipe_AreTheSecondTierAliasAndNotTheDeleteOne()
+    {
+        // D1 / AC3: two tiers. An operator with Delete alone cannot retire or wipe, which is only
+        // true if the two actions ask a different policy.
+        Assert.Equal("IntuneDevicesPrivileged", IntuneDevices.PolicyFor(IntuneDeviceAction.Retire));
+        Assert.Equal("IntuneDevicesPrivileged", IntuneDevices.PolicyFor(IntuneDeviceAction.Wipe));
+        Assert.NotEqual(IntuneDevices.PolicyFor(IntuneDeviceAction.Delete), IntuneDevices.PolicyFor(IntuneDeviceAction.Wipe));
+    }
+
+    [Fact]
+    public void AuditActionFor_RetireAndWipe_FileUnderTheirOwnActionNames()
+    {
+        Assert.Equal("IntuneDevices_Retire", IntuneDevices.AuditActionFor(IntuneDeviceAction.Retire));
+        Assert.Equal("IntuneDevices_Wipe", IntuneDevices.AuditActionFor(IntuneDeviceAction.Wipe));
+    }
+
+    [Fact]
+    public void ActionLabel_NoTwoActionsShareALeadingVerbAndNoneIsABareRemove()
+    {
+        // docs/MigrationBatchSelection-Plan.md D6, now assertable across all three.
+        var labels = new[]
+        {
+            IntuneDevices.ActionLabel(IntuneDeviceAction.Delete),
+            IntuneDevices.ActionLabel(IntuneDeviceAction.Retire),
+            IntuneDevices.ActionLabel(IntuneDeviceAction.Wipe)
+        };
+
+        Assert.Equal(["Delete record", "Retire", "Wipe"], labels);
+        var leadingVerbs = labels.Select(l => l.Split(' ')[0]).ToArray();
+        Assert.Equal(leadingVerbs.Length, leadingVerbs.Distinct().Count());
+        Assert.DoesNotContain("Remove", labels);
+    }
+
+    [Fact]
+    public void ConfirmPrompt_RetireAndWipe_SayQueuedBehaviourAndTheWipeAsksForTheName()
+    {
+        var retire = IntuneDevices.ConfirmPrompt(IntuneDeviceAction.Retire, "laptop-1");
+        var wipe = IntuneDevices.ConfirmPrompt(IntuneDeviceAction.Wipe, "laptop-1");
+
+        Assert.Contains("next check-in", retire);
+        Assert.Contains("re-enrolled", retire);
+        Assert.Contains("next check-in", wipe);
+        Assert.Contains("Type the device name", wipe);
+    }
+
+    [Fact]
+    public void SummarizeWipeFlags_NamesEveryFlagAtTheValueSent()
+    {
+        // AC21: the audit event must name the exact flag set, so every parameter appears - including
+        // the ones left at their defaults.
+        var summary = IntuneDevices.SummarizeWipeFlags(new IntuneWipeOptions());
+
+        Assert.Equal(
+            "keepUserData=false; keepEnrollmentData=false; persistEsimDataPlan=false; "
+            + "obliterationBehavior=(unset); macOsUnlockCode=(not set)",
+            summary);
+    }
+
+    [Fact]
+    public void SummarizeWipeFlags_KeepUserDataWipeIsDistinguishableFromAFullReset()
+    {
+        // The only question anyone asks afterwards. A summary that rendered these identically could
+        // not answer it.
+        var fullReset = IntuneDevices.SummarizeWipeFlags(new IntuneWipeOptions());
+        var keepingData = IntuneDevices.SummarizeWipeFlags(new IntuneWipeOptions(KeepUserData: true));
+
+        Assert.NotEqual(fullReset, keepingData);
+        Assert.Contains("keepUserData=true", keepingData);
+    }
+
+    [Fact]
+    public void SummarizeWipeFlags_MacOsUnlockCode_IsSetOrNotSetNeverItsValue()
+    {
+        // T4b applied to an operator-supplied secret rather than a returned one.
+        var withPin = IntuneDevices.SummarizeWipeFlags(new IntuneWipeOptions(MacOsUnlockCode: "123456"));
+
+        Assert.Contains("macOsUnlockCode=(set)", withPin);
+        Assert.DoesNotContain("123456", withPin);
+    }
+
+    [Fact]
+    public void SummarizeWipeFlags_ObliterationBehaviour_IsNamedWhenSet()
+    {
+        Assert.Contains("obliterationBehavior=alwaysObliterate",
+            IntuneDevices.SummarizeWipeFlags(new IntuneWipeOptions(ObliterationBehavior: "alwaysObliterate")));
+    }
+
+    [Fact]
+    public void ActionAuditExtra_Wipe_CarriesTheFlagSetAndNeverThePin()
+    {
+        // AC21: a wipe's audit event names the exact flag set used. The PIN's literal value appears
+        // in no audit field.
+        var extra = IntuneDevices.ActionAuditExtra(
+            IntuneDeviceAction.Wipe,
+            new IntuneWipeOptions(KeepUserData: true, MacOsUnlockCode: "123456"),
+            servicedNote: null);
+
+        Assert.NotNull(extra);
+        Assert.True(extra!.ContainsKey("wipeFlags"));
+        Assert.Contains("keepUserData=true", (string)extra["wipeFlags"]!);
+        Assert.DoesNotContain("123456", string.Join("|", extra.Select(kv => $"{kv.Key}={kv.Value}")));
+    }
+
+    [Fact]
+    public void ActionAuditExtra_Wipe_KeepsTheServicedNoteAlongsideTheFlagSet()
+    {
+        var extra = IntuneDevices.ActionAuditExtra(
+            IntuneDeviceAction.Wipe, new IntuneWipeOptions(), servicedNote: "serviced by group X");
+
+        Assert.NotNull(extra);
+        Assert.True(extra!.ContainsKey("wipeFlags"));
+        Assert.True(extra.ContainsKey(ExchangeAdminWeb.Services.ProtectedPrincipalServicing.AuditKey));
+    }
+
+    [Fact]
+    public void ActionAuditExtra_DeleteAndRetire_CarryNoWipeFlagsAndNoEmptyDictionary()
+    {
+        Assert.Null(IntuneDevices.ActionAuditExtra(IntuneDeviceAction.Delete, null, null));
+        Assert.Null(IntuneDevices.ActionAuditExtra(IntuneDeviceAction.Retire, null, null));
+
+        var serviced = IntuneDevices.ActionAuditExtra(IntuneDeviceAction.Retire, null, "serviced by group X");
+        Assert.NotNull(serviced);
+        Assert.False(serviced!.ContainsKey("wipeFlags"));
+    }
+
+    [Fact]
+    public void IntuneDevices_RetireAndWipeButtonsAreGatedOnThePrivilegedGrant()
+    {
+        var text = PageSource();
+
+        Assert.Contains("AuthorizeAsync(user, \"IntuneDevicesPrivileged\")", text);
+        Assert.Contains("BeginAction(device, IntuneDeviceAction.Retire)", text);
+        Assert.Contains("BeginAction(device, IntuneDeviceAction.Wipe)", text);
+        Assert.Contains("@if (canPrivileged)", text);
+    }
+
+    [Fact]
+    public void IntuneDevices_WipeRequiresTypingTheDeviceNameAndRetireDoesNot()
+    {
+        // The asymmetry is deliberate: retire is recoverable by re-enrolling, wipe destroys the
+        // machine's contents.
+        var text = PageSource();
+        var guard = MethodBody("WipeNameConfirmed");
+
+        Assert.Contains("wipeConfirmName", text);
+        Assert.Contains("!WipeNameConfirmed(device, confirmAction.Value)", text);
+        Assert.Contains("action != IntuneDeviceAction.Wipe", guard);
+        Assert.Contains("DeviceLabel(device)", guard);
+    }
+
+    [Fact]
+    public void IntuneDevices_WipePanelOffersEveryGraphParameterAsAControl()
+    {
+        // D2: anything that can be an option is an option, with full-reset defaults and every
+        // non-default choice visible at the moment of acting.
+        var text = PageSource();
+
+        Assert.Contains("id=\"wipeKeepUserData\"", text);
+        Assert.Contains("id=\"wipeKeepEnrollmentData\"", text);
+        Assert.Contains("id=\"wipePersistEsimDataPlan\"", text);
+        Assert.Contains("id=\"wipeMacOsUnlockCode\"", text);
+        Assert.Contains("id=\"wipeObliterationBehavior\"", text);
+        foreach (var behaviour in new[] { "default", "doNotObliterate", "obliterateWithWarning", "alwaysObliterate" })
+            Assert.Contains($"value=\"{behaviour}\"", text);
+
+        // Keeping user data contradicts the button's own label, so the panel says so inline.
+        Assert.Contains("contradicts the button's own label", text);
+    }
+
+    [Fact]
+    public void IntuneDevices_MacOsRecoveryPinIsShownBackOnceAfterASuccessfulQueue()
+    {
+        // Plan S4: the operator must give it to the device owner and it is not retrievable
+        // afterwards - but it is shown only where the wipe was actually queued.
+        var text = PageSource();
+        var body = MethodBody("ExecuteActionAsync");
+
+        Assert.Contains("outcome.MacOsUnlockCodeShownOnce != null", text);
+        Assert.Contains("cannot be retrieved afterwards", text);
+        Assert.Contains("applied.Success ? wipeOptions?.MacOsUnlockCode : null", body);
+    }
+
+    [Fact]
+    public void IntuneDevices_WipeOptionsAreBoundBeforeTheWriteAndResetAfterIt()
+    {
+        var body = MethodBody("ExecuteActionAsync");
+
+        var bindIndex = body.IndexOf("var wipeOptions = action == IntuneDeviceAction.Wipe ? CurrentWipeOptions() : null;", StringComparison.Ordinal);
+        Assert.True(bindIndex >= 0, "the wipe flag set is no longer bound before the request.");
+        Assert.True(WriteIndex(body) > bindIndex, "the wipe flag set is bound after the write.");
+
+        // The first `finally` after the write, not the last mention of the word - a later comment
+        // saying "finally" would otherwise move the window past the code being asserted.
+        var finallyIndex = body.IndexOf("finally", WriteIndex(body), StringComparison.Ordinal);
+        Assert.True(finallyIndex > 0, "ExecuteActionAsync no longer has a finally block after the write.");
+        Assert.Contains("ResetWipeOptions();", body[finallyIndex..]);
+    }
+
+    [Fact]
+    public void IntuneDevices_AdminNotificationForAWipeNamesTheFlagSet()
+    {
+        var details = MethodBody("NotificationDetails");
+
+        Assert.Contains("SummarizeWipeFlags(wipeOptions)", details);
+        Assert.DoesNotContain("MacOsUnlockCode", details);
     }
 
     [Fact]

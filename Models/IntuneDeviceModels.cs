@@ -66,5 +66,30 @@ public sealed record IntuneDeviceActionResult(bool Success, string Message, stri
 public enum IntuneDeviceAction
 {
     /// <summary>Delete the Intune management record. Tier 1, IntuneDevicesDelete (S3).</summary>
-    Delete
+    Delete,
+
+    /// <summary>Remove company data from the device. Tier 2, IntuneDevicesPrivileged (S4).</summary>
+    Retire,
+
+    /// <summary>Factory reset the device. Tier 2, IntuneDevicesPrivileged (S4).</summary>
+    Wipe
 }
+
+/// <summary>
+/// Every parameter Graph's managedDevice wipe action accepts, as an operator choice (D2: "anything
+/// that can be an option should be an option"). The defaults are the full-reset reading of the
+/// button's own label.
+/// </summary>
+/// <remarks>
+/// KeepUserData and KeepEnrollmentData are ALWAYS serialized at their chosen values, so the reset
+/// semantics are never left to a Graph default - the surviving half of idm-2. The other three are
+/// sent only when set, because macOsUnlockCode: "" or an obliteration behaviour on a Windows device
+/// is meaningless. MacOsUnlockCode is an operator-supplied device secret: it is displayed back once
+/// after a successful queue and recorded in the audit as (set)/(not set), never by value (T4b).
+/// </remarks>
+public sealed record IntuneWipeOptions(
+    bool KeepUserData = false,
+    bool KeepEnrollmentData = false,
+    string? MacOsUnlockCode = null,
+    string? ObliterationBehavior = null,
+    bool PersistEsimDataPlan = false);

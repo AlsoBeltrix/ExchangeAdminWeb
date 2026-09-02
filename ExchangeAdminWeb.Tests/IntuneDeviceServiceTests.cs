@@ -1,4 +1,5 @@
 using System.Net;
+using ExchangeAdminWeb.Models;
 using ExchangeAdminWeb.Modules;
 using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Storage;
@@ -438,6 +439,218 @@ public class IntuneDeviceServiceTests
         var service = new IntuneDeviceService(() => Task.FromResult<GraphTokenClient?>(null));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteDeviceAsync("dev-1"));
+    }
+
+    // ---- S4: retire ---------------------------------------------------------------------------
+
+    [Fact]
+    public async Task RetireDeviceAsync_NoContent_SaysQueuedAndNamesTheCheckIn()
+    {
+        // T3 / AC11: 204 is Intune ACCEPTING the request, not the device having acted.
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.RetireDeviceAsync("dev-1");
+
+        Assert.True(result.Success);
+        Assert.Contains("Queued retire", result.Message);
+        Assert.Contains("next check-in", result.Message);
+    }
+
+    [Fact]
+    public async Task RetireDeviceAsync_SendsNoBodyAtAll()
+    {
+        // Plan S4: "Retire sends no body, ever." Learn is explicit that it takes none, and this
+        // asserts absence rather than emptiness so a shared helper cannot quietly give retire one.
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        await service.RetireDeviceAsync("dev-1");
+
+        Assert.Equal(HttpMethod.Post, handler.LastGraphRequestMethod);
+        Assert.Equal("/v1.0/deviceManagement/managedDevices/dev-1/retire", handler.LastGraphRequestUri!.AbsolutePath);
+        Assert.Null(handler.LastGraphRequestBody);
+    }
+
+    [Fact]
+    public async Task RetireDeviceAsync_Forbidden_NamesThePrivilegedOperationsConsent()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""{"error":{"code":"Forbidden","message":"Missing PrivilegedOperations."}}""")
+        };
+
+        var result = await service.RetireDeviceAsync("dev-1");
+
+        Assert.False(result.Success);
+        Assert.Contains("DeviceManagementManagedDevices.PrivilegedOperations.All", result.Message);
+        Assert.Equal("Forbidden: Missing PrivilegedOperations.", result.SafeError);
+    }
+
+    [Fact]
+    public async Task RetireDeviceAsync_EveryFailureStatusProducesADifferentMessage()
+    {
+        var messages = new List<string>();
+        foreach (var status in new[]
+                 {
+                     HttpStatusCode.Forbidden, HttpStatusCode.NotFound,
+                     HttpStatusCode.ServiceUnavailable, HttpStatusCode.TooManyRequests
+                 })
+        {
+            var (service, handler) = CreateService();
+            handler.GraphResponse = () => new HttpResponseMessage(status);
+            var result = await service.RetireDeviceAsync("dev-1");
+            Assert.False(result.Success);
+            messages.Add(result.Message);
+        }
+
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+    }
+
+    // ---- S4: wipe -----------------------------------------------------------------------------
+
+    [Fact]
+    public async Task WipeDeviceAsync_NoContent_SaysQueuedAndNamesTheCheckIn()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var result = await service.WipeDeviceAsync("dev-1", new IntuneWipeOptions());
+
+        Assert.True(result.Success);
+        Assert.Contains("Queued wipe", result.Message);
+        Assert.Contains("next check-in", result.Message);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_PostsToTheWipeActionWithAnExplicitBody()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        await service.WipeDeviceAsync("dev-1", new IntuneWipeOptions());
+
+        Assert.Equal(HttpMethod.Post, handler.LastGraphRequestMethod);
+        Assert.Equal("/v1.0/deviceManagement/managedDevices/dev-1/wipe", handler.LastGraphRequestUri!.AbsolutePath);
+        Assert.NotNull(handler.LastGraphRequestBody);
+    }
+
+    // AC16, one case per combination. The serialized body is asserted whole, so a flag silently
+    // dropped, renamed, or left to a Graph default fails here - and the unset optional three must be
+    // ABSENT rather than present-and-null.
+    [Fact]
+    public async Task WipeDeviceAsync_Defaults_SerializesBothFlagsFalseAndNothingElse()
+    {
+        var body = await WipeBodyFor(new IntuneWipeOptions());
+
+        Assert.Equal("""{"keepUserData":false,"keepEnrollmentData":false}""", body);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_KeepUserData_SerializesItTrueAndStillSendsTheOtherFlag()
+    {
+        var body = await WipeBodyFor(new IntuneWipeOptions(KeepUserData: true));
+
+        Assert.Equal("""{"keepUserData":true,"keepEnrollmentData":false}""", body);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_KeepEnrollmentData_SerializesItTrueAndStillSendsTheOtherFlag()
+    {
+        var body = await WipeBodyFor(new IntuneWipeOptions(KeepEnrollmentData: true));
+
+        Assert.Equal("""{"keepUserData":false,"keepEnrollmentData":true}""", body);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_MacOsUnlockCodeSet_IsIncludedTrimmed()
+    {
+        var body = await WipeBodyFor(new IntuneWipeOptions(MacOsUnlockCode: " 123456 "));
+
+        Assert.Equal("""{"keepUserData":false,"keepEnrollmentData":false,"macOsUnlockCode":"123456"}""", body);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_ObliterationBehaviourSet_IsIncluded()
+    {
+        var body = await WipeBodyFor(new IntuneWipeOptions(ObliterationBehavior: "alwaysObliterate"));
+
+        Assert.Equal("""{"keepUserData":false,"keepEnrollmentData":false,"obliterationBehavior":"alwaysObliterate"}""", body);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_PersistEsimDataPlan_IsIncludedOnlyWhenSet()
+    {
+        var on = await WipeBodyFor(new IntuneWipeOptions(PersistEsimDataPlan: true));
+        var off = await WipeBodyFor(new IntuneWipeOptions(PersistEsimDataPlan: false));
+
+        Assert.Equal("""{"keepUserData":false,"keepEnrollmentData":false,"persistEsimDataPlan":true}""", on);
+        Assert.DoesNotContain("persistEsimDataPlan", off);
+    }
+
+    [Fact]
+    public void BuildWipeBody_UnsetOptionalParameters_AreAbsentNotNull()
+    {
+        var body = IntuneDeviceService.BuildWipeBody(new IntuneWipeOptions());
+
+        Assert.Equal(2, body.Count);
+        Assert.False(body.ContainsKey("macOsUnlockCode"));
+        Assert.False(body.ContainsKey("obliterationBehavior"));
+        Assert.False(body.ContainsKey("persistEsimDataPlan"));
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_Forbidden_NamesThePrivilegedOperationsConsent()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var result = await service.WipeDeviceAsync("dev-1", new IntuneWipeOptions());
+
+        Assert.False(result.Success);
+        Assert.Contains("DeviceManagementManagedDevices.PrivilegedOperations.All", result.Message);
+    }
+
+    [Fact]
+    public async Task WipeDeviceAsync_EveryFailureStatusProducesADifferentMessage()
+    {
+        var messages = new List<string>();
+        foreach (var status in new[]
+                 {
+                     HttpStatusCode.Forbidden, HttpStatusCode.NotFound,
+                     HttpStatusCode.ServiceUnavailable, HttpStatusCode.TooManyRequests
+                 })
+        {
+            var (service, handler) = CreateService();
+            handler.GraphResponse = () => new HttpResponseMessage(status);
+            var result = await service.WipeDeviceAsync("dev-1", new IntuneWipeOptions());
+            Assert.False(result.Success);
+            messages.Add(result.Message);
+        }
+
+        Assert.Equal(messages.Count, messages.Distinct().Count());
+    }
+
+    [Fact]
+    public async Task RetireAndWipe_GraphClientUnavailable_Throw()
+    {
+        var service = new IntuneDeviceService(() => Task.FromResult<GraphTokenClient?>(null));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RetireDeviceAsync("dev-1"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.WipeDeviceAsync("dev-1", new IntuneWipeOptions()));
+    }
+
+    /// <summary>The exact JSON body a wipe put on the wire for these options.</summary>
+    private static async Task<string> WipeBodyFor(IntuneWipeOptions options)
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        await service.WipeDeviceAsync("dev-1", options);
+
+        Assert.NotNull(handler.LastGraphRequestBody);
+        return handler.LastGraphRequestBody!;
     }
 
     // ---- GetGraphClientAsync credential path (plan Test plan) ---------------------------------

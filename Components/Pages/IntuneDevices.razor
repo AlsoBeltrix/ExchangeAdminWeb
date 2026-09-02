@@ -32,7 +32,8 @@
     <div class="alert alert-info py-2 mb-3">
         <small>
             Every search and device lookup is logged for audit purposes, and so is every action.
-            Retire and wipe are not available in this release.
+            Retire and wipe are queued: the device carries them out at its next check-in, and a
+            powered-off or offline device may not act for a long time.
             Deleting a device's Intune record does not remove company data from the device and
             does not remove the device's Entra ID object - both are separate actions.
         </small>
@@ -122,7 +123,7 @@
                                 <th>Compliance</th>
                                 <th>Last sync</th>
                                 <th></th>
-                                @if (canDelete)
+                                @if (CanActAtAll)
                                 {
                                     <th>Actions</th>
                                 }
@@ -142,14 +143,28 @@
                                             @(expandedDeviceId == device.Id ? "Hide detail" : "Detail")
                                         </button>
                                     </td>
-                                    @if (canDelete)
+                                    @if (CanActAtAll)
                                     {
                                         <td>
                                             @* No two action buttons share a leading verb and none is a bare
                                                "Remove" (MigrationBatchSelection-Plan.md D6). *@
-                                            <button class="btn btn-outline-danger btn-sm"
-                                                    @onclick="() => BeginAction(device, IntuneDeviceAction.Delete)"
-                                                    disabled="@ActionsDisabled">Delete record</button>
+                                            <div class="btn-group btn-group-sm">
+                                                @if (canDelete)
+                                                {
+                                                    <button class="btn btn-outline-danger"
+                                                            @onclick="() => BeginAction(device, IntuneDeviceAction.Delete)"
+                                                            disabled="@ActionsDisabled">Delete record</button>
+                                                }
+                                                @if (canPrivileged)
+                                                {
+                                                    <button class="btn btn-outline-warning"
+                                                            @onclick="() => BeginAction(device, IntuneDeviceAction.Retire)"
+                                                            disabled="@ActionsDisabled">Retire</button>
+                                                    <button class="btn btn-danger"
+                                                            @onclick="() => BeginAction(device, IntuneDeviceAction.Wipe)"
+                                                            disabled="@ActionsDisabled">Wipe</button>
+                                                }
+                                            </div>
                                         </td>
                                     }
                                 </tr>
@@ -159,21 +174,83 @@
                                    row's button goes disabled, which reads to the operator as a dead button
                                    (docs/MigrationBatchSelection-Plan.md D1 / mbs-1). The ticket field sits
                                    adjacent to the confirming button for the same reason. *@
-                                @if (canDelete && confirmDeviceId == device.Id && confirmAction is not null)
+                                @if (confirmDeviceId == device.Id && confirmAction is not null && CanAct(confirmAction.Value))
                                 {
                                     <tr class="table-warning">
                                         <td colspan="@DetailColspan">
                                             <div class="mb-2"><strong>@ConfirmPrompt(confirmAction.Value, DeviceLabel(device))</strong></div>
+
+                                            @* Every parameter Graph's wipe action accepts is an operator control
+                                               (D2), with full-reset defaults, and every non-default choice is
+                                               visible here at the moment of acting. *@
+                                            @if (confirmAction == IntuneDeviceAction.Wipe)
+                                            {
+                                                <div class="row g-2 mb-2">
+                                                    <div class="col-md-6">
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="wipeKeepUserData"
+                                                                   @bind="wipeKeepUserData" disabled="@(actingDeviceId != null)" />
+                                                            <label class="form-check-label" for="wipeKeepUserData">Keep user data</label>
+                                                            <div class="form-text">
+                                                                Ticking this contradicts the button's own label: the device is reset but
+                                                                the user's data is kept.
+                                                            </div>
+                                                        </div>
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="wipeKeepEnrollmentData"
+                                                                   @bind="wipeKeepEnrollmentData" disabled="@(actingDeviceId != null)" />
+                                                            <label class="form-check-label" for="wipeKeepEnrollmentData">Keep enrollment state</label>
+                                                            <div class="form-text">The device stays enrolled after the reset.</div>
+                                                        </div>
+                                                        <div class="form-check">
+                                                            <input class="form-check-input" type="checkbox" id="wipePersistEsimDataPlan"
+                                                                   @bind="wipePersistEsimDataPlan" disabled="@(actingDeviceId != null)" />
+                                                            <label class="form-check-label" for="wipePersistEsimDataPlan">Keep eSIM data plan</label>
+                                                            <div class="form-text">iOS / iPadOS eSIM only.</div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-6">
+                                                        <label class="form-label mb-1" for="wipeMacOsUnlockCode">macOS recovery PIN (six digits)</label>
+                                                        <input id="wipeMacOsUnlockCode" class="form-control form-control-sm" maxlength="6"
+                                                               @bind="wipeMacOsUnlockCode" @bind:event="oninput"
+                                                               disabled="@(actingDeviceId != null)" placeholder="(none)" />
+                                                        <div class="form-text">
+                                                            macOS only. It is shown back to you once after the wipe is queued and cannot be
+                                                            retrieved afterwards - you must give it to the device owner.
+                                                        </div>
+                                                        <label class="form-label mb-1 mt-2" for="wipeObliterationBehavior">macOS obliteration behaviour</label>
+                                                        <select id="wipeObliterationBehavior" class="form-select form-select-sm"
+                                                                @bind="wipeObliterationBehavior" disabled="@(actingDeviceId != null)">
+                                                            <option value="">(unset - Intune decides)</option>
+                                                            <option value="default">default</option>
+                                                            <option value="doNotObliterate">doNotObliterate</option>
+                                                            <option value="obliterateWithWarning">obliterateWithWarning</option>
+                                                            <option value="alwaysObliterate">alwaysObliterate</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            }
+
                                             <div class="row g-2 align-items-end">
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="intuneDeviceTicket">Ticket number (required)</label>
                                                     <input id="intuneDeviceTicket" class="form-control form-control-sm" @bind="actionTicket"
                                                            @bind:event="oninput" placeholder="INC0000000" disabled="@(actingDeviceId != null)" />
                                                 </div>
-                                                <div class="col-md-8">
+                                                @* Wipe alone requires typing the device name: retire is recoverable by
+                                                   re-enrolling, a wipe destroys the machine's contents. *@
+                                                @if (confirmAction == IntuneDeviceAction.Wipe)
+                                                {
+                                                    <div class="col-md-4">
+                                                        <label class="form-label mb-1" for="wipeConfirmName">Type the device name to confirm</label>
+                                                        <input id="wipeConfirmName" class="form-control form-control-sm" @bind="wipeConfirmName"
+                                                               @bind:event="oninput" placeholder="@DeviceLabel(device)" disabled="@(actingDeviceId != null)" />
+                                                    </div>
+                                                }
+                                                <div class="col-md-4">
                                                     <button class="btn btn-danger btn-sm me-2"
                                                             @onclick="() => ExecuteActionAsync(device, confirmAction.Value)"
-                                                            disabled="@(actingDeviceId != null || string.IsNullOrWhiteSpace(actionTicket))">
+                                                            disabled="@(actingDeviceId != null || string.IsNullOrWhiteSpace(actionTicket) || !WipeNameConfirmed(device, confirmAction.Value))">
                                                         @ActionLabel(confirmAction.Value)
                                                     </button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="CancelAction"
@@ -215,6 +292,16 @@
                                             <div class="alert @(outcome.Success ? "alert-success" : "alert-danger") mb-0 py-2">
                                                 <strong>@outcome.DeviceName</strong> - @outcome.Message
                                             </div>
+                                            @* The macOS recovery PIN is shown back exactly once, here: the operator
+                                               must give it to the device owner and Intune does not return it later.
+                                               It is never written to the audit record or the notification. *@
+                                            @if (outcome.MacOsUnlockCodeShownOnce != null)
+                                            {
+                                                <div class="alert alert-warning mb-0 mt-2 py-2">
+                                                    <strong>Record this macOS recovery PIN now - it cannot be retrieved afterwards:</strong>
+                                                    <code>@outcome.MacOsUnlockCodeShownOnce</code>
+                                                </div>
+                                            }
                                         </td>
                                     </tr>
                                 }
@@ -289,6 +376,10 @@
     /// the same policy immediately before it writes (T6 / Spec, Page Authorization item 3).</summary>
     private bool canDelete;
 
+    /// <summary>Granular IntuneDevicesPrivileged grant (retire and wipe, D1's second tier). Controls
+    /// RENDERING only, exactly as canDelete does.</summary>
+    private bool canPrivileged;
+
     /// <summary>Module id for the servicer grant. Must match the catalog descriptor, and must be
     /// listed in ModuleConfig.razor's ModulesWithProtectedPrincipalServicing or no group can ever
     /// be granted it.</summary>
@@ -299,11 +390,24 @@
     private string actionTicket = "";
     private string? actingDeviceId;
 
+    // Wipe options (S4 / D2). Defaults are the full-reset reading of the button's own label; every
+    // non-default choice is visible on screen and recorded in the audit event.
+    private bool wipeKeepUserData;
+    private bool wipeKeepEnrollmentData;
+    private bool wipePersistEsimDataPlan;
+    private string wipeMacOsUnlockCode = "";
+    private string wipeObliterationBehavior = "";
+
+    /// <summary>Typed device name confirming a wipe. Wipe alone requires it: retire is recoverable by
+    /// re-enrolling, a wipe destroys the machine's contents.</summary>
+    private string wipeConfirmName = "";
+
     /// <summary>One outcome per device id, so acting on several rows leaves several separately named
     /// verdicts and no row can display another row's result (Known Failure Class 2).</summary>
     private readonly Dictionary<string, DeviceOutcome> deviceOutcomes = [];
 
-    internal sealed record DeviceOutcome(string DeviceName, bool Success, string Message, string? ServicedNote);
+    internal sealed record DeviceOutcome(
+        string DeviceName, bool Success, string Message, string? ServicedNote, string? MacOsUnlockCodeShownOnce = null);
 
     private DeviceOutcome? OutcomeFor(string deviceId) =>
         deviceOutcomes.TryGetValue(deviceId, out var outcome) ? outcome : null;
@@ -311,7 +415,39 @@
     private bool ActionsDisabled => isSearching || actingDeviceId != null;
 
     /// <summary>Column count for a full-width row; tracks the conditional Actions column.</summary>
-    private int DetailColspan => canDelete ? 7 : 6;
+    private int DetailColspan => CanActAtAll ? 7 : 6;
+
+    private bool CanActAtAll => canDelete || canPrivileged;
+
+    /// <summary>Rendering-time grant for one action. The handler re-checks the same policy before it
+    /// writes (T6); this only decides whether the control is drawn.</summary>
+    private bool CanAct(IntuneDeviceAction action) =>
+        action == IntuneDeviceAction.Delete ? canDelete : canPrivileged;
+
+    /// <summary>
+    /// True unless this is a wipe whose typed device name does not match. Any action other than wipe
+    /// is unaffected, so the extra step never spreads to the recoverable ones.
+    /// </summary>
+    private bool WipeNameConfirmed(IntuneDevice device, IntuneDeviceAction action) =>
+        action != IntuneDeviceAction.Wipe
+        || string.Equals(wipeConfirmName.Trim(), DeviceLabel(device), StringComparison.OrdinalIgnoreCase);
+
+    private IntuneWipeOptions CurrentWipeOptions() => new(
+        KeepUserData: wipeKeepUserData,
+        KeepEnrollmentData: wipeKeepEnrollmentData,
+        MacOsUnlockCode: string.IsNullOrWhiteSpace(wipeMacOsUnlockCode) ? null : wipeMacOsUnlockCode.Trim(),
+        ObliterationBehavior: string.IsNullOrWhiteSpace(wipeObliterationBehavior) ? null : wipeObliterationBehavior,
+        PersistEsimDataPlan: wipePersistEsimDataPlan);
+
+    private void ResetWipeOptions()
+    {
+        wipeKeepUserData = false;
+        wipeKeepEnrollmentData = false;
+        wipePersistEsimDataPlan = false;
+        wipeMacOsUnlockCode = "";
+        wipeObliterationBehavior = "";
+        wipeConfirmName = "";
+    }
 
     private string? ServicerNoteFor(System.Security.Claims.ClaimsPrincipal? user, IEnumerable<string> matchedRules, string? qualifier = null) =>
         ProtectedPrincipalServicing.NoteFor(Servicers, user, ServicerModuleId, matchedRules, qualifier);
@@ -335,6 +471,7 @@
         // The granular grant layers ON TOP of the main one (Spec, Authorization Layering), so this
         // is only reached once module access is established.
         canDelete = (await AuthorizationService.AuthorizeAsync(user, "IntuneDevicesDelete")).Succeeded;
+        canPrivileged = (await AuthorizationService.AuthorizeAsync(user, "IntuneDevicesPrivileged")).Succeeded;
 
         clientIpAddress = ClientInfo.IpAddress != "Unknown"
             ? ClientInfo.IpAddress
@@ -367,6 +504,7 @@
         confirmDeviceId = null;
         confirmAction = null;
         actionTicket = "";
+        ResetWipeOptions();
         deviceOutcomes.Clear();
         await Task.Yield();
 
@@ -454,6 +592,9 @@
         confirmDeviceId = device.Id;
         confirmAction = action;
         actionTicket = "";
+        // Wipe options start from their defaults on every confirm, so a choice made for one device
+        // never rides along into the next one.
+        ResetWipeOptions();
         deviceOutcomes.Remove(device.Id);
     }
 
@@ -462,10 +603,12 @@
         confirmDeviceId = null;
         confirmAction = null;
         actionTicket = "";
+        ResetWipeOptions();
     }
 
-    private void SetOutcome(string deviceId, string deviceName, bool success, string message, string? servicedNote) =>
-        deviceOutcomes[deviceId] = new DeviceOutcome(deviceName, success, message, servicedNote);
+    private void SetOutcome(string deviceId, string deviceName, bool success, string message, string? servicedNote,
+        string? macOsUnlockCodeShownOnce = null) =>
+        deviceOutcomes[deviceId] = new DeviceOutcome(deviceName, success, message, servicedNote, macOsUnlockCodeShownOnce);
 
     /// <summary>
     /// Runs one destructive action against one device behind every gate S3 requires, in order:
@@ -490,6 +633,9 @@
         var ticket = actionTicket.Trim();
         var auditAction = AuditActionFor(action);
         var target = $"{deviceName} ({deviceId})";
+        // Bound with the rest of the request: the operator's chosen flag set is what gets sent,
+        // audited and reported, even if the panel is re-rendered while the call is in flight.
+        var wipeOptions = action == IntuneDeviceAction.Wipe ? CurrentWipeOptions() : null;
 
         void Refuse(string message, string auditDetail)
         {
@@ -657,18 +803,24 @@
             }
 
             // 4. The write. Reachable only with every gate above passed.
-            var applied = await PerformActionAsync(action, deviceId);
+            var applied = await PerformActionAsync(action, deviceId, wipeOptions);
             result = applied;
             SetOutcome(deviceId, deviceName, applied.Success, applied.Message,
-                applied.Success ? servicedAuditDetail : null);
+                applied.Success ? servicedAuditDetail : null,
+                // The macOS recovery PIN is shown back exactly once, and only on the path where the
+                // wipe was actually queued - the operator must hand it to the device owner and Intune
+                // will not return it later.
+                applied.Success ? wipeOptions?.MacOsUnlockCode : null);
 
             // The serviced note rides extra, never errorDetail: LogModuleAction writes
             // ["error"] = success ? null : errorDetail (Services/AuditService.cs), so the one field
             // explaining why a protected user's device could be acted on would be discarded on
-            // exactly the success path that needs it (pps-3).
+            // exactly the success path that needs it (pps-3). The wipe flag set rides the same
+            // channel, for the same reason: a successful wipe is exactly the event whose flags
+            // anyone will ask about afterwards (AC21).
             SafeAudit(() => Audit.LogModuleAction(currentUser, clientIpAddress, auditAction, "IntuneDevices", target, applied.Success, ticket,
                 errorDetail: applied.Success ? null : applied.Message,
-                extra: ServicedExtra(servicedAuditDetail)));
+                extra: ActionAuditExtra(action, wipeOptions, servicedAuditDetail)));
 
             Logger.LogInformation("User {Admin} ran {Action} against Intune device {Target} (ticket {Ticket}): {Result}",
                 currentUser, auditAction, target, ticket, applied.Message);
@@ -682,6 +834,9 @@
         {
             actingDeviceId = null;
             actionTicket = "";
+            // The panel's controls are retracted, but the outcome (including the one-time PIN
+            // display) keeps its own copy, so this cannot erase what the operator still needs.
+            ResetWipeOptions();
 
             // Mandatory admin notification on every real attempt (Constitution, Notifications), in
             // finally and wrapped so a send failure cannot change the reported result (AC13).
@@ -693,7 +848,7 @@
                 {
                     await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, auditAction,
                         success, ticket,
-                        NotificationDetails(device, action, deviceName),
+                        NotificationDetails(device, action, deviceName, wipeOptions),
                         success ? null : message);
                 }
                 catch (Exception ex)
@@ -708,21 +863,68 @@
     /// The single Graph write for this action. A switch rather than a direct call so each action
     /// keeps its own service method and no action can be run through another's endpoint.
     /// </summary>
-    private Task<IntuneDeviceActionResult> PerformActionAsync(IntuneDeviceAction action, string deviceId) => action switch
+    private Task<IntuneDeviceActionResult> PerformActionAsync(IntuneDeviceAction action, string deviceId, IntuneWipeOptions? wipeOptions) => action switch
     {
         IntuneDeviceAction.Delete => IntuneDeviceService.DeleteDeviceAsync(deviceId),
+        IntuneDeviceAction.Retire => IntuneDeviceService.RetireDeviceAsync(deviceId),
+        IntuneDeviceAction.Wipe => IntuneDeviceService.WipeDeviceAsync(deviceId,
+            wipeOptions ?? throw new ArgumentNullException(nameof(wipeOptions), "A wipe must carry an explicit flag set.")),
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
     /// <summary>Fields the administrator notification carries. Never the device's
-    /// activationLockBypassCode - IntuneDevice has no property holding it (T4b).</summary>
-    private static Dictionary<string, string> NotificationDetails(IntuneDevice device, IntuneDeviceAction action, string deviceName) => new()
+    /// activationLockBypassCode - IntuneDevice has no property holding it (T4b) - and never the
+    /// operator-supplied macOS recovery PIN, which travels as (set)/(not set) inside the flag
+    /// summary.</summary>
+    private static Dictionary<string, string> NotificationDetails(
+        IntuneDevice device, IntuneDeviceAction action, string deviceName, IntuneWipeOptions? wipeOptions)
     {
-        ["Device"] = deviceName,
-        ["Managed Device Id"] = device.Id,
-        ["Primary User"] = string.IsNullOrWhiteSpace(device.UserPrincipalName) ? "(none)" : device.UserPrincipalName,
-        ["Action"] = ActionLabel(action)
-    };
+        var details = new Dictionary<string, string>
+        {
+            ["Device"] = deviceName,
+            ["Managed Device Id"] = device.Id,
+            ["Primary User"] = string.IsNullOrWhiteSpace(device.UserPrincipalName) ? "(none)" : device.UserPrincipalName,
+            ["Action"] = ActionLabel(action)
+        };
+
+        if (action == IntuneDeviceAction.Wipe && wipeOptions != null)
+            details["Wipe Flags"] = SummarizeWipeFlags(wipeOptions);
+
+        return details;
+    }
+
+    /// <summary>
+    /// The audit event's extra: the serviced-override note, and for a wipe the exact flag set used.
+    /// </summary>
+    /// <remarks>
+    /// AC21: "wipe" alone cannot answer the only question anyone asks afterwards. A keepUserData wipe
+    /// and a full reset are different acts, so the audit record names every flag at the value that
+    /// was sent. The macOS recovery PIN is a device-unlock secret and appears as (set)/(not set) only
+    /// - the T4b rule applied to an operator-supplied secret rather than a returned one.
+    /// </remarks>
+    internal static Dictionary<string, object?>? ActionAuditExtra(
+        IntuneDeviceAction action, IntuneWipeOptions? wipeOptions, string? servicedNote)
+    {
+        var extra = ProtectedPrincipalServicing.Extra(servicedNote) ?? [];
+
+        if (action == IntuneDeviceAction.Wipe && wipeOptions != null)
+            extra["wipeFlags"] = SummarizeWipeFlags(wipeOptions);
+
+        return extra.Count == 0 ? null : extra;
+    }
+
+    /// <summary>
+    /// The exact flag set a wipe used, as one line for the audit record, the notification and the
+    /// screen. Every parameter appears at the value that was sent, including the ones Graph was left
+    /// to default, so two wipes are never indistinguishable afterwards. macOsUnlockCode is rendered
+    /// (set)/(not set), never by value.
+    /// </summary>
+    internal static string SummarizeWipeFlags(IntuneWipeOptions options) =>
+        $"keepUserData={options.KeepUserData.ToString().ToLowerInvariant()}; "
+        + $"keepEnrollmentData={options.KeepEnrollmentData.ToString().ToLowerInvariant()}; "
+        + $"persistEsimDataPlan={options.PersistEsimDataPlan.ToString().ToLowerInvariant()}; "
+        + $"obliterationBehavior={(string.IsNullOrWhiteSpace(options.ObliterationBehavior) ? "(unset)" : options.ObliterationBehavior)}; "
+        + $"macOsUnlockCode={(string.IsNullOrWhiteSpace(options.MacOsUnlockCode) ? "(not set)" : "(set)")}";
 
     /// <summary>
     /// Granular policy per action (D1's two tiers). Delete sits behind its own permission; an
@@ -731,6 +933,7 @@
     internal static string PolicyFor(IntuneDeviceAction action) => action switch
     {
         IntuneDeviceAction.Delete => "IntuneDevicesDelete",
+        IntuneDeviceAction.Retire or IntuneDeviceAction.Wipe => "IntuneDevicesPrivileged",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -741,6 +944,8 @@
     internal static string AuditActionFor(IntuneDeviceAction action) => action switch
     {
         IntuneDeviceAction.Delete => "IntuneDevices_Delete",
+        IntuneDeviceAction.Retire => "IntuneDevices_Retire",
+        IntuneDeviceAction.Wipe => "IntuneDevices_Wipe",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -749,6 +954,8 @@
     internal static string ActionLabel(IntuneDeviceAction action) => action switch
     {
         IntuneDeviceAction.Delete => "Delete record",
+        IntuneDeviceAction.Retire => "Retire",
+        IntuneDeviceAction.Wipe => "Wipe",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -756,6 +963,7 @@
     internal static string PermissionLabel(IntuneDeviceAction action) => action switch
     {
         IntuneDeviceAction.Delete => "Intune Devices Delete",
+        IntuneDeviceAction.Retire or IntuneDeviceAction.Wipe => "Intune Devices Privileged",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
@@ -769,6 +977,12 @@
         IntuneDeviceAction.Delete =>
             $"Delete the Intune record for {deviceName}? This removes the Intune record only - company data stays on the device, "
             + "and the device's Entra ID object still exists.",
+        IntuneDeviceAction.Retire =>
+            $"Retire {deviceName}? Company data is removed at the device's next check-in; personal data is left alone, "
+            + "and the device can be re-enrolled afterwards.",
+        IntuneDeviceAction.Wipe =>
+            $"Factory reset {deviceName}? The device is wiped at its next check-in and its contents are destroyed. "
+            + "Type the device name below to confirm.",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 
