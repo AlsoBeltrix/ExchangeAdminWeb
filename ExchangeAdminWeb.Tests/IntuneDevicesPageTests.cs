@@ -878,18 +878,20 @@ public class IntuneDevicesPageTests
     }
 
     [Fact]
-    public void IntuneDevices_EntraCheckboxIsSeededFromConfigAndGatedOnTheGrantForRenderingOnly()
+    public void IntuneDevices_EntraCheckboxStartsUntickedAndIsGatedOnTheGrantForRenderingOnly()
     {
-        // AC18's shape for this option: the deployment sets the default, the operator may change it
-        // at the moment of acting, and the rendering gate is not the decision.
+        // AC18's shape for this option, under the owner ruling of 2026-09-02: the starting state is
+        // fixed in code (unticked) rather than read from Module Config, the operator opts in at the
+        // moment of acting, and the rendering gate is not the decision.
         var text = PageSource();
 
         Assert.Contains("AuthorizeAsync(user, \"IntuneDevicesEntraDelete\")", text);
         Assert.Contains("@if (confirmAction != IntuneDeviceAction.EntraDelete && canEntraDelete)", text);
         Assert.Contains("@bind=\"alsoRemoveEntra\"", text);
         Assert.Contains(
-            "alsoRemoveEntra = action != IntuneDeviceAction.EntraDelete && IntuneDeviceService.RemoveEntraObjectByDefault;",
+            "alsoRemoveEntra = IntuneDeviceService.EntraRemovalStartsTicked;",
             MethodBody("BeginAction"));
+        Assert.False(IntuneDeviceService.EntraRemovalStartsTicked);
         // Reset with every other per-confirm option, so a choice made for one device never rides
         // along into the next one.
         Assert.Contains("alsoRemoveEntra = false;", MethodBody("ResetActionOptions"));
@@ -924,8 +926,8 @@ public class IntuneDevicesPageTests
     [Fact]
     public void NotificationOffered_TheThreeIntuneActionsOfferItAndTheEntraRemovalDoesNot()
     {
-        // D2 defines exactly three config fields, one per Intune action. The standalone Entra
-        // removal changes nothing the user can observe on their device.
+        // Exactly the three Intune actions offer it. The standalone Entra removal changes nothing
+        // the user can observe on their device.
         Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Delete));
         Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Retire));
         Assert.True(IntuneDevices.NotificationOffered(IntuneDeviceAction.Wipe));
@@ -933,22 +935,23 @@ public class IntuneDevicesPageTests
     }
 
     [Fact]
-    public void IntuneDevices_NotifyCheckboxIsSeededFromTheConfigDefaultAndOverridableAtActTime()
+    public void IntuneDevices_NotifyCheckboxStartsFromTheFixedPerActionStateAndIsOverridableAtActTime()
     {
-        // AC18: the config field for THIS action sets the default; the operator's change at the
-        // moment of acting is what takes effect, so the choice is bound with the request.
+        // AC18 under the owner ruling of 2026-09-02: THIS action's fixed starting state seeds the
+        // box - no Module Config read - and the operator's change at the moment of acting is what
+        // takes effect, so the choice is bound with the request.
         var text = PageSource();
 
         Assert.Contains("@bind=\"notifyPrimaryUser\"", text);
-        Assert.Contains("notifyPrimaryUser = IntuneDeviceService.NotifyUserByDefault(action);", MethodBody("BeginAction"));
+        Assert.Contains("notifyPrimaryUser = IntuneDeviceService.NotifyUserStartsTicked(action) ?? false;", MethodBody("BeginAction"));
         Assert.Contains("notifyPrimaryUser = false;", MethodBody("ResetActionOptions"));
 
         var body = MethodBody("ExecuteActionAsync");
         var bindIndex = body.IndexOf("var notifyRequested = notifyPrimaryUser;", StringComparison.Ordinal);
         Assert.True(bindIndex >= 0, "the notification choice is no longer bound with the request.");
         Assert.True(WriteIndex(body) > bindIndex, "the notification choice is bound after the write.");
-        // The default travels too, so the audit can say WHICH not-sent reason applied.
-        Assert.Contains("var notifyDefault = IntuneDeviceService.NotifyUserByDefault(action);", body);
+        // The starting state travels too, so the audit can say WHICH not-sent reason applied.
+        Assert.Contains("var notifyDefault = IntuneDeviceService.NotifyUserStartsTicked(action) ?? false;", body);
     }
 
     [Fact]

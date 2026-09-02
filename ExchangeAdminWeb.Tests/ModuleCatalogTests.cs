@@ -96,18 +96,22 @@ public class ModuleCatalogTests
     }
 
     [Fact]
-    public void Catalog_IntuneDevices_NotificationAndEntraDefaultFieldsDeclareBooleanType()
+    public void Catalog_IntuneDevices_CarriesNoNotificationOrEntraDefaultConfigFields()
     {
-        // The plan's descriptor text predates the boolean-checkbox tripwire
-        // (Catalog_BooleanDefaultedFieldsDeclareBooleanType, base 2.12.0) - current code, not the
-        // older plan wording, governs. Pinned here by name so the four D2/D3 default fields are
-        // never quietly reverted to free text.
+        // Owner ruling 2026-09-02 (.agents/decisions.md, superseding D2's config half): whether to
+        // email the affected user, and whether to also remove the Entra ID device object, are the
+        // acting operator's decisions at the moment of the wipe - not deployment-wide settings. The
+        // page's fixed starting states live in IntuneDeviceService and are pinned by
+        // IntuneDeviceServiceTests. Pinned here by name so re-adding one as a config field fails.
         var module = _catalog.GetById("IntuneDevices")!;
         foreach (var key in new[] { "NotifyUserOnDelete", "NotifyUserOnRetire", "NotifyUserOnWipe", "RemoveEntraObjectByDefault" })
         {
-            var field = Assert.Single(module.ConfigFields, f => f.Key == key);
-            Assert.Equal(ConfigFieldType.Boolean, field.FieldType);
+            Assert.DoesNotContain(module.ConfigFields, f => f.Key == key);
         }
+
+        // The two that do belong there - the Graph credential and the search cap - are untouched.
+        Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
+        Assert.Contains(module.ConfigFields, f => f.Key == "SearchResultLimit");
     }
 
     [Fact]

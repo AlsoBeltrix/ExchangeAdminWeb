@@ -809,30 +809,6 @@ public class IntuneDeviceServiceTests
         Assert.DoesNotContain("still exists", IntuneDeviceService.DeleteSuccessMessageEntraRemoved);
     }
 
-    // The fallback carries the descriptor's DefaultValue, because ModuleConfigService.GetValue
-    // returns null for an unset field rather than applying it.
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData("nonsense")]
-    public void ParseBooleanConfig_UnsetOrUnparseable_TakesTheFallbackInBothDirections(string? raw)
-    {
-        Assert.False(IntuneDeviceService.ParseBooleanConfig(raw, false));
-        Assert.True(IntuneDeviceService.ParseBooleanConfig(raw, true));
-    }
-
-    [Theory]
-    [InlineData("true", true)]
-    [InlineData("True", true)]
-    [InlineData(" true ", true)]
-    [InlineData("false", false)]
-    [InlineData("FALSE", false)]
-    public void ParseBooleanConfig_ExplicitValue_WinsOverTheFallback(string raw, bool expected)
-    {
-        Assert.Equal(expected, IntuneDeviceService.ParseBooleanConfig(raw, !expected));
-    }
-
     // ---- S6: affected-user notification -------------------------------------------------------
 
     /// <summary>
@@ -860,36 +836,30 @@ public class IntuneDeviceServiceTests
     }
 
     [Fact]
-    public void NotifyUserConfig_KeysAndDefaultsMatchTheDescriptorFieldForEachAction()
+    public void NotifyUserStartsTicked_IsFixedPerActionAndNotReadFromModuleConfig()
     {
-        // D2's three fields, cross-checked against the catalog: a renamed field or a changed default
-        // in either place must fail here, or the checkbox would silently seed from nothing.
+        // Owner ruling 2026-09-02 (.agents/decisions.md, superseding D2's config half): the starting
+        // states are fixed in code and the operator decides at act time, so no module-config field
+        // may reappear behind them. Delete off (nothing changes on the user's device, so a mail
+        // would confuse), retire and wipe on - D2's states, now hardcoded.
+        Assert.False(IntuneDeviceService.NotifyUserStartsTicked(IntuneDeviceAction.Delete));
+        Assert.True(IntuneDeviceService.NotifyUserStartsTicked(IntuneDeviceAction.Retire));
+        Assert.True(IntuneDeviceService.NotifyUserStartsTicked(IntuneDeviceAction.Wipe));
+
+        // The standalone Entra removal offers no notification at all - null, not false, so the
+        // absence is deliberate rather than an unticked box.
+        Assert.Null(IntuneDeviceService.NotifyUserStartsTicked(IntuneDeviceAction.EntraDelete));
+
+        // The Entra add-on starts unticked: a second, separately permissioned deletion is opted into.
+        Assert.False(IntuneDeviceService.EntraRemovalStartsTicked);
+
+        // The descriptor carries neither set of defaults; ModuleCatalogTests pins that by name.
         var module = new ModuleCatalog().GetById("IntuneDevices")!;
-
-        foreach (var (action, expectedKey) in new[]
-                 {
-                     (IntuneDeviceAction.Delete, "NotifyUserOnDelete"),
-                     (IntuneDeviceAction.Retire, "NotifyUserOnRetire"),
-                     (IntuneDeviceAction.Wipe, "NotifyUserOnWipe")
-                 })
-        {
-            var (key, fallback) = IntuneDeviceService.NotifyUserConfig(action);
-            Assert.Equal(expectedKey, key);
-
-            var field = Assert.Single(module.ConfigFields, f => f.Key == expectedKey);
-            Assert.Equal(bool.Parse(field.DefaultValue), fallback);
-        }
-
-        // Delete off, retire and wipe on - D2's "safe and least-surprising" defaults.
-        Assert.False(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Delete).Fallback);
-        Assert.True(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Retire).Fallback);
-        Assert.True(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.Wipe).Fallback);
-
-        // The standalone Entra removal has no field and no notification, deliberately.
-        Assert.Null(IntuneDeviceService.NotifyUserConfig(IntuneDeviceAction.EntraDelete).Key);
+        Assert.DoesNotContain(module.ConfigFields, f => f.Key.StartsWith("NotifyUserOn", StringComparison.Ordinal));
+        Assert.DoesNotContain(module.ConfigFields, f => f.Key == "RemoveEntraObjectByDefault");
     }
 
-    // AC18: the config default decides when the operator changes nothing, and the operator's change
+    // AC18: the starting state decides when the operator changes nothing, and the operator's change
     // at the moment of acting is what takes effect - in BOTH directions.
     [Fact]
     public void DecideUserNotification_ConfigDefaultDecidesWhenTheOperatorChangesNothing()

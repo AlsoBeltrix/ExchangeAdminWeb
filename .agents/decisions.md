@@ -5,6 +5,35 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-02 - Intune Devices notification and Entra-removal defaults are not Module Config settings
+
+Status: Active. Supersedes the config-default half of D2 in
+`docs/IntuneDeviceManagement-Plan.md` (2026-08-14), recorded there as
+"Revision 2026-09-02". D2's act-time checkbox half stands unchanged.
+
+Owner ruling 2026-09-02: "the email options should not live in global module
+settings. they should be in the tool so the user doing the wipe can make the
+determination."
+
+What changes:
+
+- The four Boolean config fields are removed from the `IntuneDevices` descriptor:
+  `NotifyUserOnDelete`, `NotifyUserOnRetire`, `NotifyUserOnWipe` and
+  `RemoveEntraObjectByDefault`. The Entra-removal default falls under the same ruling
+  because it is the same shape - a deployment-wide default for an act-time checkbox.
+  `GraphDelineaSecretId` and `SearchResultLimit` remain.
+- The operator running the action decides, at that moment, whether the affected user
+  is emailed and whether the Entra ID device object is also removed. The checkboxes
+  stay exactly where they were, on the confirm bar.
+- Their starting states are fixed in code, not read from config
+  (`IntuneDeviceService.NotifyUserStartsTicked`, `.EntraRemovalStartsTicked`):
+  notification off for Delete, on for Retire, on for Wipe - D2's defaults, now
+  hardcoded - and Entra removal off. EntraDelete offers no notification at all (null,
+  not false), so the absence stays deliberate.
+- Unchanged: the app-wide user-notification switch still outranks the checkbox, and a
+  suppressed send is still stated on screen and in the audit event rather than
+  silently doing nothing.
+
 ### 2026-09-01 - Boolean settings must be non-ambiguous controls, never free text
 
 Status: Active. A standing design rule for every admin surface, and the queue's P1.

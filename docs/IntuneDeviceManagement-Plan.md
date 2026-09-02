@@ -122,6 +122,26 @@ and on a lost or stolen device whoever holds it may read it.
 
 **This ruling is why S6 is a required slice rather than a conditional one.**
 
+#### Revision 2026-09-02 - the defaults leave Module Config; the checkbox stays
+
+Owner: *"the email options should not live in global module settings. they should be in the tool so
+the user doing the wipe can make the determination."*
+
+This supersedes the **config-default half** of D2 above, and by the same reasoning D3's
+`RemoveEntraObjectByDefault` (also a global default for an act-time checkbox). Recorded in
+`.agents/decisions.md`, 2026-09-02.
+
+- The four Boolean config fields - `NotifyUserOnDelete`, `NotifyUserOnRetire`, `NotifyUserOnWipe`
+  and `RemoveEntraObjectByDefault` - are **removed from the descriptor**. Only
+  `GraphDelineaSecretId` and `SearchResultLimit` remain.
+- The **act-time checkboxes stay exactly as ruled** - this half of D2 is untouched. Their starting
+  states are now fixed in code (`IntuneDeviceService.NotifyUserStartsTicked`,
+  `IntuneDeviceService.EntraRemovalStartsTicked`): notification **off** for delete, **on** for
+  retire and wipe - D2's own defaults, now hardcoded - and Entra removal **off**.
+- Everything else in D2 is unchanged: the app-wide `_notifyUsers` interaction stated above still has
+  to be surfaced on screen and in the audit event, and the audit still records which not-sent reason
+  applied.
+
 ### D3 - RULED 2026-08-14: the Entra ID device object can be removed too, as an option
 
 Owner: *"yes, add it as an option."*
@@ -132,7 +152,9 @@ would otherwise be wrong, and would have to finish the job in another portal.
 
 Built as S5: `Device.ReadWrite.All` on the same app registration, its own granular permission
 `IntuneDevicesEntraDelete`, a checkbox offered beside each of the three Intune actions and a
-standalone action on the detail panel, defaulted from `RemoveEntraObjectByDefault` (off).
+standalone action on the detail panel, starting unticked. (The `RemoveEntraObjectByDefault` config
+field this originally read is gone - see D2's *Revision 2026-09-02*; the checkbox itself is
+unchanged and still starts off.)
 
 **Two things about this decision that are not like the other three actions, and both are why it
 gets its own permission rather than riding `IntuneDevicesPrivileged`:**
@@ -362,6 +384,10 @@ case. S0 adds the status-returning pair before any slice needs them.
 
 Added to `Modules/ModuleCatalog.cs` `RegisterAll()`.
 
+> Superseded in part - see D2's *Revision 2026-09-02*: the four Boolean fields below
+> (`NotifyUserOnDelete`, `NotifyUserOnRetire`, `NotifyUserOnWipe`, `RemoveEntraObjectByDefault`) are
+> NOT in the shipped descriptor. `Modules/ModuleCatalog.cs` is the live shape.
+
 ```csharp
 new()
 {
@@ -559,8 +585,8 @@ No catalog entry yet, so no page and no route: nothing user-reachable ships in S
   `id: 000005c3-...` alongside `deviceId: 6fa60d52-...`). Passing the former to the latter's
   form yields a 404 against a real, still-present device. Both forms are documented in v1.0; only
   the alternate-key one takes what this module has.
-- Offered as a **checkbox alongside each of the three Intune actions**, defaulted from the
-  `RemoveEntraObjectByDefault` config field, and also runnable on its own from the detail panel -
+- Offered as a **checkbox alongside each of the three Intune actions**, starting unticked (D2's
+  *Revision 2026-09-02* removed the config field), and also runnable on its own from the detail panel -
   the Entra record often outlives the Intune one, so an operator cleaning up needs it without a
   second Intune action.
 - **Order and reporting: the Intune action runs first, the Entra removal second, and the two
@@ -780,8 +806,10 @@ a page. The manual checks below are the only evidence for those.
    Repeat with "keep user data" ticked and confirm the two runs are distinguishable in the audit
    log. On a macOS device, confirm the recovery PIN is shown back once after queuing and appears
    nowhere in the audit record.
-8b. Set `NotifyUserOnWipe` false in module config; confirm the checkbox now starts unticked, tick
-   it anyway, and confirm the user is emailed - the operator override is the point of the control.
+8b. Confirm the notification checkbox starts ticked on a wipe and unticked on a delete - fixed
+   states, with no config field to change them (D2's *Revision 2026-09-02*). Clear it on a wipe and
+   confirm no mail arrives; tick it on a delete and confirm the user is emailed - the operator's
+   choice at the moment of acting is the point of the control.
 8c. Disable user notifications app-wide; repeat 8b and confirm the page says nothing was sent and
    the audit event records the suppression. This is the check that proves the checkbox is not
    decorative.

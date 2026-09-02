@@ -251,15 +251,18 @@ wipe a device via Microsoft Graph API.
     obliteration behaviour, keep eSIM data plan) is an operator control, defaulting to
     a full reset
 - Optional removal of the device's Entra ID object (`IntuneDevicesEntraDelete`),
-  offered beside each action and standalone. Addressed by its alternate key
+  offered beside each action and standalone, always starting unticked so it is opted
+  into by the operator confirming the action. Addressed by its alternate key
   (`azureADDeviceId`), captured before the Intune action runs since a deleted Intune
   record cannot be read afterward; the Intune and Entra outcomes are reported and
   audited independently, so a half-finished result is never shown as a plain success
-- Per-action "email the affected user" checkbox, seeded from three config defaults
-  (off for Delete, on for Retire and Wipe) and changeable by the operator at the
-  moment of acting; if the deployment has user notifications disabled app-wide, the
-  suppression is stated on screen and recorded in the audit event rather than
-  silently sending nothing
+- Per-action "email the affected user" checkbox, decided by the operator running the
+  action rather than by a deployment-wide setting -- neither this nor the Entra
+  removal is a Module Config field. The box starts from a fixed state per action (off
+  for Delete, on for Retire and Wipe) and is changeable at the moment of acting, which
+  is what the lost-or-stolen case needs; if the deployment has user notifications
+  disabled app-wide, the suppression is stated on screen and recorded in the audit
+  event rather than silently sending nothing
 - A protected-principal check runs before every write, against the device's primary
   user, with the `ProtectedServicer:IntuneDevices` override
 - A ticket number is required before any action runs

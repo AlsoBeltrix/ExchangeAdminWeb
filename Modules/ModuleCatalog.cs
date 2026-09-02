@@ -590,7 +590,7 @@ public sealed class ModuleCatalog
             SortOrder = 820,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.1.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new("Access", "IntuneDevices", FailClosed: true),
             GranularPermissions = [
@@ -603,19 +603,12 @@ public sealed class ModuleCatalog
                     "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields"),
                 new("SearchResultLimit", "Search Result Limit",
                     "Devices returned per search. Defaults to 50, capped at 500.",
-                    Required: false, DefaultValue: "50"),
-                new("NotifyUserOnDelete", "Email User On Delete",
-                    "Default for the per-action checkbox: email the device's primary user when its Intune record is deleted. Nothing changes on the device, so this defaults off.",
-                    Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean),
-                new("NotifyUserOnRetire", "Email User On Retire",
-                    "Default for the per-action checkbox: email the device's primary user when company data is removed from the device.",
-                    Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean),
-                new("NotifyUserOnWipe", "Email User On Wipe",
-                    "Default for the per-action checkbox: email the device's primary user when the device is factory reset. Suppressed app-wide if user notifications are disabled.",
-                    Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean),
-                new("RemoveEntraObjectByDefault", "Also Remove Entra ID Object By Default",
-                    "Default for the 'also remove the Entra ID device record' checkbox offered beside each action. Off by default: it is a second, separately permissioned deletion against a different object.",
-                    Required: false, DefaultValue: "false", FieldType: ConfigFieldType.Boolean)
+                    Required: false, DefaultValue: "50")
+                // Deliberately NO notification or Entra-removal default fields (owner ruling
+                // 2026-09-02, .agents/decisions.md): whether to email the affected user, and whether
+                // to also remove the Entra ID device object, are decisions the operator running the
+                // action makes at that moment - not deployment-wide settings. The checkboxes on the
+                // page carry fixed starting states from IntuneDeviceService instead.
             ]
         },
         new()

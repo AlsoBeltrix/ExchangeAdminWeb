@@ -361,28 +361,15 @@ public sealed class IntuneDeviceService
     }
 
     /// <summary>
-    /// Deployment default for the "also remove the Entra ID device record" checkbox, from this
-    /// module's own RemoveEntraObjectByDefault config field. Off unless the deployment says
-    /// otherwise: it is a second, separately permissioned deletion against a different object.
-    /// </summary>
-    public bool RemoveEntraObjectByDefault =>
-        ParseBooleanConfig(_moduleConfig?.GetValue("IntuneDevices", "RemoveEntraObjectByDefault"), false);
-
-    /// <summary>
-    /// Parses a Boolean module-config field, falling back to the descriptor's DefaultValue when the
-    /// field is unset (ModuleConfigService.GetValue returns null then, it does not apply the
-    /// descriptor default) or holds something that is not true/false.
+    /// Fixed starting state for the "also remove the Entra ID device object" checkbox: unticked.
     /// </summary>
     /// <remarks>
-    /// Deliberately NOT TicketValidationService's refuse-on-mistype shape. That switch is a safety
-    /// gate whose state nothing else reveals, so a mistype there must refuse. These fields only seed
-    /// a checkbox the operator sees and can change at the moment of acting, and the outcome they
-    /// influence is reported on screen and recorded in the audit event - so a mistype cannot
-    /// silently mislead anyone, and falling back to the documented default is the least surprising
-    /// answer.
+    /// Not a module-config field (owner ruling 2026-09-02, .agents/decisions.md): whether to also
+    /// remove the directory object is the acting operator's call at that moment, not a
+    /// deployment-wide default. It starts off because it is a second, separately permissioned
+    /// deletion against a different object, so it is opted into rather than inherited.
     /// </remarks>
-    internal static bool ParseBooleanConfig(string? raw, bool fallback) =>
-        bool.TryParse((raw ?? "").Trim(), out var parsed) ? parsed : fallback;
+    internal const bool EntraRemovalStartsTicked = false;
 
     /// <summary>Refusal when the device carries no usable azureADDeviceId - stated, never silent.</summary>
     internal const string NoEntraDeviceIdMessage =
@@ -401,35 +388,28 @@ public sealed class IntuneDeviceService
     // ---- affected-user notification (S6 / D2) -------------------------------------------------
 
     /// <summary>
-    /// The deployment's default for the per-action "email the user" checkbox, from this module's own
-    /// config field for that action (D2: three fields, one per action, rather than one hardcoded
-    /// answer). The operator may change it at the moment of acting; this only seeds the box.
-    /// </summary>
-    public bool NotifyUserByDefault(IntuneDeviceAction action)
-    {
-        var (key, fallback) = NotifyUserConfig(action);
-        return key != null && ParseBooleanConfig(_moduleConfig?.GetValue("IntuneDevices", key), fallback);
-    }
-
-    /// <summary>
-    /// The config field name and descriptor default behind each action's notification checkbox.
+    /// Fixed starting state for each action's "email the device's primary user" checkbox. null means
+    /// the action offers no notification at all.
     /// </summary>
     /// <remarks>
-    /// The fallbacks mirror the descriptor's DefaultValue exactly, because
-    /// ModuleConfigService.GetValue returns null for a field nobody has saved. D2's reasoning for
-    /// them: delete off (nothing changes on the user's device, so a mail would confuse), retire and
-    /// wipe on.
+    /// Not module-config fields (owner ruling 2026-09-02, .agents/decisions.md, superseding D2's
+    /// config half): the operator running the action decides whether the user hears about it, at
+    /// that moment. These states only seed the box, which is changeable before confirming - the
+    /// lost-or-stolen case is exactly why the choice cannot live anywhere else.
     ///
-    /// EntraDelete has NO field and no notification. D2 rules exactly three, and removing a
-    /// directory object changes nothing the user can observe on their device - unlike a retire or a
-    /// wipe. A null key here is what makes that absence deliberate rather than forgotten.
+    /// D2's reasoning for the states themselves stands: delete off (nothing changes on the user's
+    /// device, so a mail would confuse), retire and wipe on.
+    ///
+    /// EntraDelete offers NO notification, hence null rather than false: removing a directory object
+    /// changes nothing the user can observe on their device - unlike a retire or a wipe. A null here
+    /// is what makes that absence deliberate rather than forgotten.
     /// </remarks>
-    internal static (string? Key, bool Fallback) NotifyUserConfig(IntuneDeviceAction action) => action switch
+    internal static bool? NotifyUserStartsTicked(IntuneDeviceAction action) => action switch
     {
-        IntuneDeviceAction.Delete => ("NotifyUserOnDelete", false),
-        IntuneDeviceAction.Retire => ("NotifyUserOnRetire", true),
-        IntuneDeviceAction.Wipe => ("NotifyUserOnWipe", true),
-        IntuneDeviceAction.EntraDelete => (null, false),
+        IntuneDeviceAction.Delete => false,
+        IntuneDeviceAction.Retire => true,
+        IntuneDeviceAction.Wipe => true,
+        IntuneDeviceAction.EntraDelete => null,
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown Intune device action.")
     };
 

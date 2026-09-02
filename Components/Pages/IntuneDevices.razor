@@ -233,11 +233,12 @@
                                                 </div>
                                             }
 
-                                            @* S6 / D2: emailing the affected user is an OPTION - seeded from this
-                                               module's config default for this action and changeable at the moment of
-                                               acting, which is what the lost-or-stolen case needs. A deployment with
-                                               user notifications switched off says so HERE, before the operator ticks
-                                               a box that would do nothing, and the outcome says so afterwards
+                                            @* S6: emailing the affected user is the acting operator's decision, made
+                                               HERE at the moment of acting rather than set deployment-wide in Module
+                                               Config (owner ruling 2026-09-02) - which is what the lost-or-stolen
+                                               case needs. The box starts from a fixed per-action state. A deployment
+                                               with user notifications switched off says so HERE, before the operator
+                                               ticks a box that would do nothing, and the outcome says so afterwards
                                                (AC19). *@
                                             @if (NotificationOffered(confirmAction.Value))
                                             {
@@ -275,8 +276,8 @@
 
                                             @* S5 / D3: the Entra ID device object is a SECOND deletion, against a
                                                different object, through a directory scope - so it is its own
-                                               permission, its own checkbox (defaulted from config, off unless the
-                                               deployment says otherwise), and its own reported outcome. A device
+                                               permission, its own checkbox (always starting unticked, opted into by
+                                               the acting operator), and its own reported outcome. A device
                                                that is not Entra-joined is told why instead of being offered a box
                                                that would silently skip (AC24). *@
                                             @if (confirmAction != IntuneDeviceAction.EntraDelete && canEntraDelete)
@@ -532,17 +533,18 @@
     private string wipeConfirmName = "";
 
     /// <summary>
-    /// The per-action "also remove the Entra ID device object" choice (S5 / D3), seeded from the
-    /// module's RemoveEntraObjectByDefault config field when the confirm bar opens and changeable
+    /// The per-action "also remove the Entra ID device object" choice (S5 / D3), starting unticked
+    /// (IntuneDeviceService.EntraRemovalStartsTicked) when the confirm bar opens and changeable
     /// before confirming. Rendering-only, like the wipe flags: the handler re-checks the Entra
     /// permission before it acts on this.
     /// </summary>
     private bool alsoRemoveEntra;
 
     /// <summary>
-    /// The per-action "email the device's primary user" choice (S6 / D2), seeded from this module's
-    /// NotifyUserOn{Delete,Retire,Wipe} config field when the confirm bar opens and changeable
-    /// before confirming - the lost-or-stolen case is why it cannot live in config alone.
+    /// The per-action "email the device's primary user" choice (S6), starting from this action's
+    /// fixed state (IntuneDeviceService.NotifyUserStartsTicked) when the confirm bar opens and
+    /// changeable before confirming - the lost-or-stolen case is why the operator, not a
+    /// deployment-wide setting, decides it (owner ruling 2026-09-02).
     /// </summary>
     private bool notifyPrimaryUser;
 
@@ -767,13 +769,14 @@
         // Wipe options start from their defaults on every confirm, so a choice made for one device
         // never rides along into the next one.
         ResetActionOptions();
-        // The Entra add-on is seeded from the deployment's default AFTER the reset (S5 / D2's
-        // config-default-then-operator-override shape), and never for the standalone Entra action,
-        // where removing the object IS the action.
-        alsoRemoveEntra = action != IntuneDeviceAction.EntraDelete && IntuneDeviceService.RemoveEntraObjectByDefault;
-        // Same shape for the affected-user notification (S6 / AC18): the deployment's config field
-        // for THIS action sets the default, and the operator may change it before confirming.
-        notifyPrimaryUser = IntuneDeviceService.NotifyUserByDefault(action);
+        // The Entra add-on starts from its fixed state - unticked - so it is always opted into by
+        // the operator confirming this action (owner ruling 2026-09-02), never inherited from a
+        // deployment-wide setting.
+        alsoRemoveEntra = IntuneDeviceService.EntraRemovalStartsTicked;
+        // Same shape for the affected-user notification (S6 / AC18): THIS action's fixed state seeds
+        // the box, and the operator may change it before confirming. Null means the action offers no
+        // notification at all, which reads as unticked.
+        notifyPrimaryUser = IntuneDeviceService.NotifyUserStartsTicked(action) ?? false;
         deviceOutcomes.Remove(device.Id);
     }
 
@@ -828,11 +831,11 @@
         var removeEntraObject = action != IntuneDeviceAction.EntraDelete
             && alsoRemoveEntra
             && IntuneDeviceService.IsUsableEntraDeviceId(entraDeviceId);
-        // S6: the operator's notification choice and the config default it was seeded from are both
-        // bound here, before the first await. The default travels so the audit record can say WHICH
-        // not-sent reason applied - config default, or the operator clearing a ticked box (D2).
+        // S6: the operator's notification choice and the fixed state it was seeded from are both
+        // bound here, before the first await. The starting state travels so the audit record can say
+        // WHICH not-sent reason applied - nobody asked, or the operator cleared a ticked box.
         var notifyRequested = notifyPrimaryUser;
-        var notifyDefault = IntuneDeviceService.NotifyUserByDefault(action);
+        var notifyDefault = IntuneDeviceService.NotifyUserStartsTicked(action) ?? false;
 
         void Refuse(string message, string auditDetail)
         {
@@ -1173,8 +1176,8 @@
         IntuneDeviceAction action, string upn, string deviceName, string ticket, bool requested, bool configuredDefault,
         bool actionSucceeded)
     {
-        // The standalone Entra removal has no user notification (D2 defines three fields, one per
-        // Intune action), so it reports nothing rather than an empty not-sent note.
+        // The standalone Entra removal has no user notification (only the three Intune actions offer
+        // one), so it reports nothing rather than an empty not-sent note.
         if (!NotificationOffered(action))
             return (null, false);
 
@@ -1212,12 +1215,13 @@
     }
 
     /// <summary>
-    /// Whether this action offers the affected-user notification at all. D2 defines exactly three
-    /// config fields, one per Intune action; the standalone Entra removal has none, because removing
-    /// a directory object changes nothing the user can observe on their device.
+    /// Whether this action offers the affected-user notification at all. Exactly the three Intune
+    /// actions do; the standalone Entra removal has none, because removing a directory object
+    /// changes nothing the user can observe on their device - which is why its starting state is
+    /// null rather than false.
     /// </summary>
     internal static bool NotificationOffered(IntuneDeviceAction action) =>
-        IntuneDeviceService.NotifyUserConfig(action).Key != null;
+        IntuneDeviceService.NotifyUserStartsTicked(action) != null;
 
     /// <summary>
     /// AC11's conditional half: the delete result must stop claiming the device's Entra ID object
