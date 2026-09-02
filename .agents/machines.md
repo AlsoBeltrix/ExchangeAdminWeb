@@ -32,6 +32,15 @@ _First recorded 2026-07-21._
   disposable-worktree capability the codereview playbook's self-permissioning contract
   expects - and check `git status` afterwards; both 2026-08-27 runs left the tree untouched.
   Generation (defect-hunt) passes stay `-s read-only`.
+- **codex `-s read-only` cannot spawn `pwsh.exe` at all (observed 2026-09-02, codex-cli
+  `0.152.0`):** every `command_execution` item exits `-1073741502` (0xC0000142, DLL init
+  failure), so a reviewer told to read a file from the workspace stalls indefinitely with
+  no output - the first dispatch ran 10 minutes on two failed commands. Workaround that
+  worked the same day: inline the file under review into the prompt (line-numbered) and
+  tell codex NOT to run commands; it answered in a few minutes with a valid envelope.
+  For git-range reviews this means inlining `git diff` output rather than asking codex to
+  run git. `codex --version` now reports `0.152.0` (cache said `0.150.1`); the cached
+  `exec` flags were re-probed and all still exist.
 - **codex** (`codex-cli 0.147.0`, re-probed 2026-08-14; was recorded as `0.146.0` as of
   2026-08-05, `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
