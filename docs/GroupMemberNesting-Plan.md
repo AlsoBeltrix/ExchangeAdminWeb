@@ -444,3 +444,13 @@ Both module rules fire independently of the base rule.
 - OQ2: whether the S5 picker swap on the admin page should also apply to the group
   SEARCH box (`GroupManagement.razor:35`), which is a plain input. Out of scope here;
   raise separately if the admin page work continues.
+
+## Revision History
+
+- **Revision 2026-09-02 (bug fix, no plan):** the REMOVE path now routes like the listing -
+  the listed row's DN rides with its GUID so the member resolves in its OWN domain (S4's
+  resolution asked the credential's home domain and refused a cross-domain nested group with
+  "The member could not be resolved right now"), S2's membership probe reads the group's
+  forward `member` link in the group's own domain instead of the member's local `memberOf`
+  back-link, and both modules' writes and the admin module's name-only target resolution are
+  routed the same way. `SelfServiceGroups 1.7.0`, `GroupManagement 2.7.0`.

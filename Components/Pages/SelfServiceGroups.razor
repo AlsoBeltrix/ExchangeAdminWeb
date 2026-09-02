@@ -474,7 +474,10 @@
                 return;
             }
 
-            var outcome = await GroupService.RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid, authState.User);
+            // The row's own DN rides along with its GUID: the service resolves the member in the
+            // domain that DN names, which is the only way a cross-domain nested group resolves at
+            // all (2026-09-02). The GUID stays the identity that is acted on.
+            var outcome = await GroupService.RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid, authState.User, member.DistinguishedName);
             changeResult = outcome.Result;
 
             var changeExtra = new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid };

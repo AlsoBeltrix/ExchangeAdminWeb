@@ -353,7 +353,11 @@ public sealed class ModuleCatalog
             // 2.6.0: protected target groups answer at first query - a non-servicer is refused
             // at selection and never sees members; servicers see a Protected badge. The
             // write-path gates stay as the backstop.
-            Version = "2.6.0",
+            // 2.7.0: a target group named only by sam/name/mail is resolved through the forest
+            // global catalog and re-read in its own domain (a foreign-domain group could not be
+            // written to at all), and the membership pre-check/read-back asks the group's own
+            // domain for its forward member link instead of the member's local back-link.
+            Version = "2.7.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -433,7 +437,11 @@ public sealed class ModuleCatalog
             // 1.6.0: 1.5.0's target gate removed (owner ruling 2026-08-31, .agents/decisions.md):
             // owners always edit owned groups here; eligibility already means native AD write
             // rights, so the app-side refusal was inconvenience, not security.
-            Version = "1.6.0",
+            // 1.7.0: removing a cross-domain nested group works - the listed row's DN rides with
+            // its GUID so the member resolves in its OWN domain (it was refused with "could not
+            // be resolved right now"), the membership pre-check/read-back reads the group's
+            // forward member link in the group's domain, and the write is routed there too.
+            Version = "1.7.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

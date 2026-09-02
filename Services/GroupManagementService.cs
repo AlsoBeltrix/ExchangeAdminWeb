@@ -825,6 +825,25 @@ public class GroupManagementService
     }
 
     /// <summary>
+    /// DIRECT-membership probe for the idempotency pre-checks and post-write read-backs, shared by
+    /// both group modules (2026-09-02). The SUBJECT is the GROUP and the match is on its forward
+    /// <c>member</c> link, so the query must run against the GROUP's own domain
+    /// (<see cref="ServerFromDn"/>). The earlier shape made the MEMBER the subject and matched
+    /// <c>memberOf</c>: a cross-domain member has no back-link in its own partition and does not
+    /// exist in the group's, so the probe answered "not a member" for a membership that is really
+    /// there - a removal would have reported a no-op and written nothing. The group's forward link
+    /// is the attribute that actually carries a foreign-domain member's DN, which is why both
+    /// listings read it. Both values are LDAP-escaped, so neither can alter the filter. Pure so
+    /// the subject/attribute pairing is unit-testable.
+    /// </summary>
+    internal static string BuildDirectMembershipFilter(string groupDn, string memberDn)
+    {
+        var groupEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
+        var memberEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
+        return $"(&(distinguishedName={groupEsc})(member={memberEsc}))";
+    }
+
+    /// <summary>
     /// Derives the owning domain's DNS name from a distinguished name's DC components
     /// (gmn-8): the picker's suggestions are deliberately forest-wide, but Get-ADObject binds
     /// to the local domain by default, where a foreign object's partition does not exist -
@@ -1037,16 +1056,20 @@ public class GroupManagementService
     /// <summary>
     /// Direct-membership read used by the idempotency pre-checks and the post-write read-backs
     /// (S5b, mirroring the self-service module). Class-agnostic; throws on a read error so an
-    /// unverifiable outcome fails closed rather than reading as success.
+    /// unverifiable outcome fails closed rather than reading as success. Asks the GROUP object, in
+    /// the GROUP's own domain, for its forward <c>member</c> link - see
+    /// <see cref="BuildDirectMembershipFilter"/> for why the member-side back-link cannot answer
+    /// this question across domains (2026-09-02).
     /// </summary>
     private static bool IsDirectMemberOf(PowerShell ps, PSCredential credential, string groupDn, string memberDn)
     {
-        var memberEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
-        var groupEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
         ps.AddCommand("Get-ADObject")
-          .AddParameter("LDAPFilter", $"(&(distinguishedName={memberEsc})(memberOf={groupEsc}))")
+          .AddParameter("LDAPFilter", BuildDirectMembershipFilter(groupDn, memberDn))
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        var server = ServerFromDn(groupDn);
+        if (server is not null)
+            ps.AddParameter("Server", server);
         var result = ps.Invoke();
         ps.Commands.Clear();
         if (ps.HadErrors)
@@ -1148,14 +1171,31 @@ public class GroupManagementService
         if (!string.IsNullOrEmpty(samAccountName)) candidates.Add(samAccountName);
         if (!string.IsNullOrEmpty(groupIdentity)) candidates.Add(groupIdentity);
 
+        // 2026-09-02: the name loop ran against the credential's HOME DOMAIN only, so a
+        // foreign-domain target named by sam/name/mail alone could not be resolved at all - the
+        // gate and the write then failed with "The group could not be resolved right now"
+        // (.agents/state.md recorded this as a pre-existing gap). Search the forest through the
+        // global catalog, exactly as SearchGroupsAsync does, including its ':' guard: a failed
+        // host lookup yields ":3268", which Get-ADGroup ACCEPTS and then serves from the local
+        // domain. A null catalog keeps the old local-domain behaviour rather than failing the
+        // write outright. A name that exists in TWO domains now matches twice and is refused
+        // below - the namesake swap fsr-1 documents fails closed instead of picking the local one.
+        var catalog = ResolveSearchGlobalCatalog(ps, credential);
+
         foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             var esc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(candidate);
+            // Clear first, so HadErrors below reports THIS read and not, say, a failed forest
+            // lookup left in the shared stream - which would otherwise skip every candidate and
+            // fail a resolution the local domain could have answered (the lst-3 lesson).
+            ps.Streams.Error.Clear();
             ps.AddCommand("Get-ADGroup")
               .AddParameter("LDAPFilter", $"(|(sAMAccountName={esc})(name={esc})(mail={esc}))")
               .AddParameter("Properties", new[] { "mail" })
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
+            if (catalog is not null && !catalog.StartsWith(':'))
+                ps.AddParameter("Server", catalog);
             var groups = ps.Invoke();
             ps.Commands.Clear();
             if (ps.HadErrors)
@@ -1170,6 +1210,34 @@ public class GroupManagementService
             var dn = g?.Properties["DistinguishedName"]?.Value?.ToString();
             if (string.IsNullOrWhiteSpace(dn))
                 continue;
+
+            // A global-catalog row is a PARTIAL attribute set, and this snapshot feeds the
+            // protected-target gate: an attribute missing from the catalog is a protection entry
+            // that cannot match (fail-open). Re-read the match in ITS OWN domain - the same
+            // routing the DN fast path above uses - and refuse if that read cannot be made,
+            // rather than gating on a partial object or falling through to a namesake.
+            var matchServer = ServerFromDn(dn);
+            if (matchServer is not null)
+            {
+                ps.Streams.Error.Clear();
+                ps.AddCommand("Get-ADGroup")
+                  .AddParameter("Identity", dn)
+                  .AddParameter("Properties", new[] { "mail" })
+                  .AddParameter("Credential", credential)
+                  .AddParameter("Server", matchServer)
+                  .AddParameter("ErrorAction", "Stop");
+                PSObject? routed = null;
+                try { routed = ps.Invoke().FirstOrDefault(o => o is not null); }
+                catch (Exception) { routed = null; }
+                finally { ps.Commands.Clear(); }
+                if (routed is null || ps.HadErrors)
+                {
+                    ps.Streams.Error.Clear();
+                    return ResolvedMember.Failed(
+                        $"AD group '{candidate}' was found in the forest but could not be read in its own domain ({matchServer}).");
+                }
+                g = routed;
+            }
 
             var principal = new ResolvedDirectoryPrincipal(
                 Source: "GroupManagementService-AD",

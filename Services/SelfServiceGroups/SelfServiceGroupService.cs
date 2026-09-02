@@ -596,6 +596,12 @@ public class SelfServiceGroupService
                       .AddParameter("Confirm", false)
                       .AddParameter("ErrorAction", "Stop");
                 }
+                // The write acts on the GROUP object, so it is routed to the group's own domain -
+                // the same rule the admin module's writes carry (fsr-1). The member may live in
+                // another domain; that is the group's stored DN, not this cmdlet's binding.
+                var writeServer = GroupManagementService.ServerFromDn(groupDn);
+                if (writeServer is not null)
+                    ps.AddParameter("Server", writeServer);
                 // The write (ErrorAction=Stop) can throw a TERMINATING error - including a timeout that
                 // fires AFTER the change already committed at the DC. Capture it rather than let it exit
                 // before reconciliation: whether the write "succeeded" is decided ONLY by the read-back
@@ -664,9 +670,16 @@ public class SelfServiceGroupService
     /// with the IT Support Desk message, D3), and fed to the same single executor.
     /// Typed identities keep using <see cref="ChangeMemberAsync"/>, which stays USER-only (D1).
     /// Audit and notification remain the caller's (page) responsibility, as on the typed path.
+    /// <paramref name="memberDn"/> is the listed row's own distinguished name, threaded through so
+    /// the resolution can bind to the member's OWN domain (2026-09-02): removing the cross-domain
+    /// nested group <c>Organization Management</c> (WINROOT) from an ANALOG group failed at
+    /// resolution, because a GUID lookup with no -Server asks the credential's home domain for an
+    /// object whose partition does not exist there. Optional: a caller without a DN keeps today's
+    /// home-domain lookup, which still BLOCKS on no match.
     /// </summary>
     public async Task<MembershipChangeResult> RemoveListedMemberAsync(
-        string callerSid, string groupObjectGuid, string memberObjectGuid, ClaimsPrincipal? actingUser)
+        string callerSid, string groupObjectGuid, string memberObjectGuid, ClaimsPrincipal? actingUser,
+        string? memberDn = null)
     {
         if (string.IsNullOrWhiteSpace(callerSid))
             throw new ArgumentException("Caller SID is required.", nameof(callerSid));
@@ -690,7 +703,7 @@ public class SelfServiceGroupService
         try
         {
             member = await ThrottledAdAsync(async () => await Task.Run(
-                () => ResolveListedMemberByGuid(creds.Value, memberObjectGuid)));
+                () => ResolveListedMemberByGuid(creds.Value, memberObjectGuid, memberDn)));
         }
         catch (Exception ex)
         {
@@ -716,9 +729,15 @@ public class SelfServiceGroupService
     /// SamAccountName, DistinguishedName and ObjectGuid; its mail attribute rides
     /// PrimarySmtpAddress so the affected-member notification runs on the same predicate as a
     /// user's (D6 - no class check added anywhere).
+    /// The lookup is routed to the member's own domain, derived from the DN the listing already
+    /// carries for that row - the same rule the listing itself uses (GetGroupMembersAsync, and
+    /// GroupManagementService.ServerFromDn's gmn-8 note). Without it a foreign-domain member
+    /// resolved to nothing and the removal was refused with "could not be resolved right now"
+    /// (dev, 2026-09-02). A row with no DN falls back to the home domain and still blocks on a
+    /// miss - fail closed either way (Known Failure Class #3).
     /// </summary>
     private static ResolvedDirectoryPrincipal? ResolveListedMemberByGuid(
-        (string username, string password, string domain) creds, string memberObjectGuid)
+        (string username, string password, string domain) creds, string memberObjectGuid, string? memberDn)
     {
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -737,6 +756,12 @@ public class SelfServiceGroupService
           .AddParameter("Properties", new[] { "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" })
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        // Bind the GUID lookup to the domain that owns the listed row, exactly as the listing
+        // does; null (no DC components, or no DN in hand) omits -Server and keeps the old
+        // home-domain binding rather than guessing a server.
+        var server = GroupManagementService.ServerFromDn(memberDn);
+        if (server is not null)
+            ps.AddParameter("Server", server);
         var objects = ps.Invoke();
         ps.Commands.Clear();
 
@@ -909,24 +934,27 @@ public class SelfServiceGroupService
 
     /// <summary>
     /// True when the given member DN is currently a member of the group. Uses a bound -LDAPFilter with
-    /// the member DN LDAP-escaped (codex F11); checks direct membership on the group's <c>member</c>
+    /// both DNs LDAP-escaped (codex F11); checks direct membership on the group's <c>member</c>
     /// attribute. Used both for the idempotency pre-check and the post-write read-back (slice 5a).
+    /// The query asks the GROUP object, in the GROUP's own domain, for its forward <c>member</c>
+    /// link (2026-09-02). The previous shape asked the MEMBER object for a <c>memberOf</c>
+    /// back-link in the credential's home domain: a cross-domain member is not in that partition
+    /// at all, so the read returned nothing and a real removal would have reported "not a member"
+    /// and written nothing. The forward link is where a foreign-domain member's DN actually lives
+    /// - the same attribute the listing reads.
     /// </summary>
     private static bool IsMemberOfGroup(PowerShell ps, PSCredential credential, string groupDn, string memberDn)
     {
-        var memberEsc = AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
-        var groupEsc = AdOwnershipFilter.EscapeLdapFilterValue(groupDn);
-        // Ask AD directly whether this member is in this group. distinguishedName is bound to the
-        // resolved member DN and memberOf to the resolved group DN; both are escaped so neither can alter
-        // the filter. This reflects the write immediately (unlike a cached member list).
-        var filter = $"(&(distinguishedName={memberEsc})(memberOf={groupEsc}))";
         // Get-ADObject, not Get-ADUser (nesting plan S2): the filter is already class-agnostic,
         // and a GROUP member must be visible to both the idempotency pre-check and the
         // post-write read-back, or group operations misreport their end state.
         ps.AddCommand("Get-ADObject")
-          .AddParameter("LDAPFilter", filter)
+          .AddParameter("LDAPFilter", GroupManagementService.BuildDirectMembershipFilter(groupDn, memberDn))
           .AddParameter("Credential", credential)
           .AddParameter("ErrorAction", "Stop");
+        var server = GroupManagementService.ServerFromDn(groupDn);
+        if (server is not null)
+            ps.AddParameter("Server", server);
         var result = ps.Invoke();
         ps.Commands.Clear();
         if (ps.HadErrors)

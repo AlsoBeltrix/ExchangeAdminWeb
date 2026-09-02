@@ -91,6 +91,46 @@ public sealed class GroupSearchForestScopeTests
     }
 
     [Fact]
+    public void ResolveGroupForWrite_NameFallback_SearchesTheForest_AndRereadsInTheOwningDomain()
+    {
+        // 2026-09-02: the fallback used when the page holds no DN (sam/name/mail only) queried
+        // the credential's HOME DOMAIN, so a foreign-domain target could not be resolved at all -
+        // its gate and its write both failed with "The group could not be resolved right now"
+        // (recorded in .agents/state.md as a pre-existing gap).
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Services", "GroupManagementService.cs"));
+        var start = text.IndexOf("internal virtual ResolvedMember ResolveGroupForWrite(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ResolveGroupForWrite signature not found - tripwire is stale.");
+        var end = text.IndexOf("internal static string? CombineNotes(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ResolveGroupForWrite - update the tripwire.");
+        var body = text[start..end];
+
+        var iCatalog = body.IndexOf("var catalog = ResolveSearchGlobalCatalog(ps, credential);", StringComparison.Ordinal);
+        var iLoop = body.IndexOf("foreach (var candidate in candidates", StringComparison.Ordinal);
+        var iGuard = body.IndexOf("catalog is not null && !catalog.StartsWith(':')", StringComparison.Ordinal);
+        var iServer = body.IndexOf("AddParameter(\"Server\", catalog)", StringComparison.Ordinal);
+        var iExactlyOne = body.IndexOf("if (groups.Count != 1)", StringComparison.Ordinal);
+        var iReread = body.IndexOf("var matchServer = ServerFromDn(dn);", StringComparison.Ordinal);
+        var iRerouted = body.IndexOf("AddParameter(\"Server\", matchServer)", StringComparison.Ordinal);
+
+        Assert.True(iCatalog >= 0, "The name fallback no longer searches the forest.");
+        Assert.True(iLoop > iCatalog, "The catalog must be resolved before the candidate loop.");
+        // Same ':3268' guard as the search: a failed host lookup yields a server string
+        // Get-ADGroup accepts and then quietly serves from the local domain.
+        Assert.True(iGuard > iLoop, "The ':3268' guard is missing from the candidate query.");
+        Assert.True(iServer > iGuard, "-Server must be applied only behind the guard.");
+        // A name that exists in two domains now matches twice and is REFUSED - the namesake swap
+        // fails closed instead of resolving to whichever domain answered.
+        Assert.True(iExactlyOne > iServer, "The exactly-one-match rule must gate the catalog result.");
+        // A catalog row is a partial attribute set and this snapshot feeds the protected-target
+        // gate, so the match is re-read where it lives - a missing identifier is a protection
+        // entry that cannot match.
+        Assert.True(iReread > iExactlyOne, "A catalog match must be re-read in its own domain.");
+        Assert.True(iRerouted > iReread, "The re-read must be routed to the match's own domain.");
+        Assert.Contains("could not be read in its own domain", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MemberRead_And_Writes_RouteByTheGroupsOwningDomain()
     {
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(

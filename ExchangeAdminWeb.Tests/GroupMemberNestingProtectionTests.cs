@@ -140,8 +140,9 @@ public class GroupMemberNestingProtectionTests
         Assert.True(end > start, "Could not bound the IsMemberOfGroup body - update the tripwire.");
         var body = text[start..end];
 
-        // The filter (&(distinguishedName=..)(memberOf=..)) is already class-agnostic; only the
-        // cmdlet in front of it decided which member classes the read could see.
+        // The filter is already class-agnostic (it binds two DNs, see
+        // BuildDirectMembershipFilter); only the cmdlet in front of it decided which member
+        // classes the read could see.
         Assert.Contains("AddCommand(\"Get-ADObject\")", body, StringComparison.Ordinal);
         Assert.DoesNotContain("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
     }
@@ -233,7 +234,7 @@ public class GroupMemberNestingProtectionTests
         Assert.True(end > start, "Could not bound RemoveListedMemberAsync - update the tripwire.");
         var body = text[start..end];
 
-        var iResolve = body.IndexOf("ResolveListedMemberByGuid(creds.Value, memberObjectGuid)", StringComparison.Ordinal);
+        var iResolve = body.IndexOf("ResolveListedMemberByGuid(creds.Value, memberObjectGuid, memberDn)", StringComparison.Ordinal);
         var iGate = body.IndexOf("await CheckMemberProtectedAsync(member, actingUser)", StringComparison.Ordinal);
         var iDenialCheck = body.IndexOf("if (protection.Denial is not null)", StringComparison.Ordinal);
         var iDenialReturn = body.IndexOf("return MembershipChangeResult.From(protection.Denial);", StringComparison.Ordinal);
@@ -442,6 +443,130 @@ public class GroupMemberNestingProtectionTests
         var listing = text[lStart..lEnd];
         Assert.Contains("ServerFromDn(memberDn)", listing, StringComparison.Ordinal);
         Assert.Contains("DistinguishedName = memberDn", listing, StringComparison.Ordinal);
+    }
+
+    // ----- 2026-09-02: the REMOVE paths route like the listing, not to the home domain -----
+    // Removing the cross-domain nested group "Organization Management" (WINROOT) from
+    // ExchangeWebAdmins (ANALOG) failed with "The member could not be resolved right now": the
+    // GUID lookup had no -Server, so it asked the credential's home domain for an object whose
+    // partition does not live there. The listing was fixed for exactly this on 2026-08-28; the
+    // remove path was not. ServerFromDn's own rules (including the null fallback that omits
+    // -Server) are pinned by the pure tests above.
+
+    [Fact]
+    public void ListedRemove_ThreadsTheRowsDn_AndResolvesTheMemberInItsOwnDomain()
+    {
+        var text = SelfServiceText();
+
+        // The entry point hands the row's DN to the resolver beside the GUID it acts on...
+        Assert.Contains("ResolveListedMemberByGuid(creds.Value, memberObjectGuid, memberDn)",
+            text, StringComparison.Ordinal);
+
+        // ...and the resolver binds the GUID lookup to the domain that DN names.
+        var start = text.IndexOf("private static ResolvedDirectoryPrincipal? ResolveListedMemberByGuid(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ResolveListedMemberByGuid not found - tripwire is stale.");
+        var end = text.IndexOf("internal readonly record struct ProtectionGate", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ResolveListedMemberByGuid - update the tripwire.");
+        var body = text[start..end];
+
+        var iIdentity = body.IndexOf("AddParameter(\"Identity\", memberObjectGuid)", StringComparison.Ordinal);
+        var iServer = body.IndexOf("GroupManagementService.ServerFromDn(memberDn)", StringComparison.Ordinal);
+        var iGuard = body.IndexOf("if (server is not null)", StringComparison.Ordinal);
+        var iApply = body.IndexOf("AddParameter(\"Server\", server)", StringComparison.Ordinal);
+        var iInvoke = body.IndexOf("var objects = ps.Invoke();", StringComparison.Ordinal);
+
+        Assert.True(iIdentity >= 0, "The GUID is no longer the identity being resolved.");
+        Assert.True(iServer > iIdentity, "The resolver must derive -Server from the row's own DN.");
+        // The guard is the fallback: a row with no usable DN keeps the home-domain lookup rather
+        // than passing a null server - and still BLOCKS on a miss (fail closed).
+        Assert.True(iGuard > iServer, "The null-DN fallback guard is gone.");
+        Assert.True(iApply > iGuard && iApply < iInvoke, "-Server must be applied to the GUID lookup before it runs.");
+
+        // The page is what holds the DN: it must pass the row's, not a re-derived label.
+        var page = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
+            "Components", "Pages", "SelfServiceGroups.razor"));
+        Assert.Contains(
+            "RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid, authState.User, member.DistinguishedName)",
+            page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DirectMembershipFilter_SubjectIsTheGroup_MatchedOnItsForwardMemberLink()
+    {
+        const string groupDn = "CN=ExchangeWebAdmins,OU=Groups,DC=analog,DC=com";
+        const string memberDn = "CN=Organization Management,OU=Microsoft Exchange Security Groups,DC=winroot,DC=analog,DC=com";
+
+        var filter = GroupManagementService.BuildDirectMembershipFilter(groupDn, memberDn);
+
+        // Subject = the GROUP, match = its forward member link. The inverted shape (member as
+        // subject, memberOf as the match) cannot answer this across domains: the member is in no
+        // partition the group's DC serves, and carries no back-link in its own.
+        Assert.Equal($"(&(distinguishedName={groupDn})(member={memberDn}))", filter);
+        Assert.DoesNotContain("memberOf", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DirectMembershipFilter_EscapesLdapMetacharacters_InBothDns()
+    {
+        var filter = GroupManagementService.BuildDirectMembershipFilter("CN=G*p,DC=x", "CN=M(1)\\,x,DC=y");
+
+        Assert.Contains("\\2a", filter, StringComparison.Ordinal);
+        Assert.Contains("\\28", filter, StringComparison.Ordinal);
+        Assert.Contains("\\29", filter, StringComparison.Ordinal);
+        Assert.Contains("\\5c", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("G*p", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MembershipProbes_AskTheGroupsOwnDomain_InBothModules()
+    {
+        var probes = new[]
+        {
+            ("self-service", SelfServiceText(), "private static bool IsMemberOfGroup(",
+                "internal static string ComposeMemberNotFoundMessage("),
+            ("admin", AdminServiceText(), "private static bool IsDirectMemberOf(",
+                "internal virtual async Task<(string username, string password, string domain)?> GetCredentialsAsync("),
+        };
+
+        foreach (var (label, text, signature, endMarker) in probes)
+        {
+            var start = text.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(start >= 0, $"{label}: membership probe not found - tripwire is stale.");
+            var end = text.IndexOf(endMarker, start, StringComparison.Ordinal);
+            Assert.True(end > start, $"{label}: could not bound the membership probe - update the tripwire.");
+            var body = text[start..end];
+
+            Assert.Contains("BuildDirectMembershipFilter(groupDn, memberDn)", body, StringComparison.Ordinal);
+            var iServer = body.IndexOf("ServerFromDn(groupDn)", StringComparison.Ordinal);
+            var iApply = body.IndexOf("AddParameter(\"Server\", server)", StringComparison.Ordinal);
+            Assert.True(iServer >= 0, $"{label}: the probe no longer routes to the group's own domain.");
+            Assert.True(iApply > iServer, $"{label}: -Server must be applied from the group's DN.");
+            // The back-link shape reported a real cross-domain membership as absent, which turned
+            // a removal into a silent no-op ("is not a member") - Known Failure Class #2.
+            Assert.DoesNotContain("memberOf=", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void SelfServiceWrite_RoutesBothCmdletsToTheGroupsOwnDomain()
+    {
+        var text = SelfServiceText();
+        var start = text.IndexOf("private async Task<MembershipChangeResult> ApplyMembershipChangeAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ApplyMembershipChangeAsync not found - tripwire is stale.");
+        var end = text.IndexOf("public async Task<MembershipChangeResult> RemoveListedMemberAsync(", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound ApplyMembershipChangeAsync - update the tripwire.");
+        var body = text[start..end];
+
+        var iAdd = body.IndexOf("AddCommand(\"Add-ADGroupMember\")", StringComparison.Ordinal);
+        var iRemove = body.IndexOf("AddCommand(\"Remove-ADGroupMember\")", StringComparison.Ordinal);
+        var iServer = body.IndexOf("var writeServer = GroupManagementService.ServerFromDn(groupDn);", StringComparison.Ordinal);
+        var iApply = body.IndexOf("AddParameter(\"Server\", writeServer)", StringComparison.Ordinal);
+
+        Assert.True(iAdd >= 0 && iRemove > iAdd, "Both write cmdlets must stay in the shared executor.");
+        // The write acts on the GROUP object, so it is routed by the GROUP's DN - the member may
+        // well live elsewhere. Same rule as the admin module's writes (fsr-1).
+        Assert.True(iServer > iRemove, "The write server must be derived from the group's DN.");
+        Assert.True(iApply > iServer, "-Server must be applied to whichever write cmdlet was composed.");
     }
 
     private static string AdminServiceText() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
