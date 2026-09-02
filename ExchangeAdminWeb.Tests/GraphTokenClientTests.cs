@@ -127,4 +127,122 @@ public class GraphTokenClientTests
     {
         Assert.Null(GraphTokenClient.ExtractGraphError(body));
     }
+
+    [Fact]
+    public async Task DeleteWithStatusAsync_Success_ReturnsOk()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var (ok, status, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+
+        Assert.True(ok);
+        Assert.Equal(HttpStatusCode.NoContent, status);
+        Assert.Null(safeError);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task DeleteWithStatusAsync_NonSuccess_SurfacesDistinctStatus(HttpStatusCode status)
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(status)
+        {
+            Content = new StringContent("""{"error":{"code":"SomeError","message":"detail"}}""")
+        };
+
+        var (ok, returnedStatus, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+
+        Assert.False(ok);
+        Assert.Equal(status, returnedStatus);
+        Assert.NotNull(safeError);
+        Assert.Contains("SomeError", safeError);
+    }
+
+    [Fact]
+    public async Task DeleteWithStatusAsync_NonJsonErrorBody_SafeErrorIsNull()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<html>not json</html>")
+        };
+
+        var (ok, _, safeError) = await client.DeleteWithStatusAsync("/deviceManagement/managedDevices/x");
+
+        Assert.False(ok);
+        Assert.Null(safeError);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_BackCompat_ReturnsBool_ExistingBehaviorUnchanged()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var ok = await client.DeleteAsync("/deviceManagement/managedDevices/x");
+
+        Assert.False(ok);
+    }
+
+    [Fact]
+    public async Task PostNoContentWithStatusAsync_Success_ReturnsOk()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.NoContent);
+
+        var (ok, status, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire");
+
+        Assert.True(ok);
+        Assert.Equal(HttpStatusCode.NoContent, status);
+        Assert.Null(safeError);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task PostNoContentWithStatusAsync_NonSuccess_SurfacesDistinctStatus(HttpStatusCode status)
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(status)
+        {
+            Content = new StringContent("""{"error":{"code":"SomeError","message":"detail"}}""")
+        };
+
+        var (ok, returnedStatus, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/wipe", new { keepUserData = false });
+
+        Assert.False(ok);
+        Assert.Equal(status, returnedStatus);
+        Assert.NotNull(safeError);
+        Assert.Contains("SomeError", safeError);
+    }
+
+    [Fact]
+    public async Task PostNoContentWithStatusAsync_NonJsonErrorBody_SafeErrorIsNull()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("<html>not json</html>")
+        };
+
+        var (ok, _, safeError) = await client.PostNoContentWithStatusAsync("/deviceManagement/managedDevices/x/retire");
+
+        Assert.False(ok);
+        Assert.Null(safeError);
+    }
+
+    [Fact]
+    public async Task PostNoContentAsync_BackCompat_ReturnsBool_ExistingBehaviorUnchanged()
+    {
+        var (client, handler) = CreateClient();
+        handler.GraphResponse = () => new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var ok = await client.PostNoContentAsync("/deviceManagement/managedDevices/x/retire");
+
+        Assert.False(ok);
+    }
 }

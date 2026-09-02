@@ -52,15 +52,41 @@ public sealed class GraphTokenClient
 
     public async Task<bool> DeleteAsync(string endpoint)
     {
+        var (ok, _, _) = await DeleteWithStatusAsync(endpoint);
+        return ok;
+    }
+
+    /// <summary>
+    /// DELETE that surfaces the HTTP status and a sanitized Graph error, the same shape as
+    /// PatchWithStatusAsync, so callers can distinguish a 403 (missing permission) from a 404
+    /// (already gone) from a 5xx - a bare bool collapses all three into "failed" (idm-1).
+    /// </summary>
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> DeleteWithStatusAsync(string endpoint)
+    {
         var token = await GetAccessTokenAsync();
         using var request = new HttpRequestMessage(HttpMethod.Delete, $"{GraphBaseUrl}{endpoint}");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await _httpClient.SendAsync(request);
-        return response.IsSuccessStatusCode;
+        if (response.IsSuccessStatusCode)
+            return (true, response.StatusCode, null);
+
+        var content = await response.Content.ReadAsStringAsync();
+        return (false, response.StatusCode, ExtractGraphError(content));
     }
 
     public async Task<bool> PostNoContentAsync(string endpoint, object? body = null)
+    {
+        var (ok, _, _) = await PostNoContentWithStatusAsync(endpoint, body);
+        return ok;
+    }
+
+    /// <summary>
+    /// POST-for-effect (no content expected back) that surfaces the HTTP status and a sanitized
+    /// Graph error, the same shape as PatchWithStatusAsync, so callers can distinguish a 403 from
+    /// a 404 from a 5xx instead of a bare bool (idm-1).
+    /// </summary>
+    public async Task<(bool Ok, System.Net.HttpStatusCode StatusCode, string? SafeError)> PostNoContentWithStatusAsync(string endpoint, object? body = null)
     {
         var token = await GetAccessTokenAsync();
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{GraphBaseUrl}{endpoint}");
@@ -73,7 +99,11 @@ public sealed class GraphTokenClient
         }
 
         var response = await _httpClient.SendAsync(request);
-        return response.IsSuccessStatusCode;
+        if (response.IsSuccessStatusCode)
+            return (true, response.StatusCode, null);
+
+        var content = await response.Content.ReadAsStringAsync();
+        return (false, response.StatusCode, ExtractGraphError(content));
     }
 
     public async Task<JsonDocument?> PostAsync(string endpoint, object? body = null)
