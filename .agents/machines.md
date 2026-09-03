@@ -41,7 +41,12 @@ _First recorded 2026-07-21._
   For git-range reviews this means inlining `git diff` output rather than asking codex to
   run git. `codex --version` now reports `0.152.0` (cache said `0.150.1`); the cached
   `exec` flags were re-probed and all still exist.
-- **codex** (`codex-cli 0.152.0`, re-probed 2026-09-02 - see the read-only/pwsh entry above;
+- **codex `-s read-only` native exec WORKS AGAIN as of 2026-09-03 (codex-cli `0.152.1`):** a
+  smoke dispatch ran `pwsh.exe -NoProfile -Command 'git log --oneline -1'` as a native
+  `command_execution` item, exit 0, in under a minute. The 0xC0000142 entry above is
+  therefore version-bound to `0.152.0`; probe again if the version moves. The gba plan
+  openreview (2026-09-03) was dispatched on the normal repo-reading prompt, no inlining.
+- **codex** (`codex-cli 0.152.1` as of 2026-09-03; `0.152.0` re-probed 2026-09-02 - see the read-only/pwsh entry above;
   was `0.147.0` as of 2026-08-14, `0.146.0` as of 2026-08-05,
   `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.

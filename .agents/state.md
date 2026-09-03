@@ -62,8 +62,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   that build predates `1a4b342`, redeploy, then the throwaway-group remove/re-add check.
   (b) agent: draft `docs/GroupBulkActions-Plan.md` - see the entry directly below.**
 
-- **GROUP BULK ACTIONS: OWNER REQUEST 2026-09-03, SHAPE AGREED IN CHAT, PLAN NOT YET
-  DRAFTED, NO CODE.** Owner: *"we need checkboxes and bulk actions for group management
+- **GROUP BULK ACTIONS: OWNER REQUEST 2026-09-03, SHAPE AGREED IN CHAT, PLAN DRAFTED
+  2026-09-03 (`docs/GroupBulkActions-Plan.md`, `2e89f7a`), CODEX OPENREVIEW DISPATCHED the
+  same session over `f1bec06..2e89f7a`, NO CODE.** The plan carries one drafted default the
+  owner may overrule: D1, a batch sends ONE administrator email listing every row's outcome
+  instead of one email per member (per-member AUDIT events unchanged; affected-user emails
+  in self-service stay per member). Owner goal-directive 2026-09-03: *"continue with the
+  plan and codereview with codex (default) then implement upon consensus"* - the go covers
+  drafting, the review, and implementation once the review verdict is folded in.
+  Owner: *"we need checkboxes and bulk actions for group management
   modules. removing a single entry at a time is slow and cumbersome."* Both on-prem group
   modules (`GroupManagement`, `SelfServiceGroups`); `M365GroupManagement` stays OUT (owner
   ruling 2026-08-11). Agreed shape, written to stand without the chat:
