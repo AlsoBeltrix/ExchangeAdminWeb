@@ -793,12 +793,24 @@ public class GroupMemberNestingProtectionTests
         // Ticket denial, auth denial, the outcome record, and the exception path - all four.
         Assert.Equal(4, Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")).Count);
 
+        // Since GroupBulkActions S2 the remove path is split: the ticket denial stays in the
+        // single handler, and the auth denial, the outcome record and the exception path live
+        // in RemoveOneAsync - the per-member handler both the single button and the bulk loop
+        // call. All four branches still carry the immutable identity.
         var remStart = text.IndexOf("private async Task RemoveMember(GroupMemberInfo listed)", StringComparison.Ordinal);
         var remEnd = text.IndexOf("finally { isLoading = false; }", remStart, StringComparison.Ordinal);
         Assert.True(remStart >= 0 && remEnd > remStart, "Could not bound RemoveMember - update the tripwire.");
         var remove = text[remStart..remEnd];
-        Assert.Equal(4, Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")).Count);
-        Assert.Equal(4, Regex.Matches(remove, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")).Count);
+        Assert.Equal(1, Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")).Count);
+        Assert.Equal(1, Regex.Matches(remove, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")).Count);
+
+        var oneStart = text.IndexOf("private async Task<BulkRowOutcome> RemoveOneAsync(", StringComparison.Ordinal);
+        Assert.True(oneStart >= 0, "RemoveOneAsync not found - tripwire is stale.");
+        var oneEnd = text.IndexOf("\n    // ----- Bulk remove", oneStart, StringComparison.Ordinal);
+        Assert.True(oneEnd > oneStart, "Could not bound RemoveOneAsync - update the tripwire.");
+        var one = text[oneStart..oneEnd];
+        Assert.Equal(3, Regex.Matches(one, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")).Count);
+        Assert.Equal(3, Regex.Matches(one, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")).Count);
     }
 
     [Fact]

@@ -360,7 +360,11 @@ public sealed class ModuleCatalog
             // 2.8.0: add and remove write the group's member attribute directly - the
             // Add-/Remove-ADGroupMember form made the cmdlet resolve the MEMBER on the group's
             // DC, which cannot see a member from another forest domain.
-            Version = "2.8.0",
+            // 2.9.0: bulk remove - a checkbox per member, select-all, one confirmed batch that
+            // runs each member through the same per-member handler as the single Remove
+            // (per-row authorization, protection, read-back, audit), a per-row outcome table,
+            // and one batch summary audit and email (docs/GroupBulkActions-Plan.md S2).
+            Version = "2.9.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
