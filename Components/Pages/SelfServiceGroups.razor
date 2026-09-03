@@ -218,6 +218,57 @@
                     </div>
                 </div>
 
+                <!-- Bulk add via paste list (docs/GroupBulkActions-Plan.md S5). Resolve runs every line
+                     against AD in one batched USER-only query per chunk (the single Add's own scope and
+                     binding); only lines resolving to exactly one user are committable, and each is then
+                     written through the SAME per-member handler as the single Add (ChangeOneAsync). -->
+                <div class="mb-3">
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => showBulkAdd = !showBulkAdd" disabled="@isChanging">@(showBulkAdd ? "Hide bulk add" : "Bulk add...")</button>
+                    @if (showBulkAdd)
+                    {
+                        <div class="card mt-2">
+                            <div class="card-body">
+                                <p class="text-muted mb-2"><small>Paste usernames, email addresses or UPNs - one per line, or comma-separated. Users only: a line that names a group is reported, not added. <strong>Resolve</strong> checks every line against AD in one pass; only lines that resolve to exactly one user can be added, the rest stay listed with the reason. Up to @BulkIdentityList.MaxBatch per batch.</small></p>
+                                <textarea class="form-control form-control-sm mb-2" rows="5" @bind="pasteText" @bind:event="oninput"
+                                          disabled="@(isChanging || isResolving)" placeholder="jdoe&#10;jane.doe@contoso.com"></textarea>
+                                <div class="d-flex align-items-center gap-2">
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(isChanging || isResolving || string.IsNullOrWhiteSpace(pasteText))">
+                                        @if (isResolving) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        Resolve
+                                    </button>
+                                    <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
+                                            disabled="@(isChanging || isResolving || ResolvedCount == 0)"
+                                            title="@(ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null)">
+                                        @if (isChanging && pendingOp == MembershipOperation.Add && resolution != null) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        Add resolved (@ResolvedCount)
+                                    </button>
+                                    @if (resolution != null)
+                                    {
+                                        <small class="text-muted">@ResolvedCount of @resolution.Count line(s) resolved.</small>
+                                    }
+                                </div>
+                                @if (resolution != null)
+                                {
+                                    <table class="table table-sm mt-2 mb-0">
+                                        <thead><tr><th>#</th><th>Line</th><th>Status</th><th>Resolved to</th></tr></thead>
+                                        <tbody>
+                                            @foreach (var r in resolution)
+                                            {
+                                                <tr class="@(r.Status == BulkIdentityList.Status.Resolved ? "" : "table-warning")">
+                                                    <td>@r.Line.Number</td>
+                                                    <td>@r.Line.Text</td>
+                                                    <td>@StatusLabel(r.Status)</td>
+                                                    <td><small>@(r.Match != null ? $"{r.Match.DisplayName ?? r.Match.Name ?? r.Match.DistinguishedName} ({IdentityOf(r.Match)})" : r.Reason)</small></td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
                 @if (changeResult != null)
                 {
                     <div class="alert @(changeResult.Success ? "alert-success" : "alert-danger") alert-dismissible py-2 mb-3">
@@ -413,6 +464,13 @@
     private bool showRemoveConfirm;
     private List<BulkRowOutcome>? bulkOutcome;
     private string bulkOutcomeTitle = "";
+
+    // Bulk add state (S5). The paste text survives a group switch (it is not about a group);
+    // the resolution table does not - it is a preview for the batch about to be written.
+    private bool showBulkAdd;
+    private string pasteText = "";
+    private bool isResolving;
+    private List<BulkIdentityList.Resolution>? resolution;
 
     protected override async Task OnInitializedAsync()
     {
@@ -673,6 +731,7 @@
         selectedGuids.Clear();
         showRemoveConfirm = false;
         bulkOutcome = null;
+        resolution = null;
     }
 
     private void AuditBatch(string action, ManageableGroup group, bool success, string? errorDetail, int requested, int done, int notDone, IReadOnlyList<string> memberLines)
@@ -758,13 +817,50 @@
         if (selected == null || isChanging || string.IsNullOrWhiteSpace(identity))
             return;
 
+        // Snapshot before the first await: group navigation stays live while awaits run.
+        var group = selected;
         isChanging = true;
         pendingOp = operation;
         changeResult = null;
         await Task.Yield();
 
-        var group = selected;
-        var member = identity;
+        // The per-member typed path - authorization re-check, eligibility/protection-gated
+        // service write, audit, admin email and the affected-member notification - is
+        // ChangeOneAsync, shared byte-for-byte with the bulk add loop
+        // (docs/GroupBulkActions-Plan.md S5, AC8). It never throws.
+        try
+        {
+            var outcome = await ChangeOneAsync(group, identity, operation, sendAdminEmail: true);
+            changeResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+            if (outcome.Done)
+                memberIdentity = "";
+        }
+        finally
+        {
+            isChanging = false;
+            pendingOp = null;
+        }
+
+        // Reflect the change in the displayed membership (AC-M2): a successful add/remove refreshes the
+        // list so the added member appears / the removed row disappears. A failed change leaves the list
+        // as-is. Runs after isChanging is cleared so the list's Remove buttons re-enable.
+        if (changeResult?.Success == true && ReferenceEquals(selected, group))
+            await LoadMembers();
+    }
+
+    /// <summary>
+    /// The per-member TYPED change (add or remove by identity): the ONE place the single
+    /// Add/Remove buttons and the bulk add loop both go through (docs/GroupBulkActions-Plan.md
+    /// S5, AC8 - this page's typed handler covers both operations, so it is the add handler the
+    /// plan calls AddOneAsync). Runs the module authorization re-check immediately before THIS
+    /// row's write (gba-1), then the service call (USER-only exactly-one resolution, eligibility
+    /// and protection re-checked inside), then the per-member audit on every branch, then the
+    /// per-member admin email when asked (the bulk loop sends one summary instead, plan D1), and
+    /// ALWAYS the affected-member notification on the existing predicate. Never throws: an
+    /// exception is a Not done row, audited.
+    /// </summary>
+    private async Task<BulkRowOutcome> ChangeOneAsync(ManageableGroup group, string member, MembershipOperation operation, bool sendAdminEmail)
+    {
         var action = operation == MembershipOperation.Add ? "SelfServiceGroups_AddMember" : "SelfServiceGroups_RemoveMember";
         try
         {
@@ -778,13 +874,11 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = PermissionResult.Fail("Authorization denied.");
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", "Authorization denied", new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
-                return;
+                return new BulkRowOutcome(member, false, "Authorization denied.");
             }
 
             var outcome = await GroupService.ChangeMemberAsync(callerSid, group.ObjectGuid, member, operation, authState.User);
-            changeResult = outcome.Result;
 
             var changeExtra = new Dictionary<string, object?> { ["member"] = member };
             // A serviced override succeeded, so it cannot ride errorDetail - that field is written
@@ -799,23 +893,143 @@
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, changeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             var memberDetail = string.IsNullOrWhiteSpace(outcome.AffectedMemberDisplayName) ? member : $"{outcome.AffectedMemberDisplayName} ({member})";
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, [operation == MembershipOperation.Add ? "Member Added" : "Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+            if (sendAdminEmail)
+            {
+                try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, [operation == MembershipOperation.Add ? "Member Added" : "Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+            }
 
             // Affected-user notification only when the service confirms a real security-group change
-            // with a known address (AC10; the NotifyAffectedUser gate encapsulates the rule).
+            // with a known address (AC10; the NotifyAffectedUser gate encapsulates the rule). Per
+            // member in a batch too - each row has its own recipient.
             if (outcome.NotifyAffectedUser)
             {
                 try { await Email.SendGroupMembershipUserNotificationAsync(outcome.AffectedMemberEmail!, group.Name, currentUser, operation == MembershipOperation.Add); } catch (Exception emailEx) { Logger.LogError(emailEx, "Affected-user notification failed for {Action}", action); }
             }
 
-            if (outcome.Result.Success)
-                memberIdentity = "";
+            return new BulkRowOutcome(member, outcome.Result.Success, outcome.Result.Message);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Self-service membership change failed for {User} on {Group}", callerSid, group.Name);
-            changeResult = PermissionResult.Fail("The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", ex.Message, new Dictionary<string, object?> { ["member"] = member }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            return new BulkRowOutcome(member, false, "The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
+        }
+    }
+
+    // ----- Bulk add via paste list (docs/GroupBulkActions-Plan.md S5) -----
+
+    private int ResolvedCount => resolution?.Count(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null) ?? 0;
+
+    private static string StatusLabel(BulkIdentityList.Status status) => status switch
+    {
+        BulkIdentityList.Status.Resolved => "Resolved",
+        BulkIdentityList.Status.NotFound => "Not found",
+        BulkIdentityList.Status.Ambiguous => "Ambiguous",
+        BulkIdentityList.Status.Duplicate => "Duplicate",
+        _ => "Not attempted",
+    };
+
+    /// <summary>
+    /// The identity a resolved user is committed by (AC8): its UPN, or its sAMAccountName when
+    /// the UPN is blank. ChangeMemberAsync re-resolves it USER-only, exactly-one - the same
+    /// filter the batch preview used, so the preview and the write agree.
+    /// </summary>
+    private static string IdentityOf(BulkIdentityList.Candidate match)
+        => !string.IsNullOrWhiteSpace(match.UserPrincipalName) ? match.UserPrincipalName : (match.SamAccountName ?? "");
+
+    /// <summary>
+    /// Parses the paste and resolves every kept line in one batched service call (AC7, AC9). The
+    /// table shows EVERY line the user typed: kept lines with the service's status, duplicates
+    /// and over-cap lines with their reasons, in input order. A failed resolution surfaces as
+    /// the service's NotAttempted rows or an error alert - never as "Not found".
+    /// </summary>
+    private async Task ResolvePasteAsync()
+    {
+        isResolving = true;
+        resolution = null;
+        changeResult = null;
+        await Task.Yield();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+                throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
+
+            var parsed = BulkIdentityList.Parse(pasteText);
+            var rows = new List<BulkIdentityList.Resolution>();
+            rows.AddRange(await GroupService.ResolveBatchAsync(callerSid, parsed.Kept));
+            rows.AddRange(parsed.Duplicates.Select(d => new BulkIdentityList.Resolution(d.Line, BulkIdentityList.Status.Duplicate, null, $"Duplicate of line {d.DuplicateOf}.")));
+            rows.AddRange(parsed.OverCap.Select(l => new BulkIdentityList.Resolution(l, BulkIdentityList.Status.NotAttempted, null, $"Not attempted - over the batch limit of {BulkIdentityList.MaxBatch}.")));
+            resolution = rows.OrderBy(r => r.Line.Number).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Self-service bulk resolution failed for {User}", callerSid);
+            changeResult = PermissionResult.Fail("The pasted lines could not be resolved right now. Please try again; if the problem persists, contact the IT Support Desk.");
+        }
+        finally { isResolving = false; }
+    }
+
+    /// <summary>
+    /// Adds every RESOLVED line, one at a time, in line order, through ChangeOneAsync - the same
+    /// handler as the single Add - by the resolved user's UPN (AC8). Unresolved lines are never
+    /// attempted. Same batch contract as RemoveSelectedAsync: upfront authorization as a UX
+    /// shortcut with the real check per row inside ChangeOneAsync (gba-1), one summary audit
+    /// whose success is every-row-done (Known Failure Class 2), one summary email (D1), one
+    /// reload. The paste and its resolution are cleared only when every row is Done, so a
+    /// partial batch keeps its input visible for retry.
+    /// </summary>
+    private async Task AddResolvedAsync()
+    {
+        // Snapshot the group AND the rows before the first await.
+        var group = selected;
+        var rows = resolution?.Where(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null).ToList() ?? new();
+        if (group is null || rows.Count == 0 || isChanging)
+            return;
+
+        isChanging = true;
+        pendingOp = MembershipOperation.Add;
+        changeResult = null;
+        bulkOutcome = null;
+        await Task.Yield();
+
+        const string action = "SelfServiceGroups_BulkAddMembers";
+        var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+            {
+                changeResult = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
+            if (!authCheck.Succeeded)
+            {
+                changeResult = PermissionResult.Fail("Authorization denied.");
+                AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
+                return;
+            }
+
+            var outcomes = new List<BulkRowOutcome>(rows.Count);
+            foreach (var row in rows)
+                outcomes.Add(await ChangeOneAsync(group, IdentityOf(row.Match!), MembershipOperation.Add, sendAdminEmail: false));
+
+            var summary = BulkOutcomeSummary.Of(outcomes);
+            AuditBatch(action, group, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            bulkOutcome = outcomes;
+            bulkOutcomeTitle = $"Add resolved: {summary.Done} of {summary.Requested} added";
+            changeResult = summary.Success
+                ? PermissionResult.Ok($"{summary.Done} member(s) added to {group.Name}.")
+                : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not added - see the outcome table.");
+            if (summary.Success)
+            {
+                pasteText = "";
+                resolution = null;
+            }
         }
         finally
         {
@@ -823,10 +1037,9 @@
             pendingOp = null;
         }
 
-        // Reflect the change in the displayed membership (AC-M2): a successful add/remove refreshes the
-        // list so the added member appears / the removed row disappears. A failed change leaves the list
-        // as-is. Runs after isChanging is cleared so the list's Remove buttons re-enable.
-        if (changeResult?.Success == true)
+        // One reload for the whole batch, only if the operator is still looking at this group
+        // (LoadMembers keeps the outcome table).
+        if (ReferenceEquals(selected, group))
             await LoadMembers();
     }
 

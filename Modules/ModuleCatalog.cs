@@ -461,7 +461,11 @@ public sealed class ModuleCatalog
             // (per-row authorization, eligibility, protection, read-back, audit, affected-member
             // notification), a per-row outcome table, and one batch summary audit and email
             // (docs/GroupBulkActions-Plan.md S4).
-            Version = "1.9.0",
+            // 1.10.0: bulk add via paste list - every line resolved in one batched USER-only
+            // home-domain query per chunk (a group line is reported, never added), a resolution
+            // table, and "Add resolved" running each user through the same per-member handler as
+            // the single Add (docs/GroupBulkActions-Plan.md S5).
+            Version = "1.10.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

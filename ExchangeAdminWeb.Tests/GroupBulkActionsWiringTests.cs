@@ -348,6 +348,122 @@ public class GroupBulkActionsWiringTests
         Assert.Contains("selectedGuids.Clear();", Body(page, "private async Task LoadMembers()"), StringComparison.Ordinal);
     }
 
+    // ----- S5: SelfServiceGroups bulk add -----
+
+    [Fact]
+    public void SelfService_SingleAndBulkAdd_ShareChangeOneAsync()
+    {
+        var page = SelfServicePage();
+
+        // Exactly one typed service change call on the page, inside ChangeOneAsync - the handler
+        // the plan calls AddOneAsync (this page's typed handler covers add AND remove).
+        Assert.Equal(1, CountOf(page, "GroupService.ChangeMemberAsync("));
+        Assert.Contains("GroupService.ChangeMemberAsync(", Body(page, "private async Task<BulkRowOutcome> ChangeOneAsync("), StringComparison.Ordinal);
+
+        Assert.Contains("await ChangeOneAsync(group, identity, operation, sendAdminEmail: true)", Body(page, "private async Task ChangeMember(MembershipOperation operation, string? explicitIdentity = null)"), StringComparison.Ordinal);
+        // The batch commits by the resolved user's UPN (sAMAccountName fallback), Add only (AC8).
+        Assert.Contains("await ChangeOneAsync(group, IdentityOf(row.Match!), MembershipOperation.Add, sendAdminEmail: false)", Body(page, "private async Task AddResolvedAsync()"), StringComparison.Ordinal);
+        Assert.Contains("private static string IdentityOf(BulkIdentityList.Candidate match)", page, StringComparison.Ordinal);
+        Assert.Contains("!string.IsNullOrWhiteSpace(match.UserPrincipalName) ? match.UserPrincipalName : (match.SamAccountName ?? \"\")", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_PerRowChangeHandler_RechecksAuthorization()
+    {
+        var page = SelfServicePage();
+        var one = Body(page, "private async Task<BulkRowOutcome> ChangeOneAsync(");
+
+        Assert.Contains("AuthorizationService.AuthorizeAsync(authState.User, \"SelfServiceGroups\")", one, StringComparison.Ordinal);
+        Assert.Contains("\"Authorization denied\"", one, StringComparison.Ordinal);
+        var iAuth = one.IndexOf("AuthorizationService.AuthorizeAsync(", StringComparison.Ordinal);
+        var iWrite = one.IndexOf("GroupService.ChangeMemberAsync(", StringComparison.Ordinal);
+        Assert.True(iAuth >= 0 && iWrite > iAuth, "The authorization re-check must precede the service write inside ChangeOneAsync.");
+
+        var bulk = Body(page, "private async Task AddResolvedAsync()");
+        Assert.DoesNotContain("GroupService.ChangeMemberAsync(", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("GroupService.RemoveListedMemberAsync(", bulk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkAddAudit_UsesSummarySuccess_AndOneSummaryEmail_KeepingAffectedUserNotification()
+    {
+        var page = SelfServicePage();
+        var bulk = Body(page, "private async Task AddResolvedAsync()");
+
+        Assert.Contains("const string action = \"SelfServiceGroups_BulkAddMembers\";", bulk, StringComparison.Ordinal);
+        Assert.Contains("var summary = BulkOutcomeSummary.Of(outcomes);", bulk, StringComparison.Ordinal);
+        Assert.Contains("AuditBatch(action, group, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("AuditBatch(action, group, true,", bulk, StringComparison.Ordinal);
+        Assert.Contains("sendAdminEmail: false", bulk, StringComparison.Ordinal);
+        Assert.Equal(1, CountOf(bulk, "Email.SendAdminNotificationAsync("));
+
+        var one = Body(page, "private async Task<BulkRowOutcome> ChangeOneAsync(");
+        Assert.Contains("if (sendAdminEmail)", one, StringComparison.Ordinal);
+        Assert.Contains("if (outcome.NotifyAffectedUser)", one, StringComparison.Ordinal);
+        var iFlag = one.IndexOf("if (sendAdminEmail)", StringComparison.Ordinal);
+        var iNotify = one.IndexOf("if (outcome.NotifyAffectedUser)", StringComparison.Ordinal);
+        Assert.True(iNotify > iFlag, "The affected-user notification must follow the sendAdminEmail block.");
+        var between = one[iFlag..iNotify];
+        Assert.Equal(between.Count(c => c == '{'), between.Count(c => c == '}'));
+    }
+
+    [Fact]
+    public void SelfService_BulkAdd_CommitsOnlyResolvedRows_AndSnapshotsFirst()
+    {
+        var bulk = Body(SelfServicePage(), "private async Task AddResolvedAsync()");
+
+        Assert.Contains("resolution?.Where(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null)", bulk, StringComparison.Ordinal);
+        var iSnap = bulk.IndexOf("var group = selected;", StringComparison.Ordinal);
+        var iRows = bulk.IndexOf("var rows = resolution?.Where(", StringComparison.Ordinal);
+        var iAwait = bulk.IndexOf("await ", StringComparison.Ordinal);
+        Assert.True(iSnap >= 0 && iRows > iSnap, "Group and rows must be snapshotted.");
+        Assert.True(iAwait > iRows, "The snapshot must precede the first await in AddResolvedAsync.");
+        Assert.DoesNotContain("selected.", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("selected!.", bulk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_ResolvePaste_UsesTheServiceBatch_WithTheCallerSid_AndListsEveryLine()
+    {
+        var page = SelfServicePage();
+        var body = Body(page, "private async Task ResolvePasteAsync()");
+
+        Assert.Contains("BulkIdentityList.Parse(pasteText)", body, StringComparison.Ordinal);
+        Assert.Contains("await GroupService.ResolveBatchAsync(callerSid, parsed.Kept)", body, StringComparison.Ordinal);
+        Assert.Contains("parsed.Duplicates.Select(", body, StringComparison.Ordinal);
+        Assert.Contains("parsed.OverCap.Select(", body, StringComparison.Ordinal);
+        Assert.Contains("resolution = null;", Body(page, "private void ClearBulkState()"), StringComparison.Ordinal);
+        // The users-only rule is stated on the bulk card too (nesting plan D1).
+        Assert.Contains("Users only: a line that names a group is reported, not added.", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfServiceGroupService_BatchQuery_IsUserOnly_HomeDomain_AndProjectsName()
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Services", "SelfServiceGroups", "SelfServiceGroupService.cs"));
+        var start = text.IndexOf("internal virtual IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "QueryBatchCandidates not found - tripwire is stale.");
+        var end = text.IndexOf("\n    /// <summary>", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound QueryBatchCandidates - update the tripwire.");
+        var body = text[start..end];
+
+        // USER-only, the same filter shape and binding the single Add's ResolveUserMember uses
+        // (AC9): Get-ADUser, no group clause, no -Server.
+        Assert.Contains("AddCommand(\"Get-ADUser\")", body, StringComparison.Ordinal);
+        Assert.Contains("BulkIdentityList.BuildBatchFilter(chunk, allowGroups: false)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddParameter(\"Server\"", body, StringComparison.Ordinal);
+        Assert.Contains("\"Name\", \"DisplayName\", \"UserPrincipalName\", \"SamAccountName\", \"mail\", \"DistinguishedName\", \"ObjectGUID\"", body, StringComparison.Ordinal);
+        Assert.Contains("if (ps.HadErrors)", body, StringComparison.Ordinal);
+        Assert.Contains("throw new InvalidOperationException(", body, StringComparison.Ordinal);
+
+        // And the resolver never allows groups through the matcher.
+        var resolve = text.IndexOf("public async Task<IReadOnlyList<BulkIdentityList.Resolution>> ResolveBatchAsync(", StringComparison.Ordinal);
+        Assert.True(resolve >= 0);
+        var resolveBody = text[resolve..start];
+        Assert.Contains("BulkIdentityList.Match(kept, candidates, allowGroups: false)", resolveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("allowGroups: true", resolveBody, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void GroupManagementService_BatchQuery_IsForestWide_ClassAgnostic_AndProjectsName()
     {

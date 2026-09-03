@@ -730,6 +730,194 @@ public class SelfServiceGroupService
     }
 
     /// <summary>
+    /// Batch resolution for the paste-list bulk add (docs/GroupBulkActions-Plan.md S5, AC9):
+    /// every kept line in ONE home-domain, USER-only query per chunk - the same filter shape
+    /// and binding as <see cref="ResolveUserMember"/>, so a line that previews as Resolved
+    /// resolves the same way when <see cref="ChangeMemberAsync"/> re-resolves it at commit -
+    /// then the pure matcher assigns each line its status with groups NOT allowed (nesting plan
+    /// D1: self-service never adds a group). For every line the user query missed, one batched
+    /// class-bounded probe asks whether it names a GROUP, so the refusal states the scope rule
+    /// instead of reading as a typo (the S3 message); a probe failure keeps the generic reason.
+    /// Read-only, no eligibility check (resolution is a lookup; eligibility is re-checked inside
+    /// every write). No credentials or a failing query mark EVERY line NotAttempted with the
+    /// reason - never NotFound (AC7). Nothing here is trusted for the write itself.
+    /// </summary>
+    public async Task<IReadOnlyList<BulkIdentityList.Resolution>> ResolveBatchAsync(
+        string callerSid, IReadOnlyList<BulkIdentityList.Line> kept)
+    {
+        if (string.IsNullOrWhiteSpace(callerSid))
+            throw new ArgumentException("Caller SID is required.", nameof(callerSid));
+        if (!IsSecurityIdentifier(callerSid))
+            throw new ArgumentException(
+                "Caller identity must be a Windows SID from the authenticated principal, not an alternate identity form.",
+                nameof(callerSid));
+        if (kept.Count == 0)
+            return Array.Empty<BulkIdentityList.Resolution>();
+
+        var creds = await GetCredentialsAsync("on-prem AD self-service bulk member resolution");
+        if (creds is null)
+            return GroupManagementService.NotAttempted(kept, "AD credentials unavailable. Check the DelineaSecretId configuration for SelfServiceGroups.");
+
+        IReadOnlyList<BulkIdentityList.Candidate> candidates;
+        try
+        {
+            candidates = await ThrottledAdAsync(async () => await Task.Run(() => QueryBatchCandidates(creds.Value, kept)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Self-service bulk member resolution query failed - marking every line not attempted");
+            return GroupManagementService.NotAttempted(kept, $"The directory lookup failed: {ex.Message}");
+        }
+
+        var matched = BulkIdentityList.Match(kept, candidates, allowGroups: false);
+
+        var misses = matched.Where(r => r.Status == BulkIdentityList.Status.NotFound).Select(r => r.Line).ToList();
+        if (misses.Count == 0)
+            return matched;
+
+        IReadOnlyList<string> groupNamed;
+        try
+        {
+            groupNamed = await ThrottledAdAsync(async () => await Task.Run(() => ProbeGroupIdentities(creds.Value, misses)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Group probe after bulk resolution misses failed; keeping the generic not-found reasons");
+            return matched;
+        }
+
+        var groupSet = new HashSet<string>(groupNamed, StringComparer.OrdinalIgnoreCase);
+        return matched.Select(r => r.Status == BulkIdentityList.Status.NotFound && groupSet.Contains(r.Line.Text)
+                ? r with { Reason = ComposeMemberNotFoundMessage(r.Line.Text, MembershipOperation.Add, identityIsGroup: true) }
+                : r)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Credential fetch for the batch resolution. Internal virtual as a TEST SEAM (this project
+    /// exposes internals to the test assembly), like GroupManagementService.GetCredentialsAsync:
+    /// without it no test can drive the batch past the credential step. The existing write and
+    /// read paths keep their direct <see cref="_moduleCredentials"/> calls - this seam serves the
+    /// new method only.
+    /// </summary>
+    internal virtual Task<(string username, string password, string domain)?> GetCredentialsAsync(string purpose)
+        => _moduleCredentials.GetCredentialsAsync("SelfServiceGroups", purpose);
+
+    /// <summary>
+    /// The query half of the batch resolution: one Get-ADUser -LDAPFilter per chunk of at most
+    /// BulkIdentityList.ChunkSize lines, USER-only, bound to the module credential's home
+    /// domain (no -Server) exactly as <see cref="ResolveUserMember"/> is, so preview and commit
+    /// agree. Projects each row to a Candidate, Name included (gba-3; a user's Name is not a
+    /// matching key, but the record is shared). Throws on a query error - the caller maps it to
+    /// NotAttempted. Internal virtual TEST SEAM.
+    /// </summary>
+    internal virtual IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(
+        (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> kept)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        PrepareAdRunspace(ps);
+        var props = new[] { "Name", "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
+
+        var results = new List<BulkIdentityList.Candidate>();
+        foreach (var chunk in BulkIdentityList.Chunk(kept))
+        {
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADUser")
+              .AddParameter("LDAPFilter", BulkIdentityList.BuildBatchFilter(chunk, allowGroups: false))
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var users = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                // Fail closed for the whole batch: a partially answered query must not read as
+                // "these lines were not found" (Known Failure Class 2).
+                var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown error";
+                ps.Streams.Error.Clear();
+                throw new InvalidOperationException($"The directory query reported an error: {first}");
+            }
+
+            foreach (var u in users)
+            {
+                if (u is null)
+                    continue;
+                results.Add(new BulkIdentityList.Candidate(
+                    DistinguishedName: u.Properties["DistinguishedName"]?.Value?.ToString(),
+                    ObjectClass: u.Properties["ObjectClass"]?.Value?.ToString(),
+                    Name: u.Properties["Name"]?.Value?.ToString(),
+                    DisplayName: u.Properties["DisplayName"]?.Value?.ToString(),
+                    UserPrincipalName: u.Properties["UserPrincipalName"]?.Value?.ToString(),
+                    SamAccountName: u.Properties["SamAccountName"]?.Value?.ToString(),
+                    Mail: u.Properties["mail"]?.Value?.ToString(),
+                    ObjectGuid: u.Properties["ObjectGUID"]?.Value?.ToString()));
+            }
+        }
+        return results;
+    }
+
+    /// <summary>
+    /// The batched form of <see cref="GroupWithIdentityExists"/> for the lines the user query
+    /// missed: one class-bounded Get-ADObject per chunk, OR-ing
+    /// <see cref="AdOwnershipFilter.BuildGroupProbeFilter"/> per line, returning the line texts
+    /// that name a GROUP (matched back on name, sAMAccountName or mail, ordinal-ignore-case).
+    /// Shapes wording only, never the outcome. Throws on a query error - the caller keeps the
+    /// generic reasons. Internal virtual TEST SEAM.
+    /// </summary>
+    internal virtual IReadOnlyList<string> ProbeGroupIdentities(
+        (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> misses)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        PrepareAdRunspace(ps);
+
+        var named = new List<string>();
+        foreach (var chunk in BulkIdentityList.Chunk(misses))
+        {
+            var filter = "(|" + string.Concat(chunk.Select(l => AdOwnershipFilter.BuildGroupProbeFilter(l.Text))) + ")";
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", filter)
+              .AddParameter("Properties", new[] { "Name", "SamAccountName", "mail" })
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            var groups = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                ps.Streams.Error.Clear();
+                throw new InvalidOperationException("The group probe reported an error.");
+            }
+
+            foreach (var line in chunk)
+            {
+                var hit = groups.Any(g => g is not null && (
+                    Eq(g.Properties["Name"]?.Value?.ToString(), line.Text)
+                    || Eq(g.Properties["SamAccountName"]?.Value?.ToString(), line.Text)
+                    || Eq(g.Properties["mail"]?.Value?.ToString(), line.Text)));
+                if (hit)
+                    named.Add(line.Text);
+            }
+        }
+        return named;
+
+        static bool Eq(string? a, string b) => !string.IsNullOrWhiteSpace(a) && string.Equals(a.Trim(), b, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Resolves a listed member by objectGUID for <see cref="RemoveListedMemberAsync"/>. Accepts
     /// objectClass user OR group only (nesting plan S4); anything else resolves null and the caller
     /// refuses. For a GROUP the UserPrincipalName is string.Empty, NEVER the group's name:
