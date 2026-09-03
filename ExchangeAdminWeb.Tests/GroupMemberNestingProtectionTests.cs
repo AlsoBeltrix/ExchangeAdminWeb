@@ -731,8 +731,11 @@ public class GroupMemberNestingProtectionTests
         Assert.DoesNotContain("RecipientAutocomplete", text, StringComparison.Ordinal);
 
         // The held DN is what the service writes; forest-wide search can offer two same-named
-        // groups from different domains and only the DN distinguishes them (gmn-3).
-        Assert.Contains("AddMemberAsync(group.Identity, memberLabel, authState.User, group.SamAccountName, selection?.DistinguishedName)", text, StringComparison.Ordinal);
+        // groups from different domains and only the DN distinguishes them (gmn-3). Since
+        // GroupBulkActions S3 the single Add hands its held DN to AddOneAsync as memberDn, and
+        // AddOneAsync is the one place the service add is called with it.
+        Assert.Contains("AddOneAsync(group, memberLabel, selection?.DistinguishedName, ticket, sendAdminEmail: true)", text, StringComparison.Ordinal);
+        Assert.Contains("AddMemberAsync(group.Identity, memberLabel, authState.User, group.SamAccountName, memberDn)", text, StringComparison.Ordinal);
 
         // Typed input has no DN: the ValueChanged handler must clear the held selection so a
         // stale DN from a previous pick cannot survive a retype.
@@ -786,12 +789,22 @@ public class GroupMemberNestingProtectionTests
         var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
             "Components", "Pages", "GroupManagement.razor"));
 
+        // Since GroupBulkActions S3 the add path is split like the remove path: the ticket
+        // denial stays in the single handler (carrying the held picker DN), and the auth
+        // denial, the outcome record and the exception path live in AddOneAsync, carrying the
+        // memberDn it was handed. All four branches still carry the immutable identity.
         var addStart = text.IndexOf("private async Task AddMember()", StringComparison.Ordinal);
         var addEnd = text.IndexOf("finally { isLoading = false; }", addStart, StringComparison.Ordinal);
         Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddMember - update the tripwire.");
         var add = text[addStart..addEnd];
-        // Ticket denial, auth denial, the outcome record, and the exception path - all four.
-        Assert.Equal(4, Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")).Count);
+        Assert.Equal(1, Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")).Count);
+
+        var addOneStart = text.IndexOf("private async Task<BulkRowOutcome> AddOneAsync(", StringComparison.Ordinal);
+        Assert.True(addOneStart >= 0, "AddOneAsync not found - tripwire is stale.");
+        var addOneEnd = text.IndexOf("\n    private async Task RemoveMember(GroupMemberInfo listed)", addOneStart, StringComparison.Ordinal);
+        Assert.True(addOneEnd > addOneStart, "Could not bound AddOneAsync - update the tripwire.");
+        var addOne = text[addOneStart..addOneEnd];
+        Assert.Equal(3, Regex.Matches(addOne, Regex.Escape("[\"memberDn\"] = memberDn")).Count);
 
         // Since GroupBulkActions S2 the remove path is split: the ticket denial stays in the
         // single handler, and the auth denial, the outcome record and the exception path live

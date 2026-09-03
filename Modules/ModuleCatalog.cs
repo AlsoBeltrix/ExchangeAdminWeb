@@ -364,7 +364,11 @@ public sealed class ModuleCatalog
             // runs each member through the same per-member handler as the single Remove
             // (per-row authorization, protection, read-back, audit), a per-row outcome table,
             // and one batch summary audit and email (docs/GroupBulkActions-Plan.md S2).
-            Version = "2.9.0",
+            // 2.10.0: bulk add via paste list - every line resolved against the forest in one
+            // batched query per chunk (user or group), a resolution table, and "Add resolved"
+            // running each line through the same per-member handler as the single Add
+            // (docs/GroupBulkActions-Plan.md S3).
+            Version = "2.10.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",

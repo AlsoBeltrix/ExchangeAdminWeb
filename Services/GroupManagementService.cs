@@ -805,6 +805,110 @@ public class GroupManagementService
         }));
     }
 
+    /// <summary>
+    /// Batch resolution for the paste-list bulk add (docs/GroupBulkActions-Plan.md S3, AC10):
+    /// every kept line in ONE forest-wide query per chunk, then the pure matcher assigns each
+    /// line its status. Read-only. No credentials or a failing query mark EVERY line
+    /// NotAttempted with the reason - never NotFound (AC7): an unanswered question is not "no".
+    /// The write that follows re-resolves each Resolved line by its DN through AddMemberAsync's
+    /// unchanged picker path, so nothing here is trusted for the write itself.
+    /// </summary>
+    public async Task<IReadOnlyList<BulkIdentityList.Resolution>> ResolveBatchAsync(IReadOnlyList<BulkIdentityList.Line> kept)
+    {
+        if (kept.Count == 0)
+            return Array.Empty<BulkIdentityList.Resolution>();
+
+        var creds = await GetCredentialsAsync("on-prem AD bulk member resolution");
+        if (creds is null)
+            return NotAttempted(kept, "AD credentials unavailable.");
+
+        IReadOnlyList<BulkIdentityList.Candidate> candidates;
+        try
+        {
+            candidates = await ThrottledAdAsync(async () => await Task.Run(() => QueryBatchCandidates(creds.Value, kept)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bulk member resolution query failed - marking every line not attempted");
+            return NotAttempted(kept, $"The directory lookup failed: {ex.Message}");
+        }
+
+        return BulkIdentityList.Match(kept, candidates, allowGroups: true);
+    }
+
+    /// <summary>Every line NotAttempted with one reason - the shape a failed or credential-less batch resolution returns. Pure for unit tests.</summary>
+    internal static IReadOnlyList<BulkIdentityList.Resolution> NotAttempted(IReadOnlyList<BulkIdentityList.Line> kept, string reason)
+        => kept.Select(l => new BulkIdentityList.Resolution(l, BulkIdentityList.Status.NotAttempted, null, $"Not attempted - {reason}")).ToList();
+
+    /// <summary>
+    /// The query half of the batch resolution: one Get-ADObject -LDAPFilter per chunk of at
+    /// most BulkIdentityList.ChunkSize lines, class-agnostic (user or group - the admin
+    /// module's typed-path scope), against the forest global catalog so a foreign-domain
+    /// object is found the same way the picker finds it (falls back to the home domain when
+    /// no catalog resolves, as search does). Projects each row to a Candidate, Name included
+    /// (gba-3). Throws on a query error - the caller maps it to NotAttempted. Internal virtual
+    /// TEST SEAM, like ResolveMemberForWrite.
+    /// </summary>
+    internal virtual IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(
+        (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> kept)
+    {
+        var iss = InitialSessionState.CreateDefault();
+        iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
+        using var runspace = RunspaceFactory.CreateRunspace(iss);
+        runspace.Open();
+        using var ps = PowerShell.Create();
+        ps.Runspace = runspace;
+
+        ps.AddCommand("Import-Module").AddParameter("Name", "ActiveDirectory").AddParameter("ErrorAction", "Stop");
+        ps.Invoke();
+        ps.Commands.Clear();
+
+        var credential = CreateCredential(creds.username, creds.password, creds.domain);
+        var catalog = ResolveSearchGlobalCatalog(ps, credential);
+        var props = new[] { "Name", "DisplayName", "UserPrincipalName", "SamAccountName", "mail", "DistinguishedName", "ObjectGUID" };
+
+        var results = new List<BulkIdentityList.Candidate>();
+        foreach (var chunk in BulkIdentityList.Chunk(kept))
+        {
+            ps.Streams.Error.Clear();
+            ps.AddCommand("Get-ADObject")
+              .AddParameter("LDAPFilter", BulkIdentityList.BuildBatchFilter(chunk, allowGroups: true))
+              .AddParameter("Properties", props)
+              .AddParameter("Credential", credential)
+              .AddParameter("ErrorAction", "Stop");
+            // The StartsWith guard mirrors SearchGroupsAsync: a failed host lookup once yielded
+            // ":3268", which Get-ADObject accepts and quietly serves from the local domain.
+            if (catalog is not null && !catalog.StartsWith(':'))
+                ps.AddParameter("Server", catalog);
+            var objects = ps.Invoke();
+            ps.Commands.Clear();
+            if (ps.HadErrors)
+            {
+                // Fail closed for the whole batch: a partially answered query must not read as
+                // "these lines were not found" (Known Failure Class 2).
+                var first = ps.Streams.Error.FirstOrDefault()?.ToString() ?? "unknown error";
+                ps.Streams.Error.Clear();
+                throw new InvalidOperationException($"The directory query reported an error: {first}");
+            }
+
+            foreach (var o in objects)
+            {
+                if (o is null)
+                    continue;
+                results.Add(new BulkIdentityList.Candidate(
+                    DistinguishedName: o.Properties["DistinguishedName"]?.Value?.ToString(),
+                    ObjectClass: o.Properties["ObjectClass"]?.Value?.ToString(),
+                    Name: o.Properties["Name"]?.Value?.ToString(),
+                    DisplayName: o.Properties["DisplayName"]?.Value?.ToString(),
+                    UserPrincipalName: o.Properties["UserPrincipalName"]?.Value?.ToString(),
+                    SamAccountName: o.Properties["SamAccountName"]?.Value?.ToString(),
+                    Mail: o.Properties["mail"]?.Value?.ToString(),
+                    ObjectGuid: o.Properties["ObjectGUID"]?.Value?.ToString()));
+            }
+        }
+        return results;
+    }
+
     // --- Helpers ---
 
     /// <summary>Outcome of the class-agnostic member resolution for the write paths (S5b).</summary>
