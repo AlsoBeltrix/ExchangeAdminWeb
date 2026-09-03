@@ -59,7 +59,7 @@
                 </div>
                 @* The label above and this line say which kind of match each field gets, because the
                    three differ: Intune accepts a prefix match on the two name fields and only an exact
-                   match on the serial (IntuneDeviceService.BuildFilterExpression). An operator typing
+                   match on the serial (IntuneDeviceService.BuildSearchRequests). An operator typing
                    the middle of a device name would otherwise read the empty result as "no such device".
                    This block sits ahead of the button in source order so the pinned wording stays inside
                    IntuneDevicesPageTests's search-card window; order-1/order-2 below move it under the
@@ -98,6 +98,20 @@
        the first search's verdict on screen while the second is in flight. *@
     @if (hasSearched && !isSearching)
     {
+        @* Devices Graph returned that do not match what was typed are hidden, and the fact that
+           they were is stated (T2 Revision 2026-09-03). Normally this is zero; a non-zero count
+           means the endpoint answered a request and ignored its $filter, and unrelated devices
+           rendering as "matches" beside a wipe button is the failure this refuses to hide. *@
+        @if (errorMessage == null && filterIgnoredCount > 0)
+        {
+            <div class="alert alert-warning py-2">
+                <small>
+                    Graph returned @filterIgnoredCount device(s) that do not match the search; they were hidden.
+                    Re-run the search, and report this if it persists.
+                </small>
+            </div>
+        }
+
         @if (errorMessage != null)
         {
             <div class="alert alert-danger">@errorMessage</div>
@@ -557,6 +571,13 @@
     private bool truncated;
     private int searchedCount;
 
+    /// <summary>
+    /// Devices the last search dropped because they did not match the term (T2 Revision
+    /// 2026-09-03). Zero on every healthy search; shown as a warning when it is not, because a
+    /// $filter Graph ignored must not render as matches.
+    /// </summary>
+    private int filterIgnoredCount;
+
     private string? expandedDeviceId;
     private bool detailLoading;
     private string? detailError;
@@ -736,6 +757,7 @@
         devices = [];
         truncated = false;
         searchedCount = 0;
+        filterIgnoredCount = 0;
         expandedDeviceId = null;
         detailDevice = null;
         detailError = null;
@@ -757,6 +779,7 @@
             devices = [.. result.Devices];
             truncated = result.Truncated;
             searchedCount = result.SearchedCount;
+            filterIgnoredCount = result.FilterIgnoredCount;
 
             SafeAudit(() => Audit.LogLookupAction(currentUser, clientIpAddress, "IntuneDevices_Search", target, true));
         }

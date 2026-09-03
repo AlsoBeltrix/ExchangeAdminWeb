@@ -1215,7 +1215,7 @@ public class IntuneDevicesPageTests
     /// <summary>
     /// Source guard for the owner's search finding: the box must SAY that the two name fields
     /// match from the start and that a serial must be exact, because
-    /// IntuneDeviceService.BuildFilterExpression cannot do a substring match on this resource.
+    /// IntuneDeviceService.BuildSearchRequests cannot do a substring match on this resource.
     /// </summary>
     [Fact]
     public void IntuneDevices_SearchBox_SaysItMatchesTheStartOfANameAndAnExactSerial()
@@ -1225,6 +1225,21 @@ public class IntuneDevicesPageTests
         Assert.Contains("Start of a device name or user principal name, or an exact serial number", searchCard);
         Assert.Contains("match from the START of the value", searchCard);
         Assert.Contains("A serial number must be exact.", searchCard);
+    }
+
+    /// <summary>
+    /// Source guard, plan T2 Revision 2026-09-03: devices Graph returned that do not match the
+    /// term are hidden, and the page SAYS how many were hidden. A filter the endpoint ignored must
+    /// not read as a benign result, and the rows must not read as matches beside a wipe button.
+    /// </summary>
+    [Fact]
+    public void IntuneDevices_HiddenNonMatchingRows_AreStatedAsAWarningWithTheirCount()
+    {
+        var results = Between(PageSource(), "hasSearched && !isSearching", "No matching devices found.");
+
+        Assert.Contains("filterIgnoredCount > 0", results);
+        Assert.Contains("Graph returned @filterIgnoredCount device(s) that do not match the search; they were hidden.", results);
+        Assert.Contains("alert-warning", results);
     }
 
     // ---- harness ------------------------------------------------------------------------------

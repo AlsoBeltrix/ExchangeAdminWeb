@@ -29,6 +29,22 @@ public class IntuneDeviceServiceTests
         public Func<HttpResponseMessage> GraphResponse { get; set; } =
             () => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"value":[]}""") };
 
+        /// <summary>
+        /// Per-request response, for the three concurrent per-field search requests (plan T2
+        /// Revision 2026-09-03): set this when the three must answer differently. GraphResponse
+        /// still serves every request while this is null.
+        /// </summary>
+        public Func<HttpRequestMessage, HttpResponseMessage>? GraphResponseByRequest { get; set; }
+
+        /// <summary>
+        /// Every non-token request URI. A search issues three requests concurrently, so
+        /// LastGraphRequestUri alone cannot pin what was asked - and which of the three lands last
+        /// is not deterministic.
+        /// </summary>
+        public List<Uri> GraphRequestUris { get; } = [];
+
+        private readonly object _recordLock = new();
+
         public Uri? LastGraphRequestUri { get; private set; }
 
         /// <summary>Method and body of the last non-token request, so the write tests can assert the
@@ -51,13 +67,21 @@ public class IntuneDeviceServiceTests
                 };
             }
 
-            LastGraphRequestUri = request.RequestUri;
-            LastGraphRequestMethod = request.Method;
-            LastGraphRequestBody = request.Content == null
+            var body = request.Content == null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            GraphRequestCount++;
-            return GraphResponse();
+
+            // Three search requests are in flight at once; the recording must not race.
+            lock (_recordLock)
+            {
+                LastGraphRequestUri = request.RequestUri;
+                LastGraphRequestMethod = request.Method;
+                LastGraphRequestBody = body;
+                GraphRequestUris.Add(request.RequestUri!);
+                GraphRequestCount++;
+            }
+
+            return GraphResponseByRequest?.Invoke(request) ?? GraphResponse();
         }
     }
 
@@ -202,65 +226,281 @@ public class IntuneDeviceServiceTests
         Assert.DoesNotContain("filter", handler.LastGraphRequestUri!.Query, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- the per-field search requests (plan T2 Revision 2026-09-03) --------------------------
+
+    /// <summary>
+    /// The exact relative URL a per-field search request must carry. The $select list is
+    /// interpolated from the service's own constant rather than restated here: what these tests
+    /// pin is the URL SHAPE - parameter order, separators, and which characters are percent-encoded
+    /// - which is exactly what the 2026-09-03 fix changed. The $select CONTENT has its own guard
+    /// (SearchDevicesAsync_QueryCarriesSelect_AndExcludesActivationLockBypassCode).
+    /// </summary>
+    private static string ExpectedSearchUrl(string filter, int top = 50) =>
+        $"/deviceManagement/managedDevices?$top={top}&$select={IntuneDeviceService.SelectFields}&$filter={filter}";
+
+    /// <summary>
+    /// The device-name request, exactly. A prefix match, with `(`, `,` and the delimiting quotes
+    /// LITERAL: the previous form escaped the whole expression, so those arrived percent-encoded
+    /// and the tenant answered 200 with an empty value array.
+    /// </summary>
     [Fact]
-    public async Task SearchDevicesAsync_WithSearchTerm_EmitsPrefixFilterAcrossThreeFields()
+    public void BuildDeviceNameSearchUrl_IsTheExactRelativeUrlWithLiteralODataSyntax()
     {
-        var (service, handler) = CreateService();
+        Assert.Equal(
+            ExpectedSearchUrl("startswith(deviceName,'HYB-')"),
+            IntuneDeviceService.BuildDeviceNameSearchUrl("HYB-", 50));
+    }
 
-        await service.SearchDevicesAsync("laptop-1");
-
-        var query = Uri.UnescapeDataString(handler.LastGraphRequestUri!.Query);
-        Assert.Contains("startswith(deviceName,'laptop-1')", query);
-        Assert.Contains("startswith(userPrincipalName,'laptop-1')", query);
-        Assert.Contains("serialNumber eq 'laptop-1'", query);
+    [Fact]
+    public void BuildUserPrincipalNameSearchUrl_IsTheExactRelativeUrlWithLiteralODataSyntax()
+    {
+        Assert.Equal(
+            ExpectedSearchUrl("startswith(userPrincipalName,'HYB-')"),
+            IntuneDeviceService.BuildUserPrincipalNameSearchUrl("HYB-", 50));
     }
 
     /// <summary>
-    /// The whole filter, exactly (plan T2 Revision 2026-09-02, owner finding 2026-09-02): the two
-    /// name fields are PREFIX matches because an exact-match-only box is not a search box - a full
-    /// UPN typed against the old `eq` form returned nothing on dev. serialNumber stays `eq`.
+    /// The serial request stays `eq` - a serial is copied whole, never typed as a prefix - and the
+    /// spaces around it are emitted as %20, so the builder's output IS the string sent.
     /// </summary>
     [Fact]
-    public void BuildFilterExpression_PrefixMatchesNamesAndExactMatchesSerial()
+    public void BuildSerialNumberSearchUrl_IsTheExactRelativeUrlWithEncodedSpacesAroundEq()
     {
         Assert.Equal(
-            "startswith(deviceName,'laptop-1') or startswith(userPrincipalName,'laptop-1') or serialNumber eq 'laptop-1'",
-            IntuneDeviceService.BuildFilterExpression("laptop-1"));
+            ExpectedSearchUrl("serialNumber%20eq%20'HYB-'"),
+            IntuneDeviceService.BuildSerialNumberSearchUrl("HYB-", 50));
+    }
+
+    /// <summary>
+    /// The encoding split, stated as such: OData syntax characters are literal in every one of the
+    /// three URLs, and the typed value is what gets escaped.
+    /// </summary>
+    [Fact]
+    public void SearchUrls_LeaveODataSyntaxLiteralAndEscapeOnlyTheTypedValue()
+    {
+        var urls = new[]
+        {
+            IntuneDeviceService.BuildDeviceNameSearchUrl("a b&c", 50),
+            IntuneDeviceService.BuildUserPrincipalNameSearchUrl("a b&c", 50),
+            IntuneDeviceService.BuildSerialNumberSearchUrl("a b&c", 50)
+        };
+
+        foreach (var url in urls)
+        {
+            // Syntax: never percent-encoded.
+            Assert.DoesNotContain("%28", url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("%29", url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("%2C", url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("%27", url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("%24", url, StringComparison.OrdinalIgnoreCase);
+            // Value: always escaped, so the space and the ampersand cannot end the parameter.
+            Assert.Contains("'a%20b%26c'", url);
+            Assert.DoesNotContain("a b&c", url);
+        }
+
+        // And the syntax really is present in its literal form, so the assertions above are not
+        // passing on an expression that lost its parentheses altogether.
+        Assert.Contains("startswith(deviceName,'", urls[0]);
+        Assert.Contains("startswith(userPrincipalName,'", urls[1]);
+        Assert.Contains("serialNumber%20eq%20'", urls[2]);
+    }
+
+    /// <summary>
+    /// T4c: a single quote in the value is DOUBLED as an OData literal escape and then percent-
+    /// escaped as part of the value, never interpolated raw where it would close the literal.
+    /// </summary>
+    [Fact]
+    public void SearchUrls_SingleQuoteInValue_IsDoubledThenEscapedNotInjectedRaw()
+    {
+        Assert.Equal(
+            ExpectedSearchUrl("startswith(deviceName,'O%27%27Brien-Laptop')"),
+            IntuneDeviceService.BuildDeviceNameSearchUrl("O'Brien-Laptop", 50));
+
+        Assert.Equal(
+            ExpectedSearchUrl("serialNumber%20eq%20'O%27%27Brien-Laptop'"),
+            IntuneDeviceService.BuildSerialNumberSearchUrl("O'Brien-Laptop", 50));
     }
 
     /// <summary>
     /// `contains` is NOT usable on managedDevices - Graph answers 400 - so no substring operator
-    /// may creep into the expression, on any field.
+    /// may creep into any of the three requests.
     /// </summary>
     [Fact]
-    public void BuildFilterExpression_NeverUsesContains()
+    public void SearchUrls_NeverUseContains()
     {
-        Assert.DoesNotContain("contains", IntuneDeviceService.BuildFilterExpression("laptop-1"), StringComparison.OrdinalIgnoreCase);
+        foreach (var request in IntuneDeviceService.BuildSearchRequests("laptop-1", 50))
+            Assert.DoesNotContain("contains", request.Url, StringComparison.OrdinalIgnoreCase);
     }
 
-    // T4c: a single quote in the search value is doubled, never interpolated raw.
     [Fact]
-    public void BuildFilterExpression_SingleQuoteInValue_IsDoubledNotInjectedRaw()
+    public void BuildUnfilteredSearchUrl_CarriesNoFilterAtAll()
     {
-        var expression = IntuneDeviceService.BuildFilterExpression("O'Brien-Laptop");
-
         Assert.Equal(
-            "startswith(deviceName,'O''Brien-Laptop') or startswith(userPrincipalName,'O''Brien-Laptop') or serialNumber eq 'O''Brien-Laptop'",
-            expression);
+            $"/deviceManagement/managedDevices?$top=50&$select={IntuneDeviceService.SelectFields}",
+            IntuneDeviceService.BuildUnfilteredSearchUrl(50));
+    }
+
+    /// <summary>
+    /// The heart of the 2026-09-03 fix: three requests, one per field, and NO combined `or` filter
+    /// - which this tenant answers 200/empty for, with `eq` and with `startswith` alike, even for a
+    /// device the same endpoint returns in an unfiltered page.
+    /// </summary>
+    [Fact]
+    public async Task SearchDevicesAsync_WithSearchTerm_IssuesOneRequestPerFieldAndNoCombinedFilter()
+    {
+        var (service, handler) = CreateService();
+
+        await service.SearchDevicesAsync("HYB-");
+
+        Assert.Equal(3, handler.GraphRequestCount);
+
+        // OriginalString, not PathAndQuery: it is the exact text the service composed, before
+        // System.Uri has any chance to canonicalize part of it.
+        foreach (var expected in new[]
+                 {
+                     IntuneDeviceService.BuildDeviceNameSearchUrl("HYB-", 50),
+                     IntuneDeviceService.BuildUserPrincipalNameSearchUrl("HYB-", 50),
+                     IntuneDeviceService.BuildSerialNumberSearchUrl("HYB-", 50)
+                 })
+        {
+            Assert.Equal(1, handler.GraphRequestUris.Count(
+                uri => uri.OriginalString.EndsWith(expected, StringComparison.Ordinal)));
+        }
+
+        Assert.DoesNotContain(handler.GraphRequestUris, uri =>
+            uri.OriginalString.Contains(" or ", StringComparison.OrdinalIgnoreCase)
+            || uri.OriginalString.Contains("%20or%20", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// The merge: distinct by device id with the FIRST occurrence winning, ordered by device name
+    /// rather than by which request answered first, and SearchedCount is the distinct count.
+    /// </summary>
+    [Fact]
+    public async Task SearchDevicesAsync_MergesThePerFieldPagesByIdFirstOccurrenceWinningInNameOrder()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponseByRequest = request => Ok(SearchFieldOf(request) switch
+        {
+            "deviceName" =>
+                """{"value":[{"id":"2","deviceName":"HYB-B"},{"id":"1","deviceName":"HYB-A","notes":"device-name page"}]}""",
+            "userPrincipalName" =>
+                """{"value":[{"id":"1","deviceName":"HYB-A","notes":"UPN page"},{"id":"3","deviceName":"AAA-1","userPrincipalName":"HYB-user@contoso.com"}]}""",
+            _ =>
+                """{"value":[{"id":"4","deviceName":"ZZZ-1","serialNumber":"HYB-"}]}"""
+        });
+
+        var result = await service.SearchDevicesAsync("HYB-");
+
+        Assert.Equal(["3", "1", "2", "4"], result.Devices.Select(device => device.Id));
+        Assert.Equal(4, result.SearchedCount);
+        Assert.Equal(0, result.FilterIgnoredCount);
+        // First occurrence wins: id 1 is the copy the device-name request returned.
+        Assert.Equal("device-name page", result.Devices.Single(device => device.Id == "1").Notes);
+    }
+
+    /// <summary>
+    /// T7 per field: one failing request fails the WHOLE search, naming which field's request
+    /// failed. A search that returned the other two fields' rows would be a partial result
+    /// presented as a complete one.
+    /// </summary>
+    [Theory]
+    [InlineData("deviceName", "device name search")]
+    [InlineData("userPrincipalName", "user principal name search")]
+    [InlineData("serialNumber", "serial number search")]
+    public async Task SearchDevicesAsync_OneFieldRequestFails_FailsTheWholeSearchNamingThatRequest(
+        string failingField, string expectedWording)
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponseByRequest = request => SearchFieldOf(request) == failingField
+            ? new HttpResponseMessage(HttpStatusCode.BadRequest)
+            : Ok("""{"value":[{"id":"1","deviceName":"HYB-A"}]}""");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.SearchDevicesAsync("HYB-"));
+
+        Assert.Contains(expectedWording, ex.Message);
+        Assert.Contains("400 Bad Request", ex.Message);
+        Assert.Contains("failed search", ex.Message);
+    }
+
+    /// <summary>
+    /// The defensive half: an endpoint that honours the request and IGNORES the $filter answers
+    /// with an arbitrary page, and those rows must not render as matches beside a wipe button. They
+    /// are dropped, and the fact that they were is counted so the page can say so.
+    /// </summary>
+    [Fact]
+    public async Task SearchDevicesAsync_GraphIgnoresTheFilter_HidesTheNonMatchingRowsAndCountsThem()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponseByRequest = request => Ok(SearchFieldOf(request) == "deviceName"
+            ? """{"value":[{"id":"1","deviceName":"HYB-A"},{"id":"9","deviceName":"OTHER-9","userPrincipalName":"someone@contoso.com","serialNumber":"SN-9"}]}"""
+            : """{"value":[]}""");
+
+        var result = await service.SearchDevicesAsync("HYB-");
+
+        Assert.Equal(["1"], result.Devices.Select(device => device.Id));
+        Assert.Equal(1, result.FilterIgnoredCount);
+        Assert.Equal(2, result.SearchedCount);
+    }
+
+    // T1, across three responses: one truncated page truncates the whole search.
+    [Fact]
+    public async Task SearchDevicesAsync_AnyOnePerFieldPageTruncated_SetsTruncatedTrue()
+    {
+        var (service, handler) = CreateService();
+        handler.GraphResponseByRequest = request => Ok(SearchFieldOf(request) == "serialNumber"
+            ? """{"value":[],"@odata.nextLink":"https://graph.microsoft.com/v1.0/deviceManagement/managedDevices?$skiptoken=abc"}"""
+            : """{"value":[{"id":"1","deviceName":"HYB-A"}]}""");
+
+        var result = await service.SearchDevicesAsync("HYB-");
+
+        Assert.True(result.Truncated);
+        Assert.Single(result.Devices);
     }
 
     [Fact]
-    public void BuildFilterExpression_NullOrWhitespace_ReturnsNull()
+    public async Task SearchDevicesAsync_NoPerFieldPageTruncated_SetsTruncatedFalse()
     {
-        Assert.Null(IntuneDeviceService.BuildFilterExpression(null));
-        Assert.Null(IntuneDeviceService.BuildFilterExpression(""));
-        Assert.Null(IntuneDeviceService.BuildFilterExpression("   "));
+        var (service, handler) = CreateService();
+        handler.GraphResponseByRequest = _ => Ok("""{"value":[{"id":"1","deviceName":"HYB-A"}]}""");
+
+        var result = await service.SearchDevicesAsync("HYB-");
+
+        Assert.False(result.Truncated);
+        Assert.Single(result.Devices);
+        Assert.Equal(1, result.SearchedCount);
+    }
+
+    /// <summary>
+    /// The client-side verification's own rules: prefix on the two name fields, EQUALITY on the
+    /// serial, case-insensitive throughout - the same three comparisons the three requests ask
+    /// Graph for, so a matching device is never hidden by this check.
+    /// </summary>
+    [Theory]
+    [InlineData("hyb-", "HYB-1", "", "", true)]
+    [InlineData("HYB-", "OTHER-1", "hyb-user@contoso.com", "", true)]
+    [InlineData("sn123", "OTHER-1", "", "SN123", true)]
+    [InlineData("HYB-", "X-HYB-1", "user@contoso.com", "SN1", false)]
+    [InlineData("SN123", "OTHER-1", "", "SN1234", false)]
+    [InlineData("HYB-", "", "", "", false)]
+    public void MatchesSearchTerm_IsPrefixOnTheNamesAndEqualityOnTheSerial(
+        string searchTerm, string deviceName, string userPrincipalName, string serialNumber, bool expected)
+    {
+        var device = new IntuneDevice
+        {
+            Id = "1",
+            DeviceName = deviceName,
+            UserPrincipalName = userPrincipalName,
+            SerialNumber = serialNumber
+        };
+
+        Assert.Equal(expected, IntuneDeviceService.MatchesSearchTerm(searchTerm, device));
     }
 
     [Theory]
     [InlineData("a&b")]
     [InlineData("a#b")]
-    public async Task SearchDevicesAsync_ValueWithReservedCharacters_ProducesWellFormedUrl(string value)
+    public async Task SearchDevicesAsync_ValueWithReservedCharacters_ProducesWellFormedUrls(string value)
     {
         var (service, handler) = CreateService();
 
@@ -268,12 +508,12 @@ public class IntuneDeviceServiceTests
 
         Assert.Empty(result.Devices);
         // A well-formed request URI parses cleanly and the literal reserved character never
-        // leaks unescaped into the query string.
-        Assert.DoesNotContain(value, handler.LastGraphRequestUri!.Query);
+        // leaks unescaped into any of the three query strings.
+        Assert.All(handler.GraphRequestUris, uri => Assert.DoesNotContain(value, uri.Query));
     }
 
     [Fact]
-    public async Task SearchDevicesAsync_OverlongValue_ProducesWellFormedUrl()
+    public async Task SearchDevicesAsync_OverlongValue_ProducesWellFormedUrls()
     {
         var (service, handler) = CreateService();
         var overlong = new string('x', 500);
@@ -281,7 +521,26 @@ public class IntuneDeviceServiceTests
         var result = await service.SearchDevicesAsync(overlong);
 
         Assert.Empty(result.Devices);
-        Assert.Contains("deviceName", handler.LastGraphRequestUri!.Query);
+        Assert.Equal(3, handler.GraphRequestUris.Count);
+        Assert.All(handler.GraphRequestUris, uri => Assert.Contains(overlong, uri.Query));
+    }
+
+    private static HttpResponseMessage Ok(string json) =>
+        new(HttpStatusCode.OK) { Content = new StringContent(json) };
+
+    /// <summary>Which of the three per-field search requests this is, read off its own $filter.</summary>
+    private static string SearchFieldOf(HttpRequestMessage request)
+    {
+        var url = request.RequestUri!.OriginalString;
+
+        if (url.Contains("startswith(deviceName", StringComparison.Ordinal))
+            return "deviceName";
+
+        if (url.Contains("startswith(userPrincipalName", StringComparison.Ordinal))
+            return "userPrincipalName";
+
+        Assert.Contains("serialNumber", url);
+        return "serialNumber";
     }
 
     [Fact]

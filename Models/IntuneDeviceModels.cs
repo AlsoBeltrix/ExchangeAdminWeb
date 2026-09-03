@@ -44,15 +44,22 @@ public sealed class IntuneDevice
 
 /// <summary>
 /// Result of a bounded device search (docs/IntuneDeviceManagement-Plan.md S1). Truncated is set
-/// whenever the Graph response carried @odata.nextLink (T1) - the shared client cannot follow an
-/// absolute nextLink, so a capped result must never render as a complete one. SearchedCount is
-/// the number of devices the page actually inspected, which matters when a client-side filter
-/// (T2 fallback) matches nothing: "no match in the first N devices," never "no such device."
+/// whenever ANY of the search's Graph responses carried @odata.nextLink (T1) - the shared client
+/// cannot follow an absolute nextLink, so a capped result must never render as a complete one.
+/// SearchedCount is the number of distinct devices the search actually inspected, which matters
+/// when nothing matches: "no match in the first N devices," never "no such device."
 /// </summary>
+/// <param name="FilterIgnoredCount">
+/// How many devices Graph returned that did NOT match the search term and were therefore hidden
+/// (T2 Revision 2026-09-03). Normally zero. A non-zero value means an endpoint honoured the
+/// request and ignored its $filter, which the page states as a warning rather than rendering the
+/// rows as matches - a filter that failed must not read as a benign result.
+/// </param>
 public sealed record IntuneDeviceSearchResult(
     IReadOnlyList<IntuneDevice> Devices,
     bool Truncated,
-    int SearchedCount);
+    int SearchedCount,
+    int FilterIgnoredCount = 0);
 
 /// <summary>Outcome of a single device action. SafeError carries only the sanitized Graph
 /// error.code/message (never a token or raw body) so a refusal can be shown and audited.</summary>

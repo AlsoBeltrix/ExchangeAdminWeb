@@ -248,6 +248,11 @@ wipe a device via Microsoft Graph API.
   (`startswith`); a serial number must be exact. Typing the middle of a device name
   finds nothing, which the search box says on screen. Intune does not support a
   substring (`contains`) filter on managed devices
+- Each search sends **one Graph request per field** and merges the three result sets by
+  device id: a single filter combining the three properties with `or` returns an empty
+  result on this tenant instead of matching. Any one of the three requests failing fails
+  the whole search, and a device Graph returns that does not match the term is hidden with
+  a count shown, never rendered as a match
 - **What the actions do** -- the same wording appears on the page in a collapsible
   "What do these actions do?" panel, closed by default, plus a tooltip on each button
   and the first two sentences above each confirmation's ticket box:

@@ -708,7 +708,10 @@ public sealed class ModuleCatalog
             SortOrder = 820,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.2.0",
+            // 1.3.0: the search issues one Graph request per field (device name, UPN, serial) and
+            // merges them - a single combined `or` filter returns 200 with an empty result on the
+            // dev tenant (docs/IntuneDeviceManagement-Plan.md T2 Revision 2026-09-03).
+            Version = "1.3.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

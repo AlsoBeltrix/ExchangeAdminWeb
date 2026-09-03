@@ -302,6 +302,34 @@ Request ... this is a failed search and not a device that does not exist"), neve
 list. Graph's own error text is not quoted there because `GraphTokenClient.GetWithStatusAsync`
 discards the response body on a non-success status.
 
+**Revision 2026-09-03 (dev validation, module 1.2.0 on dev, app registration proven).** The
+combined `or` filter is the defect, not the operator:
+
+- **A single `$filter` joining the three properties with `or` returns `200` with an EMPTY
+  `value` array on this tenant** - for `startswith` and for `eq` alike. Proven against a
+  device the same endpoint returns in an unfiltered page: a blank search listed
+  `CAMB-ARSM-D01`, and searching that exact name, a real `HYB-` prefix, or a full UPN each
+  answered `200` with nothing. The endpoint evaluates the combined expression to nothing
+  rather than rejecting it, so T7 has no `400` to surface.
+- **The search now issues ONE REQUEST PER FIELD, concurrently** -
+  `startswith(deviceName,'<v>')`, `startswith(userPrincipalName,'<v>')` and
+  `serialNumber eq '<v>'`, each with the same `$top` and `$select` - and merges the three
+  result sets by device `id`, first occurrence winning, ordered by device name.
+  `Truncated` is true if ANY of the three carried `@odata.nextLink`; `SearchedCount` is the
+  distinct merged count. A blank term stays one unfiltered request.
+- **Encoding is narrowed to the value.** The previous form ran `Uri.EscapeDataString` over
+  the whole expression, so `(`, `)`, `,` and the delimiting `'` reached Graph
+  percent-encoded. Only the typed value is escaped now (after doubling any single quote);
+  the OData syntax characters stay literal and the spaces around `eq` are emitted as `%20`.
+  The three composed relative URLs are pinned by exact-string tests.
+- **T7 is per field.** Any one of the three requests failing fails the WHOLE search, naming
+  which field's request failed. There is no partial result and no silent empty one.
+- **Defensive client-side verification.** After merging, a row that does not actually match
+  the term - device name or UPN prefix, or serial equality, case-insensitive - is dropped and
+  counted in `FilterIgnoredCount`, which the page states as a warning. This catches the
+  mirror-image failure: an endpoint that honours the request and ignores the `$filter`,
+  answering with an arbitrary page whose rows would otherwise render as matches.
+
 ### T3 - the destructive verbs are asynchronous, and 204 is acceptance not completion
 
 `retire`, `wipe` and `delete` return `204 No Content`. For retire and wipe that means Intune

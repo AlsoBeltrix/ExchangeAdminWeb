@@ -102,7 +102,9 @@ public sealed class IntuneDeviceService
     // Deliberately excludes activationLockBypassCode (T4b) - the second, request-boundary half
     // of the exclusion. IntuneDevice also has no property to hold it (the first half), so a
     // $select regression here does not, on its own, put the secret on the page.
-    private const string SelectFields =
+    // internal so the URL-builder tests can assert a whole composed URL by equality without
+    // restating this list; the exclusion itself has its own guard test.
+    internal const string SelectFields =
         "id,deviceName,managedDeviceName,userPrincipalName,userDisplayName,userId,operatingSystem," +
         "osVersion,manufacturer,model,serialNumber,imei,meid,wiFiMacAddress,ethernetMacAddress," +
         "enrolledDateTime,lastSyncDateTime,complianceState,managementAgent,managedDeviceOwnerType," +
@@ -110,47 +112,143 @@ public sealed class IntuneDeviceService
         "azureADDeviceId,azureADRegistered,totalStorageSpaceInBytes,freeStorageSpaceInBytes,notes";
 
     /// <summary>
-    /// Bounded search: a PREFIX match on deviceName and userPrincipalName, an exact match on
-    /// serialNumber (see BuildFilterExpression; plan T2 Revision 2026-09-02). A device search
-    /// whose filter Graph will not accept does not read as "no matches" here, because a
-    /// non-success status throws (T7) rather than being swallowed; a 400 for an unsupported
-    /// filter surfaces as a failed search naming the status, not an empty one.
+    /// Bounded search: ONE REQUEST PER FIELD, issued concurrently - a prefix match on deviceName,
+    /// a prefix match on userPrincipalName, an exact match on serialNumber - merged by device id
+    /// (plan T2 Revision 2026-09-03).
     /// </summary>
+    /// <remarks>
+    /// A single combined `or` filter across those three properties answers 200 with an EMPTY
+    /// value array on this tenant - for `startswith` and for `eq` alike, and for a device the same
+    /// endpoint returns in an unfiltered page. The endpoint evaluates the combined expression to
+    /// nothing instead of rejecting it, so there is no 400 for T7 to surface; three
+    /// single-property filters are each an expression it does honour.
+    ///
+    /// A failed search still never reads as "no matches": any one of the three requests failing
+    /// throws (T7), naming which field's request failed, rather than contributing an empty page to
+    /// the merge. Rows Graph returns that do not actually match the term are dropped and counted
+    /// (FilterIgnoredCount), so the mirror-image failure - a honoured request whose filter was
+    /// ignored - cannot render as matches either.
+    /// </remarks>
     public async Task<IntuneDeviceSearchResult> SearchDevicesAsync(string? searchTerm)
     {
         var client = await _graphClientFactory() ?? throw new InvalidOperationException("Intune Devices Graph credentials not available.");
 
         var top = ClampSearchResultLimit(_moduleConfig?.GetValue("IntuneDevices", "SearchResultLimit"));
 
-        var query = $"$top={top}&$select={SelectFields}";
-        var filterExpression = BuildFilterExpression(searchTerm);
-        if (filterExpression != null)
-            query += $"&$filter={Uri.EscapeDataString(filterExpression)}";
-
-        var (doc, status) = await client.GetWithStatusAsync($"{DevicesEndpoint}?{query}");
-
-        // A failed request must never render as "no devices found" - an operator searching a
-        // serial number who sees nothing must not conclude the device is unenrolled when the
-        // real cause is a missing permission or a throttled tenant (T7).
-        if (doc == null)
-            throw BuildFailure(status, "Intune devices");
-
-        using var responseDoc = doc;
-
-        // @odata.nextLink is absolute and GraphTokenClient cannot follow it (T1) - its presence
-        // must still be surfaced so a capped list never looks like a complete one.
-        var truncated = responseDoc.RootElement.TryGetProperty("@odata.nextLink", out _);
-
-        var devices = new List<IntuneDevice>();
-        var searchedCount = 0;
-        foreach (var item in responseDoc.RootElement.GetProperty("value").EnumerateArray())
+        // A blank term stays ONE unfiltered request, as before: there is no field to split it
+        // across, and nothing to verify a returned row against.
+        if (string.IsNullOrWhiteSpace(searchTerm))
         {
-            searchedCount++;
-            devices.Add(ParseDevice(item));
+            var (doc, status) = await client.GetWithStatusAsync(BuildUnfilteredSearchUrl(top));
+
+            // A failed request must never render as "no devices found" - an operator searching a
+            // serial number who sees nothing must not conclude the device is unenrolled when the
+            // real cause is a missing permission or a throttled tenant (T7).
+            if (doc == null)
+                throw BuildFailure(status, "Intune devices");
+
+            using var unfilteredDoc = doc;
+            var page = ReadDevicePage(unfilteredDoc);
+            return new IntuneDeviceSearchResult(page.Devices, page.Truncated, page.Devices.Count, 0);
         }
 
-        return new IntuneDeviceSearchResult(devices, truncated, searchedCount);
+        var requests = BuildSearchRequests(searchTerm, top);
+
+        // Awaited as one Task.WhenAll rather than in sequence: three round trips at once, and
+        // WhenAll observes every child exception, so a socket failure on the second request cannot
+        // become an unobserved task exception while the first one's throw unwinds.
+        var responses = await Task.WhenAll(requests.Select(request => client.GetWithStatusAsync(request.Url)));
+
+        try
+        {
+            for (var i = 0; i < responses.Length; i++)
+            {
+                // T7, per field: a 403 on the serial-number request is a FAILED search, not a
+                // search whose serial half happened to match nothing. There is no partial result.
+                if (responses[i].Document == null)
+                    throw BuildFailure(responses[i].StatusCode, requests[i].FailureContext);
+            }
+
+            var pages = responses.Select(response => ReadDevicePage(response.Document!)).ToArray();
+
+            return MergeSearchPages(
+                searchTerm,
+                pages.SelectMany(page => page.Devices),
+                pages.Any(page => page.Truncated));
+        }
+        finally
+        {
+            foreach (var response in responses)
+                response.Document?.Dispose();
+        }
     }
+
+    /// <summary>
+    /// One Graph page: the devices it carried, and whether it was cut short. @odata.nextLink is
+    /// absolute and GraphTokenClient cannot follow it (T1) - its presence must still be surfaced so
+    /// a capped list never looks like a complete one.
+    /// </summary>
+    private static (List<IntuneDevice> Devices, bool Truncated) ReadDevicePage(JsonDocument document)
+    {
+        var truncated = document.RootElement.TryGetProperty("@odata.nextLink", out _);
+
+        var devices = new List<IntuneDevice>();
+        foreach (var item in document.RootElement.GetProperty("value").EnumerateArray())
+            devices.Add(ParseDevice(item));
+
+        return (devices, truncated);
+    }
+
+    /// <summary>
+    /// Merges the per-field pages into one result: the first occurrence of a device id wins, the
+    /// order is by device name so the same search does not reshuffle between runs, Truncated is
+    /// true when ANY page carried @odata.nextLink, and SearchedCount is the distinct merged count -
+    /// including rows that are then dropped for not matching, because that count is what "no match
+    /// in the first N devices" means on the page.
+    /// </summary>
+    internal static IntuneDeviceSearchResult MergeSearchPages(
+        string searchTerm, IEnumerable<IntuneDevice> devicesInRequestOrder, bool truncated)
+    {
+        var merged = new Dictionary<string, IntuneDevice>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in devicesInRequestOrder)
+            merged.TryAdd(device.Id, device);
+
+        var matching = new List<IntuneDevice>();
+        var ignored = 0;
+        foreach (var device in merged.Values)
+        {
+            if (MatchesSearchTerm(searchTerm, device))
+                matching.Add(device);
+            else
+                ignored++;
+        }
+
+        matching.Sort(static (left, right) =>
+        {
+            var byName = string.Compare(left.DeviceName, right.DeviceName, StringComparison.OrdinalIgnoreCase);
+            return byName != 0 ? byName : string.Compare(left.Id, right.Id, StringComparison.Ordinal);
+        });
+
+        return new IntuneDeviceSearchResult(matching, truncated, merged.Count, ignored);
+    }
+
+    /// <summary>
+    /// Whether a device Graph returned actually matches what was typed - device name or user
+    /// principal name starting with the term, or a serial equal to it, all case-insensitively: the
+    /// same three comparisons the three requests ask Graph for.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately redundant with the server-side filter. The 2026-09-03 finding is that this
+    /// endpoint can evaluate a filter it dislikes to nothing rather than rejecting it; the
+    /// mirror-image failure - honouring the request but ignoring the filter and answering with an
+    /// arbitrary page - would put unrelated devices on screen as "matches", which is the worse
+    /// direction on a page whose next button wipes a laptop. A dropped row is counted and stated,
+    /// never silently discarded: a filter that failed must not read as a benign result.
+    /// </remarks>
+    internal static bool MatchesSearchTerm(string searchTerm, IntuneDevice device) =>
+        device.DeviceName.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase)
+        || device.UserPrincipalName.StartsWith(searchTerm, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(device.SerialNumber, searchTerm, StringComparison.OrdinalIgnoreCase);
 
     public async Task<IntuneDevice> GetDeviceAsync(string deviceId)
     {
@@ -527,25 +625,57 @@ public sealed class IntuneDeviceService
     }
 
     /// <summary>
-    /// Builds the $filter expression that matches searchTerm against deviceName,
-    /// userPrincipalName or serialNumber. deviceName and userPrincipalName are PREFIX matches:
-    /// an exact-match-only search box is not a search box, and dev proved on 2026-09-02 that a
-    /// full UPN typed against the previous `eq` form returned nothing usable (plan T2, Revision
-    /// 2026-09-02). serialNumber stays `eq` - a serial is copied whole, never typed as a prefix.
-    /// `contains` is deliberately NOT used: managedDevices rejects it with a 400.
-    /// A single quote in the value is doubled per the OData literal-escaping shape
-    /// (M365GroupManagementService.cs:74, T4c) rather than interpolated raw; the caller
-    /// Uri.EscapeDataString's the whole expression as a query parameter. Graph rejecting the
-    /// clause is a failed request via GetWithStatusAsync (T7), never a silent empty list.
+    /// The three per-field requests one search issues, in the order their results are merged, each
+    /// paired with the wording its own failure is reported under (T7) - so "the serial-number
+    /// request was throttled" is distinguishable from "the device-name request was refused".
     /// </summary>
-    internal static string? BuildFilterExpression(string? searchTerm)
-    {
-        if (string.IsNullOrWhiteSpace(searchTerm))
-            return null;
+    internal static (string Url, string FailureContext)[] BuildSearchRequests(string searchTerm, int top) =>
+    [
+        (BuildDeviceNameSearchUrl(searchTerm, top), "Intune devices (device name search)"),
+        (BuildUserPrincipalNameSearchUrl(searchTerm, top), "Intune devices (user principal name search)"),
+        (BuildSerialNumberSearchUrl(searchTerm, top), "Intune devices (serial number search)")
+    ];
 
-        var escaped = EscapeODataLiteral(searchTerm);
-        return $"startswith(deviceName,'{escaped}') or startswith(userPrincipalName,'{escaped}') or serialNumber eq '{escaped}'";
-    }
+    /// <summary>The unfiltered first page, for a blank search term.</summary>
+    internal static string BuildUnfilteredSearchUrl(int top) => $"{DevicesEndpoint}?{SearchQuery(top)}";
+
+    /// <summary>
+    /// Prefix match on deviceName. An exact-match-only search box is not a search box, and dev
+    /// proved on 2026-09-02 that a full value typed against the previous `eq` form returned
+    /// nothing usable (plan T2, Revision 2026-09-02). `contains` is deliberately NOT used:
+    /// managedDevices rejects it with a 400.
+    /// </summary>
+    internal static string BuildDeviceNameSearchUrl(string searchTerm, int top) =>
+        $"{DevicesEndpoint}?{SearchQuery(top)}&$filter=startswith(deviceName,{ODataStringLiteral(searchTerm)})";
+
+    /// <summary>Prefix match on userPrincipalName. See BuildDeviceNameSearchUrl.</summary>
+    internal static string BuildUserPrincipalNameSearchUrl(string searchTerm, int top) =>
+        $"{DevicesEndpoint}?{SearchQuery(top)}&$filter=startswith(userPrincipalName,{ODataStringLiteral(searchTerm)})";
+
+    /// <summary>
+    /// Exact match on serialNumber - a serial is copied whole, never typed as a prefix. The spaces
+    /// around `eq` are emitted as %20 rather than left literal, so the string this builder returns
+    /// is the string that goes on the wire: System.Uri would escape a literal space anyway, and a
+    /// builder whose output differs from the request is one a test cannot pin.
+    /// </summary>
+    internal static string BuildSerialNumberSearchUrl(string searchTerm, int top) =>
+        $"{DevicesEndpoint}?{SearchQuery(top)}&$filter=serialNumber%20eq%20{ODataStringLiteral(searchTerm)}";
+
+    private static string SearchQuery(int top) => $"$top={top}&$select={SelectFields}";
+
+    /// <summary>
+    /// One OData string literal: the quotes delimiting it are SYNTAX and stay literal, and only the
+    /// typed value is percent-escaped - after doubling any single quote it contains, per the OData
+    /// literal-escaping shape (M365GroupManagementService.cs:74, T4c).
+    /// </summary>
+    /// <remarks>
+    /// Narrowed on 2026-09-03. The previous form ran Uri.EscapeDataString over the WHOLE filter
+    /// expression, so `(`, `)`, `,` and the delimiting `'` reached Graph percent-encoded. That is
+    /// legal in a URL and Graph answered 200 - with an empty value array every time. The escaping
+    /// is now the value's alone, which is the shape Graph's own clients put on the wire.
+    /// </remarks>
+    private static string ODataStringLiteral(string value) =>
+        $"'{Uri.EscapeDataString(EscapeODataLiteral(value))}'";
 
     private static string EscapeODataLiteral(string value) => value.Replace("'", "''");
 
