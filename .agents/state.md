@@ -58,18 +58,42 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   on dev (owner: nobody with group-module access may make themselves a portal admin), so
   the original repro is refused by design. Test with a THROWAWAY ANALOG group holding a
   WINROOT member instead.** Suite 2220/0/3 as of `1a4b342`.
-  **NEXT: (a) owner: dev deploy is at `2.17.0` written 2026-09-03 12:25 (assembly) - if
+  **NEXT: owner: dev deploy is at `2.17.0` written 2026-09-03 12:25 (assembly) - if
   that build predates `1a4b342`, redeploy, then the throwaway-group remove/re-add check.
-  (b) agent: draft `docs/GroupBulkActions-Plan.md` - see the entry directly below.**
+  The bulk actions below (`2.18.0`) will ride the same deploy.**
 
-- **GROUP BULK ACTIONS: OWNER REQUEST 2026-09-03, SHAPE AGREED IN CHAT, PLAN DRAFTED
-  2026-09-03 (`docs/GroupBulkActions-Plan.md`, `2e89f7a`), CODEX OPENREVIEW DISPATCHED the
-  same session over `f1bec06..2e89f7a`, NO CODE.** The plan carries one drafted default the
-  owner may overrule: D1, a batch sends ONE administrator email listing every row's outcome
-  instead of one email per member (per-member AUDIT events unchanged; affected-user emails
-  in self-service stay per member). Owner goal-directive 2026-09-03: *"continue with the
-  plan and codereview with codex (default) then implement upon consensus"* - the go covers
-  drafting, the review, and implementation once the review verdict is folded in.
+- **GROUP BULK ACTIONS: IMPLEMENTED 2026-09-03 (owner goal-directive the same day:
+  "continue with the plan and codereview with codex (default) then implement upon
+  consensus"). NOT DEPLOYED.** `docs/GroupBulkActions-Plan.md` (drafted `2e89f7a`,
+  codex openreview `acceptable_with_changes` with gba-1..3 all folded in at `9652842`
+  BEFORE any code - `.agents/review/findings/gba-{1,2,3}.md`), then all six slices in one
+  session: S1 `568f80b` (pure `Services/BulkIdentityList.cs` + `BulkOutcomeSummary`, base
+  app `2.17.0` -> `2.18.0` per gba-2), S2 `edf50e4` (GroupManagement bulk remove, `2.9.0`),
+  S3 `e2bfc29` (GroupManagement paste-list bulk add, forest-wide resolution, `2.10.0`), S4
+  `3923229` (SelfServiceGroups bulk remove with the nested-group warning in the
+  confirmation, `1.9.0`), S5 `14e16f6` (SelfServiceGroups paste-list bulk add, users-only
+  home-domain resolution with the group-scope reason, `1.10.0`), S6 README + plan status +
+  this entry. Suite 2284/0/3 after S5, every slice mutation-probed.
+  **The load-bearing shape, worth knowing before touching either page again:** each page
+  now has ONE per-member handler (`RemoveOneAsync` / `AddOneAsync` on the admin page,
+  `RemoveOneAsync` / `ChangeOneAsync` on self-service) that the single button AND the bulk
+  loop both call; the module authorization re-check lives INSIDE it so it runs immediately
+  before every row's write (gba-1 - the drafted plan had hoisted it to once per batch, and
+  codex caught it); the service write paths are untouched. A batch's summary audit
+  (`<Module>_Bulk{Remove,Add}Members`) reports `success` only when every row is Done
+  (Known Failure Class 2) and carries `requested/done/notDone/members` in `extra`.
+  **D1 implemented on its drafted default - owner may overrule:** a batch sends ONE
+  administrator email listing every row's outcome instead of one per member (per-member
+  AUDIT events unchanged; affected-user emails in self-service stay per member). Reverting
+  to per-member emails is a one-line change per page (`sendAdminEmail: false` -> `true` in
+  each bulk loop, drop the summary email).
+  **Recorded lesson (S2):** a non-vacuity probe restore must copy from a scratchpad backup,
+  never `git checkout` - the first S2 probe wiped the uncommitted slice and it was re-applied.
+  **NEXT: the plan's seven manual checks (section 8) on dev against a THROWAWAY ANALOG
+  group (`ExchangeWebAdmins` is a Protected Group Target on dev); check 7 records whether a
+  WINROOT user by UPN previews Not found in self-service (expected - home-domain binding,
+  same as the single Add). A codex defect-hunt (`codereview`) over `568f80b..HEAD` is the
+  obvious review step and needs an owner go.**
   Owner: *"we need checkboxes and bulk actions for group management
   modules. removing a single entry at a time is slow and cumbersome."* Both on-prem group
   modules (`GroupManagement`, `SelfServiceGroups`); `M365GroupManagement` stays OUT (owner
@@ -91,8 +115,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   a "staged picker" (typeahead feeding a pending list) - it still types one at a time and
   waits on AD per entry; the paste list with batch resolution is the answer to "we'd lose
   the AD validation on the input control", not a replacement for it.**
-  Constitution: a written plan is required (new write surface over the protection gates).
-  **NEXT: draft the plan (`plan` operator), review with codex, then owner go per slice.**
+  Constitution: a written plan is required (new write surface over the protection gates) -
+  written, reviewed and implemented as recorded at the top of this entry.
 
 - **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
   NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1

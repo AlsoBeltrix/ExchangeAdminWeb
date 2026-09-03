@@ -1,11 +1,15 @@
 # Bulk member actions for the on-prem group modules
 
-Status: Approved for implementation 2026-09-03 (owner goal-directive the same day:
-"continue with the plan and codereview with codex (default) then implement upon
-consensus"). Codex openreview over `f1bec06..2e89f7a` returned
-`acceptable_with_changes` with three findings (gba-1..3, section 10), all admitted
-and folded in below. One owner decision is drafted with a default (D1, section 1);
-implementation proceeds on that default unless the owner overrules it.
+Status: Implemented 2026-09-03 (owner goal-directive the same day: "continue with
+the plan and codereview with codex (default) then implement upon consensus"). Codex
+openreview over `f1bec06..2e89f7a` returned `acceptable_with_changes` with three
+findings (gba-1..3, section 10), all admitted and folded in before any code. All six
+slices landed the same day (S1 `568f80b`, S2 `edf50e4`, S3 `e2bfc29`, S4 `3923229`,
+S5 `14e16f6`, S6 the commit that set this status); section 9 completes the
+traceability. NOT DEPLOYED - the seven manual checks in section 8 need a deployed
+instance and ride the next dev deploy. D1 (one summary admin email per batch) was
+implemented on its drafted default; the owner may still overrule it (a one-line
+change per page, section 1).
 Owner: Michael
 Last verified against code: `f1bec06` / 2026-09-03
 Versions: base app `2.17.0` -> `2.18.0` in S1 (shared helpers, gba-2);
@@ -551,7 +555,92 @@ confirm PASS.
 
 ## 9. Traceability check
 
-Completed in S6: each AC above maps to its slice commit and test names.
+Implementation notes that differ from the sketch, recorded rather than silently
+diverging: (a) the self-service typed handler covers add AND remove in one method, so
+its extracted per-member handler is `ChangeOneAsync(group, identity, operation,
+sendAdminEmail)` rather than a separate `AddOneAsync`; the bulk add loop calls it with
+`MembershipOperation.Add`. (b) Self-service gained an `internal virtual
+GetCredentialsAsync` seam used only by `ResolveBatchAsync` (the existing paths keep
+their direct `_moduleCredentials` calls) and a third seam, `ProbeGroupIdentities`, for
+the batched group probe behind the AC9 reason. (c) `BulkIdentityList.Match`'s reasons
+for a NotFound line differ by scope ("not found in AD as a user or group" vs "did not
+match exactly one user") so the self-service table never claims a group scope it does
+not have.
+
+- AC1 (checkbox per row, select-all over the removable rows only): S2 `edf50e4`
+  (`GroupManagement.razor` `CanRemove` / `SelectableMembers` / `ToggleSelectAll`,
+  guard `GroupBulkActionsWiringTests.GroupManagement_SelectAll_SkipsDisabledRows`);
+  S4 `3923229` (`SelfServiceGroups.razor`, guard `SelfService_SelectAll_SkipsDisabledRows`).
+- AC2 (Remove selected behind N > 0 and, admin, the ticket; one confirmation listing
+  names; D2 warning on group rows in self-service): S2 (button + inline confirmation);
+  S4 (guard `SelfService_BulkConfirm_CarriesGroupWarning`). No automated proof of the
+  disabled state (no bUnit) - manual checks 1, 4, 5.
+- AC3 (sequential loop through the extracted per-member handler; per-row authorization
+  re-check inside it, gba-1): S2 `RemoveOneAsync`, guards
+  `GroupManagement_SingleAndBulkRemove_ShareRemoveOneAsync`,
+  `GroupManagement_PerRowRemoveHandler_RechecksAuthorization`, and the re-pointed gmn-9
+  tripwire `AdminPage_AuditsCarryTheImmutableIdentity_OnEveryBranch`; S4
+  `RemoveOneAsync`, guards `SelfService_SingleAndBulkRemove_ShareRemoveOneAsync`,
+  `SelfService_PerRowRemoveHandler_RechecksAuthorization`.
+- AC4 (per-row outcome table, one refresh at the end): S2/S4 markup +
+  `bulkOutcome`; refresh-once is in the handlers (manual check 1).
+- AC5 (batch summary audit, success only when every row Done): S1 `568f80b`
+  `BulkOutcomeSummary` (`BulkIdentityListTests.Summary_SuccessOnlyWhenEveryRowDone`);
+  S2 guard `GroupManagement_BulkRemoveAudit_UsesSummarySuccess`; S3 `e2bfc29` guard
+  `GroupManagement_BulkAddAudit_UsesSummarySuccess_AndOneSummaryEmail`; S4 guard
+  `SelfService_BulkRemoveAudit_UsesSummarySuccess`; S5 `14e16f6` guard
+  `SelfService_BulkAddAudit_UsesSummarySuccess_AndOneSummaryEmail_KeepingAffectedUserNotification`.
+- AC6 (D1: one summary admin email per batch, no per-member admin email in the loop,
+  affected-user notification still per row): S2 guard
+  `GroupManagement_BulkRemoveLoop_DoesNotSendPerMemberAdminEmail`; S3 (same guard as
+  AC5); S4 guard
+  `SelfService_BulkRemoveLoop_DoesNotSendPerMemberAdminEmail_ButKeepsAffectedUserNotification`
+  (brace-balance check added after a probe survived); S5 (same guard as AC5).
+- AC7 (paste parser, batch resolution, every line listed with a status, failures never
+  read as Not found): S1 `BulkIdentityList.Parse` / `Chunk` / `BuildBatchFilter`
+  (`BulkIdentityListTests`); S3 `GroupManagementService.ResolveBatchAsync`
+  (`GroupBulkResolveTests.ResolveBatchAsync_NoCredentials_EveryLineNotAttempted`,
+  `_QueryThrows_EveryLineNotAttempted`) and page guard
+  `GroupManagement_ResolvePaste_UsesTheServiceBatch_AndListsEveryLine`; S5
+  `SelfServiceGroupService.ResolveBatchAsync` (`SelfServiceBulkResolveTests`, same two
+  shapes) and page guard
+  `SelfService_ResolvePaste_UsesTheServiceBatch_WithTheCallerSid_AndListsEveryLine`.
+- AC8 (Add resolved runs only Resolved rows through the shared per-member add handler;
+  admin passes the DN, self-service the UPN): S3 `AddOneAsync`, guards
+  `GroupManagement_SingleAndBulkAdd_ShareAddOneAsync`,
+  `GroupManagement_PerRowAddHandler_RechecksAuthorization`,
+  `GroupManagement_BulkAdd_CommitsOnlyResolvedRows`, plus the re-pointed S5c held-DN
+  guard and gmn-9 add tripwire; S5 `ChangeOneAsync` + `IdentityOf`, guards
+  `SelfService_SingleAndBulkAdd_ShareChangeOneAsync`,
+  `SelfService_PerRowChangeHandler_RechecksAuthorization`,
+  `SelfService_BulkAdd_CommitsOnlyResolvedRows_AndSnapshotsFirst`.
+- AC9 (self-service resolution USER-only, home domain, group-scope reason on a miss):
+  S5 `SelfServiceBulkResolveTests.ResolveBatchAsync_UserResolves_GroupCandidateNeverDoes`,
+  `_MissNamingAGroup_GetsTheScopeRuleReason`, `_ProbeThrows_KeepsGenericReasons`,
+  `_RejectsNonSidCaller`; guard
+  `SelfServiceGroupService_BatchQuery_IsUserOnly_HomeDomain_AndProjectsName`.
+- AC10 (admin resolution class-agnostic against the global catalog, Name projected,
+  Ambiguous / Duplicate rules): S1 `Match_Multiple_Ambiguous`,
+  `Match_SameObjectTwice_LaterLineIsDuplicate`, `Match_GroupCandidate_ByNameOnly_Resolves`
+  (gba-3); S3 `GroupBulkResolveTests.ResolveBatchAsync_ScriptedCandidates_UserAndGroupResolve`,
+  guard `GroupManagementService_BatchQuery_IsForestWide_ClassAgnostic_AndProjectsName`.
+- AC11 (matcher pure and total): S1 `Match_NullAttributes_DoNotThrow`,
+  `Match_OneStatusPerLine_InOrder`, `Match_UserCandidate_NameDoesNotMatch`.
+- AC12 (loading flag held; group snapshotted before the first await; refresh only if
+  still selected): S2 guard `GroupManagement_BulkRemove_SnapshotsGroupBeforeFirstAwait`,
+  S3 `GroupManagement_BulkAdd_SnapshotsGroupBeforeFirstAwait`, S4
+  `SelfService_BulkRemove_SnapshotsGroupBeforeFirstAwait`, S5 (in the AC8 guard); bulk
+  state cleared on switch/reload: `GroupManagement_BulkStateNeverSurvivesAGroupSwitchOrReload`,
+  `SelfService_BulkStateNeverSurvivesAGroupSwitchOrReload`.
+- AC13 (versions): base app `2.17.0` -> `2.18.0` in S1 (gba-2); `GroupManagement`
+  `2.8.0` -> `2.9.0` (S2) -> `2.10.0` (S3); `SelfServiceGroups` `1.8.0` -> `1.9.0` (S4)
+  -> `1.10.0` (S5). `ModuleCatalogTests` untouched and green throughout.
+- AC14 (README): S6, one bulk bullet in each module section.
+- Non-vacuity: every slice mutation-probed before its commit - S1 two batches (6 + 5
+  failures), S2 seven single probes, S3 twelve (8 page, 2 service text, 2 behavioral),
+  S4 eight (one guard strengthened when a probe survived), S5 thirteen (7 page, 3
+  service text, 3 behavioral). Full suite after S5: 2284 passed / 0 failed / 3 skipped;
+  format clean at every slice.
 
 ## 10. Review log
 

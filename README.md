@@ -119,6 +119,13 @@ Search and manage distribution lists, mail-enabled security groups, and Microsof
   adds are guarded against self-nesting and membership cycles in the service, writes are
   confirmed by a post-write read-back, and a protected group member is refused (the
   `ProtectedServicer:GroupManagement` override applies)
+- Bulk actions (on-prem AD): tick members (select-all covers only removable rows) and
+  remove them in one confirmed batch under one ticket; paste a list of usernames, emails,
+  UPNs or group names, Resolve checks every line against the forest in one pass, and
+  "Add resolved" adds the lines that resolved to exactly one object. Every member still
+  runs the single-member path (per-row authorization, protection, read-back, audit), a
+  per-row outcome table shows Done / Not done with the reason, and each batch writes one
+  summary audit event (success only when every row succeeded) and one summary admin email
 - **Requires:** `GroupManagementOnPrem` section access for on-premises group modifications
 - Section access key: `GroupManagement`
 
@@ -137,6 +144,15 @@ module previously had no README entry.)
   an inline warning that re-adding it will require a ticket
 - Protected principals - including protected groups and groups nested under one - are refused;
   the `ProtectedServicer:SelfServiceGroups` override applies
+- Bulk actions: tick members (select-all covers only removable rows) and remove them in one
+  confirmed batch - a nested group in the batch carries its one-way warning inside the
+  confirmation; paste a list of usernames, emails or UPNs, Resolve checks every line in one
+  pass (users only - a line naming a group is reported, not added), and "Add resolved" adds
+  the lines that resolved to exactly one user. Every member still runs the single-member
+  path (per-row authorization, eligibility, protection, read-back, audit, affected-member
+  notification), a per-row outcome table shows Done / Not done with the reason, and each
+  batch writes one summary audit event (success only when every row succeeded) and one
+  summary admin email
 - Section access key: `SelfServiceGroups`
 
 ### M365 Group Management (`/m365-group-management`)
