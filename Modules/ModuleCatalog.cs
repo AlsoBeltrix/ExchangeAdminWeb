@@ -357,7 +357,10 @@ public sealed class ModuleCatalog
             // global catalog and re-read in its own domain (a foreign-domain group could not be
             // written to at all), and the membership pre-check/read-back asks the group's own
             // domain for its forward member link instead of the member's local back-link.
-            Version = "2.7.0",
+            // 2.8.0: add and remove write the group's member attribute directly - the
+            // Add-/Remove-ADGroupMember form made the cmdlet resolve the MEMBER on the group's
+            // DC, which cannot see a member from another forest domain.
+            Version = "2.8.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -441,7 +444,10 @@ public sealed class ModuleCatalog
             // its GUID so the member resolves in its OWN domain (it was refused with "could not
             // be resolved right now"), the membership pre-check/read-back reads the group's
             // forward member link in the group's domain, and the write is routed there too.
-            Version = "1.7.0",
+            // 1.8.0: the write itself sets the group's member attribute - routing it was not
+            // enough, because Remove-ADGroupMember resolved the MEMBER on that same DC and
+            // failed with "Cannot find an object with identity ... under: 'DC=ad,...'".
+            Version = "1.8.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

@@ -517,6 +517,48 @@ public class GroupMemberNestingProtectionTests
         Assert.DoesNotContain("G*p", filter, StringComparison.Ordinal);
     }
 
+    // ----- BuildMemberAttributeWrite: the cross-domain-safe write payload (2026-09-03) -----
+
+    [Fact]
+    public void MemberAttributeWrite_CarriesTheForeignDomainDn_Verbatim_OnTheMemberAttribute()
+    {
+        const string memberDn = "CN=Organization Management,OU=Microsoft Exchange Security Groups,DC=winroot,DC=analog,DC=com";
+
+        var payload = GroupManagementService.BuildMemberAttributeWrite(memberDn);
+
+        // One attribute, and it is the group's forward link - the same attribute both listings
+        // and BuildDirectMembershipFilter read. Anything else (memberOf, members) would ask the
+        // MEMBER's partition, which is where the cmdlet form failed.
+        Assert.Single(payload);
+        Assert.True(payload.ContainsKey("member"));
+        // Verbatim: no escaping, no re-derivation. The write must offer AD exactly the DN string
+        // the read-back will look for, or a real removal reads as unconfirmed.
+        Assert.Equal(memberDn, (string?)payload["member"]);
+    }
+
+    [Fact]
+    public void MemberAttributeWrite_IsKeyedCaseInsensitively_LikeAPowerShellHashtable()
+    {
+        var payload = GroupManagementService.BuildMemberAttributeWrite("CN=Ops,DC=analog,DC=com");
+
+        // AD attribute names are case-insensitive and a PowerShell hashtable literal is too;
+        // a default-keyed Hashtable would diverge from the shape this replaces.
+        Assert.True(payload.ContainsKey("Member"));
+        Assert.Equal("CN=Ops,DC=analog,DC=com", (string?)payload["MEMBER"]);
+    }
+
+    [Fact]
+    public void MemberAttributeWrite_IsTotal_LeavingAnUnusableDnForAdToRefuse()
+    {
+        // The helper is composed OUTSIDE the write's try/catch, so throwing here would escape
+        // the reconciliation that decides success (codex F10). A blank DN is handed to AD, whose
+        // terminating error is captured and then judged by the read-back.
+        var payload = GroupManagementService.BuildMemberAttributeWrite("");
+
+        Assert.Single(payload);
+        Assert.Equal("", (string?)payload["member"]);
+    }
+
     [Fact]
     public void MembershipProbes_AskTheGroupsOwnDomain_InBothModules()
     {
@@ -548,7 +590,7 @@ public class GroupMemberNestingProtectionTests
     }
 
     [Fact]
-    public void SelfServiceWrite_RoutesBothCmdletsToTheGroupsOwnDomain()
+    public void SelfServiceWrite_SetsTheMemberAttribute_AndRoutesToTheGroupsOwnDomain()
     {
         var text = SelfServiceText();
         var start = text.IndexOf("private async Task<MembershipChangeResult> ApplyMembershipChangeAsync(", StringComparison.Ordinal);
@@ -557,16 +599,26 @@ public class GroupMemberNestingProtectionTests
         Assert.True(end > start, "Could not bound ApplyMembershipChangeAsync - update the tripwire.");
         var body = text[start..end];
 
-        var iAdd = body.IndexOf("AddCommand(\"Add-ADGroupMember\")", StringComparison.Ordinal);
-        var iRemove = body.IndexOf("AddCommand(\"Remove-ADGroupMember\")", StringComparison.Ordinal);
+        var iAdd = body.IndexOf("AddParameter(\"Add\", GroupManagementService.BuildMemberAttributeWrite(memberDn))", StringComparison.Ordinal);
+        var iRemove = body.IndexOf("AddParameter(\"Remove\", GroupManagementService.BuildMemberAttributeWrite(memberDn))", StringComparison.Ordinal);
         var iServer = body.IndexOf("var writeServer = GroupManagementService.ServerFromDn(groupDn);", StringComparison.Ordinal);
         var iApply = body.IndexOf("AddParameter(\"Server\", writeServer)", StringComparison.Ordinal);
 
-        Assert.True(iAdd >= 0 && iRemove > iAdd, "Both write cmdlets must stay in the shared executor.");
+        Assert.True(iAdd >= 0 && iRemove > iAdd, "Both member-attribute writes must stay in the shared executor.");
+        Assert.Equal(2, Regex.Matches(body, Regex.Escape("AddCommand(\"Set-ADGroup\")")).Count);
+        // 2026-09-03: the cmdlets that take -Members resolve the MEMBER on the -Server applied
+        // below - the GROUP's DC - so a cross-domain member DN failed with "Cannot find an
+        // object with identity ... under: 'DC=ad,DC=analog,DC=com'".
+        Assert.DoesNotContain("AddCommand(\"Add-ADGroupMember\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddCommand(\"Remove-ADGroupMember\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddParameter(\"Members\"", body, StringComparison.Ordinal);
+        // The write and the read-back must speak about the SAME DN string, or a successful
+        // remove cannot be confirmed (Known Failure Class #2).
+        Assert.Equal(2, Regex.Matches(body, Regex.Escape("IsMemberOfGroup(ps, credential, groupDn, memberDn)")).Count);
         // The write acts on the GROUP object, so it is routed by the GROUP's DN - the member may
         // well live elsewhere. Same rule as the admin module's writes (fsr-1).
         Assert.True(iServer > iRemove, "The write server must be derived from the group's DN.");
-        Assert.True(iApply > iServer, "-Server must be applied to whichever write cmdlet was composed.");
+        Assert.True(iApply > iServer, "-Server must be applied to whichever write was composed.");
     }
 
     private static string AdminServiceText() => File.ReadAllText(AuditCategoryFilingTests.FindRepoFile(
@@ -593,7 +645,7 @@ public class GroupMemberNestingProtectionTests
         var iSelf = body.IndexOf("IsSelfNest(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
         var iCycle = body.IndexOf("BuildCycleProbeFilter(resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
         var iFailClosed = body.IndexOf("The nesting check could not be completed.", StringComparison.Ordinal);
-        var iWrite = body.IndexOf("AddCommand(\"Add-ADGroupMember\")", StringComparison.Ordinal);
+        var iWrite = body.IndexOf("AddParameter(\"Add\", BuildMemberAttributeWrite(candidateDn))", StringComparison.Ordinal);
         var iReadback = body.LastIndexOf("IsDirectMemberOf(ps, credential, resolvedGroupDn, candidateDn)", StringComparison.Ordinal);
 
         Assert.True(iResolve >= 0, "Class-agnostic resolution missing from AddMemberAsync.");
@@ -604,6 +656,13 @@ public class GroupMemberNestingProtectionTests
         Assert.True(iFailClosed > iCycle, "The cycle probe must fail closed on errors.");
         Assert.True(iWrite > iFailClosed, "The write must come after every guard.");
         Assert.True(iReadback > iWrite, "Read-back reconciliation must follow the write.");
+
+        // 2026-09-03: the write sets the group's own member attribute. Add-ADGroupMember made the
+        // cmdlet resolve the MEMBER against the group's DC, which cannot see a member from
+        // another forest domain.
+        Assert.Contains("AddCommand(\"Set-ADGroup\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddCommand(\"Add-ADGroupMember\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddParameter(\"Members\"", body, StringComparison.Ordinal);
 
         // The interpolated PowerShell -Filter strings are gone from this path.
         Assert.DoesNotContain("UserPrincipalName -eq '", body, StringComparison.Ordinal);
@@ -623,7 +682,7 @@ public class GroupMemberNestingProtectionTests
         var iResolve = body.IndexOf("ResolveMemberForWrite(creds.Value, member, memberDn: memberDnHint, memberObjectGuid)", StringComparison.Ordinal);
         var iGate = body.IndexOf("CheckResolvedMemberAsync(resolvedMember.Principal!, actingUser)", StringComparison.Ordinal);
         var iDenial = body.IndexOf("return resolvedGate.Denial;", StringComparison.Ordinal);
-        var iWrite = body.IndexOf("AddCommand(\"Remove-ADGroupMember\")", StringComparison.Ordinal);
+        var iWrite = body.IndexOf("AddParameter(\"Remove\", BuildMemberAttributeWrite(memberDnResolved))", StringComparison.Ordinal);
         var iReadback = body.LastIndexOf("IsDirectMemberOf(ps, credential, resolvedGroupDn, memberDnResolved)", StringComparison.Ordinal);
 
         Assert.True(iResolve >= 0, "GUID-capable resolution missing from RemoveMemberAsync.");
@@ -633,6 +692,15 @@ public class GroupMemberNestingProtectionTests
         Assert.True(iDenial > iGate, "A gate denial must RETURN before the write.");
         Assert.True(iWrite > iDenial, "The write must come after the gate.");
         Assert.True(iReadback > iWrite, "Read-back reconciliation must follow the write.");
+
+        // 2026-09-03: Remove-ADGroupMember resolved the MEMBER on the group's DC and could not
+        // remove a cross-domain nested group at all. The member attribute is written instead,
+        // from the same DN string the read-back above asks about.
+        Assert.Contains("AddCommand(\"Set-ADGroup\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddCommand(\"Remove-ADGroupMember\")", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddParameter(\"Members\"", body, StringComparison.Ordinal);
+        // -Confirm stays false: the write must never become a prompt in a background runspace.
+        Assert.Contains("AddParameter(\"Confirm\", false)", body, StringComparison.Ordinal);
 
         Assert.DoesNotContain("UserPrincipalName -eq '", body, StringComparison.Ordinal);
         Assert.DoesNotContain("EmailAddress -eq '", body, StringComparison.Ordinal);

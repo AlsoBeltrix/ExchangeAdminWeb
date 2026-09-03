@@ -373,8 +373,9 @@ public class SelfServiceGroupService
                                   ?? (psam.Length > 0 ? psam : GroupManagementService.DisplayNameFromDn(dn)),
                     Identity = !string.IsNullOrWhiteSpace(pupn) ? pupn : psam,
                     Kind = GroupMemberClassifier.KindOf(cls),
-                    // lst-2: Remove-ADGroupMember cannot remove a member from its primary
-                    // group - never offer the affordance, whatever the class.
+                    // lst-2: a member cannot be removed from its primary group - neither
+                    // Remove-ADGroupMember nor the member-attribute write that replaced it can
+                    // do it - so never offer the affordance, whatever the class.
                     IsRemovable = false,
                 });
             }
@@ -579,19 +580,27 @@ public class SelfServiceGroupService
                         member.PrimarySmtpAddress, member.DisplayName, isSecurityGroup, MembershipChanged: false);
                 }
 
+                // The write sets the group's forward `member` link directly (2026-09-03). The
+                // Add-/Remove-ADGroupMember form made the CMDLET resolve the member, and it
+                // resolves against the -Server applied below - the group's own DC - so removing
+                // the cross-domain nested `Organization Management` (WINROOT) from an ANALOG
+                // group failed with "Cannot find an object with identity ... under:
+                // 'DC=ad,DC=analog,DC=com'". See GroupManagementService.BuildMemberAttributeWrite:
+                // the attribute carries a foreign-domain DN verbatim, and it is the same
+                // attribute IsMemberOfGroup reads back, from the same DN string.
                 if (operation == MembershipOperation.Add)
                 {
-                    ps.AddCommand("Add-ADGroupMember")
+                    ps.AddCommand("Set-ADGroup")
                       .AddParameter("Identity", groupDn)
-                      .AddParameter("Members", memberDn)
+                      .AddParameter("Add", GroupManagementService.BuildMemberAttributeWrite(memberDn))
                       .AddParameter("Credential", credential)
                       .AddParameter("ErrorAction", "Stop");
                 }
                 else
                 {
-                    ps.AddCommand("Remove-ADGroupMember")
+                    ps.AddCommand("Set-ADGroup")
                       .AddParameter("Identity", groupDn)
-                      .AddParameter("Members", memberDn)
+                      .AddParameter("Remove", GroupManagementService.BuildMemberAttributeWrite(memberDn))
                       .AddParameter("Credential", credential)
                       .AddParameter("Confirm", false)
                       .AddParameter("ErrorAction", "Stop");

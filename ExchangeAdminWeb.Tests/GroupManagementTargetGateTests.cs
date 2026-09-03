@@ -232,12 +232,15 @@ public sealed class GroupManagementTargetGateTests : IDisposable
 
         foreach (var (sig, endSig, writeCmd) in new[]
         {
+            // The write is the member-attribute set (2026-09-03), pinned by the parameter that
+            // carries the gated snapshot's member DN - the cmdlets that resolved -Members
+            // themselves could not reach a cross-domain member.
             ("public async Task<PermissionResult> AddMemberAsync(",
              "public async Task<PermissionResult> RemoveMemberAsync(",
-             "AddCommand(\"Add-ADGroupMember\")"),
+             "AddParameter(\"Add\", BuildMemberAttributeWrite(candidateDn))"),
             ("public async Task<PermissionResult> RemoveMemberAsync(",
              "// --- Helpers ---",
-             "AddCommand(\"Remove-ADGroupMember\")"),
+             "AddParameter(\"Remove\", BuildMemberAttributeWrite(memberDnResolved))"),
         })
         {
             var start = text.IndexOf(sig, StringComparison.Ordinal);

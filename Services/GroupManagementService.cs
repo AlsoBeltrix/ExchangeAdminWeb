@@ -477,8 +477,10 @@ public class GroupManagementService
                     MemberKind = k,
                     ObjectGuid = p.Properties["ObjectGUID"]?.Value?.ToString() ?? "",
                     DistinguishedName = dn,
-                    // Remove-ADGroupMember cannot remove a member from its PRIMARY group; the
-                    // page disables Remove so the affordance is not an always-failing button.
+                    // A member cannot be removed from its PRIMARY group - not by
+                    // Remove-ADGroupMember and not by the member-attribute write that replaced
+                    // it (the link is not on the group's member attribute at all); the page
+                    // disables Remove so the affordance is not an always-failing button.
                     IsPrimaryMember = true
                 });
             }
@@ -627,9 +629,13 @@ public class GroupManagementService
             // verbatim through the read-back failure below rather than being pre-empted by a
             // local rule that would drift from AD's (AC12).
             Exception? writeError = null;
-            ps.AddCommand("Add-ADGroupMember")
+            // The group's forward member link is written DIRECTLY (2026-09-03): the
+            // Add-ADGroupMember form made the cmdlet resolve the member against this same
+            // -Server, which cannot see a member from another forest domain - see
+            // BuildMemberAttributeWrite.
+            ps.AddCommand("Set-ADGroup")
               .AddParameter("Identity", resolvedGroupDn)
-              .AddParameter("Members", candidateDn)
+              .AddParameter("Add", BuildMemberAttributeWrite(candidateDn))
               .AddParameter("Credential", credential)
               .AddParameter("ErrorAction", "Stop");
             // fsr-1: the write operates on the group object - route to its owning domain.
@@ -760,9 +766,13 @@ public class GroupManagementService
                 return PermissionResult.Ok($"{member} is not a member of {groupIdentity} (on-premises).", combinedNote);
 
             Exception? writeError = null;
-            ps.AddCommand("Remove-ADGroupMember")
+            // Same member-attribute write as the add path (2026-09-03): Remove-ADGroupMember
+            // resolved the member on the group's DC and failed on a cross-domain nested member -
+            // see BuildMemberAttributeWrite. -Confirm stays false so no host preference can
+            // turn this write into a prompt.
+            ps.AddCommand("Set-ADGroup")
               .AddParameter("Identity", resolvedGroupDn)
-              .AddParameter("Members", memberDnResolved)
+              .AddParameter("Remove", BuildMemberAttributeWrite(memberDnResolved))
               .AddParameter("Credential", credential)
               .AddParameter("Confirm", false)
               .AddParameter("ErrorAction", "Stop");
@@ -842,6 +852,25 @@ public class GroupManagementService
         var memberEsc = SelfServiceGroups.AdOwnershipFilter.EscapeLdapFilterValue(memberDn);
         return $"(&(distinguishedName={groupEsc})(member={memberEsc}))";
     }
+
+    /// <summary>
+    /// The <c>member</c>-attribute payload for a membership WRITE, shared by both group modules
+    /// (2026-09-03). <c>Add-ADGroupMember</c>/<c>Remove-ADGroupMember</c> make the CMDLET resolve
+    /// every -Members value, and it resolves them against the -Server the write is routed to -
+    /// the GROUP's own DC (<see cref="ServerFromDn"/>) - so a member DN in another forest domain
+    /// failed outright: "Cannot find an object with identity: 'CN=Organization Management,...,
+    /// DC=winroot,DC=analog,DC=com' under: 'DC=ad,DC=analog,DC=com'". Setting the group's forward
+    /// <c>member</c> link with <c>Set-ADGroup -Add</c>/<c>-Remove</c> carries the foreign DN
+    /// verbatim with no member-side resolution - the same attribute both listings and
+    /// <see cref="BuildDirectMembershipFilter"/> already read, so the write and the read-back
+    /// speak about the same DN string. Keyed ordinal-ignore-case to match a PowerShell hashtable
+    /// literal, AD attribute names being case-insensitive. Pure and TOTAL: an unusable DN is left
+    /// for AD to refuse through the write's terminating error and the read-back, never pre-empted
+    /// here (that would move the failure outside the caller's try/catch). Neither form can remove
+    /// a member from its PRIMARY group - see <see cref="GroupMemberInfo.IsPrimaryMember"/>.
+    /// </summary>
+    internal static System.Collections.Hashtable BuildMemberAttributeWrite(string memberDn)
+        => new(StringComparer.OrdinalIgnoreCase) { { "member", memberDn } };
 
     /// <summary>
     /// Derives the owning domain's DNS name from a distinguished name's DC components
@@ -1349,8 +1378,9 @@ public class GroupMemberInfo
 
     /// <summary>
     /// True when the membership comes from the member's primaryGroupID (lst-2): real
-    /// membership the linked member attribute does not carry, and one that
-    /// Remove-ADGroupMember cannot remove - the page offers no Remove for such rows.
+    /// membership the linked member attribute does not carry, and one that neither
+    /// Remove-ADGroupMember nor a member-attribute write can remove - the page offers no
+    /// Remove for such rows.
     /// </summary>
     public bool IsPrimaryMember { get; set; }
 }

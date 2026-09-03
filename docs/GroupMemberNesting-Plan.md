@@ -447,6 +447,23 @@ Both module rules fire independently of the base rule.
 
 ## Revision History
 
+- **Revision 2026-09-03 (bug fix, no plan):** the 2026-09-02 routing was necessary and not
+  sufficient - the remove got past the resolve and failed at the WRITE. `Add-ADGroupMember` and
+  `Remove-ADGroupMember` make the CMDLET resolve every `-Members` value, and it resolves against
+  the `-Server` the write is routed to (the group's own DC), so a WINROOT member DN failed with
+  `Cannot find an object with identity: 'CN=Organization Management,...,DC=winroot,DC=analog,DC=com'
+  under: 'DC=ad,DC=analog,DC=com'`. Both modules now write the group's forward `member` attribute
+  directly - `Set-ADGroup -Add`/`-Remove @{member=<dn>}` via the shared
+  `GroupManagementService.BuildMemberAttributeWrite` - which carries a foreign-domain DN verbatim,
+  with no member-side resolution, and is the same attribute the listings and the read-back already
+  read (so the write and the confirmation speak about one DN string). Every surrounding invariant
+  is unchanged: `-Server` from the group's DN, the module credential, `ErrorAction Stop`,
+  `-Confirm false` on the removes, success decided ONLY by the post-write read-back, and the
+  protected-principal and target-group gates ahead of the write. The primary-group caveat still
+  holds - a `primaryGroupID` membership is not on the `member` attribute at all, so neither form
+  can remove it and the listings keep offering no Remove for those rows.
+  `SelfServiceGroups 1.8.0`, `GroupManagement 2.8.0`.
+
 - **Revision 2026-09-02 (bug fix, no plan):** the REMOVE path now routes like the listing -
   the listed row's DN rides with its GUID so the member resolves in its OWN domain (S4's
   resolution asked the credential's home domain and refused a cross-domain nested group with
