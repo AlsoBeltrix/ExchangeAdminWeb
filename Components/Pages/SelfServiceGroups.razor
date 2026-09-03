@@ -244,9 +244,73 @@
                 }
                 else
                 {
+                    <!-- Bulk remove (docs/GroupBulkActions-Plan.md S4): tick rows, one confirmed batch.
+                         Every member still runs the SAME per-member handler as the single Remove -
+                         RemoveOneAsync - so authorization, eligibility, protection, write, read-back,
+                         audit and the affected-user notification are per row; one refusal never hides
+                         another (Known Failure Class 2). A nested group in the batch carries the D2
+                         one-way warning inside the single confirmation. -->
+                    <div class="d-flex align-items-center gap-2 mb-2">
+                        <button class="btn btn-outline-danger btn-sm" @onclick="() => showRemoveConfirm = true"
+                                disabled="@(isChanging || SelectedCount == 0)"
+                                title="@(SelectedCount == 0 ? "Tick one or more members first." : null)">Remove selected (@SelectedCount)</button>
+                        <small class="text-muted">Tick members below and remove them in one confirmed batch. Each member is checked and written on its own, so one refusal never hides another.</small>
+                    </div>
+                    @if (showRemoveConfirm && SelectedCount > 0)
+                    {
+                        <div class="alert alert-warning py-2">
+                            <div><strong>Remove @SelectedCount member(s) from @selected.Name?</strong></div>
+                            <ul class="mb-2 small">
+                                @foreach (var sel in SelectedMembers())
+                                {
+                                    <li>
+                                        @sel.DisplayName <span class="text-muted">(@sel.Kind)</span>
+                                        @if (sel.Kind == "Group")
+                                        {
+                                            <div class="text-danger"><strong>@sel.DisplayName</strong> is a group. Removing it takes access away from its members, and re-adding it will require an IT Support Desk ticket.</div>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                            <button class="btn btn-danger btn-sm me-1" @onclick="RemoveSelectedAsync" disabled="@isChanging">
+                                @if (isChanging) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                Remove @SelectedCount member(s)
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isChanging">Cancel</button>
+                        </div>
+                    }
+
+                    @if (bulkOutcome != null)
+                    {
+                        <div class="card mb-3">
+                            <div class="card-header d-flex justify-content-between align-items-center py-1">
+                                <small><strong>@bulkOutcomeTitle</strong></small>
+                                <button type="button" class="btn-close btn-close-sm" @onclick="() => bulkOutcome = null"></button>
+                            </div>
+                            <table class="table table-sm mb-0">
+                                <thead><tr><th>Member</th><th>Outcome</th><th>Detail</th></tr></thead>
+                                <tbody>
+                                    @foreach (var o in bulkOutcome)
+                                    {
+                                        <tr class="@(o.Done ? "" : "table-danger")">
+                                            <td>@o.Label</td>
+                                            <td>@(o.Done ? "Done" : "Not done")</td>
+                                            <td><small>@o.Message</small></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
                     <table class="table table-sm align-middle mb-0">
                         <thead>
                             <tr>
+                                <!-- Select-all covers only rows whose single Remove renders (CanRemove). -->
+                                <th style="width: 2rem;"><input type="checkbox" class="form-check-input" checked="@AllSelectableSelected"
+                                                                @onchange="e => ToggleSelectAll(e.Value is true)"
+                                                                disabled="@(isChanging || SelectableMembers().Count == 0)"
+                                                                title="Select all removable members" /></th>
                                 <th>Name</th>
                                 <th>Identity</th>
                                 <th>Type</th>
@@ -258,6 +322,10 @@
                             {
                                 var member = m;
                                 <tr>
+                                    <td><input type="checkbox" class="form-check-input" checked="@selectedGuids.Contains(member.ObjectGuid)"
+                                               @onchange="e => ToggleSelected(member, e.Value is true)"
+                                               disabled="@(isChanging || !CanRemove(member))"
+                                               title="@(CanRemove(member) ? null : "This member cannot be removed here.")" /></td>
                                     <td>@member.DisplayName</td>
                                     <td>@member.Identity</td>
                                     <td>@member.Kind</td>
@@ -287,7 +355,7 @@
                                          the acting row (the reachable pattern, not a top-of-table confirm) and require
                                          a second action. User removals keep their existing no-confirm behaviour. -->
                                     <tr>
-                                        <td colspan="4">
+                                        <td colspan="5">
                                             <div class="alert alert-warning py-2 mb-0 d-flex align-items-center justify-content-between">
                                                 <small><strong>@member.DisplayName</strong> is a group. Removing it takes access away
                                                 from its members, and re-adding it will require an IT Support Desk ticket.</small>
@@ -338,6 +406,14 @@
     private bool isLoadingMembers;
     private string? memberLoadError;
 
+    // Bulk remove state (docs/GroupBulkActions-Plan.md S4). Selection is keyed on the immutable
+    // objectGUID, the same key the remove path acts on; it never survives a list reload or a
+    // group switch (the gmn-4 shape pendingGroupRemoval already follows).
+    private readonly HashSet<string> selectedGuids = new(StringComparer.OrdinalIgnoreCase);
+    private bool showRemoveConfirm;
+    private List<BulkRowOutcome>? bulkOutcome;
+    private string bulkOutcomeTitle = "";
+
     protected override async Task OnInitializedAsync()
     {
         var authState = await AuthStateProvider.GetAuthenticationStateAsync();
@@ -366,6 +442,7 @@
         selected = group;
         memberIdentity = "";
         changeResult = null;
+        ClearBulkState();
         await LoadMembers();
     }
 
@@ -378,6 +455,7 @@
         changeResult = null;
         groupMembers = [];
         memberLoadError = null;
+        ClearBulkState();
     }
 
     // Loads the selected group's current members (AC-M1). Fail-closed display: a read error sets
@@ -394,6 +472,10 @@
         // gmn-4: a pending group-removal confirm never survives a list reload or a group
         // switch - a stale one would make "Remove group" the FIRST action on another group.
         pendingGroupRemoval = null;
+        // Same rule for the bulk selection: a reload invalidates every GUID it held. The
+        // outcome table of a batch that just ran is kept - the post-batch refresh comes here.
+        selectedGuids.Clear();
+        showRemoveConfirm = false;
         try
         {
             if (string.IsNullOrWhiteSpace(callerSid))
@@ -449,12 +531,47 @@
         if (selected == null || isChanging)
             return;
 
+        // Snapshot before the first await: group navigation stays live while awaits run.
+        var group = selected;
         isChanging = true;
         pendingOp = MembershipOperation.Remove;
         changeResult = null;
         await Task.Yield();
 
-        var group = selected;
+        // The per-member path - authorization re-check, eligibility/protection-gated service
+        // write, audit, admin email and the affected-member notification - is RemoveOneAsync,
+        // shared byte-for-byte with the bulk loop (docs/GroupBulkActions-Plan.md S4, AC3). It
+        // never throws.
+        try
+        {
+            var outcome = await RemoveOneAsync(group, member, sendAdminEmail: true);
+            changeResult = outcome.Done ? PermissionResult.Ok(outcome.Message) : PermissionResult.Fail(outcome.Message);
+        }
+        finally
+        {
+            isChanging = false;
+            pendingOp = null;
+        }
+
+        // Reflect the change in the displayed membership (AC-M2), as on the typed path.
+        if (changeResult?.Success == true && ReferenceEquals(selected, group))
+            await LoadMembers();
+    }
+
+    /// <summary>
+    /// The per-member remove: the ONE place the single Remove (user rows directly, group rows
+    /// via the D2 inline confirm) and the bulk loop both go through
+    /// (docs/GroupBulkActions-Plan.md S4, AC3). Runs the module authorization re-check
+    /// immediately before THIS row's write (gba-1; Constitution: every mutating operation
+    /// re-checks authorization immediately before the write - a batch must not carry a stale
+    /// page-level answer across rows), then the service call (which re-checks eligibility and
+    /// protection itself), then the per-member audit on every branch, then the per-member admin
+    /// email when asked (the bulk loop sends one summary instead, plan D1), and ALWAYS the
+    /// affected-member notification on the existing predicate - it goes to a different
+    /// recipient per row. Never throws: an exception is a Not done row, audited.
+    /// </summary>
+    private async Task<BulkRowOutcome> RemoveOneAsync(ManageableGroup group, GroupMember member, bool sendAdminEmail)
+    {
         var memberLabel = string.IsNullOrWhiteSpace(member.Identity) ? member.DistinguishedName : member.Identity;
         const string action = "SelfServiceGroups_RemoveMember";
         try
@@ -469,16 +586,14 @@
             var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
             if (!authCheck.Succeeded)
             {
-                changeResult = PermissionResult.Fail("Authorization denied.");
                 try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", "Authorization denied", new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
-                return;
+                return new BulkRowOutcome(member.DisplayName, false, "Authorization denied.");
             }
 
             // The row's own DN rides along with its GUID: the service resolves the member in the
             // domain that DN names, which is the only way a cross-domain nested group resolves at
             // all (2026-09-02). The GUID stays the identity that is acted on.
             var outcome = await GroupService.RemoveListedMemberAsync(callerSid, group.ObjectGuid, member.ObjectGuid, authState.User, member.DistinguishedName);
-            changeResult = outcome.Result;
 
             var changeExtra = new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid };
             // A serviced override succeeded, so it cannot ride errorDetail - that field is written
@@ -490,20 +605,140 @@
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, outcome.Result.Success, "", outcome.Result.Success ? null : outcome.Result.Message, changeExtra); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
             var memberDetail = string.IsNullOrWhiteSpace(outcome.AffectedMemberDisplayName) ? memberLabel : $"{outcome.AffectedMemberDisplayName} ({memberLabel})";
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+            if (sendAdminEmail)
+            {
+                try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, outcome.Result.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Member Removed"] = memberDetail }, outcome.Result.Success ? null : outcome.Result.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+            }
 
             // Affected-member notification rides the SAME predicate as a user's (D6): for a group
-            // the address is the group's mail attribute; no mail, no notification.
+            // the address is the group's mail attribute; no mail, no notification. Per member in
+            // a batch too - each row has its own recipient.
             if (outcome.NotifyAffectedUser)
             {
                 try { await Email.SendGroupMembershipUserNotificationAsync(outcome.AffectedMemberEmail!, group.Name, currentUser, false); } catch (Exception emailEx) { Logger.LogError(emailEx, "Affected-user notification failed for {Action}", action); }
             }
+
+            return new BulkRowOutcome(member.DisplayName, outcome.Result.Success, outcome.Result.Message);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Self-service list removal failed for {User} on {Group}", callerSid, group.Name);
-            changeResult = PermissionResult.Fail("The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, false, "", ex.Message, new Dictionary<string, object?> { ["member"] = memberLabel, ["memberObjectGuid"] = member.ObjectGuid }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            return new BulkRowOutcome(member.DisplayName, false, "The change could not be completed right now. Please try again; if the problem persists, contact the IT Support Desk.");
+        }
+    }
+
+    // ----- Bulk remove (docs/GroupBulkActions-Plan.md S4) -----
+
+    /// <summary>Same predicate as the single Remove button's rendering: only a removable row with an immutable id can be acted on.</summary>
+    private static bool CanRemove(GroupMember m) => m.IsRemovable && !string.IsNullOrEmpty(m.ObjectGuid);
+
+    private List<GroupMember> SelectableMembers() => groupMembers.Where(CanRemove).ToList();
+
+    private List<GroupMember> SelectedMembers() => SelectableMembers().Where(m => selectedGuids.Contains(m.ObjectGuid)).ToList();
+
+    private int SelectedCount => SelectedMembers().Count;
+
+    private bool AllSelectableSelected
+    {
+        get
+        {
+            var selectable = SelectableMembers();
+            return selectable.Count > 0 && selectable.All(m => selectedGuids.Contains(m.ObjectGuid));
+        }
+    }
+
+    private void ToggleSelected(GroupMember m, bool on)
+    {
+        showRemoveConfirm = false;
+        pendingGroupRemoval = null;
+        if (!CanRemove(m))
+            return;
+        if (on) selectedGuids.Add(m.ObjectGuid); else selectedGuids.Remove(m.ObjectGuid);
+    }
+
+    // Select-all covers only the rows the single Remove could act on (AC1).
+    private void ToggleSelectAll(bool on)
+    {
+        showRemoveConfirm = false;
+        pendingGroupRemoval = null;
+        selectedGuids.Clear();
+        if (on)
+            foreach (var m in SelectableMembers())
+                selectedGuids.Add(m.ObjectGuid);
+    }
+
+    private void ClearBulkState()
+    {
+        selectedGuids.Clear();
+        showRemoveConfirm = false;
+        bulkOutcome = null;
+    }
+
+    private void AuditBatch(string action, ManageableGroup group, bool success, string? errorDetail, int requested, int done, int notDone, IReadOnlyList<string> memberLines)
+    {
+        try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "SelfServiceGroups", group.Name, success, "", errorDetail, new Dictionary<string, object?> { ["requested"] = requested, ["done"] = done, ["notDone"] = notDone, ["members"] = memberLines }); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+    }
+
+    /// <summary>
+    /// Removes every ticked member, one at a time, in list order, through RemoveOneAsync - the
+    /// same handler as the single Remove - so per-row authorization, eligibility, protection,
+    /// write, read-back, audit and affected-member notification are the single path's, and one
+    /// refusal never hides another. After the loop: one batch summary audit whose success is
+    /// true ONLY when every row is Done (Known Failure Class 2), one summary admin email (plan
+    /// D1), one member-list reload. The upfront authorization check is a UX shortcut - the check
+    /// that counts runs inside RemoveOneAsync per row (gba-1). Self-service has no ticket.
+    /// </summary>
+    private async Task RemoveSelectedAsync()
+    {
+        // Snapshot the group AND the rows before the first await.
+        var group = selected;
+        var rows = SelectedMembers();
+        showRemoveConfirm = false;
+        pendingGroupRemoval = null;
+        if (group is null || rows.Count == 0 || isChanging)
+            return;
+
+        isChanging = true;
+        pendingOp = MembershipOperation.Remove;
+        changeResult = null;
+        bulkOutcome = null;
+        await Task.Yield();
+
+        const string action = "SelfServiceGroups_BulkRemoveMembers";
+        var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(callerSid))
+            {
+                changeResult = PermissionResult.Fail("Your Windows identity could not be determined. Sign out and back in, then try again.");
+                AuditBatch(action, group, false, "Caller SID unavailable", rows.Count, 0, 0, notAttempted);
+                return;
+            }
+
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "SelfServiceGroups");
+            if (!authCheck.Succeeded)
+            {
+                changeResult = PermissionResult.Fail("Authorization denied.");
+                AuditBatch(action, group, false, "Authorization denied", rows.Count, 0, 0, notAttempted);
+                return;
+            }
+
+            var outcomes = new List<BulkRowOutcome>(rows.Count);
+            foreach (var row in rows)
+                outcomes.Add(await RemoveOneAsync(group, row, sendAdminEmail: false));
+
+            var summary = BulkOutcomeSummary.Of(outcomes);
+            AuditBatch(action, group, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, summary.Success, "", new Dictionary<string, string> { ["Group"] = group.Name, ["Requested"] = summary.Requested.ToString(), ["Done"] = summary.Done.ToString(), ["Not done"] = summary.NotDone.ToString(), ["Members"] = string.Join("; ", summary.MemberLines) }, summary.ErrorDetail); } catch (Exception emailEx) { Logger.LogError(emailEx, "Admin notification failed for {Action}", action); }
+
+            selectedGuids.Clear();
+            bulkOutcome = outcomes;
+            bulkOutcomeTitle = $"Remove selected: {summary.Done} of {summary.Requested} removed";
+            changeResult = summary.Success
+                ? PermissionResult.Ok($"{summary.Done} member(s) removed from {group.Name}.")
+                : PermissionResult.Fail($"{summary.NotDone} of {summary.Requested} member(s) were not removed - see the outcome table.");
         }
         finally
         {
@@ -511,8 +746,9 @@
             pendingOp = null;
         }
 
-        // Reflect the change in the displayed membership (AC-M2), as on the typed path.
-        if (changeResult?.Success == true)
+        // One reload for the whole batch, only if the operator is still looking at this group
+        // (LoadMembers keeps the outcome table).
+        if (ReferenceEquals(selected, group))
             await LoadMembers();
     }
 

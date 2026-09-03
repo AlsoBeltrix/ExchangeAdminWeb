@@ -455,7 +455,13 @@ public sealed class ModuleCatalog
             // 1.8.0: the write itself sets the group's member attribute - routing it was not
             // enough, because Remove-ADGroupMember resolved the MEMBER on that same DC and
             // failed with "Cannot find an object with identity ... under: 'DC=ad,...'".
-            Version = "1.8.0",
+            // 1.9.0: bulk remove - a checkbox per removable member, select-all, one confirmed
+            // batch (a nested group carries its one-way warning inside the confirmation) that
+            // runs each member through the same per-member handler as the single Remove
+            // (per-row authorization, eligibility, protection, read-back, audit, affected-member
+            // notification), a per-row outcome table, and one batch summary audit and email
+            // (docs/GroupBulkActions-Plan.md S4).
+            Version = "1.9.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

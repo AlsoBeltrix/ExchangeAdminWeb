@@ -18,6 +18,9 @@ public class GroupBulkActionsWiringTests
     private static string AdminPage() => File.ReadAllText(
         AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "GroupManagement.razor"));
 
+    private static string SelfServicePage() => File.ReadAllText(
+        AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "SelfServiceGroups.razor"));
+
     /// <summary>Bounds a method body from its signature to the next member at the same indent.</summary>
     private static string Body(string text, string signature)
     {
@@ -221,6 +224,128 @@ public class GroupBulkActionsWiringTests
         Assert.Contains("parsed.Duplicates.Select(", body, StringComparison.Ordinal);
         Assert.Contains("parsed.OverCap.Select(", body, StringComparison.Ordinal);
         Assert.Contains("BulkIdentityList.Status.NotAttempted", body, StringComparison.Ordinal);
+    }
+
+    // ----- S4: SelfServiceGroups bulk remove -----
+
+    [Fact]
+    public void SelfService_SingleAndBulkRemove_ShareRemoveOneAsync()
+    {
+        var page = SelfServicePage();
+
+        Assert.Equal(1, CountOf(page, "GroupService.RemoveListedMemberAsync("));
+        Assert.Contains("GroupService.RemoveListedMemberAsync(", Body(page, "private async Task<BulkRowOutcome> RemoveOneAsync("), StringComparison.Ordinal);
+
+        Assert.Contains("await RemoveOneAsync(group, member, sendAdminEmail: true)", Body(page, "private async Task RemoveListedMember(GroupMember member)"), StringComparison.Ordinal);
+        Assert.Contains("await RemoveOneAsync(group, row, sendAdminEmail: false)", Body(page, "private async Task RemoveSelectedAsync()"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_PerRowRemoveHandler_RechecksAuthorization()
+    {
+        var page = SelfServicePage();
+        var one = Body(page, "private async Task<BulkRowOutcome> RemoveOneAsync(");
+
+        Assert.Contains("AuthorizationService.AuthorizeAsync(authState.User, \"SelfServiceGroups\")", one, StringComparison.Ordinal);
+        Assert.Contains("\"Authorization denied\"", one, StringComparison.Ordinal);
+        var iAuth = one.IndexOf("AuthorizationService.AuthorizeAsync(", StringComparison.Ordinal);
+        var iWrite = one.IndexOf("GroupService.RemoveListedMemberAsync(", StringComparison.Ordinal);
+        Assert.True(iAuth >= 0 && iWrite > iAuth, "The authorization re-check must precede the service write inside RemoveOneAsync.");
+
+        var bulk = Body(page, "private async Task RemoveSelectedAsync()");
+        Assert.DoesNotContain("GroupService.RemoveListedMemberAsync(", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("GroupService.ChangeMemberAsync(", bulk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkRemoveAudit_UsesSummarySuccess()
+    {
+        var bulk = Body(SelfServicePage(), "private async Task RemoveSelectedAsync()");
+
+        Assert.Contains("const string action = \"SelfServiceGroups_BulkRemoveMembers\";", bulk, StringComparison.Ordinal);
+        Assert.Contains("var summary = BulkOutcomeSummary.Of(outcomes);", bulk, StringComparison.Ordinal);
+        Assert.Contains("AuditBatch(action, group, summary.Success, summary.ErrorDetail, summary.Requested, summary.Done, summary.NotDone, summary.MemberLines);", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("AuditBatch(action, group, true,", bulk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkRemoveLoop_DoesNotSendPerMemberAdminEmail_ButKeepsAffectedUserNotification()
+    {
+        var page = SelfServicePage();
+        var bulk = Body(page, "private async Task RemoveSelectedAsync()");
+
+        Assert.Contains("sendAdminEmail: false", bulk, StringComparison.Ordinal);
+        Assert.Equal(1, CountOf(bulk, "Email.SendAdminNotificationAsync("));
+        var iLoop = bulk.IndexOf("foreach (var row in rows)", StringComparison.Ordinal);
+        var iEmail = bulk.IndexOf("Email.SendAdminNotificationAsync(", StringComparison.Ordinal);
+        Assert.True(iLoop >= 0 && iEmail > iLoop, "The summary email must follow the loop.");
+
+        var one = Body(page, "private async Task<BulkRowOutcome> RemoveOneAsync(");
+        Assert.Contains("if (sendAdminEmail)", one, StringComparison.Ordinal);
+        // The affected-member notification is per row and NOT behind the admin-email flag: it
+        // goes to a different recipient each time (plan D1).
+        Assert.Contains("if (outcome.NotifyAffectedUser)", one, StringComparison.Ordinal);
+        Assert.Contains("Email.SendGroupMembershipUserNotificationAsync(outcome.AffectedMemberEmail!, group.Name, currentUser, false)", one, StringComparison.Ordinal);
+        var iFlag = one.IndexOf("if (sendAdminEmail)", StringComparison.Ordinal);
+        var iNotify = one.IndexOf("if (outcome.NotifyAffectedUser)", StringComparison.Ordinal);
+        Assert.True(iNotify > iFlag, "The affected-user notification must follow the sendAdminEmail block.");
+        // ...and sit OUTSIDE it: every brace opened between the two must have closed again, so
+        // the notification cannot have been tucked inside the flag's block.
+        var between = one[iFlag..iNotify];
+        Assert.Equal(between.Count(c => c == '{'), between.Count(c => c == '}'));
+
+        Assert.Contains("sendAdminEmail: true", Body(page, "private async Task RemoveListedMember(GroupMember member)"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_SelectAll_SkipsDisabledRows()
+    {
+        var page = SelfServicePage();
+
+        Assert.Contains("disabled=\"@(isChanging || !CanRemove(member))\"", page, StringComparison.Ordinal);
+        Assert.Contains("private List<GroupMember> SelectableMembers() => groupMembers.Where(CanRemove).ToList();", page, StringComparison.Ordinal);
+        Assert.Contains("foreach (var m in SelectableMembers())", Body(page, "private void ToggleSelectAll(bool on)"), StringComparison.Ordinal);
+        Assert.Contains("private static bool CanRemove(GroupMember m) => m.IsRemovable && !string.IsNullOrEmpty(m.ObjectGuid);", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkConfirm_CarriesGroupWarning()
+    {
+        var page = SelfServicePage();
+        var start = page.IndexOf("@if (showRemoveConfirm && SelectedCount > 0)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Bulk confirmation block not found - tripwire is stale.");
+        // The confirmation ends at its Cancel button (its heading also says "Remove N member(s)").
+        var end = page.IndexOf(">Cancel</button>", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Could not bound the bulk confirmation - update the tripwire.");
+        var confirm = page[start..end];
+
+        // D2: a group row in the batch carries the one-way warning inside the single confirmation.
+        Assert.Contains("@if (sel.Kind == \"Group\")", confirm, StringComparison.Ordinal);
+        Assert.Contains("re-adding it will require an IT Support Desk ticket", confirm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkRemove_SnapshotsGroupBeforeFirstAwait()
+    {
+        var bulk = Body(SelfServicePage(), "private async Task RemoveSelectedAsync()");
+
+        var iSnap = bulk.IndexOf("var group = selected;", StringComparison.Ordinal);
+        var iRows = bulk.IndexOf("var rows = SelectedMembers();", StringComparison.Ordinal);
+        var iAwait = bulk.IndexOf("await ", StringComparison.Ordinal);
+        Assert.True(iSnap >= 0 && iRows > iSnap, "Group and rows must be snapshotted.");
+        Assert.True(iAwait > iRows, "The snapshot must precede the first await in RemoveSelectedAsync.");
+        Assert.DoesNotContain("selected.", bulk, StringComparison.Ordinal);
+        Assert.DoesNotContain("selected!.", bulk, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SelfService_BulkStateNeverSurvivesAGroupSwitchOrReload()
+    {
+        var page = SelfServicePage();
+
+        Assert.Contains("ClearBulkState();", Body(page, "private async Task SelectGroup(ManageableGroup group)"), StringComparison.Ordinal);
+        Assert.Contains("ClearBulkState();", Body(page, "private void BackToGroups()"), StringComparison.Ordinal);
+        Assert.Contains("selectedGuids.Clear();", Body(page, "private async Task LoadMembers()"), StringComparison.Ordinal);
     }
 
     [Fact]
