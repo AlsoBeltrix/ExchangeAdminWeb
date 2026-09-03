@@ -1,13 +1,16 @@
 # Bulk member actions for the on-prem group modules
 
-Status: Draft 2026-09-03, awaiting codex openreview, then owner go per slice. One
-owner decision is drafted with a default (D1, section 1); implementation proceeds
-on that default unless the owner overrules it.
+Status: Approved for implementation 2026-09-03 (owner goal-directive the same day:
+"continue with the plan and codereview with codex (default) then implement upon
+consensus"). Codex openreview over `f1bec06..2e89f7a` returned
+`acceptable_with_changes` with three findings (gba-1..3, section 10), all admitted
+and folded in below. One owner decision is drafted with a default (D1, section 1);
+implementation proceeds on that default unless the owner overrules it.
 Owner: Michael
 Last verified against code: `f1bec06` / 2026-09-03
-Versions: module bumps only - `GroupManagement` `2.8.0` -> `2.9.0` (S2) -> `2.10.0`
-(S3); `SelfServiceGroups` `1.8.0` -> `1.9.0` (S4) -> `1.10.0` (S5). No base app
-bump (section 6, "Shared helpers").
+Versions: base app `2.17.0` -> `2.18.0` in S1 (shared helpers, gba-2);
+`GroupManagement` `2.8.0` -> `2.9.0` (S2) -> `2.10.0` (S3); `SelfServiceGroups`
+`1.8.0` -> `1.9.0` (S4) -> `1.10.0` (S5).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 
@@ -114,9 +117,16 @@ Settled by existing rulings or code, not open:
   member's display name; in self-service, each GROUP row in that list carries the D2
   one-way warning. Confirm runs the batch; Cancel clears nothing but the confirmation.
 - AC3: The batch runs the members SEQUENTIALLY through the same private per-member
-  handler the single Remove button uses (S2/S4 extract it), so per-member ticket,
+  handler the single Remove button uses (S2/S4 extract it), so per-member
   authorization, protection, servicer, write, read-back, per-member audit and
-  (self-service) affected-user notification are byte-for-byte the single path. One
+  (self-service) affected-user notification are byte-for-byte the single path. The
+  module authorization re-check (`AuthorizationService.AuthorizeAsync` on the
+  `GroupManagementOnPrem` / `SelfServiceGroups` policy) lives INSIDE the per-member
+  handler and therefore runs immediately before EVERY row's service call (gba-1;
+  Constitution, Authorization: "immediately before the write"); a per-row denial is
+  audited as the single path audits it today and the loop continues. The batch
+  handler's upfront authorization check is a UX shortcut for early refusal, never
+  the only check. The admin ticket is validated once per batch (section 1). One
   member's refusal or exception is recorded for that row and the loop continues.
 - AC4: After the loop, a per-row outcome table shows each member's display name,
   Done or Not done, and the service message. The member list refreshes ONCE at the
@@ -156,7 +166,8 @@ Settled by existing rulings or code, not open:
   user query missed.
 - AC10: Admin batch resolution is class-agnostic (user or group) against the forest
   global catalog (the `ResolveSearchGlobalCatalog` endpoint with its `:3268` guard),
-  returning DN, objectClass, display name, UPN, sAMAccountName and mail; a line
+  returning DN, objectClass, Name, display name, UPN, sAMAccountName and mail (Name is
+  projected because the group clause of the filter matches on it, gba-3); a line
   matching more than one object is Ambiguous; an object matching more than one line
   makes the later line a Duplicate.
 - AC11: `BulkIdentityList.Match` is pure and total: given the kept lines and the
@@ -166,7 +177,10 @@ Settled by existing rulings or code, not open:
   batch; every bulk control is disabled while it runs; a group switch mid-batch does
   not redirect the writes (the group is snapshotted before the first await, gmn-7)
   and the final refresh applies only if that group is still selected.
-- AC13: Versions per the header, bumped in the slice that ships each behavior. No
+- AC13: Versions per the header: the base app triple (`<VersionPrefix>`,
+  `AssemblyVersion`, `FileVersion` in `ExchangeAdminWeb.csproj`) bumps IN S1, the
+  slice that lands the shared helpers (gba-2; the csv-2 rule: the bump ships with the
+  shared change); module versions bump in the slice that ships each behavior. No
   `ModuleCatalog` permission or alias change (`ModuleCatalogTests.cs` untouched).
 - AC14: README gains a bulk bullet in both module sections.
 
@@ -175,7 +189,8 @@ Settled by existing rulings or code, not open:
 | Step / dependency | If it fails | The operator sees | System state afterward |
 |---|---|---|---|
 | Ticket validation (admin, once before the loop) | Batch does not start | Existing "Ticket validation failed" alert | One failed batch audit event (AC5, requested = N, done = 0), no member events, no writes |
-| Authorization re-check (once before the loop, page) | Batch does not start | "Authorization denied." | One failed batch audit, no writes |
+| Upfront authorization check (page, before the loop - UX shortcut) | Batch does not start | "Authorization denied." | One failed batch audit, no writes |
+| Per-row authorization re-check inside `RemoveOneAsync`/`AddOneAsync` (gba-1) | That row marked Not done "Authorization denied." | Row in the outcome table | Per-row failed audit (the single path's auth-denial branch); loop continues; batch `success=false` |
 | One member's service call returns `Success=false` | Row marked Not done with the message | Row in the outcome table | Per-member failed audit as today; loop continues |
 | One member's service call THROWS | Caught per row; row marked Not done with the exception message | Row in the outcome table | Per-member failed audit (the single path's catch branch, reused); loop continues |
 | Batch audit write throws | Caught, logged | Nothing | Member audits already written; batch summary missing, logged as audit failure |
@@ -253,9 +268,11 @@ public static class BulkIdentityList
         IReadOnlyList<(Line Line, int DuplicateOf)> Duplicates,
         IReadOnlyList<Line> OverCap);
 
-    // One directory object as the batch query returns it. All strings nullable.
+    // One directory object as the batch query returns it. All strings nullable. Name is
+    // the AD `name` (RDN) attribute - the group clause of the filter matches on it, so
+    // the matcher must see it (gba-3).
     public sealed record Candidate(
-        string? DistinguishedName, string? ObjectClass, string? DisplayName,
+        string? DistinguishedName, string? ObjectClass, string? Name, string? DisplayName,
         string? UserPrincipalName, string? SamAccountName, string? Mail, string? ObjectGuid);
 
     public enum Status { Resolved, NotFound, Ambiguous, Duplicate, NotAttempted }
@@ -263,7 +280,9 @@ public static class BulkIdentityList
     public sealed record Resolution(Line Line, Status Status, Candidate? Match, string Reason);
 
     // Match: for each kept line, the candidates whose UPN, mail, or sAMAccountName
-    // equals the line text (OrdinalIgnoreCase); for group candidates also name. Exactly
+    // equals the line text (OrdinalIgnoreCase); for group candidates (ObjectClass
+    // "group", only when allowGroups) also Name. A group candidate is never a match
+    // when allowGroups is false, whatever attribute equals the line. Exactly
     // one -> Resolved; zero -> NotFound; more -> Ambiguous ("matches <k> directory
     // objects"). A candidate already claimed by an earlier line makes the later line
     // Duplicate ("Duplicate of line <n>: same object"). Total: never throws on nulls.
@@ -293,11 +312,13 @@ public static class BulkOutcomeSummary
 }
 ```
 
-Shared helpers: two group modules consume these and nothing else does, matching the
-precedent of `GroupManagementService.ServerFromDn` / `BuildMemberAttributeWrite` /
-`MemberDnsOf` being consumed by `SelfServiceGroupService` with module bumps only
-(2026-08-28, 2026-09-02, 2026-09-03). No base bump. If the reviewer or owner rules
-these count as shared infrastructure, the base bump lands in S1.
+Shared helpers are shared infrastructure (gba-2; Constitution, Deployment And
+Versioning): a new `Services/` class consumed by two modules bumps the base app
+version, and the bump ships in S1 with the class (the csv-2 rule). The drafted
+alternative - module bumps only, on the precedent of cross-module helpers living on
+`GroupManagementService` - was declined by the reviewer and is withdrawn: those
+helpers were added to an existing module service during module-scoped fixes; a new
+shared class is the shape the rule names.
 
 ### Batch query seams (one per service)
 
@@ -307,8 +328,9 @@ these count as shared infrastructure, the base bump lands in S1.
 // Internal virtual TEST SEAM. Resolves every chunk against the forest global catalog
 // (ResolveSearchGlobalCatalog; falls back to the home domain when null, as search
 // does), Get-ADObject -LDAPFilter BuildBatchFilter(chunk, allowGroups: true)
-// -Properties DisplayName,UserPrincipalName,SamAccountName,mail,DistinguishedName,
-// ObjectGUID -Credential ... -ErrorAction Stop. Projects each row to a Candidate.
+// -Properties Name,DisplayName,UserPrincipalName,SamAccountName,mail,DistinguishedName,
+// ObjectGUID -Credential ... -ErrorAction Stop. Projects each row to a Candidate
+// (Name from the `Name` property, gba-3).
 // Throws on a query error (the page maps it to NotAttempted for every line).
 internal virtual IReadOnlyList<BulkIdentityList.Candidate> QueryBatchCandidates(
     (string username, string password, string domain) creds, IReadOnlyList<BulkIdentityList.Line> kept);
@@ -324,7 +346,7 @@ public async Task<IReadOnlyList<BulkIdentityList.Resolution>> ResolveBatchAsync(
 
 ```
 // Same shape, USER-only, home domain (no -Server), Get-ADUser -LDAPFilter
-// BuildBatchFilter(chunk, allowGroups: false) -Properties DisplayName,
+// BuildBatchFilter(chunk, allowGroups: false) -Properties Name,DisplayName,
 // UserPrincipalName,SamAccountName,mail,DistinguishedName,ObjectGUID. For every
 // NotFound line, one class-bounded probe (the existing GroupWithIdentityExists
 // filter, batched the same way with BuildGroupProbeFilter per line OR'd) rewrites the
@@ -351,20 +373,24 @@ resolution`, `bool isResolving`.
 
 Extraction (the load-bearing move, S2/S4): the body of the existing single handler
 becomes `private async Task<BulkRowOutcome> RemoveOneAsync(GroupSnapshot group,
-<RowType> listed, string ticket, ClaimsPrincipal user, bool sendAdminEmail)` containing
-the service call, the per-member audit (all branches), the affected-user email
-(self-service) and, when `sendAdminEmail`, the per-member admin email. It never throws:
-the existing catch branch becomes the `Not done` return. The single button's handler
-becomes: snapshot, ticket validation (admin), auth re-check, `RemoveOneAsync(...,
-sendAdminEmail: true)`, refresh. Same for `AddOneAsync(group, label, memberDn |
-identity, ticket, user, sendAdminEmail)`.
+<RowType> listed, string ticket, bool sendAdminEmail)` containing, in order: the
+module authorization re-check (`AuthStateProvider` + `AuthorizationService.AuthorizeAsync`
+on the module's write policy, with its audited denial branch - gba-1: this is what
+makes "immediately before the write" hold per row), the service call, the per-member
+audit (all branches), the affected-user email (self-service) and, when
+`sendAdminEmail`, the per-member admin email. It never throws: the existing catch
+branch becomes the `Not done` return. The single button's handler becomes: snapshot,
+ticket validation (admin), `RemoveOneAsync(..., sendAdminEmail: true)`, refresh. Same
+for `AddOneAsync(group, label, memberDn | identity, ticket, sendAdminEmail)`. The
+`ClaimsPrincipal` the service receives is the one the per-row check just authorized,
+fetched inside the handler, never a principal captured before the loop.
 
 Bulk remove handler:
 
 ```
 var group = selectedGroup; var rows = members where selectedGuids contains ObjectGuid;  // snapshot
-hold loading flag; ticket validation once (admin); auth re-check once
-foreach row in rows (list order): outcomes.Add(await RemoveOneAsync(group, row, ticket, user, sendAdminEmail: false));
+hold loading flag; ticket validation once (admin); upfront auth check once (UX shortcut - refuse early, audit the batch as failed)
+foreach row in rows (list order): outcomes.Add(await RemoveOneAsync(group, row, ticket, sendAdminEmail: false));   // per-row auth re-check is INSIDE
 summary = BulkOutcomeSummary.Of(outcomes)
 try { Audit.LogModuleAction(user, ip, "<Module>_BulkRemoveMembers", "<Module>", group.Name, summary.Success, ticket, summary.ErrorDetail, extra{requested, done, notDone, members}) } catch { log }
 try { await Email.SendAdminNotificationAsync(user, ip, "<Module>_BulkRemoveMembers", summary.Success, ticket, details{Group, Requested, Done, Not done, Members}, summary.ErrorDetail) } catch { log }
@@ -401,9 +427,10 @@ One commit per slice. S1 first; S2 and S4 depend on S1; S3 depends on S2 (the
 extracted `AddOneAsync` shape and the outcome table); S5 depends on S4 for the same
 reason. S2/S3 and S4/S5 are independent of each other.
 
-**S1 - `Services/BulkIdentityList.cs` + `BulkOutcomeSummary` + tests.** Serves AC7's
-parser, AC11, and the summary rule behind AC5. No page change, no version bump
-(nothing observable ships).
+**S1 - `Services/BulkIdentityList.cs` + `BulkOutcomeSummary` + tests + base app
+bump.** Serves AC7's parser, AC11, the summary rule behind AC5, and the base-bump
+half of AC13: the csproj triple `2.17.0` -> `2.18.0` lands here with the shared
+class (gba-2). No page change, no module bump.
 
 **S2 - GroupManagement bulk remove.** Extract `RemoveOneAsync`; checkboxes,
 select-all, confirmation, loop, outcome table, batch audit and email. Serves AC1-AC6,
@@ -442,7 +469,9 @@ loop. Serves AC7, AC8, AC9. `1.9.0` -> `1.10.0`.
 | AC11 | `Match_Zero_NotFound` | No candidate -> NotFound | n/a (shape) |
 | AC11 | `Match_Multiple_Ambiguous` | Two candidates share a sAM -> Ambiguous, reason names the count | Take the first; FAIL |
 | AC11 | `Match_SameObjectTwice_LaterLineIsDuplicate` | `jdoe` and `jdoe@x` resolving to one object -> second is Duplicate of line 1 | Remove the claimed set; FAIL |
-| AC10/AC9 | `Match_GroupCandidate_OnlyWhenAllowed` | A group candidate matching by name resolves with allowGroups true, is NotFound with false | Ignore the flag; FAIL |
+| AC10/AC9 | `Match_GroupCandidate_OnlyWhenAllowed` | A group candidate matching by sAMAccountName resolves with allowGroups true, is NotFound with false | Ignore the flag; FAIL |
+| AC10 | `Match_GroupCandidate_ByNameOnly_Resolves` (gba-3) | A group candidate whose ONLY matching attribute is `Name` (sAM, mail, UPN all different) resolves with allowGroups true | Drop Name from the comparison; FAIL |
+| AC9 | `Match_UserCandidate_NameDoesNotMatch` | A USER candidate whose `Name` equals the line but whose UPN/mail/sAM do not is NotFound - Name is a group-only key | Compare Name for every class; FAIL |
 | AC11 | `Match_NullAttributes_DoNotThrow` | Candidate with all-null strings -> NotFound, no exception | Dereference without null check; FAIL |
 | AC7 | `BuildBatchFilter_EscapesEachValue_AndOrsLines` | Two lines, one containing `*(`, yield one `(|...)` filter with `\2a\28` and no raw metacharacter; group clause present only with allowGroups | Skip escaping; FAIL |
 | AC7 | `Chunk_SplitsAtFifty` | 120 lines -> 50, 50, 20 | Change the size; FAIL |
@@ -468,6 +497,7 @@ page text, bound the method body, assert call shapes):
 |---|---|---|---|
 | AC3 | `<Page>_SingleAndBulkRemove_ShareRemoveOneAsync` | Both the single handler and the bulk loop body call `RemoveOneAsync(` and the page contains exactly one `RemoveMemberAsync(`/`RemoveListedMemberAsync(` service call | Inline a second service call; FAIL |
 | AC8 | `<Page>_SingleAndBulkAdd_ShareAddOneAsync` | Same for `AddOneAsync(` and `AddMemberAsync(`/`ChangeMemberAsync(` | Same |
+| AC3 | `<Page>_PerRowHandlers_RecheckAuthorization` (gba-1) | The bodies of `RemoveOneAsync` and `AddOneAsync` each contain `AuthorizationService.AuthorizeAsync(` on the module's write policy and an audited "Authorization denied" branch; the bulk loop bodies contain no `GroupService.` call outside those handlers | Hoist the check above the loop; FAIL |
 | AC5 | `<Page>_BulkAudit_UsesSummarySuccess` | The bulk handler's `LogModuleAction` call passes `summary.Success` and the `_Bulk` action name | Pass `true`; FAIL |
 | AC6 | `<Page>_BulkLoop_DoesNotSendPerMemberAdminEmail` | The bulk loop calls `RemoveOneAsync(..., sendAdminEmail: false)` and one `SendAdminNotificationAsync` follows the loop | Flip the flag; FAIL |
 | AC1 | `<Page>_SelectAll_SkipsDisabledRows` | The select-all handler filters on the same predicate as the row checkbox's `disabled` (`IsPrimaryMember`/`ObjectGuid` for admin, `IsRemovable` for self-service) | Drop the filter; FAIL |
@@ -525,4 +555,24 @@ Completed in S6: each AC above maps to its slice commit and test names.
 
 ## 10. Review log
 
-(Filled by the openreview dispatch.)
+- 2026-09-03: openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+  grade fallback; codex-cli 0.152.1, `codex exec -s read-only`, native command
+  execution working again on this version) over `f1bec06..2e89f7a`: verdict
+  `acceptable_with_changes`, capability_ok true, both SHAs echoed. Reviewer's own
+  approach matched the plan's shape (plan first, batch only the operator workflow
+  and read-side resolution, sequential writes through extracted single-member
+  handlers, per-row outcomes, per-member audits plus one batch summary). Three
+  material changes, three findings, all admitted and folded in:
+  **gba-1 (HIGH)** - the authorization re-check ran once before the loop, so later
+  rows could write under a stale page-level result and AC3's "byte-for-byte the
+  single path" claim was false; now inside `RemoveOneAsync`/`AddOneAsync`, per
+  row, audited (AC3, section 4, section 6, new source guard).
+  **gba-2 (MEDIUM)** - the shared helpers were declared module-bump-only on a
+  precedent that does not fit; base app `2.17.0` -> `2.18.0` now lands in S1
+  (header, AC13, S1).
+  **gba-3 (MEDIUM)** - the group clause of the LDAP filter matched on `name` but
+  `Candidate` had no Name field, so a group found only by name could never be
+  matched back to its line; `Name` added to the record, the projection, the
+  matcher (group-only key) and two new tests (AC10, section 6, section 8).
+  Records: `.agents/review/findings/gba-{1,2,3}.md`; envelope
+  `.agents/review/gba.result.json` (gitignored scratch).
