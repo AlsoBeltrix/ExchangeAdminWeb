@@ -40,10 +40,52 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   tenant** - if a dev search reports a failed search naming a 400, the filter needs a
   per-field split. Also found: `GraphTokenClient.GetWithStatusAsync` discards the error
   body on non-success, so a rejected filter cannot quote Graph's reason without a base
-  bump - recorded, not changed. Suite 2200/0/3.
-  **NEXT: owner deploys dev (carries `2.17.0` + these three), then: remove Organization
-  Management from ExchangeWebAdmins in self-service and re-add it via Group Management;
-  an Intune prefix search and a full-UPN search; read the Risky Users labels.**
+  bump - recorded, not changed.
+  **Third round, 2026-09-03, after the owner tested the second on dev:** (7) the
+  `startswith` form ALSO returned 200/empty - even an exact device name copied from the
+  blank list found nothing. Root cause is the SHAPE: three properties joined with `or` in
+  one `$filter` evaluates to nothing on this tenant (both `eq` and `startswith`). Now ONE
+  Graph request per field (deviceName startswith, UPN startswith, serial eq), merged by
+  id, only the typed value percent-encoded, and any returned row that does not actually
+  match is hidden and counted on screen (`acfabe9`, IntuneDevices `1.3.0`). **VERIFIED on
+  dev 2026-09-03: "intune is searching correctly."** Also the search button/hint
+  alignment (`dc4e9fc`). (8) The cross-domain remove got past the resolve and then failed
+  at the WRITE: `Remove-ADGroupMember -Members <dn> -Server <group DC>` resolves the
+  MEMBER on the group's DC, where a WINROOT DN does not exist. Both group modules now
+  write the group's `member` attribute directly (`Set-ADGroup -Add/-Remove @{member=dn}`,
+  `1a4b342`, SelfServiceGroups `1.8.0`, GroupManagement `2.8.0`); read-back still decides
+  success. **NOT YET VERIFIED on dev: `ExchangeWebAdmins` is now a Protected Group Target
+  on dev (owner: nobody with group-module access may make themselves a portal admin), so
+  the original repro is refused by design. Test with a THROWAWAY ANALOG group holding a
+  WINROOT member instead.** Suite 2220/0/3 as of `1a4b342`.
+  **NEXT: (a) owner: dev deploy is at `2.17.0` written 2026-09-03 12:25 (assembly) - if
+  that build predates `1a4b342`, redeploy, then the throwaway-group remove/re-add check.
+  (b) agent: draft `docs/GroupBulkActions-Plan.md` - see the entry directly below.**
+
+- **GROUP BULK ACTIONS: OWNER REQUEST 2026-09-03, SHAPE AGREED IN CHAT, PLAN NOT YET
+  DRAFTED, NO CODE.** Owner: *"we need checkboxes and bulk actions for group management
+  modules. removing a single entry at a time is slow and cumbersome."* Both on-prem group
+  modules (`GroupManagement`, `SelfServiceGroups`); `M365GroupManagement` stays OUT (owner
+  ruling 2026-08-11). Agreed shape, written to stand without the chat:
+  (1) **Bulk remove:** checkbox per member row plus select-all; "Remove selected" -> one
+  confirmation listing the names, one ticket where the module already requires one; each
+  member then runs the EXISTING per-member path unchanged (protection check, servicer
+  override, attribute write, read-back), sequentially, so one refusal never hides another;
+  a per-row outcome table (removed / refused with reason / failed with reason); one audit
+  event per member as today PLUS one batch summary event. Known Failure Class 2 is the
+  whole risk here: never a blanket success.
+  (2) **Bulk add via paste list:** a textarea taking usernames, emails or UPNs (one per
+  line or comma-separated); one click resolves ALL lines against AD as a batch (queries
+  run together, not one spinner each); a resolution table shows each line as resolved
+  (with the AD name), not found, or ambiguous; only resolved rows are committable and the
+  rest stay listed with their reason; one commit runs the per-member add path for the
+  resolved set with the same per-row outcome table. Self-service adds USERS only (its
+  standing rule); the existing typeahead stays for one-off adds. **Rejected by the owner:
+  a "staged picker" (typeahead feeding a pending list) - it still types one at a time and
+  waits on AD per entry; the paste list with batch resolution is the answer to "we'd lose
+  the AD validation on the input control", not a replacement for it.**
+  Constitution: a written plan is required (new write surface over the protection gates).
+  **NEXT: draft the plan (`plan` operator), review with codex, then owner go per slice.**
 
 - **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
   NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1
@@ -589,7 +631,11 @@ review was ever obtained.
 - **App version:** owned by `<VersionPrefix>` in `ExchangeAdminWeb.csproj` -- read the number
   there, never from here. The per-release history of that number is archived verbatim in
   `docs/history/state-archive.md` (Archived 2026-08-14).
-- **Deployed: dev `2.15.0` (DLL written 2026-09-02 09:13), prod `2.8.1` (unchanged,
+- **Deployed: dev `2.17.0` (DLL written 2026-09-03 12:25; which module versions that build
+  carries is unverified - read Module Config on dev; if the group modules show below
+  `1.8.0`/`2.8.0`, `1a4b342` is not on dev yet), prod `2.8.1` (unchanged, see below).**
+  Superseded record follows.
+- **Deployed (superseded 2026-09-03): dev `2.15.0` (DLL written 2026-09-02 09:13), prod `2.8.1` (unchanged,
   2026-08-13 16:52:57)** -- dev re-verified from the assembly 2026-09-02 after the owner's
   deploy. **The 2026-09-02 deploy was DEV ONLY.** Dev `2.15.0` carries over `2.10.0`:
   boolean config checkboxes (2.12.0), BitLocker mandatory ticket (2.11.0 + module 1.1.0),
