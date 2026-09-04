@@ -6,6 +6,23 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **USAGE TELEMETRY: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN OWNER GO
+  TO IMPLEMENT. NO CODE.** `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
+  `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
+  opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
+  2026-09-04); the Home page Important Notice must state telemetry is active (owner, same
+  day; AC13, conditional on the kill switch so it is never false). Codex openreview over
+  `2938db7..4af217e`: `acceptable_with_changes`, three findings + one material change, all
+  folded in (`.agents/review/findings/ute-{1,2,3}.md`). **Two were mine to have caught:**
+  ute-1 put the table in the config DB that `promote-dev-to-prod.ps1` replaces wholesale
+  with dev's (now its own `config/exchangeadmin-usage.db`, never promoted or backed up, no
+  migrator step); ute-2 hooked `LogModuleAction` only, while MailboxPermissions,
+  ConferenceRooms, Migration and MfaReset audit through their own methods (now the common
+  `WriteAuditEvent`). ute-3: action rows now carry the throwaway session id through a
+  `CircuitHandler.CreateInboundActivityHandler` + `AsyncLocal` ambient. Six slices; base
+  app `2.18.0` -> `2.19.0` in S1, `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
+  **NEXT: owner go, then S1.**
+
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**
   (1) The admin save bar counted dirty SECTIONS and called them "changes" - it now counts
