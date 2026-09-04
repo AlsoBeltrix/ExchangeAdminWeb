@@ -39,7 +39,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the shared file before "nothing to do"); plan section 10 has the log. The current build
   is `2.19.1` (>= the cutover script's 2.19.0 floor).
 
-- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1 LANDED.**
+- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1-S2 LANDED.**
   `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
   `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
   opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
@@ -57,7 +57,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the bump is now `2.19.0` -> `2.20.0`), `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
   S1 landed: `config/exchangeadmin-usage.db` with its own factory and
   `UsageEventRepository` (idempotent table, no migrator step), base app `2.20.0`.
-  **NEXT: S2 (session ambient, `UsageTelemetryService`, `AuditService` hook, DI).**
+  S2 landed: `UsageSession` + `UsageSessionCircuitHandler` (ambient per-circuit id),
+  `UsageTelemetryService` (kill switch defaulting on, fail-closed on an unreadable
+  config, `ModuleOf` legacy-category map, swallow-everything `Enqueue`), the
+  `AuditService.WriteAuditEvent` telemetry hook as its last statement, and DI.
+  **NEXT: S3 (`UsageTracker.razor` open/session/theme events in `MainLayout`).**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**

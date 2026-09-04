@@ -203,6 +203,10 @@ try
 
     builder.Services.AddSingleton<ExtendedLogService>();
     builder.Services.AddSingleton<JsonlLogService>();
+    // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC3). Registered BEFORE
+    // AuditService so the optional sink on its constructor is satisfied; a singleton, like the
+    // audit service it hangs off.
+    builder.Services.AddSingleton<UsageTelemetryService>();
     builder.Services.AddSingleton<OperationTraceService>();
     builder.Services.AddSingleton<AuditService>();
     builder.Services.AddSingleton<EmailService>();
@@ -229,6 +233,12 @@ try
     // open, so audit records carry the right per-session IP for the circuit's
     // whole lifetime (the static cache is fallback only).
     builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, ClientInfoCircuitHandler>();
+    // A throwaway per-circuit id for anonymous usage rows (docs/UsageTelemetry-Plan.md, AC4).
+    // Scoped like ClientInfoService above; the handler publishes it as an ambient value for the
+    // duration of each inbound circuit activity so the singleton telemetry service - reached
+    // from deep inside the audit path - can see which visit an action belonged to.
+    builder.Services.AddScoped<UsageSession>();
+    builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, UsageSessionCircuitHandler>();
 
     builder.Services.AddScoped<IUndoableModule, ADAttributeEditorUndoService>();
     builder.Services.AddScoped<UndoRegistry>();

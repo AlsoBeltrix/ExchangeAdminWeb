@@ -125,7 +125,9 @@ public class ConferenceRoomBulkProcessorTests : IDisposable
         // ClaimsPrincipal to service with in the first place.
         var servicers = new ProtectedPrincipalServicerService(sectionAccess, NullLogger<ProtectedPrincipalServicerService>.Instance);
         var gate = new ConferenceRoomProtectionGate(pp, servicers, NullLogger<ConferenceRoomProtectionGate>.Instance);
-        var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace);
+        // The usage sink is passed explicitly as null: the proxy generator binds constructors by
+        // exact arity and does not fill in the optional third parameter.
+        var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace, null);
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var rooms = new FakeRoomOps();
 

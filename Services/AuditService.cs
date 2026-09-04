@@ -4,11 +4,19 @@ public class AuditService
 {
     private readonly JsonlLogService _log;
     private readonly OperationTraceService _operationTrace;
+    private readonly UsageTelemetryService? _usage;
 
-    public AuditService(JsonlLogService log, OperationTraceService operationTrace)
+    /// <summary>
+    /// <paramref name="usage"/> is the anonymous usage-telemetry sink
+    /// (docs/UsageTelemetry-Plan.md, AC5). It is optional and defaults to null so every
+    /// existing construction - the test suites included - compiles and behaves exactly as
+    /// before; a null sink is a no-op.
+    /// </summary>
+    public AuditService(JsonlLogService log, OperationTraceService operationTrace, UsageTelemetryService? usage = null)
     {
         _log = log;
         _operationTrace = operationTrace;
+        _usage = usage;
     }
 
     /// <summary>
@@ -419,6 +427,17 @@ public class AuditService
         {
             implicitScope?.Dispose();
         }
+
+        // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC5). Deliberately the LAST
+        // statement and OUTSIDE the try/finally: the audit row is already written and the
+        // operation scope already closed, so a telemetry call can neither mask an audit
+        // failure nor run on a path where the audit write threw. RecordAction never throws.
+        // Hooked here rather than in LogModuleAction because this is the ONE method every
+        // public audit method ends in (review finding ute-2).
+        _usage?.RecordAction(
+            GetString(evt, "category") ?? string.Empty,
+            GetString(evt, "action") ?? string.Empty,
+            IsSuccessfulAuditResult(GetString(evt, "result")));
     }
 
     private static string? GetAuditTarget(IReadOnlyDictionary<string, object?> evt)

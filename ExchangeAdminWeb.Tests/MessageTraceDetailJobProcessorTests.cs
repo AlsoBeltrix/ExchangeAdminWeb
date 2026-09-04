@@ -69,7 +69,9 @@ public sealed class MessageTraceDetailJobProcessorTests : IDisposable
 
         var jsonlLog = new JsonlLogService(config, NullLogger<JsonlLogService>.Instance);
         var trace = new OperationTraceService(config, jsonlLog);
-        var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace);
+        // The usage sink is passed explicitly as null: the proxy generator binds constructors by
+        // exact arity and does not fill in the optional third parameter.
+        var audit = Substitute.ForPartsOf<AuditService>(jsonlLog, trace, null);
         var email = Substitute.ForPartsOf<EmailService>(config, NullLogger<EmailService>.Instance);
         var details = new FakeDetailSource();
 
