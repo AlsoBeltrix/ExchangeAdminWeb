@@ -1,15 +1,17 @@
 # Anonymous usage telemetry
 
-Status: Draft 2026-09-04, codex openreview over `2938db7..4af217e` returned
-`acceptable_with_changes` (ute-1..3 plus one further material change, section 10), all
-admitted and folded in. AWAITING AN OWNER GO to implement. The one owner decision (D1,
-event rows) is RULED (`.agents/decisions.md` 2026-09-04); no owner decision is
-outstanding.
+Status: Implemented 2026-09-04 (owner go same day), slices S1 `e33b201`, S2 `9bab3b2`,
+S3 `d3a5d5f`, S4 `73eaaeb`, S5 `322c27d`, S6 (this docs commit). Codex openreview over
+`2938db7..4af217e` returned `acceptable_with_changes` (ute-1..3 plus one further material
+change, section 10), all admitted and folded in before implementation. The one owner
+decision (D1, event rows) is RULED (`.agents/decisions.md` 2026-09-04); no owner decision
+is outstanding. Implementation deviations and notes are recorded in section 9.
 Owner: Michael
-Last verified against code: `2938db7` / 2026-09-04
-Versions: base app `2.18.0` -> `2.19.0` in S1 (new database, shared service, layout
-component, circuit handler, audit hook); `AdminEventLog` `1.1.0` -> `1.2.0` in S5
-(Usage view + kill-switch config field).
+Last verified against code: `322c27d` / 2026-09-04
+Versions: base app `2.19.1` -> `2.20.0` in S1 (new database, shared service, layout
+component, circuit handler, audit hook) - the plan was drafted against `2.18.0`, but
+SharedConfigDb landed first and took `2.19.0`/`2.19.1`; `AdminEventLog` `1.1.0` -> `1.2.0`
+in S5 (Usage view + kill-switch config field).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
 
@@ -516,7 +518,70 @@ PASS.
 
 ## 9. Traceability check
 
-Completed in S6.
+Completed 2026-09-04. Every slice commit passed `dotnet build ExchangeAdminWeb.slnx -c
+Release`, the FULL `dotnet test ExchangeAdminWeb.slnx`, `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore`, `git diff --check HEAD` and a
+non-ASCII scan. No `.ps1`/`.psm1` file was touched in any slice, so ScriptAnalyzer and
+Pester were not part of this stream's gate.
+
+**Final figures:** .NET suite 2373 passed / 0 failed / 3 skipped (2376 total) at S5
+`322c27d`, from 2339 before S1. Per slice: S1 2348, S2 2360, S3 2370, S4 2372, S5 2373.
+Build 0 errors (23 warnings, all pre-existing NU1903 advisories plus one CS8604 in
+`AccountLockoutRemediationService`). Mutation probes: S1 8, S2 12, S3 6, S4 4, S5 3 = 33,
+each failed exactly its target test on the mutant and passed on restore - except the one
+plan-defect probe recorded as deviation 3 below, which is unachievable in principle.
+
+| AC | Slice / commit | Tests (all mutation-probed) |
+|---|---|---|
+| AC1 own database, idempotent schema, no identity columns | S1 `e33b201` | `UsageEventRepositoryTests`: `Schema_HasNoIdentityColumns` (PRAGMA table_info), `Insert_ThenModuleSummary_*`, `ConfigStoreMigrator_IsUntouched` (pins TargetVersion 6) |
+| AC2 insert, prune, three aggregates | S1 `e33b201` | `UsageEventRepositoryTests` x9: range filtering on all three aggregates, prune count, `ThemeSummary` latest-row-per-session, `SessionSummary` exact session join |
+| AC3 service records, never throws | S2 `9bab3b2` | `UsageTelemetryServiceTests`: kill-switch off writes nothing, repository throw is swallowed, every `Record*` returns void, `ModuleOf` category mapping (catalog id, legacy table, unmapped) |
+| AC4 scoped session + circuit handler ambient | S2 `9bab3b2` | `CircuitHandler_SetsCurrentForTheActivity_AndDoesNotLeakIt` (see deviation 3), `UsageSession` id shape |
+| AC5 hook is the last statement of `WriteAuditEvent` | S2 `9bab3b2` | `AuditService_EveryPublicAuditMethod_CallsRecordAction` (reflection sweep), `AuditService_HookIsLastInWriteAuditEvent` (brace-matched source guard) |
+| AC6 tracker after the first interactive render, inside `Authorized` | S3 `d3a5d5f` | `UsageTrackerWiringTests`: `_RecordsOnlyAfterFirstInteractiveRender`, `_RendersInsideAuthorized`, `_RecordsOnLocationChanged_AndDisposes`, `RouteToModule_MatchesModuleVersionDerivation` (theory), `RouteToModule_TracksOnlyTheTwoModulelessRoutes` |
+| AC7 theme recorded after `setTheme` | S3 `d3a5d5f` | `ThemePicker_RecordsThemeAfterSet` |
+| AC8 startup prune, failure does not stop startup | S4 `73eaaeb` | No automated test - see deviation 5; manual check 4 covers it |
+| AC9 Usage view on the Event Log page | S5 `322c27d` | `BuildModuleRows_FillsZerosForUnopenedModules` (catalog count read from the catalog, zero-fill, non-module key kept, actions-per-open guard) |
+| AC10 kill switch off stops writes, view still reads | S2 `9bab3b2`, S4 `73eaaeb` | `UsageTelemetryServiceTests` switch behaviour (off, unparseable, unreadable-is-off), `KillSwitch_IsABooleanConfigFieldOnTheEventLogModule` |
+| AC11 versions | S1 `e33b201`, S5 `322c27d` | csproj `2.19.1` -> `2.20.0`; `ModuleCatalog` `AdminEventLog` `1.1.0` -> `1.2.0`; `ModuleCatalogTests` alias/permission counts unchanged (a config field is not a permission) |
+| AC12 docs | S6 (this commit) | README "Usage telemetry" under the Admin Event Log page; `.agents/repo-guidance.md` invariant 3; this status and section; `.agents/state.md` |
+| AC13 Home disclosure gated on the same read | S4 `73eaaeb` | `Home_DisclosesTelemetry_OnlyWhenEnabled` (gate precedes the phrase, phrase appears once, retention interpolated not typed) |
+
+**Deviations and implementation notes (nothing here changes an AC):**
+
+1. `ModuleUsage.Module` is the GROUPING KEY, not strictly a catalog module id: the
+   aggregate groups on `COALESCE(module, category)` and drops rows where both are null or
+   empty, so an audited action belonging to no catalog module still reports under its raw
+   category and the module-less home/access-denied opens fall out. The section 6 record
+   sketch implied a module id.
+2. `UsageEvent` carries a `Category` member the section 6 record sketch omits (the later
+   schema note in the same section adds the column). It is what makes note 1 possible.
+3. The planned `CircuitHandler_SetsAndRestoresCurrent` test and its "drop the `finally`;
+   FAIL" probe are UNACHIEVABLE: an `async` method's `AsyncLocal` writes never escape to
+   its caller, so the restore is provably inert from outside the activity and no probe can
+   make the test fail. Replaced with
+   `CircuitHandler_SetsCurrentForTheActivity_AndDoesNotLeakIt`, proven by two other probes
+   (a synchronous handler, and the ambient never being set). The `finally` is kept as
+   defence for a future synchronous path.
+4. The plan says "nothing else in the class changes" for `AuditService`, but Castle
+   DynamicProxy binds constructors by exact arity, so the two existing
+   `Substitute.ForPartsOf<AuditService>(jsonlLog, trace)` call sites in
+   `ConferenceRoomBulkProcessorTests` and `MessageTraceDetailJobProcessorTests` had to pass
+   an explicit `null` third argument. Production code matches the plan exactly.
+5. The S4 startup prune block has no automated test: it lives in `Program.cs` top-level
+   statements with no seam, and the plan's test table lists none. Manual check 4 covers it.
+   S4 also added `KillSwitch_IsABooleanConfigFieldOnTheEventLogModule`, a test the plan's
+   table does not list, because the new config field otherwise had no coverage.
+6. AC9 asks for "Lookup", "Admin Settings" and "Other" rows for actions with no module.
+   Implemented as: every aggregate key that is not a catalog module id is appended after
+   the catalog rows under its own raw category name and badged `category`, rather than
+   being folded into three fixed buckets - the same wording the service already documents
+   ("reported by its raw category name in the Usage view"). Nothing is hidden, and a new
+   unmapped category appears by name instead of vanishing into "Other".
+7. The Usage view also hides the undo side panel (its top-level `@if` became
+   `!showUsage && undoPreview != null`) and repoints the two date inputs at
+   `OnDateRangeChanged`, so the range drives whichever view is showing. The plan named the
+   events table and the undo panel but not the input rebinding.
 
 ## 10. Review log
 
@@ -546,3 +611,11 @@ Completed in S6.
   in `OnAfterRenderAsync(firstRender)`, pinned by a source guard and manual check 1.
   Records: `.agents/review/findings/ute-{1,2,3}.md`; envelope
   `.agents/review/ute.result.json` (gitignored scratch).
+- 2026-09-04: implemented end to end in six commits (`e33b201`, `9bab3b2`, `d3a5d5f`,
+  `73eaaeb`, `322c27d`, this docs commit), one slice per commit, each verified with the
+  full gate in section 8 before the next started. 33 mutation probes, restored from
+  scratch copies rather than `git restore`. No owner decision was needed during
+  implementation; the seven deviations and notes in section 9 are the complete list of
+  places where the shipped code differs from the plan text, none of them changing an
+  acceptance criterion. Not yet deployed: the Usage view, the disclosure bullet and the
+  first rows appear only after `tools/deploy-pipeline.ps1` runs, which is owner-run.

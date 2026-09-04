@@ -31,7 +31,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   on dev shows on prod within seconds).** Until step 4 both instances keep their own
   `config\exchangeadmin.db` and behave exactly as before (no key = today's path). Jobs and
   usage databases stay per instance. **NEXT: owner deploys dev, then decides when to cut
-  over; UsageTelemetry-Plan S1 is the next code stream (its base bump is now `2.20.0`).**
+  over; UsageTelemetry-Plan is now implemented at `2.20.0` (entry below).**
   Codereview (codex, 2026-09-04) over the implementation closed three findings, all
   fixed and probed: scdi-1 `3f8bd0e` (EXO pool now drains itself when the shared
   ExchangeOnline config changed in the other process; base app `2.19.1`), scdi-2
@@ -39,7 +39,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the shared file before "nothing to do"); plan section 10 has the log. The current build
   is `2.19.1` (>= the cutover script's 2.19.0 floor).
 
-- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1-S5 LANDED.**
+- **USAGE TELEMETRY: IMPLEMENTED 2026-09-04, NOT DEPLOYED.**
   `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
   `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
   opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
@@ -74,8 +74,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   listed, zeros included, plus any audited category that maps to no module under its own
   name; per-theme sessions; a one-line visit summary), all behind the same `EventLog`
   policy and with no new permission; `AdminEventLog` `1.1.0` -> `1.2.0`.
-  **NEXT: S6 (docs - README usage paragraph, repo-guidance invariant 3, plan Status
-  Implemented + traceability and implementation log).**
+  S6 landed: README "Usage telemetry" under the Admin Event Log page (what is and is not
+  recorded, the 90-day retention, where the kill switch lives), repo-guidance invariant 3
+  naming both `exchangeadmin-jobs.db` and `exchangeadmin-usage.db` as per-instance files
+  deliberately neither backed up nor promoted, and the plan set to Implemented with its
+  traceability table, seven recorded deviations and an implementation-log entry.
+  Final: 2373/0/3, format clean, `git diff --check` clean, 33 mutation probes across the
+  six slices; no `.ps1`/`.psm1` touched, so ScriptAnalyzer/Pester were not in this
+  stream gate. The build is now `2.20.0`, still above the cutover script minimum 2.19.0.
+  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.0`
+  (usage rows only start being written then); a codex codereview over the implementation
+  range, S1 `e33b201` through the S6 docs commit, is the natural owner-dispatched
+  follow-up.**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**

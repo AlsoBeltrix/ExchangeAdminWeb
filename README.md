@@ -96,6 +96,19 @@ A read-only JSONL audit log viewer, also gated by `Security:AdminGroups`.
 - Displays full event detail in an expandable JSON view.
 - Download CSV includes a `Ticket` column carrying the stored audit/trace ticket field.
 
+**Usage telemetry.** An "Events | Usage" toggle above the filters switches the page to an
+anonymous usage view: per module, how many times it was opened, how many audited actions ran,
+how many failed and how many visits touched it (every module is listed, so a module nobody
+opens shows zeros); per theme, how many visits ended on it; and a one-line visit summary. The
+rows behind it come from `config/exchangeadmin-usage.db`, a separate database that is never
+promoted between instances and is not part of the config backup. What is recorded: a throwaway
+per-visit id, a timestamp, the route or module opened, the audit category and action name of a
+completed action with its success flag, and the selected theme id. What is NOT recorded: the
+user, the IP address, the target of the action, the ticket number, or any operator-typed text.
+Rows older than 90 days are deleted at startup. Turn it off with the "Record anonymous usage"
+setting on the Event Log module in Admin Settings; the Home page notice announcing collection
+appears only while it is on, and the Usage view keeps showing rows already recorded.
+
 ### MFA Reset (`/mfa-reset`)
 
 Reset user MFA authentication methods via Microsoft Graph API.
