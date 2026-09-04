@@ -211,6 +211,35 @@ Describe 'deploy.ps1' {
             -Because 'the snapshot must be taken before any files change'
     }
 
+    It 'backs up the config DB from the path appsettings resolves, and stops when a configured path is missing (scd-1)' {
+        # SharedConfigDb-Plan AC6: with ConfigStore:Path set the backup (and the post-deploy
+        # check) must target that file - the one shared with the other instance - not the
+        # publish folder's config\. A configured path naming a missing file is fatal BEFORE
+        # anything is mirrored; without the key a missing DB is still just "nothing to back up".
+        $upgradeBlock = [regex]::Match(
+            $s.Text,
+            '(?s)# --- UPGRADE ---.*?# --- FRESH INSTALL ---'
+        ).Value
+
+        $upgradeBlock | Should -Match 'Get-ConfigStorePathSetting -PublishPath \$PublishPath'
+        $upgradeBlock | Should -Match 'Resolve-ConfigDbPath -PublishPath \$PublishPath'
+        $upgradeBlock | Should -Match 'Backup-SqliteConfigDb -DbPath \$configDbPath' `
+            -Because 'the backup must use the resolved path'
+        $upgradeBlock | Should -Not -Match 'Backup-SqliteConfigDb -ConfigDir' `
+            -Because 'the ConfigDir form would back up a stale per-instance file'
+        $upgradeBlock | Should -Match '(?s)if \(\$configStorePathSetting -and -not \(Test-IsSqliteConfigDbPresent -DbPath \$configDbPath\)\) \{\s*Write-Fail' `
+            -Because 'key set + file absent must Write-Fail (throw)'
+        $upgradeBlock.IndexOf('Write-Fail "ConfigStore:Path') |
+            Should -BeLessThan $upgradeBlock.IndexOf('robocopy') `
+            -Because 'the check must run before any files change'
+        $upgradeBlock | Should -Match 'nothing to back up' `
+            -Because 'the no-key, no-DB case keeps the warning posture'
+
+        # The post-deploy health check resolves the same way (never the hardcoded config\ path).
+        $upgradeBlock | Should -Match '\$liveDb = Resolve-ConfigDbPath -PublishPath \$PublishPath'
+        $upgradeBlock | Should -Not -Match 'Join-Path \$PublishPath "config\\exchangeadmin\.db"'
+    }
+
     It 'runs a post-deploy live DB integrity check (DB is excluded from file drift by design)' {
         $upgradeBlock = [regex]::Match(
             $s.Text,
@@ -346,74 +375,83 @@ Describe 'tools/promote-dev-to-prod.ps1' {
         $s.Text | Should -Match 'appsettings\.promote\..*\.tmp'
     }
 
-    It 'promotes config by wholesale DB copy, not the removed JSON-fragment merge (SQLite Phase D2)' {
-        # Config now lives in one SQLite DB; promotion replaces prod's DB with a consistent copy
-        # of dev's (dev is staging, same code version -> prod mirrors dev). The old per-file
-        # Merge-JsonConfig machinery is dead and must be gone (it merged now-archived JSONs).
-        $s.Text | Should -Match 'Copy-SqliteConfigDb' `
-            -Because 'config promotion is a wholesale verified DB copy'
+    It 'never copies, replaces or merges the config database (shared DB, decision 2026-09-04)' {
+        # SharedConfigDb-Plan AC7: dev and prod open ONE config database, so promotion has no
+        # config step at all. The wholesale copy (Copy-SqliteConfigDb), the older JSON-fragment
+        # merge, the -SkipConfigFragments opt-out and the prod->dev -Refresh are all gone.
+        $s.Text | Should -Not -Match 'Copy-SqliteConfigDb' `
+            -Because 'promotion must not replace the shared config database with a copy'
+        $s.Text | Should -Not -Match 'Copy-SqliteDbFile' `
+            -Because 'promotion must not copy any database file'
+        $s.Text | Should -Not -Match 'SkipConfigFragments' `
+            -Because 'there is no config promotion to skip'
+        $s.Text | Should -Not -Match '\$Refresh' `
+            -Because 'a prod->dev refresh would overwrite the shared database with itself or a stale copy'
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Not -Contain 'Refresh'
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Not -Contain 'SkipConfigFragments'
         $s.Text | Should -Not -Match 'function Merge-JsonConfig' `
             -Because 'the JSON-fragment merge helpers are dead after the SQLite cutover'
         $s.Text | Should -Not -Match '\$jsonConfigFiles' `
             -Because 'the per-file fragment list merged files that no longer exist'
     }
 
-    It 'backs up prod config DB (verified) before promoting, with the pool stopped' {
-        # The prod DB must be captured by the verified online backup (not just the robocopy of
-        # config/, which can tear a live WAL DB), and the promote copy must happen after the
-        # prod pool is stopped.
-        $s.Text | Should -Match 'Backup-SqliteConfigDb' `
-            -Because 'prod''s live DB needs a consistent backup before being replaced'
-        $s.Text.IndexOf('Stop-AppPoolChecked') |
-            Should -BeLessThan $s.Text.IndexOf('Copy-SqliteConfigDb') `
-            -Because 'the prod DB must be replaced only while its app pool is stopped'
+    It 'backs up the config DB prod opens (resolved via ConfigStore:Path) before the pool stops' {
+        # SharedConfigDb-Plan AC7: the verified backup is taken from the path prod actually opens
+        # - the shared file when ConfigStore:Path is set, else prod's own config\exchangeadmin.db
+        # - and it is taken BEFORE the prod pool is stopped and anything is mirrored.
+        $s.Text | Should -Match 'Resolve-ConfigDbPath -PublishPath \$prod' `
+            -Because 'the DB path must come from prod''s appsettings.json, never be hardcoded to config\'
+        $s.Text | Should -Match 'Backup-SqliteConfigDb -DbPath \$prodConfigDbPath' `
+            -Because 'the backup must use the resolved path'
+        $s.Text.IndexOf('Backup-SqliteConfigDb -DbPath') |
+            Should -BeLessThan $s.Text.IndexOf('Stop-AppPoolChecked -Name $ProdAppPoolName') `
+            -Because 'the backup must exist before prod is touched'
+        $s.Text | Should -Not -Match 'Backup-SqliteConfigDb -ConfigDir' `
+            -Because 'the ConfigDir form would silently back up a stale per-instance file'
     }
 
-    It 'rollback restores the VERIFIED DB backup, not just the raw robocopy copy (codex P1)' {
-        # The robocopy of config/ can capture a torn live WAL DB; rollback must overlay the
-        # verified backup (exchangeadmin.<timestamp>.db) onto prod and integrity-check it.
-        $rollbackBlock = [regex]::Match($s.Text, '(?s)Rolling back prod from backup.*?Rolled back prod').Value
-        $rollbackBlock | Should -Match 'exchangeadmin\.\$\{timestamp\}\.db' `
-            -Because 'rollback must consume the verified DB backup path'
-        $rollbackBlock | Should -Match 'Test-SqliteConfigDbIntegrity' `
-            -Because 'the restored DB must be integrity-checked'
+    It 'stops (Write-Fail) when ConfigStore:Path is set and the file is absent (scd-1)' {
+        # A configured path that names a missing file is a misconfiguration prod cannot start
+        # on; promoting would take prod down. The script must throw before anything changes,
+        # and only when the key is SET (the no-key case keeps the "nothing to back up" posture).
+        $s.Text | Should -Match 'Get-ConfigStorePathSetting -PublishPath \$prod'
+        $s.Text | Should -Match '(?s)if \(\$prodConfigStorePathSetting -and -not \(Test-IsSqliteConfigDbPresent -DbPath \$prodConfigDbPath\)\) \{\s*Write-Fail' `
+            -Because 'key set + file absent must Write-Fail (throw)'
+        $fn = Find-FunctionDefinition $s 'Write-Fail'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '\bthrow\b'
+        $s.Text.IndexOf('Write-Fail "Prod''s ConfigStore:Path') |
+            Should -BeLessThan $s.Text.IndexOf('Stop-AppPoolChecked -Name $ProdAppPoolName') `
+            -Because 'the check must run before prod is touched'
     }
 
-    It 'aborts apply (not just warns) when dev has no config DB (codex P2)' {
-        # In -Apply, a missing dev DB means no config is promoted; the script must throw rather
-        # than finish on the success banner with stale prod config.
-        $s.Text | Should -Match 'cannot promote config' `
-            -Because 'apply must abort when there is no dev config DB to promote'
-        $s.Text | Should -Match 'elseif \(\$Apply\)' `
-            -Because 'the abort is gated on apply mode (dry-run only warns)'
+    It 'rollback restores binaries only and names the DB backup instead of restoring it' {
+        # SharedConfigDb-Plan AC7: promotion no longer replaces the config DB, so restoring the
+        # verified backup on rollback would roll back DEV''s live data too. The rollback mirror
+        # excludes config\ (per-instance jobs DB, any per-instance config DB), never copies
+        # exchangeadmin.*.db anywhere, and tells the operator where the backup is.
+        $rollbackBlock = [regex]::Match($s.Text, '(?s)Rolling back prod binaries from backup.*?Rolled back prod binaries').Value
+        $rollbackBlock | Should -Not -BeNullOrEmpty
+        $rollbackBlock | Should -Match "'/XD' 'logs' 'config'" `
+            -Because 'the rollback mirror must leave config\ alone'
+        $rollbackBlock | Should -Not -Match 'Copy-Item -LiteralPath \$verifiedDb' `
+            -Because 'rollback must not overwrite the config DB'
+        $rollbackBlock | Should -Not -Match 'Test-SqliteConfigDbIntegrity' `
+            -Because 'nothing is restored, so nothing is re-checked'
+        $rollbackBlock | Should -Match 'Write-Warn .*NOT restored by the rollback.*\$verifiedDb' `
+            -Because 'the operator must be told where the verified backup is'
     }
 
-    It 'supports -Refresh (prod->dev) as a wholesale verified copy that backs up dev first' {
-        $s.Text | Should -Match '\[switch\]\$Refresh' -Because 'the prod->dev refresh is a switch'
-        $refreshBlock = [regex]::Match($s.Text, '(?s)if \(\$Refresh\) \{.*?\n    return\b').Value
-        $refreshBlock | Should -Not -BeNullOrEmpty
-        # Source is prod, dest is dev (reverse of promotion).
-        $refreshBlock | Should -Match 'Copy-SqliteConfigDb -SourceConfigDir \$prodConfigDir -DestConfigDir \$devConfigDir' `
-            -Because 'refresh copies prod config DOWN into dev'
-        # Dev DB backed up before the swap, and the dev pool stopped during it.
-        $refreshBlock.IndexOf('Backup-SqliteConfigDb') |
-            Should -BeLessThan $refreshBlock.IndexOf('Copy-SqliteConfigDb') `
-            -Because 'dev must be backed up before being overwritten'
-        $refreshBlock | Should -Match 'Stop-WebAppPool -Name \$DevAppPoolName' `
-            -Because 'the dev DB must be replaced only while the dev pool is stopped'
-    }
-
-    It '-Refresh never patches appsettings/PathBase (dev keeps its own identity)' {
-        $refreshBlock = [regex]::Match($s.Text, '(?s)if \(\$Refresh\) \{.*?\n    return\b').Value
-        $refreshBlock | Should -Not -Match 'Set-AppsettingsPathBase' `
-            -Because 'refresh is config-DB-only; appsettings/PathBase are per-environment identity'
-    }
-
-    It '-Refresh is exempt from the prod-overwrite consent gate (it never writes prod) (codex)' {
-        # -Refresh writes dev, not prod, so requiring -IUnderstandThisOverwritesProd would block
-        # it nonsensically. The consent gate must exclude -Refresh.
-        $s.Text | Should -Match '\$Apply -and -not \$Refresh -and -not \$IUnderstandThisOverwritesProd' `
-            -Because 'the prod-overwrite confirmation applies to promotion, not the prod->dev refresh'
+    It 'keeps every remaining step behind the -Apply gate (plan mode prints, never acts)' {
+        foreach ($name in 'Invoke-RobocopyChecked', 'Copy-FileChecked', 'Set-AppsettingsPathBase', 'Stop-AppPoolChecked', 'Start-AppPoolChecked') {
+            $fn = Find-FunctionDefinition $s $name
+            $fn | Should -Not -BeNullOrEmpty -Because "$name must exist"
+            $fn.Extent.Text | Should -Match '-not \$Apply' -Because "$name must honour dry run"
+        }
+        $s.Text | Should -Match 'Write-Plan "Verified online backup of the config DB at \$prodConfigDbPath' `
+            -Because 'the backup step must print its plan in dry run'
+        $s.Text | Should -Match 'Write-Plan "Config database at \$prodConfigDbPath is shared with dev and is NOT copied' `
+            -Because 'dry run must state that no config copy happens'
     }
 
     It 'only claims prod was restored from backup when rollback actually completed' {
@@ -501,5 +539,20 @@ Describe 'tools/deploy-pipeline.ps1' {
         $assignment = [regex]::Match($s.Text, '(?s)if \(-not \$PlanOnly\) \{.*?IUnderstandThisOverwritesProd.*?\}')
         $assignment.Success | Should -BeTrue
         ([regex]::Matches($s.Text, 'IUnderstandThisOverwritesProd')).Count | Should -Be 1 -Because 'the consent switch must not be asserted anywhere else'
+    }
+
+    It 'never claims that config was promoted (the config database is shared - scd-4)' {
+        # SharedConfigDb-Plan AC6: help text and final messages must not tell the operator that
+        # module configs or settings were promoted from dev; nothing is copied any more.
+        $s.Text | Should -Not -Match '(?i)promoted from dev' `
+            -Because 'the shared config database is never copied by promotion'
+        $s.Text | Should -Not -Match '(?i)config promotion' `
+            -Because 'there is no config promotion step'
+        $s.Text | Should -Not -Match '(?i)dev values win' `
+            -Because 'the dev-wins rule was superseded on 2026-09-04'
+        $s.Text | Should -Match 'ConfigStore:Path' `
+            -Because 'the help text should point the operator at where the shared database is named'
+        $s.Text | Should -Not -Match 'SkipConfigFragments|\bRefresh\b' `
+            -Because 'the pipeline must not pass switches the promote script no longer has'
     }
 }

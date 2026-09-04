@@ -428,30 +428,45 @@ if ($isUpgrade) {
     # pre-incident enablement state unknowable. Back up the runtime config directory,
     # retained alongside the appsettings backups.
     #
-    # The config DB (config/exchangeadmin.db) is a LIVE SQLite database - a raw recursive
-    # Copy-Item of a live WAL DB can be torn/inconsistent, producing a worthless rollback
-    # snapshot. Back the DB up via a verified online backup (VACUUM INTO + integrity_check;
-    # SqliteConfigStore-Plan Phase D), then copy any remaining non-DB config files (e.g. legacy
-    # *.imported-* archives, samples) with a plain recursive copy.
+    # The config DB is a LIVE SQLite database - a raw recursive Copy-Item of a live WAL DB can be
+    # torn/inconsistent, producing a worthless rollback snapshot. Back the DB up via a verified
+    # online backup (VACUUM INTO + integrity_check; SqliteConfigStore-Plan Phase D), then copy
+    # any remaining non-DB config files (e.g. legacy *.imported-* archives, samples) with a plain
+    # recursive copy.
+    #
+    # WHERE THE DB IS (SharedConfigDb-Plan AC6, decision 2026-09-04): when appsettings.json names
+    # ConfigStore:Path, that file - shared by both instances on this server - is what gets backed
+    # up, not the publish folder's config\. With the key set the file MUST exist: a mistyped key
+    # or a moved file must stop the deploy here, before anything is mirrored, because the app
+    # would otherwise refuse to start (it never creates a configured database). Without the key
+    # a missing DB just means the first start has not happened yet.
     $runtimeConfigDir = Join-Path $PublishPath "config"
+    $configStorePathSetting = Get-ConfigStorePathSetting -PublishPath $PublishPath
+    $configDbPath = Resolve-ConfigDbPath -PublishPath $PublishPath
+    if ($configStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $configDbPath)) {
+        Write-Fail "ConfigStore:Path in $configPath names '$configDbPath' but no database exists there. The app will not start against a missing shared database (it never creates one). Fix the key, restore the file, or run tools\Move-ConfigDbToShared.ps1 to create the shared database. Nothing was deployed."
+    }
+
+    $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
+    New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
+
+    # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
+    $dbBackup = Backup-SqliteConfigDb -DbPath $configDbPath -DestDir $configDirBackup -Timestamp $timestamp
+    if ($dbBackup) {
+        Write-Success "Config DB ($configDbPath) backed up (verified) to $dbBackup"
+    } else {
+        Write-Warn "No config DB at $configDbPath yet -- nothing to back up (it is created on first app start)"
+    }
+
     if (Test-Path $runtimeConfigDir) {
-        $configDirBackup = Join-Path $BackupDir "config.${timestamp}.bak"
-        New-Item -ItemType Directory -Path $configDirBackup -Force | Out-Null
-
-        # Verified online backup of the live DB (throws + aborts the deploy on integrity failure).
-        $dbBackup = Backup-SqliteConfigDb -ConfigDir $runtimeConfigDir -DestDir $configDirBackup -Timestamp $timestamp
-        if ($dbBackup) {
-            Write-Success "Config DB backed up (verified) to $dbBackup"
-        }
-
-        # Copy the rest of config/ (everything except the live DB triplet, which is handled above).
+        # Copy the rest of config/ (everything except a per-instance live DB triplet, which is
+        # handled above when it is the configured database and is a stale leftover otherwise).
         Get-ChildItem -LiteralPath $runtimeConfigDir -File |
             Where-Object { $_.Name -notin @('exchangeadmin.db', 'exchangeadmin.db-wal', 'exchangeadmin.db-shm') } |
             ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $configDirBackup $_.Name) -Force }
         Write-Success "Runtime config directory backed up to $configDirBackup"
     } else {
-        $configDirBackup = $null
-        Write-Warn "No runtime config directory at $runtimeConfigDir -- nothing to back up"
+        Write-Warn "No runtime config directory at $runtimeConfigDir -- only the config DB backup was taken"
     }
 
     # Pre-deploy snapshot for the post-deploy drift check (incident fix #5): the
@@ -603,15 +618,19 @@ if ($isUpgrade) {
     # so verify it properly here instead: the app pool was started above, so the schema has been
     # migrated/seeded. A missing or corrupt live DB must be flagged loudly rather than ending on
     # the success banner. Warn (not throw) - the deploy has already happened; this surfaces a bad
-    # outcome to the operator with the verified pre-deploy backup as the rollback.
-    $liveDb = Join-Path $PublishPath "config\exchangeadmin.db"
+    # outcome to the operator with the verified pre-deploy backup as the rollback. The path is
+    # resolved again from appsettings.json (deploy never rewrites it) so a shared database is
+    # checked where it actually lives (SharedConfigDb-Plan AC6).
+    $liveDb = Resolve-ConfigDbPath -PublishPath $PublishPath
     if (Test-Path -LiteralPath $liveDb) {
         try {
             Test-SqliteConfigDbIntegrity -DbPath $liveDb | Out-Null
-            Write-Success "Config DB verified: integrity_check passed on the live store"
+            Write-Success "Config DB verified: integrity_check passed on the live store at $liveDb"
         } catch {
             Write-Warn "POST-DEPLOY CHECK: live config DB integrity check FAILED: $($_.Exception.Message). The app may not function correctly - restore from the pre-deploy backup in $BackupDir and investigate."
         }
+    } elseif ($configStorePathSetting) {
+        Write-Warn "POST-DEPLOY CHECK: ConfigStore:Path names $liveDb but it does not exist after deploy. The app will not start against a missing shared database - investigate."
     } else {
         Write-Warn "POST-DEPLOY CHECK: no config DB at $liveDb after deploy. If this is the first deploy of the SQLite build it will be created on first app start; otherwise investigate."
     }

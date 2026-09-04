@@ -12,8 +12,11 @@
 
     Workflow: run -Dev first, validate in dev, then run -Prod to promote.
 
-    Config promotion: module configs and operational settings are promoted
-    from dev (dev values win). appsettings.json is prod-owned and preserved,
+    Config: dev and prod share ONE config database (the file named by
+    ConfigStore:Path in each instance's appsettings.json; decision 2026-09-04).
+    Promotion never copies, replaces or merges it - a setting saved on dev is
+    already live on prod. Every deploy of either instance takes a verified
+    backup of that file first. appsettings.json is prod-owned and preserved,
     with Application:PathBase patched for the prod path.
 
 .EXAMPLE
@@ -183,6 +186,6 @@ if ($Prod) {
     else {
         Write-Ok "Prod deployment complete at $ProdPath"
         Write-Host "Validate: https://<server>$ProdPathBase" -ForegroundColor Cyan
-        Write-Host "Module configs and operational settings promoted from dev. appsettings.json preserved with PathBase patched." -ForegroundColor DarkGray
+        Write-Host "Prod now runs the dev build. appsettings.json preserved with PathBase patched. The shared config database was not touched (backup taken first)." -ForegroundColor DarkGray
     }
 }

@@ -5,19 +5,18 @@ param(
     [string]$ProdAppPoolName = "ExchangeAdminWeb",
     [string]$ProdPathBase = "/ExchangeAdminWeb",
     [string]$ProdPublicBaseUrl,
-    [string]$DevAppPoolName = "ExchangeAdminWebDev",
     [string]$BackupRoot,
     [int]$BackupRetention = 3,
     [switch]$Apply,
     [switch]$IUnderstandThisOverwritesProd,
-    [switch]$CopyAppSettings,
-    [switch]$SkipConfigFragments,
-    [switch]$Refresh
+    [switch]$CopyAppSettings
 )
 
 $ErrorActionPreference = "Stop"
 
-# Shared SQLite config-DB backup / promote / integrity helpers (SqliteConfigStore-Plan Phase D).
+# Shared SQLite config-DB backup / integrity helpers (SqliteConfigStore-Plan Phase D). The
+# config database itself is SHARED by dev and prod and is never copied by promotion
+# (SharedConfigDb-Plan, decision 2026-09-04) - this script backs it up and otherwise leaves it.
 Import-Module (Join-Path $PSScriptRoot 'SqliteConfigBackup.psm1') -Force
 
 # Shared warning about active bulk jobs before an app-pool recycle (BulkJobRunner-Plan).
@@ -27,6 +26,7 @@ function Write-Step { param([string]$Message) Write-Host ">>> $Message" -Foregro
 function Write-Ok { param([string]$Message) Write-Host " OK  $Message" -ForegroundColor Green }
 function Write-Warn { param([string]$Message) Write-Host "  !  $Message" -ForegroundColor Yellow }
 function Write-Plan { param([string]$Message) Write-Host "DRY  $Message" -ForegroundColor DarkGray }
+function Write-Fail { param([string]$Message) Write-Host "  X  $Message" -ForegroundColor Red; throw $Message }
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -251,9 +251,7 @@ if ($dev.Equals($prod, [StringComparison]::OrdinalIgnoreCase)) {
     throw "DevPath and ProdPath resolve to the same directory. Refusing to continue."
 }
 
-# Prod-overwrite consent gates PROMOTION (dev->prod) only. -Refresh (prod->dev) never writes to
-# prod, so it must NOT require this confirmation - it has its own elevation check below.
-if ($Apply -and -not $Refresh -and -not $IUnderstandThisOverwritesProd) {
+if ($Apply -and -not $IUnderstandThisOverwritesProd) {
     throw "Apply mode requires -IUnderstandThisOverwritesProd to confirm this promotion overwrites the prod publish folder."
 }
 
@@ -265,63 +263,6 @@ if (-not (Test-Path -LiteralPath $BackupRoot -PathType Container)) {
 $backupRootResolved = if (Test-Path -LiteralPath $BackupRoot) { (Resolve-Path -LiteralPath $BackupRoot).Path } else { $BackupRoot }
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $backup = Join-Path $backupRootResolved ("ExchangeAdminWeb.backup.$timestamp")
-
-# --- -Refresh: pull PROD config DB down into DEV (the reverse of promotion) -----------------
-# The owner's "copy prod config to dev" operation (SqliteConfigStore-Plan section Phase D). It is a
-# wholesale, verified copy of prod's config DB onto dev so dev reproduces prod's live config.
-# It NEVER touches prod, and NEVER touches dev's appsettings.json / PathBase (those are
-# per-environment identity). Backup-first, dev pool stopped during the swap.
-if ($Refresh) {
-    $devConfigDir = Join-Path $dev "config"
-    $prodConfigDir = Join-Path $prod "config"
-
-    Write-Host ""
-    Write-Host "ExchangeAdminWeb prod-to-dev config refresh" -ForegroundColor Magenta
-    Write-Host "  Source (prod): $prodConfigDir" -ForegroundColor DarkGray
-    Write-Host "  Target (dev) : $devConfigDir" -ForegroundColor DarkGray
-    Write-Host "  Dev app pool : $DevAppPoolName" -ForegroundColor DarkGray
-    Write-Host "  Mode         : $(if ($Apply) { 'APPLY' } else { 'DRY RUN' })" -ForegroundColor DarkGray
-    Write-Host ""
-
-    if (-not (Test-IsSqliteConfigDbPresent -ConfigDir $prodConfigDir)) {
-        throw "Prod has no config DB at $prodConfigDir\exchangeadmin.db - nothing to refresh into dev."
-    }
-
-    if (-not $Apply) {
-        Write-Plan "Back up dev config DB (verified) into $backup"
-        Write-Plan "Stop-WebAppPool -Name $DevAppPoolName"
-        Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $devConfigDir -PlanOnly | Out-Null
-        Write-Plan "Replace dev config DB with a consistent copy of $prodConfigDir\exchangeadmin.db (wholesale)"
-        Write-Plan "Start-WebAppPool -Name $DevAppPoolName"
-        Write-Warn "Dry run only. Re-run with -Apply to make changes. (Dev appsettings.json / PathBase are never touched.)"
-        return
-    }
-
-    if (-not (Test-IsAdministrator)) { throw "Run this script from an elevated PowerShell session when using -Apply." }
-    Import-Module WebAdministration -ErrorAction Stop
-
-    # Back up dev's current DB first (verified online backup; throws/aborts on integrity failure).
-    $devDbBackup = Backup-SqliteConfigDb -ConfigDir $devConfigDir -DestDir $backup -Timestamp $timestamp
-    if ($devDbBackup) { Write-Ok "Dev config DB backed up (verified) to $devDbBackup" }
-
-    Write-Step "Stopping dev app pool: $DevAppPoolName"
-    # Warn (do not block) if a durable bulk job is active on dev - recycling interrupts it.
-    Assert-NoActiveBulkJobsBeforeRecycle -ConfigDir $devConfigDir | Out-Null
-    Stop-WebAppPool -Name $DevAppPoolName -ErrorAction Stop
-    Start-Sleep -Seconds 3
-    try {
-        $refreshed = Copy-SqliteConfigDb -SourceConfigDir $prodConfigDir -DestConfigDir $devConfigDir
-        Write-Ok "Refreshed dev config DB from prod (verified): $refreshed"
-    } finally {
-        Write-Step "Starting dev app pool: $DevAppPoolName"
-        Start-WebAppPool -Name $DevAppPoolName
-        Write-Ok "Dev app pool started"
-    }
-
-    Write-Host ""
-    Write-Ok "Prod-to-dev config refresh complete. Dev now mirrors prod's config; appsettings.json/PathBase unchanged."
-    return
-}
 
 Write-Host ""
 Write-Host "ExchangeAdminWeb dev-to-prod promotion" -ForegroundColor Magenta
@@ -367,15 +308,24 @@ Invoke-RobocopyChecked -Description "Backing up prod publish folder" -RobocopyAr
 )
 
 # The publish-folder backup above includes config/ via robocopy, but a robocopy of a LIVE WAL
-# database can be torn/inconsistent - so additionally capture a verified online backup of prod's
-# config DB (if it has one yet) into the same backup folder. No-op on a pre-SQLite prod (returns
-# null). Throws/aborts if prod's live DB fails its integrity check (owner decision 2026-06-18).
+# database can be torn/inconsistent - so additionally capture a verified online backup of the
+# config DB prod opens into the same backup folder. That DB is the file named by prod's
+# ConfigStore:Path when set (the database SHARED with dev - promotion never copies or replaces
+# it, decision 2026-09-04), else prod's own config\exchangeadmin.db. With the key set the file
+# MUST exist - a missing shared database stops the promotion here, before anything changes,
+# because prod would not start against it (the app never creates a configured database). No-op
+# on a pre-SQLite prod without the key (returns null). Throws/aborts if the live DB fails its
+# integrity check (owner decision 2026-06-18).
+$prodConfigStorePathSetting = Get-ConfigStorePathSetting -PublishPath $prod
+$prodConfigDbPath = Resolve-ConfigDbPath -PublishPath $prod
+if ($prodConfigStorePathSetting -and -not (Test-IsSqliteConfigDbPresent -DbPath $prodConfigDbPath)) {
+    Write-Fail "Prod's ConfigStore:Path names '$prodConfigDbPath' but no database exists there. Prod will not start against a missing shared database (the app never creates one). Fix the key or restore the file before promoting. Nothing was changed."
+}
 if ($Apply) {
-    $prodConfigDirForBackup = Join-Path $prod "config"
-    $prodDbBackup = Backup-SqliteConfigDb -ConfigDir $prodConfigDirForBackup -DestDir $backup -Timestamp $timestamp
-    if ($prodDbBackup) { Write-Ok "Prod config DB backed up (verified) to $prodDbBackup" }
+    $prodDbBackup = Backup-SqliteConfigDb -DbPath $prodConfigDbPath -DestDir $backup -Timestamp $timestamp
+    if ($prodDbBackup) { Write-Ok "Config DB ($prodConfigDbPath) backed up (verified) to $prodDbBackup" }
 } else {
-    Write-Plan "Verified online backup of prod config DB (if present) into $backup"
+    Write-Plan "Verified online backup of the config DB at $prodConfigDbPath (if present) into $backup"
 }
 
 Stop-AppPoolChecked -Name $ProdAppPoolName -ConfigDir (Join-Path $prod "config")
@@ -397,33 +347,11 @@ try {
 
     Set-AppsettingsPathBase -AppSettingsPath $prodAppSettings -PathBase $ProdPathBase -PublicBaseUrl $ProdPublicBaseUrl
 
-    if (-not $SkipConfigFragments) {
-        # Config promotion (SqliteConfigStore-Plan Phase D2): all runtime config now lives in the
-        # single SQLite DB config/exchangeadmin.db. dev is staging for prod and both run the same
-        # code version after this promotion, so prod's config should MIRROR dev's exactly - a
-        # wholesale replace, not a per-key merge (owner decision 2026-06-18: any prod-only key is
-        # either dead under the new code or a dev misconfiguration to fix in dev). Copy-SqliteConfigDb
-        # writes a consistent, integrity-verified snapshot of dev's DB over prod's. Prod's prior DB
-        # was backed up (verified) above; the prod pool is stopped at this point.
-        $devConfigDir = Join-Path $dev "config"
-        $prodConfigDir = Join-Path $prod "config"
-        if (Test-IsSqliteConfigDbPresent -ConfigDir $devConfigDir) {
-            if ($Apply) {
-                $promoted = Copy-SqliteConfigDb -SourceConfigDir $devConfigDir -DestConfigDir $prodConfigDir
-                Write-Ok "Promoted dev config DB to prod (verified): $promoted"
-            } else {
-                Write-Plan "Replace prod config DB with a consistent copy of $devConfigDir\exchangeadmin.db (wholesale)"
-            }
-        } elseif ($Apply) {
-            # All runtime config lives in the DB now. A missing dev DB means promotion would ship
-            # binaries with NO config promoted, leaving prod on stale/missing config - abort
-            # rather than report success. (Triggers the rollback in the surrounding catch.)
-            throw "Dev has no config DB at $devConfigDir\exchangeadmin.db - cannot promote config. Run -Dev with the current build first."
-        } else {
-            Write-Warn "Dev has no config DB at $devConfigDir\exchangeadmin.db - nothing to promote (dry run). Run -Dev with the current build first."
-        }
-    } else {
-        Write-Warn "Skipping config promotion by request."
+    # No config step: the config database is shared by both instances and already holds
+    # whatever dev saved (SharedConfigDb-Plan AC7). New tables reach prod through the shared
+    # file - whichever build starts first migrates it and the other accepts it.
+    if (-not $Apply) {
+        Write-Plan "Config database at $prodConfigDbPath is shared with dev and is NOT copied or replaced by promotion"
     }
 } catch {
     $promotionFailed = $true
@@ -432,29 +360,20 @@ try {
     Write-Host ""
 
     if ($Apply -and (Test-Path -LiteralPath $backup -PathType Container)) {
-        Write-Step "Rolling back prod from backup: $backup"
+        Write-Step "Rolling back prod binaries from backup: $backup"
         try {
-            & robocopy $backup $prod '/MIR' '/XD' 'logs' '/NFL' '/NDL' '/NJH' '/NJS' '/R:2' '/W:1'
+            # Binaries only: config\ is excluded so the rollback never touches the per-instance
+            # jobs database or a per-instance config DB, and the shared config database (outside
+            # the publish folder) was never changed by this promotion. Restoring the verified DB
+            # backup would roll back dev's live data too, so it is a deliberate manual act.
+            & robocopy $backup $prod '/MIR' '/XD' 'logs' 'config' '/NFL' '/NDL' '/NJH' '/NJS' '/R:2' '/W:1'
             if ($LASTEXITCODE -ge 8) {
                 Write-Host "  X  Rollback robocopy failed with exit code $LASTEXITCODE - prod may be in an inconsistent state" -ForegroundColor Red
             } else {
-                # The robocopy above restores the config/ tree, but its copy of the live DB may be
-                # torn (WAL). If a VERIFIED DB backup was taken (Backup-SqliteConfigDb wrote
-                # $backup\exchangeadmin.<timestamp>.db), overlay it onto prod's config DB and
-                # integrity-check, so rollback restores a known-good DB rather than the raw copy.
                 $verifiedDb = Join-Path $backup "exchangeadmin.${timestamp}.db"
-                if (Test-Path -LiteralPath $verifiedDb -PathType Leaf) {
-                    $prodDb = Join-Path $prod "config\exchangeadmin.db"
-                    foreach ($suffix in '-wal', '-shm') {
-                        $side = "$prodDb$suffix"
-                        if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
-                    }
-                    Copy-Item -LiteralPath $verifiedDb -Destination $prodDb -Force
-                    Test-SqliteConfigDbIntegrity -DbPath $prodDb | Out-Null
-                    Write-Ok "Restored verified config DB from $verifiedDb"
-                }
+                Write-Warn "The config database ($prodConfigDbPath) was not changed by this promotion and is NOT restored by the rollback (it is shared with dev). A verified pre-promotion backup is at $verifiedDb should you decide to restore it by hand - stop BOTH app pools first."
                 $rolledBack = $true
-                Write-Ok "Rolled back prod to pre-promotion state"
+                Write-Ok "Rolled back prod binaries to pre-promotion state"
             }
         } catch {
             Write-Host "  X  Rollback failed: $_ - restore manually from $backup" -ForegroundColor Red
@@ -480,6 +399,7 @@ Write-Host ""
 if ($Apply) {
     Write-Ok "Promotion complete. Backup: $backup"
     Write-Host "Validate: https://<server>$ProdPathBase" -ForegroundColor Cyan
+    Write-Host "The config database ($prodConfigDbPath) is shared with dev and was not changed." -ForegroundColor DarkGray
 } else {
     Write-Warn "No changes were made. Re-run with -Apply after reviewing the dry-run output."
 }

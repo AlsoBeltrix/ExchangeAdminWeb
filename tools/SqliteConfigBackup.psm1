@@ -3,10 +3,16 @@
     Consistent backup + integrity verification for the SQLite runtime config DB.
 
 .DESCRIPTION
-    Shared by deploy.ps1 and promote-dev-to-prod.ps1 (SqliteConfigStore-Plan Phase D). The
-    config DB (config/exchangeadmin.db) is a live SQLite database; a raw file copy of a live
-    WAL database can be torn/inconsistent, so a pre-deploy "backup" that just copies the file
-    could produce a rollback snapshot that is itself corrupt.
+    Shared by deploy.ps1, promote-dev-to-prod.ps1 and Move-ConfigDbToShared.ps1
+    (SqliteConfigStore-Plan Phase D; SharedConfigDb-Plan). The config DB is a live SQLite
+    database; a raw file copy of a live WAL database can be torn/inconsistent, so a pre-deploy
+    "backup" that just copies the file could produce a rollback snapshot that is itself corrupt.
+
+    WHERE THE DATABASE LIVES (SharedConfigDb-Plan AC5, decision 2026-09-04): when an instance's
+    appsettings.json names ConfigStore:Path, that is the database - one file shared by the dev
+    and prod instances on this server. Without the key, the database is the instance's own
+    <PublishPath>\config\exchangeadmin.db. Resolve-ConfigDbPath does that lookup; every
+    function here takes an explicit -DbPath so callers never re-derive it.
 
     DEPENDENCY: sqlite3.exe must be on PATH (declared in docs/AdminModuleDeveloperGuide.md /
     deployment docs - install via `winget install SQLite.SQLite`). Backups use a true online
@@ -16,6 +22,9 @@
 
     On an integrity-check FAILURE the function THROWS (owner decision 2026-06-18: abort the
     deploy rather than continue over a corrupt store with a worthless rollback snapshot).
+
+    This module is imported by deploy.ps1 under Windows PowerShell 5.1: keep it pure ASCII and
+    5.1-compatible (no ternary, no null-coalescing, no PS7-only cmdlet parameters).
 #>
 
 Set-StrictMode -Version Latest
@@ -34,32 +43,96 @@ function Assert-Sqlite3Available {
     return $sqlite3
 }
 
+<#
+.SYNOPSIS
+    Returns the ConfigStore:Path value from <PublishPath>\appsettings.json, or $null when the
+    file or the key is absent or blank.
+.DESCRIPTION
+    Callers use this to tell "the key is set" (the named file MUST exist - a missing shared
+    database is a deploy-stopping error, never something to create or skip) from "no key" (the
+    per-instance default, where a missing database just means a first start has not happened).
+    Strict-mode safe: never dereferences a property that is not there.
+#>
+function Get-ConfigStorePathSetting {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$PublishPath)
+
+    $appsettings = Join-Path $PublishPath 'appsettings.json'
+    if (-not (Test-Path -LiteralPath $appsettings -PathType Leaf)) {
+        return $null
+    }
+
+    $json = Get-Content -LiteralPath $appsettings -Raw | ConvertFrom-Json
+    if ($null -eq $json) { return $null }
+
+    $section = $json.PSObject.Properties['ConfigStore']
+    if ($null -eq $section -or $null -eq $section.Value) { return $null }
+
+    $pathProperty = $section.Value.PSObject.Properties['Path']
+    if ($null -eq $pathProperty) { return $null }
+
+    $value = [string]$pathProperty.Value
+    if ([string]::IsNullOrWhiteSpace($value)) { return $null }
+    return $value.Trim()
+}
+
+<#
+.SYNOPSIS
+    The config database an instance opens: ConfigStore:Path from its appsettings.json when set,
+    else <PublishPath>\config\exchangeadmin.db.
+#>
+function Resolve-ConfigDbPath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$PublishPath)
+
+    $configured = Get-ConfigStorePathSetting -PublishPath $PublishPath
+    if ($configured) { return $configured }
+    return (Join-Path (Join-Path $PublishPath 'config') 'exchangeadmin.db')
+}
+
+function Resolve-DbPathArgument {
+    # Shared by the functions that accept either -DbPath or the older -ConfigDir form.
+    param([string]$DbPath, [string]$ConfigDir)
+
+    if ($DbPath) { return $DbPath }
+    if ($ConfigDir) { return (Join-Path $ConfigDir 'exchangeadmin.db') }
+    throw "Specify -DbPath (the database file) or -ConfigDir (a directory containing exchangeadmin.db)."
+}
+
 function Test-IsSqliteConfigDbPresent {
-    param([Parameter(Mandatory)][string]$ConfigDir)
-    return (Test-Path -LiteralPath (Join-Path $ConfigDir 'exchangeadmin.db') -PathType Leaf)
+    param(
+        [string]$ConfigDir,
+        [string]$DbPath
+    )
+    $path = Resolve-DbPathArgument -DbPath $DbPath -ConfigDir $ConfigDir
+    return (Test-Path -LiteralPath $path -PathType Leaf)
 }
 
 <#
 .SYNOPSIS
     Backs up the config DB to $DestDir via a verified online backup.
+.PARAMETER DbPath
+    The database file to back up (the resolved shared or per-instance path). Preferred.
 .PARAMETER ConfigDir
-    The runtime config directory containing exchangeadmin.db.
+    Older form: the runtime config directory containing exchangeadmin.db.
 .PARAMETER DestDir
     Directory to write the backup into (created if missing).
 .PARAMETER Timestamp
     Caller's deploy timestamp, used in the backup file name.
 .OUTPUTS
-    The path to the backup .db file, or $null if there was no DB to back up.
+    The path to the backup .db file, or $null if there was no DB to back up. Whether a missing
+    file is acceptable is the CALLER's decision (no key: nothing to back up yet; key set: stop).
 #>
 function Backup-SqliteConfigDb {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$ConfigDir,
+        [string]$ConfigDir,
+        [string]$DbPath,
         [Parameter(Mandatory)][string]$DestDir,
         [Parameter(Mandatory)][string]$Timestamp
     )
 
-    $dbPath = Join-Path $ConfigDir 'exchangeadmin.db'
+    $dbPath = Resolve-DbPathArgument -DbPath $DbPath -ConfigDir $ConfigDir
     if (-not (Test-Path -LiteralPath $dbPath -PathType Leaf)) {
         return $null
     }
@@ -93,78 +166,71 @@ function Backup-SqliteConfigDb {
 
 <#
 .SYNOPSIS
-    Replaces the destination config DB with a consistent, integrity-verified copy of the source
-    config DB (dev -> prod wholesale promotion; SqliteConfigStore-Plan Phase D2).
+    Writes a consistent, integrity-verified copy of one SQLite database file to another path.
 
 .DESCRIPTION
-    dev is staging for prod and the two run the same code version after a promotion, so prod's
-    config should mirror dev's exactly - a wholesale replace, not a per-table merge (owner
-    decision 2026-06-18; any prod-only key is either dead under the new code or a dev
-    misconfiguration to fix in dev, so nothing of prod's is worth preserving).
+    Used by the one-time cutover (Move-ConfigDbToShared.ps1) to seed the shared database from
+    dev's, and by an operator returning to per-instance databases. Promotion no longer copies
+    the config database (decision 2026-09-04).
 
-    Uses 'VACUUM INTO' to write a fresh consistent snapshot of the SOURCE directly onto the
-    destination path, so a live/WAL source cannot produce a torn copy. The destination's WAL/SHM
-    sidecars are removed (the fresh DB has no pending WAL), and the result is integrity-checked.
-    The CALLER is responsible for backing up the destination first and for stopping the
-    destination app pool before calling this.
+    Uses 'VACUUM INTO' to write a fresh consistent snapshot of the SOURCE onto a temp file next
+    to the destination, integrity-checks it, then moves it into place. Any WAL/SHM sidecars of a
+    destination being replaced are removed (the fresh DB has no pending WAL). The CALLER is
+    responsible for backing up an existing destination first and for stopping any process that
+    has it open.
 
-.PARAMETER SourceConfigDir
-    Config directory containing the source (dev) exchangeadmin.db.
-.PARAMETER DestConfigDir
-    Config directory whose exchangeadmin.db will be replaced (prod).
+.PARAMETER SourceDbPath
+    The database file to copy.
+.PARAMETER DestDbPath
+    The file to write. Its directory is created if missing.
 .OUTPUTS
-    The destination DB path on success. Throws if the source DB is absent or fails integrity.
+    The destination path on success. Throws if the source is absent or the copy fails integrity.
 #>
-function Copy-SqliteConfigDb {
+function Copy-SqliteDbFile {
     [CmdletBinding(SupportsShouldProcess)]
     param(
-        [Parameter(Mandatory)][string]$SourceConfigDir,
-        [Parameter(Mandatory)][string]$DestConfigDir
+        [Parameter(Mandatory)][string]$SourceDbPath,
+        [Parameter(Mandatory)][string]$DestDbPath
     )
 
-    $sourceDb = Join-Path $SourceConfigDir 'exchangeadmin.db'
-    if (-not (Test-Path -LiteralPath $sourceDb -PathType Leaf)) {
-        throw "Source config DB not found at $sourceDb - cannot promote config to $DestConfigDir."
+    if (-not (Test-Path -LiteralPath $SourceDbPath -PathType Leaf)) {
+        throw "Source database not found at $SourceDbPath - cannot copy it to $DestDbPath."
     }
 
     $sqlite3 = Assert-Sqlite3Available
 
-    if (-not (Test-Path -LiteralPath $DestConfigDir)) {
-        New-Item -ItemType Directory -Path $DestConfigDir -Force | Out-Null
-    }
-    $destDb = Join-Path $DestConfigDir 'exchangeadmin.db'
-
-    if (-not $PSCmdlet.ShouldProcess($destDb, "Replace with consistent copy of $sourceDb")) {
-        return $destDb
+    $destDir = Split-Path -Parent $DestDbPath
+    if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
 
-    # Write a fresh consistent snapshot of the source onto a temp path, integrity-check it, then
-    # atomically swap it into place and drop the destination's stale WAL/SHM sidecars.
-    $tmpDb = Join-Path $DestConfigDir ("exchangeadmin.promote.{0}.db" -f ([guid]::NewGuid().ToString('N')))
+    if (-not $PSCmdlet.ShouldProcess($DestDbPath, "Replace with consistent copy of $SourceDbPath")) {
+        return $DestDbPath
+    }
+
+    $tmpDb = Join-Path $destDir ("exchangeadmin.copy.{0}.db" -f ([guid]::NewGuid().ToString('N')))
     try {
         $escaped = $tmpDb -replace "'", "''"
-        & $sqlite3 $sourceDb "VACUUM INTO '$escaped'"
+        & $sqlite3 $SourceDbPath "VACUUM INTO '$escaped'"
         if ($LASTEXITCODE -ne 0) {
-            throw "sqlite3 VACUUM INTO failed (exit $LASTEXITCODE) copying $sourceDb"
+            throw "sqlite3 VACUUM INTO failed (exit $LASTEXITCODE) copying $SourceDbPath"
         }
 
         $integrity = (& $sqlite3 $tmpDb 'PRAGMA integrity_check;') 2>&1
         if ($LASTEXITCODE -ne 0) {
-            throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on the promoted copy"
+            throw "sqlite3 integrity_check failed to run (exit $LASTEXITCODE) on the copy"
         }
         if ("$integrity".Trim() -ne 'ok') {
-            throw "Promoted config DB failed integrity check: '$integrity'. Prod NOT changed."
+            throw "Copied database failed integrity check: '$integrity'. Destination NOT changed."
         }
 
-        # Remove the destination's old WAL/SHM (they belong to the DB being replaced); the fresh
-        # VACUUM INTO output is a self-contained DB with no pending WAL.
         foreach ($suffix in '-wal', '-shm') {
-            $side = "$destDb$suffix"
+            $side = "$DestDbPath$suffix"
             if (Test-Path -LiteralPath $side -PathType Leaf) { Remove-Item -LiteralPath $side -Force }
         }
 
-        Move-Item -LiteralPath $tmpDb -Destination $destDb -Force
-        return $destDb
+        Move-Item -LiteralPath $tmpDb -Destination $DestDbPath -Force
+        return $DestDbPath
     } finally {
         if (Test-Path -LiteralPath $tmpDb -PathType Leaf) {
             Remove-Item -LiteralPath $tmpDb -Force -ErrorAction SilentlyContinue
@@ -195,4 +261,4 @@ function Test-SqliteConfigDbIntegrity {
     return $true
 }
 
-Export-ModuleMember -Function Get-Sqlite3Path, Assert-Sqlite3Available, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteConfigDb, Test-SqliteConfigDbIntegrity
+Export-ModuleMember -Function Get-Sqlite3Path, Assert-Sqlite3Available, Get-ConfigStorePathSetting, Resolve-ConfigDbPath, Test-IsSqliteConfigDbPresent, Backup-SqliteConfigDb, Copy-SqliteDbFile, Test-SqliteConfigDbIntegrity
