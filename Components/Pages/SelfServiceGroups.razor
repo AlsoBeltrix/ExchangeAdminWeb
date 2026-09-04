@@ -309,25 +309,23 @@
                     </div>
                     @if (showRemoveConfirm && SelectedCount > 0)
                     {
+                        <!-- Compact by design (owner, 2026-09-04): the buttons sit on the heading line so
+                             they never scroll off with a long selection, the names wrap inline, and every
+                             group row shares ONE warning line instead of one each. -->
                         <div class="alert alert-warning py-2">
-                            <div><strong>Remove @SelectedCount member(s) from @selected.Name?</strong></div>
-                            <ul class="mb-2 small">
-                                @foreach (var sel in SelectedMembers())
-                                {
-                                    <li>
-                                        @sel.DisplayName <span class="text-muted">(@sel.Kind)</span>
-                                        @if (sel.Kind == "Group")
-                                        {
-                                            <div class="text-danger"><strong>@sel.DisplayName</strong> is a group. Removing it takes access away from its members, and re-adding it will require an IT Support Desk ticket.</div>
-                                        }
-                                    </li>
-                                }
-                            </ul>
-                            <button class="btn btn-danger btn-sm me-1" @onclick="RemoveSelectedAsync" disabled="@isChanging">
-                                @if (isChanging) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                                Remove @SelectedCount member(s)
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isChanging">Cancel</button>
+                            <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+                                <strong>Remove @SelectedCount member(s) from @selected.Name?</strong>
+                                <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@isChanging">
+                                    @if (isChanging) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                    Remove @SelectedCount member(s)
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isChanging">Cancel</button>
+                            </div>
+                            <div class="small">@string.Join(", ", SelectedMembers().Select(m => m.Kind == "Group" ? $"{m.DisplayName} (Group)" : m.DisplayName))</div>
+                            @if (SelectedGroupCount > 0)
+                            {
+                                <div class="small text-danger mt-1"><strong>@SelectedGroupCount of these are groups.</strong> Removing a group takes access away from its members, and re-adding it will require an IT Support Desk ticket.</div>
+                            }
                         </div>
                     }
 
@@ -696,6 +694,8 @@
     private List<GroupMember> SelectedMembers() => SelectableMembers().Where(m => selectedGuids.Contains(m.ObjectGuid)).ToList();
 
     private int SelectedCount => SelectedMembers().Count;
+
+    private int SelectedGroupCount => SelectedMembers().Count(m => m.Kind == "Group");
 
     private bool AllSelectableSelected
     {

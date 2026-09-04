@@ -314,14 +314,37 @@ public class GroupBulkActionsWiringTests
         var page = SelfServicePage();
         var start = page.IndexOf("@if (showRemoveConfirm && SelectedCount > 0)", StringComparison.Ordinal);
         Assert.True(start >= 0, "Bulk confirmation block not found - tripwire is stale.");
-        // The confirmation ends at its Cancel button (its heading also says "Remove N member(s)").
-        var end = page.IndexOf(">Cancel</button>", start, StringComparison.Ordinal);
+        // The confirmation block runs up to the outcome table that follows it.
+        var end = page.IndexOf("@if (bulkOutcome != null)", start, StringComparison.Ordinal);
         Assert.True(end > start, "Could not bound the bulk confirmation - update the tripwire.");
         var confirm = page[start..end];
 
-        // D2: a group row in the batch carries the one-way warning inside the single confirmation.
-        Assert.Contains("@if (sel.Kind == \"Group\")", confirm, StringComparison.Ordinal);
+        // D2: the batch confirmation carries the one-way warning for its group rows - as ONE
+        // line for all of them (owner, 2026-09-04: a per-row warning pushed the confirm button
+        // off the screen), never one per row.
+        Assert.Contains("@if (SelectedGroupCount > 0)", confirm, StringComparison.Ordinal);
         Assert.Contains("re-adding it will require an IT Support Desk ticket", confirm, StringComparison.Ordinal);
+        Assert.Equal(1, CountOf(confirm, "re-adding it will require an IT Support Desk ticket"));
+        Assert.DoesNotContain("@if (sel.Kind == \"Group\")", confirm, StringComparison.Ordinal);
+        Assert.DoesNotContain("<li>", confirm, StringComparison.Ordinal);
+        // The confirm button precedes the name list, so a long selection cannot scroll it away.
+        var iButton = confirm.IndexOf("@onclick=\"RemoveSelectedAsync\"", StringComparison.Ordinal);
+        var iNames = confirm.IndexOf("string.Join(\", \", SelectedMembers()", StringComparison.Ordinal);
+        Assert.True(iButton >= 0 && iNames > iButton, "The confirm button must come before the name list.");
+    }
+
+    [Fact]
+    public void GroupManagement_BulkConfirm_IsCompact()
+    {
+        var page = AdminPage();
+        var start = page.IndexOf("@if (showRemoveConfirm && SelectedCount > 0)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Bulk confirmation block not found - tripwire is stale.");
+        var end = page.IndexOf("string.Join(\", \", SelectedMembers()", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Inline name list not found - tripwire is stale.");
+        var confirm = page[start..end];
+
+        Assert.Contains("@onclick=\"RemoveSelectedAsync\"", confirm, StringComparison.Ordinal);
+        Assert.DoesNotContain("<li>", confirm, StringComparison.Ordinal);
     }
 
     [Fact]

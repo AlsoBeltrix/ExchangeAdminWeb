@@ -368,7 +368,9 @@ public sealed class ModuleCatalog
             // batched query per chunk (user or group), a resolution table, and "Add resolved"
             // running each line through the same per-member handler as the single Add
             // (docs/GroupBulkActions-Plan.md S3).
-            Version = "2.10.0",
+            // 2.10.1: the bulk-remove confirmation is compact - buttons on the heading line, names
+            // inline (owner, 2026-09-04).
+            Version = "2.10.1",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
@@ -465,7 +467,10 @@ public sealed class ModuleCatalog
             // home-domain query per chunk (a group line is reported, never added), a resolution
             // table, and "Add resolved" running each user through the same per-member handler as
             // the single Add (docs/GroupBulkActions-Plan.md S5).
-            Version = "1.10.0",
+            // 1.10.1: the bulk-remove confirmation is compact - buttons on the heading line, names
+            // inline, one warning line for all group rows (a per-row warning scrolled the confirm
+            // button off the screen; owner, 2026-09-04).
+            Version = "1.10.1",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

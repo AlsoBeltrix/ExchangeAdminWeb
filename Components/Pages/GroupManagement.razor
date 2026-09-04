@@ -194,19 +194,19 @@
                         </div>
                         @if (showRemoveConfirm && SelectedCount > 0)
                         {
+                            @* Compact by design (owner, 2026-09-04): the buttons sit on the heading line so
+                               they never scroll off with a long selection, and the names wrap inline. *@
                             <div class="alert alert-warning py-2">
-                                <div><strong>Remove @SelectedCount member(s) from @selectedGroup.Name?</strong> <small>Ticket @ticketNumber.Trim() will be recorded on every removal.</small></div>
-                                <ul class="mb-2 small">
-                                    @foreach (var sel in SelectedMembers())
-                                    {
-                                        <li>@sel.DisplayName <span class="text-muted">(@sel.MemberKind)</span></li>
-                                    }
-                                </ul>
-                                <button class="btn btn-danger btn-sm me-1" @onclick="RemoveSelectedAsync" disabled="@isLoading">
-                                    @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
-                                    Remove @SelectedCount member(s)
-                                </button>
-                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isLoading">Cancel</button>
+                                <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
+                                    <strong>Remove @SelectedCount member(s) from @selectedGroup.Name?</strong>
+                                    <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@isLoading">
+                                        @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
+                                        Remove @SelectedCount member(s)
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isLoading">Cancel</button>
+                                    <small class="text-muted">Ticket @ticketNumber.Trim() will be recorded on every removal.</small>
+                                </div>
+                                <div class="small">@string.Join(", ", SelectedMembers().Select(m => m.MemberKind == "Group" ? $"{m.DisplayName} (Group)" : m.DisplayName))</div>
                             </div>
                         }
                     }

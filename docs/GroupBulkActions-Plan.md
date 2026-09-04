@@ -72,9 +72,13 @@ and drop the summary email; a one-line change in S2/S4 each.
 Settled by existing rulings or code, not open:
 
 - A nested GROUP row in the self-service bulk remove is included, and the single
-  confirmation carries the D2 warning text for each group row (re-adding needs an IT
-  Support Desk ticket) - the same warning the inline confirm shows today, moved into
-  the batch confirmation. No separate second click per group.
+  confirmation carries the D2 warning text (re-adding needs an IT Support Desk ticket)
+  for its group rows. No separate second click per group. **Revision 2026-09-04
+  (owner, from the first look at dev): ONE warning line for all group rows, never one
+  per row** - the per-row form pushed the confirm button off the screen with a handful
+  of groups selected. Both pages' confirmations are compact by the same ruling: buttons
+  on the heading line, names inline (commit `git log -1 -- ExchangeAdminWeb.Tests/GroupBulkActionsWiringTests.cs`
+  after S6; `GroupManagement 2.10.1`, `SelfServiceGroups 1.10.1`).
 - The admin module's paste list resolves users OR groups (its existing typed path,
   `ResolveMemberForWrite`, is class-agnostic); the nesting guards (self-nest, cycle)
   run inside the per-member write exactly as today.
