@@ -9,6 +9,16 @@ directory. A versioned system DLL stands in for ExchangeAdminWeb.dll so the buil
 prints every step and must change nothing, and the refusals happen before any step runs.
 #>
 
+# Resolved at DISCOVERY time (before BeforeAll) so -Skip can use it; same fallback as
+# SqliteConfigBackup.Tests.ps1. Only the integrity rows need sqlite3.exe.
+if (-not (Get-Command sqlite3 -ErrorAction SilentlyContinue)) {
+    $candidate = Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe'
+    if (Test-Path -LiteralPath (Join-Path $candidate 'sqlite3.exe')) {
+        $env:PATH = "$candidate;$env:PATH"
+    }
+}
+$HasSqlite = [bool](Get-Command sqlite3 -ErrorAction SilentlyContinue)
+
 BeforeAll {
     $script:ScriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..' '..' 'tools' 'Move-ConfigDbToShared.ps1')).Path
 
@@ -186,6 +196,52 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
                 Should -Throw -ExpectedMessage '*split state*'
         } finally {
             Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # scdi-3: "both already shared - nothing to do" must first prove the file both instances are
+    # configured to open exists and is sound; the app opens a configured path without create, so
+    # a missing file stops both pools at their next start. Plan mode is the default and must fail
+    # the same way.
+    Context 'both instances already name the shared path' {
+        BeforeEach {
+            $script:fake = New-FakeInstances
+            $escaped = $script:fake.Shared -replace '\\', '\\'
+            foreach ($p in $script:fake.Dev, $script:fake.Prod) {
+                Set-Content -LiteralPath (Join-Path $p 'appsettings.json') -Encoding UTF8 -Value "{ `"ConfigStore`": { `"Path`": `"$escaped`" } }"
+            }
+        }
+        AfterEach { Remove-Item -LiteralPath $script:fake.Root -Recurse -Force -ErrorAction SilentlyContinue }
+
+        It 'fails naming the path when the shared file does not exist (plan mode, scdi-3)' {
+            $err = $null
+            $out = $null
+            try { $out = & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -MinimumAppVersion '1.0' *>&1 | Out-String }
+            catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty -Because 'a missing configured file is never "nothing to do"'
+            "$err" | Should -BeLike "*$($fake.Shared)*"
+            "$err" | Should -Match 'no file exists there'
+            "$err" | Should -Match 'Nothing was changed'
+            "$out" | Should -Not -Match 'nothing to do'
+            Test-Path -LiteralPath $fake.Shared | Should -BeFalse
+        }
+
+        It 'fails naming the path when the shared file is not a sound database (scdi-3)' -Skip:(-not $HasSqlite) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $fake.Shared) -Force | Out-Null
+            [System.IO.File]::WriteAllText($fake.Shared, 'this is not a sqlite database')
+            $err = $null
+            try { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null }
+            catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty
+            "$err" | Should -BeLike "*$($fake.Shared)*"
+            "$err" | Should -Match 'integrity_check'
+        }
+
+        It 'reports nothing to do only when the shared file exists and passes integrity_check' -Skip:(-not $HasSqlite) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $fake.Shared) -Force | Out-Null
+            & sqlite3 $fake.Shared "CREATE TABLE t(x); INSERT INTO t VALUES (1);"
+            $out = & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $fake.Shared -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-String
+            $out | Should -Match 'passes PRAGMA integrity_check - nothing to do'
         }
     }
 

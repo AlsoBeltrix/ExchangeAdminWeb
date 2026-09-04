@@ -291,6 +291,46 @@ function Write-RestoreInstructions {
     Write-Host ""
 }
 
+function Assert-SharedDbUsable {
+    # Review finding scdi-3. When both appsettings already name the shared path, "nothing to do"
+    # is only true if the file they are configured to open exists and is sound: the app opens a
+    # configured path WITHOUT create, so a deleted or never-created shared file stops BOTH pools
+    # at their next start. That is the failure to report - in plan mode too - never a success.
+    # Prints the same return-to-two-databases commands the cutover itself prints, pointing at
+    # the newest backups this script left behind (placeholders when none are found).
+    param([string]$Path, [string]$DevConfigDir, [string]$ProdConfigDir, [string]$DevAppSettings, [string]$ProdAppSettings)
+
+    $problem = $null
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        $problem = "no file exists there"
+    } else {
+        try {
+            Test-SqliteConfigDbIntegrity -DbPath $Path | Out-Null
+        } catch {
+            $problem = "it failed PRAGMA integrity_check: $($_.Exception.Message)"
+        }
+    }
+    if (-not $problem) { return }
+
+    $devBackup = Get-ChildItem -LiteralPath $BackupRoot -Recurse -File -Filter 'dev.exchangeadmin.*.db' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $prodBackup = Get-ChildItem -LiteralPath $BackupRoot -Recurse -File -Filter 'prod.exchangeadmin.*.db' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $appsettingsBackup = Get-ChildItem -LiteralPath (Split-Path -Parent $DevAppSettings) -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'appsettings.json.pre-shared.*.bak' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $suffix = if ($appsettingsBackup) { $appsettingsBackup.Name.Substring('appsettings.json.'.Length) } else { 'pre-shared.<timestamp>.bak' }
+
+    Write-Host ""
+    Write-Host "  X  Both instances name $Path in ConfigStore:Path but $problem. Both app pools will refuse to start on it (the configured path is opened without create)." -ForegroundColor Red
+    Write-Host "     Restore the shared file from the newest verified backup under $BackupRoot (Copy-SqliteDbFile -SourceDbPath <backup> -DestDbPath '$Path'), or return both instances to two databases:" -ForegroundColor Yellow
+    Write-RestoreInstructions -DevDb (Join-Path $DevConfigDir 'exchangeadmin.db') -ProdDb (Join-Path $ProdConfigDir 'exchangeadmin.db') `
+        -DevBackup $(if ($devBackup) { $devBackup.FullName } else { Join-Path $BackupRoot 'cutover.<timestamp>\dev.exchangeadmin.<timestamp>.db' }) `
+        -ProdBackup $(if ($prodBackup) { $prodBackup.FullName } else { Join-Path $BackupRoot 'cutover.<timestamp>\prod.exchangeadmin.<timestamp>.db' }) `
+        -DevAppSettings $DevAppSettings -ProdAppSettings $ProdAppSettings -Suffix $suffix
+    Write-Fail "Both instances name $Path in ConfigStore:Path but $problem. Nothing was changed; see the restore commands above."
+}
+
 # --- Preconditions (read-only) --------------------------------------------------------------
 
 Assert-LocalAbsolutePath -Path $SharedDbPath -Name 'SharedDbPath'
@@ -325,7 +365,10 @@ Write-Host "  Mode      : $(if ($PlanOnly) { 'PLAN ONLY' } else { 'APPLY' })" -F
 Write-Host ""
 
 if ($devDb -ieq $SharedDbPath -and $prodDb -ieq $SharedDbPath) {
-    Write-Ok "Both instances already name $SharedDbPath in ConfigStore:Path - nothing to do."
+    # The no-op shortcut sits BEHIND the invariant it claims (scdi-3): a missing or corrupt
+    # configured file is a failure to report, in plan mode too, never "nothing to do".
+    Assert-SharedDbUsable -Path $SharedDbPath -DevConfigDir $devConfigDir -ProdConfigDir $prodConfigDir -DevAppSettings $devAppSettings -ProdAppSettings $prodAppSettings
+    Write-Ok "Both instances already name $SharedDbPath in ConfigStore:Path and the file passes PRAGMA integrity_check - nothing to do."
     return
 }
 if ($devDb -ieq $SharedDbPath -or $prodDb -ieq $SharedDbPath) {
