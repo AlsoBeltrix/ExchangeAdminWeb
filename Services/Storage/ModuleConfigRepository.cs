@@ -17,6 +17,9 @@ public sealed class ModuleConfigRepository
 
     public ModuleConfigRepository(IConfigStore store) => _store = store;
 
+    /// <summary>A change watcher over this repository's store, for the caching reader that sits on it.</summary>
+    public ConfigChangeWatcher CreateChangeWatcher(ILogger? logger = null) => new(_store, logger);
+
     /// <summary>Returns a module's config as a case-insensitive dictionary (empty if none).</summary>
     public Dictionary<string, string> GetModule(string moduleId)
     {

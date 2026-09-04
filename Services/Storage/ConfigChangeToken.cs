@@ -8,12 +8,10 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// cached under; a mismatch means an out-of-band write happened (the prod->dev refresh tool, a
 /// manual DB edit, or simply a different service instance) and the cache must be reloaded.
 ///
-/// This is the intended replacement for the per-instance TTL/cache-until-save model that would
-/// silently drift once a shared database has writers outside the caching instance
-/// (SqliteConfigStore-Plan Section 5B.2). It is bumped on every write, but no production reader consults
-/// it yet - the TTL caches (ProtectedPrincipalService, ADAttributeEditorService) currently accept
-/// a <=30s staleness window, which Section 5B.2 permitted. Read is a single indexed primary-key lookup, so
-/// callers can check it cheaply on every read once they are wired to it.
+/// Since the shared config database (docs/SharedConfigDb-Plan.md, decision 2026-09-04) the four
+/// caching readers consult it through <see cref="ConfigChangeWatcher"/>, which reads it at most
+/// once per 2 s per reader and compares against the token recorded as of the reader's own load.
+/// Read is a single indexed primary-key lookup.
 /// </summary>
 public sealed class ConfigChangeToken
 {

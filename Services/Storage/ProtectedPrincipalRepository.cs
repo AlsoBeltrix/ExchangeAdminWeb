@@ -28,6 +28,9 @@ public sealed class ProtectedPrincipalRepository
 
     public ProtectedPrincipalRepository(IConfigStore store) => _store = store;
 
+    /// <summary>A change watcher over this repository's store, for the caching reader that sits on it.</summary>
+    public ConfigChangeWatcher CreateChangeWatcher(ILogger? logger = null) => new(_store, logger);
+
     /// <summary>
     /// Reads the four lists AND the configured flag in a single guarded operation. Returns false
     /// if either read throws (DB-integrity failure / partial schema damage); both out-params are

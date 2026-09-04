@@ -61,6 +61,13 @@ public class ADAttributeEditorService
     private Dictionary<string, Dictionary<string, AttributeLegendEntry>>? _cachedLegend;
     private DateTime _legendLoadedAt = DateTime.MinValue;
     private static readonly TimeSpan AllowlistCacheTtl = TimeSpan.FromSeconds(30);
+
+    // Cross-process freshness on the shared config database (docs/SharedConfigDb-Plan.md AC4):
+    // one watcher, a token per cache recorded as of that cache's load. A cache hit first asks
+    // whether the store moved past it; the TTL still bounds staleness when the token is unreadable.
+    private readonly ConfigChangeWatcher _changeWatcher;
+    private long _allowlistLoadedToken = ConfigChangeWatcher.Unknown;
+    private long _legendLoadedToken = ConfigChangeWatcher.Unknown;
     private static readonly SemaphoreSlim _adThrottle = new(2, 2);
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(2);
 
@@ -106,6 +113,7 @@ public class ADAttributeEditorService
         _repository = repository;
         _env = env;
         _logger = logger;
+        _changeWatcher = repository.CreateChangeWatcher(logger);
 
         _legacyAllowlistCorrupt = ImportLegacyIfPresent();
     }
@@ -119,14 +127,21 @@ public class ADAttributeEditorService
         }
     }
 
+    /// <summary>Test seam: the watcher this service consults on every cache hit.</summary>
+    internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
+
     public List<EditableAttribute>? GetAllowlist()
     {
         lock (_allowlistLock)
         {
-            if (_cachedAllowlist != null && DateTime.UtcNow - _allowlistLoadedAt < AllowlistCacheTtl)
+            if (_cachedAllowlist != null
+                && !_changeWatcher.HasChangedSince(_allowlistLoadedToken)
+                && DateTime.UtcNow - _allowlistLoadedAt < AllowlistCacheTtl)
                 return _cachedAllowlist;
         }
 
+        // Token BEFORE the load (scd-2) so a racing write is caught on the next check.
+        var token = _changeWatcher.CurrentToken();
         var loaded = LoadAllowlistFromDisk();
 
         // Only cache a successful load. A corrupt store (null) is never cached, so a
@@ -140,6 +155,7 @@ public class ADAttributeEditorService
             {
                 _cachedAllowlist = loaded;
                 _allowlistLoadedAt = DateTime.UtcNow;
+                _allowlistLoadedToken = token;
             }
         }
         return loaded;
@@ -266,11 +282,15 @@ public class ADAttributeEditorService
     {
         lock (_allowlistLock)
         {
-            if (_cachedLegend != null && DateTime.UtcNow - _legendLoadedAt < AllowlistCacheTtl)
+            if (_cachedLegend != null
+                && !_changeWatcher.HasChangedSince(_legendLoadedToken)
+                && DateTime.UtcNow - _legendLoadedAt < AllowlistCacheTtl)
                 return _cachedLegend;
         }
 
-        // Legend is fail-open: the repository returns an empty map on any read failure.
+        // Token BEFORE the load (scd-2). Legend is fail-open: the repository returns an empty
+        // map on any read failure.
+        var token = _changeWatcher.CurrentToken();
         var rows = _repository.ReadLegend();
         var parsed = rows.ToDictionary(
             outer => outer.Key,
@@ -284,6 +304,7 @@ public class ADAttributeEditorService
         {
             _cachedLegend = parsed;
             _legendLoadedAt = DateTime.UtcNow;
+            _legendLoadedToken = token;
         }
         return parsed;
     }

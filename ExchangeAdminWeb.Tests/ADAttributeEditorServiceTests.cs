@@ -88,6 +88,66 @@ public class ADAttributeEditorServiceTests : IDisposable
 
     private ExchangeAdminWeb.Services.Storage.IConfigStore? _attrStore;
 
+    // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
+
+    private static ExchangeAdminWeb.Services.Storage.AttributeRow Row(string name)
+        => new(name, name, "String", null, false, true, null, null, 1);
+
+    [Fact]
+    public void AttributeEditor_ReloadsWhenTokenMoves()
+    {
+        var service = CreateService();
+        SeedAllowlist(Row("department"));
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+
+        var first = service.GetAllowlist();
+        Assert.NotNull(first);
+        Assert.Single(first!);
+        Assert.Same(first, service.GetAllowlist());
+
+        // "The other instance" saves through its own repository on the same database.
+        SeedAllowlist(Row("department"), Row("title"));
+
+        // Inside the 2 s throttle the cache still serves (the 30 s TTL is nowhere near).
+        Assert.Same(first, service.GetAllowlist());
+
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+        var reloaded = service.GetAllowlist();
+        Assert.NotSame(first, reloaded);
+        Assert.Equal(2, reloaded!.Count);
+    }
+
+    // scd-2: a write that lands between the load and the FIRST check must be seen by that check.
+    [Fact]
+    public void AttributeEditor_DetectsAChangeMadeBeforeItsFirstPoll()
+    {
+        var service = CreateService();
+        SeedAllowlist(Row("department"));
+
+        Assert.Single(service.GetAllowlist()!);
+
+        SeedAllowlist(Row("department"), Row("title"));
+
+        Assert.Equal(2, service.GetAllowlist()!.Count);
+    }
+
+    [Fact]
+    public void AttributeEditor_LegendDetectsAChangeMadeBeforeItsFirstPoll()
+    {
+        var service = CreateService();
+
+        Assert.Empty(service.GetLegend());
+
+        new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).ImportLegendIfMissing(
+            new Dictionary<string, Dictionary<string, ExchangeAdminWeb.Services.Storage.AttributeLegendRow>>
+            {
+                ["department"] = new() { ["IT"] = new("Information Technology", null, null) },
+            });
+
+        Assert.True(service.GetLegend().ContainsKey("department"));
+    }
+
     private void WriteAllowlistConfig(object config)
     {
         var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
@@ -406,10 +466,13 @@ public class ADAttributeEditorServiceTests : IDisposable
         SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
             "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
 
-        // Load initial
+        // Load initial, then one cache hit so the change watcher's 2 s throttle is armed.
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
         var first = service.GetAllowlist();
         Assert.NotNull(first);
         Assert.Single(first!);
+        Assert.Same(first, service.GetAllowlist());
 
         // Out-of-band write directly to the store (bypassing SaveAllowlist), adding a second row.
         new ExchangeAdminWeb.Services.Storage.AttributeEditorRepository(_attrStore!).SaveAllowlist(new[]
@@ -418,7 +481,9 @@ public class ADAttributeEditorServiceTests : IDisposable
             new ExchangeAdminWeb.Services.Storage.AttributeRow("title", "Title", "String", null, false, true, null, null, 1),
         });
 
-        // Without invalidation, the 30s cache still returns the old result.
+        // Without invalidation, and inside the watcher's throttle, the cache still returns the
+        // old result (once the throttle passes the shared-DB watcher would reload it - see
+        // AttributeEditor_ReloadsWhenTokenMoves).
         var cached = service.GetAllowlist();
         Assert.Single(cached!);
 
@@ -500,10 +565,14 @@ public class ADAttributeEditorServiceTests : IDisposable
         SeedAllowlist(new ExchangeAdminWeb.Services.Storage.AttributeRow(
             "extensionAttribute1", "Extension 1", "String", null, false, true, null, null, 1));
 
-        // Prime the cache with a valid load.
+        // Prime the cache with a valid load, then one cache hit so the change watcher's 2 s
+        // throttle is armed (the window in which the cache can still mask a change).
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
         var first = service.GetAllowlist();
         Assert.NotNull(first);
         Assert.Single(first!);
+        Assert.Same(first, service.GetAllowlist());
 
         // Corrupt the store directly within the TTL (drop the table - partial schema damage),
         // simulating an operator/promote clobber.
@@ -515,7 +584,7 @@ public class ADAttributeEditorServiceTests : IDisposable
             cmd.ExecuteNonQuery();
         });
 
-        // The cache still hands back the stale-but-valid list (expected for the runtime path)...
+        // Inside the throttle the cache still hands back the stale-but-valid list...
         var stillCached = service.GetAllowlist();
         Assert.NotNull(stillCached);
         Assert.Single(stillCached!);
@@ -523,6 +592,11 @@ public class ADAttributeEditorServiceTests : IDisposable
         // ...but the fresh gate must see the corruption and report it.
         Assert.True(service.IsAllowlistCorrupt(),
             "IsAllowlistCorrupt must read fresh and detect corruption the cache masks");
+
+        // Once the throttle passes, the shared-DB watcher sees the write, drops the cache and
+        // the reload fails closed (null) instead of serving the stale list.
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+        Assert.Null(service.GetAllowlist());
     }
 
     [Fact]

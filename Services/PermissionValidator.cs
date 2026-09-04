@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.Management.Automation;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Services;
 
@@ -21,6 +22,12 @@ public class PermissionValidator
     private bool _initFailed = false;
     private DateTime _lastRefresh = DateTime.MinValue;
 
+    // Cross-process freshness on the shared config database (docs/SharedConfigDb-Plan.md AC4):
+    // the exclusions derive from MailboxPermissions module config, which the other instance can
+    // save. The token recorded as of the load is checked before the 30-minute lifetime.
+    private readonly ConfigChangeWatcher _changeWatcher;
+    private long _loadedToken = ConfigChangeWatcher.Unknown;
+
     public PermissionValidator(IConfiguration config, ModuleConfigService moduleConfig, ExoConnectionPool exoPool, ProtectedPrincipalService protectedPrincipalService, ProtectedPrincipalServicerService servicers, ILogger<PermissionValidator> logger, IServiceScopeFactory scopeFactory)
     {
         _logger = logger;
@@ -30,6 +37,7 @@ public class PermissionValidator
         _protectedPrincipalService = protectedPrincipalService;
         _servicers = servicers;
         _scopeFactory = scopeFactory;
+        _changeWatcher = moduleConfig.CreateChangeWatcher(logger);
 
         moduleConfig.ConfigSaved += moduleId =>
         {
@@ -69,6 +77,9 @@ public class PermissionValidator
     {
         _lastRefresh = DateTime.MinValue;
     }
+
+    /// <summary>Test seam: the watcher this validator consults before trusting its cache.</summary>
+    internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
     public async Task<bool> IsUserExcludedAsync(string userIdentity)
     {
@@ -334,14 +345,26 @@ public class PermissionValidator
         return names;
     }
 
+    private bool CacheIsFresh()
+        => _initialized
+            && !_changeWatcher.HasChangedSince(_loadedToken)
+            && DateTime.UtcNow - _lastRefresh < CacheLifetime;
+
     private async Task EnsureInitializedAsync()
     {
-        if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
+        if (CacheIsFresh()) return;
 
         await _initLock.WaitAsync();
+        // Token BEFORE the load (scd-2): a write racing the reads below moves the stored token
+        // past this value and is caught on the next check. Recorded on every exit path that
+        // stamps _lastRefresh, including the fail-closed ones, so a fix saved by the other
+        // instance is picked up without a recycle.
+        var token = ConfigChangeWatcher.Unknown;
         try
         {
-            if (_initialized && DateTime.UtcNow - _lastRefresh < CacheLifetime) return;
+            if (CacheIsFresh()) return;
+
+            token = _changeWatcher.CurrentToken();
 
             if (_moduleConfig.HasModuleConfigFile("MailboxPermissions") && _moduleConfig.IsModuleCorrupt("MailboxPermissions"))
             {
@@ -350,6 +373,7 @@ public class PermissionValidator
                 _initFailed = true;
                 _initialized = true;
                 _lastRefresh = DateTime.UtcNow;
+                _loadedToken = token;
                 _logger.LogError("Module config file is corrupt - blocking all protected-target operations until file is fixed");
                 return;
             }
@@ -401,6 +425,7 @@ public class PermissionValidator
             _initFailed = false;
             _initialized = true;
             _lastRefresh = DateTime.UtcNow;
+            _loadedToken = token;
             _logger.LogInformation("Permission validator initialized with {Total} total excluded identities", _excludedUsers.Count);
         }
         catch (Exception ex)
@@ -410,6 +435,7 @@ public class PermissionValidator
             _initFailed = true;
             _initialized = true;
             _lastRefresh = DateTime.UtcNow;
+            _loadedToken = token;
             _logger.LogError(ex, "Failed to initialize permission validator - all operations on protected targets will be blocked until app pool recycle.");
         }
         finally

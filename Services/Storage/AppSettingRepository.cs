@@ -14,6 +14,9 @@ public sealed class AppSettingRepository
 
     public AppSettingRepository(IConfigStore store) => _store = store;
 
+    /// <summary>A change watcher over this repository's store, for the caching reader that sits on it.</summary>
+    public ConfigChangeWatcher CreateChangeWatcher(ILogger? logger = null) => new(_store, logger);
+
     /// <summary>Returns the value for <paramref name="key"/>, or null if unset.</summary>
     public string? Get(string key)
     {

@@ -13,7 +13,8 @@ public class PermissionValidatorTests
     private static PermissionValidator CreateValidator(
         string[]? excludedUsers = null,
         bool preventSelfGrant = true,
-        string[]? appsettingsExcludedUsers = null)
+        string[]? appsettingsExcludedUsers = null,
+        ExchangeAdminWeb.Services.Storage.IConfigStore? moduleConfigStore = null)
     {
         // Unique DB dir per validator so seeded module config does not leak across tests.
         var testDir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
@@ -48,7 +49,10 @@ public class PermissionValidatorTests
         var env = Substitute.For<IWebHostEnvironment>();
         env.ContentRootPath.Returns(testDir);
         var moduleConfigLogger = Substitute.For<ILogger<ModuleConfigService>>();
-        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, TestConfigStore.CreateModuleConfig(testDir), moduleConfigLogger);
+        var moduleConfigRepo = moduleConfigStore != null
+            ? new ExchangeAdminWeb.Services.Storage.ModuleConfigRepository(moduleConfigStore)
+            : TestConfigStore.CreateModuleConfig(testDir);
+        var moduleConfig = new ModuleConfigService(new ModuleCatalog(), env, moduleConfigRepo, moduleConfigLogger);
 
         // Exclusions are read from the MailboxPermissions/ExcludedUsers module config
         // (the only source since the appsettings fallback was retired 2026-07-28).
@@ -86,6 +90,55 @@ public class PermissionValidatorTests
             Substitute.For<ILogger<ProtectedPrincipalServicerService>>());
 
         return new PermissionValidator(config, moduleConfig, exoPool, protectedPrincipalService, servicers, logger, scopeFactory);
+    }
+
+    // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
+
+    private static ExchangeAdminWeb.Services.Storage.IConfigStore NewStore()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "eaw-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return TestConfigStore.Create(dir);
+    }
+
+    private static void SaveExclusionsAsOtherInstance(ExchangeAdminWeb.Services.Storage.IConfigStore store, params string[] users)
+        => new ExchangeAdminWeb.Services.Storage.ModuleConfigRepository(store).SaveModule(
+            "MailboxPermissions", new Dictionary<string, string> { ["ExcludedUsers"] = string.Join(",", users) });
+
+    [Fact]
+    public async Task PermissionValidator_ReloadsWhenTokenMoves()
+    {
+        var store = NewStore();
+        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store);
+        var now = DateTime.UtcNow;
+        validator.ChangeWatcher.UtcNow = () => now;
+
+        Assert.False(await validator.IsUserExcludedAsync("newly@contoso.com"));
+        Assert.False(await validator.IsUserExcludedAsync("newly@contoso.com"));
+
+        // "The other instance" saves the module config on the same database - no ConfigSaved
+        // event reaches this validator, only the change token does.
+        SaveExclusionsAsOtherInstance(store, "blocked@contoso.com", "newly@contoso.com");
+
+        // Inside the 2 s throttle the cache still serves (the 30-minute lifetime is nowhere near).
+        Assert.False(await validator.IsUserExcludedAsync("newly@contoso.com"));
+
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+        Assert.True(await validator.IsUserExcludedAsync("newly@contoso.com"));
+    }
+
+    // scd-2: a write that lands between the load and the FIRST check must be seen by that check.
+    [Fact]
+    public async Task PermissionValidator_DetectsAChangeMadeBeforeItsFirstPoll()
+    {
+        var store = NewStore();
+        var validator = CreateValidator(excludedUsers: new[] { "blocked@contoso.com" }, moduleConfigStore: store);
+
+        Assert.False(await validator.IsUserExcludedAsync("newly@contoso.com"));
+
+        SaveExclusionsAsOtherInstance(store, "blocked@contoso.com", "newly@contoso.com");
+
+        Assert.True(await validator.IsUserExcludedAsync("newly@contoso.com"));
     }
 
     // --- Self-grant validation ---

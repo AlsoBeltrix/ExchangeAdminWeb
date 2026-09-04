@@ -26,6 +26,13 @@ public class ExtendedLogService : IDisposable
     private readonly int _maxFilesPerDay;
     private volatile LogEventLevel _minimumLevel = LogEventLevel.Fatal;
     private readonly string _legacyConfigFilePath;
+
+    // Cross-process freshness on the shared config database (docs/SharedConfigDb-Plan.md AC4):
+    // the level never expires, so without this a level set on the other instance would never
+    // reach this one. The watcher reads the token at most once per 2 s, so the per-log-line
+    // cost of MinimumLevel is a clock read and a compare.
+    private readonly ConfigChangeWatcher _changeWatcher;
+    private long _loadedToken = ConfigChangeWatcher.Unknown;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -35,6 +42,7 @@ public class ExtendedLogService : IDisposable
     {
         _logger = logger;
         _settings = settings;
+        _changeWatcher = settings.CreateChangeWatcher(logger);
         var logRoot = AuditLogRoot.Require(config);
         _logFolder = Path.Combine(logRoot, "ExchangeAdminWeb");
         _legacyConfigFilePath = Path.Combine(env.ContentRootPath, "config", "extended-log-level.txt");
@@ -52,32 +60,52 @@ public class ExtendedLogService : IDisposable
         LoadLevel();
     }
 
-    public string CurrentLevel => _minimumLevel == LogEventLevel.Fatal ? "None" : _minimumLevel.ToString();
+    public string CurrentLevel => MinimumLevel == LogEventLevel.Fatal ? "None" : MinimumLevel.ToString();
 
-    public bool IsEnabled => _minimumLevel != LogEventLevel.Fatal;
+    public bool IsEnabled => MinimumLevel != LogEventLevel.Fatal;
 
-    public bool IsEnabledFor(LogEventLevel level) => level >= _minimumLevel;
+    public bool IsEnabledFor(LogEventLevel level) => level >= MinimumLevel;
+
+    /// <summary>Test seam: the watcher consulted before every read of the level.</summary>
+    internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
+
+    // The effective level: re-read from the store when the other instance has written since
+    // this one loaded (throttled inside the watcher), else the field.
+    private LogEventLevel MinimumLevel
+    {
+        get
+        {
+            if (_changeWatcher.HasChangedSince(_loadedToken))
+                LoadLevel();
+            return _minimumLevel;
+        }
+    }
 
     public void SetLevel(string level)
     {
-        _minimumLevel = level.ToLowerInvariant() switch
-        {
-            "debug" or "verbose" => LogEventLevel.Debug,
-            "info" or "information" => LogEventLevel.Information,
-            "warn" or "warning" => LogEventLevel.Warning,
-            "error" => LogEventLevel.Error,
-            _ => LogEventLevel.Fatal
-        };
+        _minimumLevel = ParseLevel(level);
 
         try
         {
             _settings.Set(LevelSettingKey, level);
+            // Our own write bumped the token; re-read (token first) so the next check does not
+            // count it as a foreign change.
+            LoadLevel();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to persist extended log level");
         }
     }
+
+    private static LogEventLevel ParseLevel(string level) => level.ToLowerInvariant() switch
+    {
+        "debug" or "verbose" => LogEventLevel.Debug,
+        "info" or "information" => LogEventLevel.Information,
+        "warn" or "warning" => LogEventLevel.Warning,
+        "error" => LogEventLevel.Error,
+        _ => LogEventLevel.Fatal
+    };
 
     public void Write(LogEventLevel level, string message, string? category = null, string? detail = null)
         => Write(level, message, category, detail is null ? null : () => detail);
@@ -254,13 +282,17 @@ public class ExtendedLogService : IDisposable
     private string GetRotatedLogPath(DateTime date, int index)
         => Path.Combine(_logFolder, $"exchangeadmin_{date:yyyyMMdd}_extended.{index}.jsonl");
 
+    // Reads the persisted level WITHOUT writing it back (a write here would bump the token and
+    // make every reload trigger the next one). Token read BEFORE the value (scd-2).
     private void LoadLevel()
     {
         try
         {
+            var token = _changeWatcher.CurrentToken();
             var level = _settings.Get(LevelSettingKey);
             if (!string.IsNullOrWhiteSpace(level))
-                SetLevel(level.Trim());
+                _minimumLevel = ParseLevel(level.Trim());
+            _loadedToken = token;
         }
         catch { }
     }

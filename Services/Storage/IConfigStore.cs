@@ -12,16 +12,17 @@ namespace ExchangeAdminWeb.Services.Storage;
 /// bump the <see cref="ConfigChangeToken"/> on commit (Section 5B.2). No store keeps a long-lived
 /// connection (Section 5B.1).
 ///
-/// Note: the change token is available for cache-invalidation but is currently advisory - the
-/// two TTL-caching readers (ProtectedPrincipalService, ADAttributeEditorService) do NOT consult
-/// it and instead accept a <=30s staleness window (Section 5B.2 permitted this). Only the store and its
-/// tests reference <see cref="GetChangeToken"/> today; wiring the readers to it is a future option.
+/// The change token is consulted (docs/SharedConfigDb-Plan.md AC4, decision 2026-09-04): the
+/// four caching readers (ProtectedPrincipalService, ADAttributeEditorService, PermissionValidator,
+/// ExtendedLogService) each hold a <see cref="ConfigChangeWatcher"/> over this store and reload
+/// when the token moves - that is how a write by the other instance on the shared database
+/// reaches this one without a restart. Their TTLs remain as a bound when the token is unreadable.
 /// </summary>
 public interface IConfigStore
 {
     /// <summary>
-    /// The current change token. Intended for readers that want to compare-and-reload, but no
-    /// production reader consults it yet (see the type remarks); the TTL caches accept <=30s drift.
+    /// The current change token, bumped inside every <see cref="Write"/>. Read through
+    /// <see cref="ConfigChangeWatcher"/> by the caching readers (see the type remarks).
     /// </summary>
     long GetChangeToken();
 

@@ -23,6 +23,13 @@ public class ModuleConfigService
 
     public event Action<string>? ConfigSaved;
 
+    /// <summary>
+    /// A change watcher over the module-config store, for a caching reader (PermissionValidator)
+    /// that derives its cache from module config and must notice a write by the other instance
+    /// on the shared database (docs/SharedConfigDb-Plan.md AC4).
+    /// </summary>
+    public ConfigChangeWatcher CreateChangeWatcher(ILogger? logger = null) => _repository.CreateChangeWatcher(logger);
+
     public bool HasConfigFile => HasModuleConfigFile(null);
     public bool IsCorrupt => IsModuleCorrupt(null);
 

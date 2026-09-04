@@ -113,6 +113,12 @@ public class ProtectedPrincipalService
     private DateTime _configLoadedAt = DateTime.MinValue;
     private bool _configCorrupt;
 
+    // Cross-process freshness on the shared config database (docs/SharedConfigDb-Plan.md AC4):
+    // the token recorded as of the cached load; a cache hit first asks the watcher whether the
+    // store moved past it. The TTL below still bounds staleness when the token cannot be read.
+    private readonly ConfigChangeWatcher _changeWatcher;
+    private long _loadedToken = ConfigChangeWatcher.Unknown;
+
     // Set when a legacy protected-principals.json exists but is unparseable / lacks the
     // ProtectedPrincipals node, and the DB store is not yet configured. Like the section-access
     // store, a corrupt protection list must keep the store fail-closed during the upgrade window
@@ -143,6 +149,7 @@ public class ProtectedPrincipalService
         _delineaService = delineaService;
         _logger = logger;
         _scopeFactory = scopeFactory;
+        _changeWatcher = repository.CreateChangeWatcher(logger);
 
         var legacyPath = Path.Combine(env.ContentRootPath, "config", "protected-principals.json");
         _legacyFileCorrupt = ImportLegacyIfPresent(legacyPath);
@@ -181,6 +188,9 @@ public class ProtectedPrincipalService
             _configLoadedAt = DateTime.MinValue;
         }
     }
+
+    /// <summary>Test seam: the watcher this service consults on every cache hit.</summary>
+    internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
     // virtual: a test seam so the bulk job processor's protected-principal gate can be exercised
     // without a live AD/Delinea backend (no behavior change). Mirrors the EmailService seam pattern.
@@ -290,9 +300,17 @@ public class ProtectedPrincipalService
 
         lock (_cacheLock)
         {
-            if (_cachedConfig != null && DateTime.UtcNow - _configLoadedAt < ConfigCacheTtl && !_configCorrupt)
+            // A write by the other instance on the shared database invalidates the cache before
+            // its TTL does; the watcher reads the token at most once per 2 s.
+            if (_cachedConfig != null && !_configCorrupt
+                && !_changeWatcher.HasChangedSince(_loadedToken)
+                && DateTime.UtcNow - _configLoadedAt < ConfigCacheTtl)
                 return (_cachedConfig, GetLegacyExclusions(), null);
         }
+
+        // Token BEFORE the load (scd-2): a write racing the read moves the stored token past
+        // this value and is caught on the next check.
+        var token = _changeWatcher.CurrentToken();
 
         // Read the four lists + configured flag in one guarded operation. A read failure (DB
         // integrity / partial schema damage) fails closed, never silently empty.
@@ -319,6 +337,7 @@ public class ProtectedPrincipalService
             _cachedConfig = config;
             _configLoadedAt = DateTime.UtcNow;
             _configCorrupt = false;
+            _loadedToken = token;
         }
 
         return (config, GetLegacyExclusions(), null);

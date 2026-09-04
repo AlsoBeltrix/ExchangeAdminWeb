@@ -145,6 +145,71 @@ public class ExtendedLogServiceTests
         Assert.False(service.IsEnabledFor(LogEventLevel.Debug));
     }
 
+    // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
+
+    [Fact]
+    public void ExtendedLogService_MinimumLevel_FollowsAnOutOfBandWrite()
+    {
+        using var temp = new TempDirectory();
+        var appDir = Path.Combine(temp.Path, "app");
+        Directory.CreateDirectory(appDir);
+        var store = TestConfigStore.Create(appDir);
+        using var service = CreateService(temp.Path, settings: new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store), appDir: appDir);
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+
+        Assert.False(service.IsEnabledFor(LogEventLevel.Error));
+
+        // "The other instance" sets the level through its own repository on the same database.
+        new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store).Set(ExtendedLogService.LevelSettingKey, "Error");
+
+        // Inside the 2 s throttle the old level still applies.
+        Assert.False(service.IsEnabledFor(LogEventLevel.Error));
+
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+        Assert.True(service.IsEnabledFor(LogEventLevel.Error));
+        Assert.Equal("Error", service.CurrentLevel);
+    }
+
+    // scd-2: the level never expires, so a write made between construction and the first check
+    // would otherwise be missed until the next unrelated write.
+    [Fact]
+    public void ExtendedLogService_DetectsAChangeMadeBeforeItsFirstPoll()
+    {
+        using var temp = new TempDirectory();
+        var appDir = Path.Combine(temp.Path, "app");
+        Directory.CreateDirectory(appDir);
+        var store = TestConfigStore.Create(appDir);
+        using var service = CreateService(temp.Path, settings: new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store), appDir: appDir);
+
+        new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store).Set(ExtendedLogService.LevelSettingKey, "Error");
+
+        Assert.True(service.IsEnabledFor(LogEventLevel.Error));
+    }
+
+    // A reader's own save must not read as a foreign change (that would reload on every check
+    // for the next two seconds), and must not stop a later foreign write being seen.
+    [Fact]
+    public void ExtendedLogService_OwnSetLevel_ThenForeignWrite_BothApply()
+    {
+        using var temp = new TempDirectory();
+        var appDir = Path.Combine(temp.Path, "app");
+        Directory.CreateDirectory(appDir);
+        var store = TestConfigStore.Create(appDir);
+        using var service = CreateService(temp.Path, settings: new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store), appDir: appDir);
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+
+        service.SetLevel("Warning");
+        Assert.Equal("Warning", service.CurrentLevel);
+        Assert.Equal("Warning", service.CurrentLevel);
+
+        new ExchangeAdminWeb.Services.Storage.AppSettingRepository(store).Set(ExtendedLogService.LevelSettingKey, "Debug");
+
+        now = now.Add(ExchangeAdminWeb.Services.Storage.ConfigChangeWatcher.Throttle);
+        Assert.Equal("Debug", service.CurrentLevel);
+    }
+
     private static ExtendedLogService CreateService(string logRoot, Dictionary<string, string?>? additionalSettings = null,
         ExchangeAdminWeb.Services.Storage.AppSettingRepository? settings = null, string? appDir = null)
     {

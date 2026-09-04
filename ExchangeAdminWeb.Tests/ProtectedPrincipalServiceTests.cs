@@ -75,6 +75,52 @@ public class ProtectedPrincipalServiceTests : IDisposable
         return new ProtectedPrincipalService(env, config, moduleConfig, ppRepo, delineaService, logger);
     }
 
+    // --- Shared config database: cross-process cache freshness (SharedConfigDb-Plan AC4) ---
+
+    private static ProtectedPrincipalData UsersOnly(params string[] users) => new(users, [], [], [], []);
+
+    [Fact]
+    public void ProtectedPrincipal_ReloadsWhenTokenMoves()
+    {
+        var store = TestConfigStore.Create(_tempDir);
+        new ProtectedPrincipalRepository(store).Save(UsersOnly("ceo@contoso.com"));
+        var service = CreateService(protectedStore: store);
+        var now = DateTime.UtcNow;
+        service.ChangeWatcher.UtcNow = () => now;
+
+        var first = service.LoadEffectiveConfig().config;
+        Assert.NotNull(first);
+        Assert.Contains("ceo@contoso.com", first!.Users);
+        Assert.Same(first, service.LoadEffectiveConfig().config);
+
+        // "The other instance" saves through its own repository on the same database.
+        new ProtectedPrincipalRepository(store).Save(UsersOnly("ceo@contoso.com", "cfo@contoso.com"));
+
+        // Inside the 2 s throttle the cache still serves (the 30 s TTL is nowhere near).
+        Assert.Same(first, service.LoadEffectiveConfig().config);
+
+        now = now.Add(ConfigChangeWatcher.Throttle);
+        var reloaded = service.LoadEffectiveConfig().config;
+        Assert.NotSame(first, reloaded);
+        Assert.Contains("cfo@contoso.com", reloaded!.Users);
+    }
+
+    // scd-2: a write that lands between the load and the FIRST check must be seen by that check.
+    [Fact]
+    public void ProtectedPrincipal_DetectsAChangeMadeBeforeItsFirstPoll()
+    {
+        var store = TestConfigStore.Create(_tempDir);
+        new ProtectedPrincipalRepository(store).Save(UsersOnly("ceo@contoso.com"));
+        var service = CreateService(protectedStore: store);
+
+        var first = service.LoadEffectiveConfig().config;
+        Assert.DoesNotContain("cfo@contoso.com", first!.Users);
+
+        new ProtectedPrincipalRepository(store).Save(UsersOnly("ceo@contoso.com", "cfo@contoso.com"));
+
+        Assert.Contains("cfo@contoso.com", service.LoadEffectiveConfig().config!.Users);
+    }
+
     private static ResolvedDirectoryPrincipal MakePrincipal(
         string upn = "user@contoso.com",
         string? samAccountName = null,
