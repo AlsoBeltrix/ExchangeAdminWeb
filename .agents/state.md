@@ -82,10 +82,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   Final: 2373/0/3, format clean, `git diff --check` clean, 33 mutation probes across the
   six slices; no `.ps1`/`.psm1` touched, so ScriptAnalyzer/Pester were not in this
   stream gate. The build is now `2.20.0`, still above the cutover script minimum 2.19.0.
-  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.0`
-  (usage rows only start being written then); a codex codereview over the implementation
-  range, S1 `e33b201` through the S6 docs commit, is the natural owner-dispatched
-  follow-up.**
+  That codereview has since run: codex over `e33b201~1..dea899b` returned four MEDIUM
+  findings, all admitted and all closed, one commit each with a mutation-proved guard -
+  utei-2 (a malformed kill-switch value read as ON in the service while the config page
+  showed OFF), utei-3 (the kill-switch config read sat on the caller's path, so a locked
+  shared config DB could delay an audited operation - now cached behind a
+  `ConfigChangeWatcher` + 30s TTL), utei-1 (the bulk job pump inherited the enqueueing
+  circuit's `UsageSession` through `Task.Run`, cross-attributing other operators' rows -
+  the pump now starts with execution-context flow suppressed) and utei-4 (a date-range
+  edit made in the Usage view left the events table, its count and its CSV on the old
+  range - `ShowEventsView` now reloads when the range moved). Records in
+  `.agents/review/findings/utei-{1,2,3,4}.md`; the batch carries base `2.20.0` -> `2.20.1`
+  and `AdminEventLog` `1.2.0` -> `1.2.1`. Final: 2385/0/3, format clean, `git diff --check`
+  clean.
+  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.1`
+  (usage rows only start being written then).**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**

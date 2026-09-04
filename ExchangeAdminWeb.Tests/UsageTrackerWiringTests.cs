@@ -190,4 +190,65 @@ public class UsageTrackerWiringTests
         Assert.Equal(5, other.Actions);
         Assert.Equal(2, other.Failed);
     }
+
+    /// <summary>
+    /// Review finding utei-4: the date inputs sit above BOTH views, so a range edit made while
+    /// Usage is showing must not leave the events table, its count and its CSV export on the
+    /// old range. Source-text guard (no bUnit here, per the class remarks); each assertion is
+    /// anchored inside the method that has to carry it, because loose substring checks would
+    /// pass on a file that merely mentions the flag somewhere.
+    /// </summary>
+    [Fact]
+    public void EventLog_ReloadsEventsWhenTheRangeMovedInTheUsageView()
+    {
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
+
+        var changed = MethodBody(text, "private void OnDateRangeChanged()");
+        var elseAt = changed.IndexOf("else", StringComparison.Ordinal);
+        Assert.True(elseAt > 0, "OnDateRangeChanged no longer branches on the current view.");
+        Assert.Contains("eventsRangeStale = true;", changed[..elseAt], StringComparison.Ordinal);
+
+        var toEvents = MethodBody(text, "private void ShowEventsView()");
+        Assert.Contains("showUsage = false;", toEvents, StringComparison.Ordinal);
+
+        var gate = toEvents.IndexOf("if (eventsRangeStale)", StringComparison.Ordinal);
+        Assert.True(gate >= 0, "ShowEventsView no longer checks whether the range moved.");
+        Assert.True(
+            toEvents.IndexOf("LoadEvents();", StringComparison.Ordinal) > gate,
+            "The events reload must sit inside the stale-range gate.");
+        Assert.True(
+            toEvents.IndexOf("eventsRangeStale = false;", StringComparison.Ordinal) > gate,
+            "The stale flag must be cleared once the reload has been ordered.");
+    }
+
+    /// <summary>
+    /// The source text of one method, from its signature to its matching closing brace. Lets a
+    /// source-text guard assert a statement sits in a PARTICULAR method rather than somewhere
+    /// in a 1300-line page.
+    /// </summary>
+    private static string MethodBody(string text, string signature)
+    {
+        var start = text.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{signature} is gone from the page.");
+
+        var open = text.IndexOf('{', start);
+        Assert.True(open > start, $"{signature} has no body.");
+
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '{')
+            {
+                depth++;
+            }
+            else if (text[i] == '}' && --depth == 0)
+            {
+                return text[start..(i + 1)];
+            }
+        }
+
+        Assert.Fail($"{signature} has no matching closing brace.");
+        return string.Empty;
+    }
 }

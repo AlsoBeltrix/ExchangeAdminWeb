@@ -106,7 +106,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | utei-1 | MEDIUM | Bulk job pump inherits the submitting browser circuits usage session id (AsyncLocal flows across Task.Run), cross-attributing other operators jobs | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
 | utei-2 | MEDIUM | Malformed UsageTelemetryEnabled value renders as OFF on the config page but reads as ON in the service, so a corrupted privacy switch keeps collecting | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
 | utei-3 | MEDIUM | Kill-switch config read runs synchronously on the caller path before the fire-and-forget hand-off, so a locked shared config db can delay an audited operation | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
-| utei-4 | MEDIUM | Changing dates in the Usage view leaves the Events table, count and CSV on the old range when switching back | `[ ]` | | codex/gpt-5.5-dzs/xhigh/std |
+| utei-4 | MEDIUM | Changing dates in the Usage view leaves the Events table, count and CSV on the old range when switching back | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
 
 Notes:
 - **The second openreview pass over this plan (`6aef9e3..236b91b`) returned two findings and

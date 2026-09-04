@@ -34,15 +34,66 @@ with the controls.
 
 ## Approach
 
-TBD - fix commit will fill this in.
+`OnDateRangeChanged` now sets a `eventsRangeStale` flag in its `showUsage` branch, and
+`ShowEventsView` consumes it: on the way back to Events it clears the flag and calls
+`LoadEvents()` once, then behaves as before.
+
+The reload is deliberately conditional rather than unconditional on every toggle.
+`LoadEvents` re-reads every JSONL log file across the whole selected span - a 90-day
+range is 90 file reads - and it also resets `expandedRow` to -1 and `currentPage` to 1.
+Reloading on every Events click would make an idle Usage/Events/Usage flick pay that
+scan repeatedly and would silently collapse an expanded row and throw away the
+operator's page position for no reason. The flag makes the cost land exactly when the
+data is actually wrong.
+
+The flag is set rather than the events reloaded in place, for the same reason: an
+operator dragging the date inputs while reading Usage aggregates should not be paying
+a log scan for a table they are not looking at.
+
+The symmetric direction needed nothing: `ShowUsageView` already calls `LoadUsage`
+unconditionally, and the usage aggregates are three SQL aggregates rather than a file
+scan.
 
 ## Files changed
 
-TBD
+- `Components/Pages/AdminEventLog.razor` - `eventsRangeStale` field;
+  `OnDateRangeChanged` sets it in the usage branch; `ShowEventsView` grows a body that
+  consumes it. Each carries the reasoning as a comment.
+- `ExchangeAdminWeb.Tests/UsageTrackerWiringTests.cs` - one test plus a `MethodBody`
+  helper.
+- `ExchangeAdminWeb.csproj` - base app version 2.20.0 -> 2.20.1, carrying the whole
+  utei batch (utei-1..4); `Modules/ModuleCatalog.cs` - AdminEventLog module version
+  1.2.0 -> 1.2.1 for this page-scoped behaviour change. Two independent rules, both
+  fired (Constitution, Deployment And Versioning).
 
 ## Guard proof
 
-TBD
+Test: `EventLog_ReloadsEventsWhenTheRangeMovedInTheUsageView`
+(`ExchangeAdminWeb.Tests/UsageTrackerWiringTests.cs`). A source-text guard, matching
+the rest of that class: the repo has no bUnit dependency and the plan forbids adding
+one.
+
+The assertions are anchored INSIDE the method that has to carry each statement, using
+a new `MethodBody` helper that brace-matches a method out of the page source. Loose
+`Assert.Contains` calls over the whole 1300-line file would pass on a page that merely
+mentions `eventsRangeStale` somewhere - the false-coverage trap recorded on blr-4. So
+the test proves: the usage branch of `OnDateRangeChanged` (the text before its `else`)
+sets the flag; `ShowEventsView` still clears `showUsage`, gates on
+`if (eventsRangeStale)`, and has both `LoadEvents();` and the flag reset positioned
+after that gate.
+
+Mutation probe (non-vacuity): `ShowEventsView` reverted to the pre-fix
+`showUsage = false;` body - exactly this test fails, the other 12 in the class pass.
+Restored from a copy outside the working tree, not by `git checkout`, and re-stamped
+(`(Get-Item $path).LastWriteTime = Get-Date`) so MSBuild actually rebuilt.
+
+Verification after restore: `dotnet build ExchangeAdminWeb.slnx -c Release` succeeded
+(0 errors; only the pre-existing CS8604 and the NU1903 package advisories);
+`dotnet test ExchangeAdminWeb.slnx` 2385 passed / 0 failed / 3 skipped; `dotnet format
+ExchangeAdminWeb.slnx --verify-no-changes --no-restore` exit 0; `git diff --check HEAD`
+exit 0. No `.ps1`/`.psm1` touched, so ScriptAnalyzer and Pester are not in this gate.
+The one non-ASCII hit in `AdminEventLog.razor` (the up/down arrows at :284) predates
+this change and is untouched; the ASCII rule covers `.cs`/`.ps1`/`.psm1`.
 
 ## Coder dispute (if any)
 
@@ -51,7 +102,15 @@ Events, switch to Usage) is already safe because `ShowUsageView` calls `LoadUsag
 
 ## Known gaps
 
-TBD
+The guard is a source-text assertion, so it proves the code SHAPE, not the rendered
+behaviour: a refactor that keeps the flag and the gate but breaks the toggle some other
+way would still pass. That is the standing limitation of every razor guard in this
+repo, not something new here.
+
+The flag is one-way and coarse: any range edit made in Usage marks Events stale, even
+if the operator sets the dates back to what they were. The cost of that is one extra
+log scan on the next Events click, which is the pre-fix behaviour for a real change
+anyway.
 
 ## Reviewer comments
 

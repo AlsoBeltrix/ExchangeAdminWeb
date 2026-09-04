@@ -857,7 +857,7 @@ public sealed class ModuleCatalog
             SortOrder = 910,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.2.0",
+            Version = "1.2.1",
             MainPermission = new(
                 "Access",
                 "EventLog",

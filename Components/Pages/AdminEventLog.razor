@@ -1187,6 +1187,15 @@
     // ---------------------------------------------------------------------
 
     private bool showUsage;
+
+    /// <summary>
+    /// Set when the date range is edited while the Usage view is showing (review finding
+    /// utei-4). The date inputs sit above both views, so an edit made in Usage leaves the
+    /// events table, its count and its CSV export on the OLD range while the inputs read
+    /// the new one. <see cref="ShowEventsView"/> consumes the flag and reloads.
+    /// </summary>
+    private bool eventsRangeStale;
+
     private string? usageError;
     private IReadOnlyList<UsageRow> usageModules = [];
     private IReadOnlyList<ThemeUsage> usageThemes = [];
@@ -1209,7 +1218,21 @@
         public double ActionsPerOpen => Opens == 0 ? 0d : Actions / (double)Opens;
     }
 
-    private void ShowEventsView() => showUsage = false;
+    /// <summary>
+    /// Returns to the events table, reloading it first if the range moved while Usage was
+    /// showing (review finding utei-4). The reload is conditional because
+    /// <see cref="LoadEvents"/> re-reads every log file in the span and resets the expanded
+    /// row and the page number; an unconditional reload would pay that on every toggle.
+    /// </summary>
+    private void ShowEventsView()
+    {
+        showUsage = false;
+        if (eventsRangeStale)
+        {
+            eventsRangeStale = false;
+            LoadEvents();
+        }
+    }
 
     private void ShowUsageView()
     {
@@ -1219,12 +1242,15 @@
 
     /// <summary>
     /// The date inputs drive whichever view is showing, so changing the range refreshes the
-    /// usage tables instead of silently reloading events behind them.
+    /// usage tables instead of silently reloading events behind them. The events table is
+    /// marked stale rather than reloaded here, so the operator does not pay a log-file scan
+    /// for a view they are not looking at (review finding utei-4).
     /// </summary>
     private void OnDateRangeChanged()
     {
         if (showUsage)
         {
+            eventsRangeStale = true;
             LoadUsage();
         }
         else
