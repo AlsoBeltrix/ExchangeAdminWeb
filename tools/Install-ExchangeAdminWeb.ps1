@@ -20,6 +20,15 @@
       - Copies binaries/static files while preserving appsettings.json, config, and logs.
       - Seeds only newly missing config fragments.
 
+    Shared config database (optional, -ConfigStorePath): when several instances on one server
+    are meant to open ONE config database, pass the absolute local path of that database. The
+    installer writes it as ConfigStore:Path in the generated appsettings.json and grants the
+    app pool identity Modify on the shared directory in addition to the instance's own config
+    folder (which is still created and ACLed: the per-instance jobs database and the first-run
+    seed files live there). The shared database must already exist - the installer never
+    creates it; tools\Move-ConfigDbToShared.ps1 does, once, from an existing instance.
+    Without -ConfigStorePath the instance uses its own config\exchangeadmin.db as before.
+
 .EXAMPLE
     .\tools\Install-ExchangeAdminWeb.ps1
 
@@ -65,6 +74,7 @@ param(
     [string]$OnPremExchangeServerUri,
     [string]$CertSubject,
 
+    [string]$ConfigStorePath,
     [switch]$RegenerateAppSettings,
     [switch]$PlanOnly,
     [switch]$NonInteractive
@@ -384,10 +394,11 @@ function New-AppSettingsObject {
         [string]$BasePath,
         [string]$LogPath,
         [string[]]$SecurityAllowedGroups,
-        [string[]]$SecurityAdminGroups
+        [string[]]$SecurityAdminGroups,
+        [string]$ConfigStorePath
     )
 
-    return [ordered]@{
+    $settings = [ordered]@{
         Serilog = [ordered]@{
             MinimumLevel = [ordered]@{
                 Default = "Information"
@@ -445,6 +456,16 @@ function New-AppSettingsObject {
         }
         AllowedHosts = "*"
     }
+
+    # Only when a shared database was named: without the key the app uses its own
+    # config\exchangeadmin.db, and the generated file must stay byte-identical to before.
+    if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
+        $settings.ConfigStore = [ordered]@{
+            Path = $ConfigStorePath
+        }
+    }
+
+    return $settings
 }
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")
@@ -485,6 +506,26 @@ $appLogDir = Join-Path $PublishPath "logs"
 $timestamp = Get-Date -Format "yyyyMMddHHmmss"
 $stagingPath = "$PublishPath.staging.$timestamp"
 
+# Optional shared config database. The path must be absolute and local (SQLite locking is not
+# reliable over a network share) and the file MUST already exist: the app opens a configured
+# path without create and stops if it is missing, so the installer refuses here rather than
+# hand over an instance that cannot start. Creating the shared database from an existing
+# instance is tools\Move-ConfigDbToShared.ps1's job, run once.
+$sharedConfigDir = $null
+if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
+    if ($ConfigStorePath.StartsWith('\\') -or $ConfigStorePath.StartsWith('//')) {
+        Write-Fail "ConfigStorePath must be a local path, not a network share: $ConfigStorePath"
+    }
+    if (-not [System.IO.Path]::IsPathRooted($ConfigStorePath)) {
+        Write-Fail "ConfigStorePath must be an absolute local file path: $ConfigStorePath"
+    }
+    $ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)
+    if (-not (Test-Path -LiteralPath $ConfigStorePath -PathType Leaf)) {
+        Write-Fail "ConfigStorePath names $ConfigStorePath but no database exists there. The installer never creates the shared database; create it once from an existing instance with tools\Move-ConfigDbToShared.ps1, then re-run the installer."
+    }
+    $sharedConfigDir = Split-Path -Parent $ConfigStorePath
+}
+
 Write-Host ""
 Write-Host "ExchangeAdminWeb installer" -ForegroundColor Magenta
 Write-Host "  Source      : $repoRoot" -ForegroundColor DarkGray
@@ -493,6 +534,7 @@ Write-Host "  App pool    : $AppPoolName" -ForegroundColor DarkGray
 Write-Host "  Publish     : $PublishPath" -ForegroundColor DarkGray
 Write-Host "  PathBase    : $PathBase" -ForegroundColor DarkGray
 Write-Host "  Log root    : $LogRoot" -ForegroundColor DarkGray
+Write-Host "  Config DB   : $(if ($sharedConfigDir) { "$ConfigStorePath (shared)" } else { "$configDir\exchangeadmin.db (this instance only)" })" -ForegroundColor DarkGray
 Write-Host "  Mode        : $(if ($PlanOnly) { 'PLAN ONLY' } else { 'APPLY' })" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -558,6 +600,12 @@ Set-DirectoryAcl -Path $PublishPath -Identity $appPoolIdentity -Rights "(OI)(CI)
 Set-DirectoryAcl -Path $LogRoot -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $configDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
 Set-DirectoryAcl -Path $appLogDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
+if ($sharedConfigDir) {
+    # In ADDITION to the instance's own config\ above (the jobs database and the seed files
+    # still live there): the shared database's directory needs Modify too, for the WAL/SHM
+    # sidecars SQLite writes next to the file.
+    Set-DirectoryAcl -Path $sharedConfigDir -Identity $appPoolIdentity -Rights "(OI)(CI)M"
+}
 
 if ($CertSubject) {
     Invoke-PlanOrAction "Grant $appPoolIdentity read access to certificate private key matching $CertSubject if present" {
@@ -593,7 +641,8 @@ Write-AppSettings -Path $configPath -Settings (New-AppSettingsObject `
     -BasePath $PathBase `
     -LogPath $LogRoot `
     -SecurityAllowedGroups $allowedGroupsQualified `
-    -SecurityAdminGroups $adminGroupsQualified)
+    -SecurityAdminGroups $adminGroupsQualified `
+    -ConfigStorePath $ConfigStorePath)
 
 # Config seeds (SQLite note): runtime config now lives in config/exchangeadmin.db, created by
 # the app on first start. These JSON seeds are written only if missing and are consumed as

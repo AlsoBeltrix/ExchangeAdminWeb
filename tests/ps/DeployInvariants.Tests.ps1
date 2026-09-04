@@ -339,6 +339,52 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
             -Because 'the runtime DB inherits the config-dir ACL - no DB-specific grant needed'
     }
 
+    It 'with -ConfigStorePath: still ACLs config\, ACLs the shared directory too, and refuses a missing shared file (scd-1, scd-4)' {
+        # SharedConfigDb-Plan AC9. The local config\ ACL must stay (per-instance jobs DB and
+        # seed files live there); the shared directory is ACLed IN ADDITION; the shared file
+        # must already exist (the installer never creates it - the cutover script does).
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'ConfigStorePath'
+        $s.Text | Should -Match 'Set-DirectoryAcl -Path \$configDir -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"' `
+            -Because 'the per-instance config folder must still be created and ACLed'
+        $s.Text | Should -Match '(?s)if \(\$sharedConfigDir\) \{.*?Set-DirectoryAcl -Path \$sharedConfigDir -Identity \$appPoolIdentity -Rights "\(OI\)\(CI\)M"' `
+            -Because 'the shared directory needs Modify for the WAL/SHM sidecars, in addition'
+        $s.Text.IndexOf('Set-DirectoryAcl -Path $configDir') |
+            Should -BeLessThan $s.Text.IndexOf('Set-DirectoryAcl -Path $sharedConfigDir') `
+            -Because 'the local ACL is unconditional and comes first; the shared one is additional'
+        $s.Text | Should -Match '(?s)if \(-not \(Test-Path -LiteralPath \$ConfigStorePath -PathType Leaf\)\) \{\s*Write-Fail' `
+            -Because 'a configured path naming a missing file must be refused, never created'
+        $s.Text | Should -Match 'Move-ConfigDbToShared\.ps1' `
+            -Because 'the refusal must point the operator at the cutover script that creates the shared database'
+        $s.Text | Should -Not -Match 'New-Item[^\r\n]*\$ConfigStorePath' `
+            -Because 'the installer must never create the shared database file'
+        $s.Text | Should -Match 'StartsWith\(''\\\\''\)' -Because 'a UNC path must be refused'
+        $s.Text | Should -Match '-ConfigStorePath \$ConfigStorePath\)' `
+            -Because 'the generated appsettings must carry the key'
+    }
+
+    It 'generated appsettings carries ConfigStore:Path only when -ConfigStorePath is given (byte-identical otherwise)' {
+        # Runs the real New-AppSettingsObject function (lifted from the script by AST) so the
+        # generated object is checked, not just the source text.
+        $fn = Find-FunctionDefinition $s 'New-AppSettingsObject'
+        $fn | Should -Not -BeNullOrEmpty
+        $CertSubject = ''; $SmtpHost = 'localhost'; $SmtpPort = 25; $SmtpUseSsl = $false
+        $FromAddress = 'a@b'; $FromName = 'x'; $AdminNotificationEmail = 'a@b'; $DelineaUrl = ''
+        $DelineaCredentialTarget = 'Delinea_Client'; $OnPremExchangeServerUri = ''; $ContactEmail = 'a@b'; $PublicBaseUrl = ''
+        Invoke-Expression $fn.Extent.Text
+
+        $without = New-AppSettingsObject -Name 'n' -BasePath '/x' -LogPath 'C:\logs' -SecurityAllowedGroups @('g') -SecurityAdminGroups @('g')
+        $without.Keys | Should -Not -Contain 'ConfigStore' -Because 'no key means the instance keeps its own database'
+
+        $blank = New-AppSettingsObject -Name 'n' -BasePath '/x' -LogPath 'C:\logs' -SecurityAllowedGroups @('g') -SecurityAdminGroups @('g') -ConfigStorePath '   '
+        $blank.Keys | Should -Not -Contain 'ConfigStore' -Because 'a blank value must not write an empty key'
+        ($blank | ConvertTo-Json -Depth 20) | Should -Be ($without | ConvertTo-Json -Depth 20) -Because 'byte-identical without the key'
+
+        $with = New-AppSettingsObject -Name 'n' -BasePath '/x' -LogPath 'C:\logs' -SecurityAllowedGroups @('g') -SecurityAdminGroups @('g') -ConfigStorePath 'D:\shared\config\exchangeadmin.db'
+        $with.ConfigStore.Path | Should -Be 'D:\shared\config\exchangeadmin.db'
+        $json = $with | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $json.ConfigStore.Path | Should -Be 'D:\shared\config\exchangeadmin.db'
+    }
+
     It 'still writes the section-access seed file (consumed as first-run DB import seed)' {
         # Fresh installs get correct initial authorization via this seed, which the app imports
         # into section_access on first start. Assert the actual WRITE call + path, not just the
@@ -512,6 +558,70 @@ Describe 'tools/test-delinea.ps1' {
             Where-Object { $_.Name.VariablePath.UserPath -eq 'ServerUrl' }
         $serverParam.DefaultValue | Should -BeNullOrEmpty `
             -Because 'ServerUrl must be supplied by the operator, not defaulted to an internal host'
+    }
+}
+
+Describe 'tools/Move-ConfigDbToShared.ps1 (static)' {
+    BeforeAll { $script:s = Get-ScriptUnderTest 'tools/Move-ConfigDbToShared.ps1' }
+
+    It 'parses without syntax errors' {
+        $s.Errors | Should -BeNullOrEmpty
+    }
+
+    It 'sets $ErrorActionPreference = Stop' {
+        $s.Text | Should -Match '\$ErrorActionPreference\s*=\s*"Stop"'
+    }
+
+    It 'is pure ASCII (Windows PowerShell 5.1 reads it - invariant 6)' {
+        $bytes = [System.IO.File]::ReadAllBytes($s.Path)
+        ($bytes | Where-Object { $_ -gt 127 }).Count | Should -Be 0
+    }
+
+    It 'defaults to plan mode: acting requires -Apply' {
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'Apply'
+        $s.Ast.ParamBlock.Parameters.Name.VariablePath.UserPath | Should -Contain 'PlanOnly'
+        $s.Text | Should -Match 'if \(-not \$Apply\) \{ \$PlanOnly = \$true \}'
+    }
+
+    It 'gates every step on $PlanOnly through Invoke-PlanOrAction' {
+        $fn = Find-FunctionDefinition $s 'Invoke-PlanOrAction'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '\$PlanOnly'
+        # Eight steps, each through the gate (the stop/start/appsettings/verify helpers wrap it).
+        ([regex]::Matches($s.Text, 'Invoke-PlanOrAction "')).Count | Should -BeGreaterOrEqual 8
+    }
+
+    It 'Write-Fail throws (repo error model)' {
+        $fn = Find-FunctionDefinition $s 'Write-Fail'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Find({ param($node) $node -is [System.Management.Automation.Language.ThrowStatementAst] }, $true) |
+            Should -Not -BeNullOrEmpty
+    }
+
+    It 'checks the native exit code after every icacls invocation' {
+        $result = Test-IcaclsCallsAreChecked $s
+        $result.Count | Should -BeGreaterThan 0
+        $result.Unguarded | Should -BeNullOrEmpty -Because "unguarded: $($result.Unguarded -join '; ')"
+    }
+
+    It 'seeds the shared file from DEV via the verified copy helper, after backing up BOTH databases' {
+        $s.Text | Should -Match 'Copy-SqliteDbFile -SourceDbPath \$devDb -DestDbPath \$SharedDbPath'
+        $s.Text.IndexOf('Backup-SqliteConfigDb -DbPath $devDb') | Should -BeLessThan $s.Text.IndexOf('Copy-SqliteDbFile -SourceDbPath $devDb')
+        $s.Text.IndexOf('Backup-SqliteConfigDb -DbPath $prodDb') | Should -BeLessThan $s.Text.IndexOf('Copy-SqliteDbFile -SourceDbPath $devDb')
+        $s.Text | Should -Match 'Test-SqliteConfigDbIntegrity -DbPath \$SharedDbPath'
+    }
+
+    It 'writes ConfigStore:Path atomically (temp file, re-parse, move) with a backup of the original' {
+        $s.Text | Should -Match 'appsettings\.cutover\..*\.tmp'
+        $s.Text | Should -Match 'Copy-Item -LiteralPath \$AppSettingsPath -Destination "\$AppSettingsPath\.\$BackupSuffix"'
+        $s.Text | Should -Match 'Move-Item -LiteralPath \$tmp -Destination \$AppSettingsPath -Force'
+    }
+
+    It 'prints the restore commands on failure and on success' {
+        $fn = Find-FunctionDefinition $s 'Write-RestoreInstructions'
+        $fn | Should -Not -BeNullOrEmpty
+        ([regex]::Matches($s.Text, 'Write-RestoreInstructions -DevDb')).Count | Should -BeGreaterOrEqual 2
+        $s.Text | Should -Match 'SPLIT STATE' -Because 'a failure between the two appsettings writes must be named'
     }
 }
 
