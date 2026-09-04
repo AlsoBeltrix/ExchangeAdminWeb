@@ -5,6 +5,44 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-04 - Dev and prod share ONE config database; promotion never copies it
+
+Status: Active. Supersedes the 2026-06-18 dev-wins promotion rule ("prod's config
+should MIRROR dev's exactly - a wholesale replace", `tools/promote-dev-to-prod.ps1`
+config block) and `.agents/repo-guidance.md` Architectural Invariant 2 ("Config
+promotion is dev-wins"). Governs `docs/SharedConfigDb-Plan.md` (drafted the same day).
+
+Owner rulings 2026-09-04, in order: "prod deployment cannot keep overwriting the prod
+db and all settings with what's in dev." Then, rejecting a prod-keeps-its-own-copy
+answer: "can't prod and dev use the same DB with each deployment making a backup
+first? I don't want to maintain two dbs and two sets of settings, and not replacing
+the db on promotion means that we might not be getting new database tables or
+settings. I need a good option, not more compromises."
+
+What this settles:
+
+- Both instances on the server open the SAME `exchangeadmin.db`, at a path outside
+  either app root, named in each instance's appsettings. There is one set of module
+  enablement, section access, module settings and protected principals. A change made
+  on dev is live on prod at once, including enabling or disabling a module; the owner
+  chose that over two settings sets.
+- Promotion never copies, replaces or merges the config database. New tables and
+  settings reach prod through the shared file: whichever build starts first migrates
+  it (in practice dev), and the other must accept it.
+- A build therefore accepts a database NEWER than itself and migrates an older one.
+  Corollary binding on every future migration: schema steps are ADDITIVE ONLY - add
+  tables, add nullable-or-defaulted columns, add indexes; never rename, drop, or
+  change the meaning of an existing column. A destructive change needs its own plan
+  and a coordinated deploy of both instances.
+- Each instance keeps its own cache invalidation honest across processes: a change
+  committed by the other instance is picked up on the next read (SQLite's
+  `data_version` counter), not on restart.
+- Every deploy of either instance takes the verified backup from the shared path
+  first, as today. The per-instance databases (bulk jobs, usage telemetry) stay per
+  instance: a shared job queue would be run by both processes.
+- One-time switch: dev's current database becomes the shared one (it is the superset -
+  prod's has only ever received copies of it); prod's is kept as a backup.
+
 ### 2026-09-04 - Anonymous usage telemetry: event rows with a throwaway session id
 
 Status: Active. Governs `docs/UsageTelemetry-Plan.md` (drafted the same day).
