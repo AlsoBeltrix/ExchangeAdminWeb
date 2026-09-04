@@ -1,0 +1,94 @@
+@rendermode InteractiveServer
+@implements IDisposable
+@using ExchangeAdminWeb.Services
+@using Microsoft.AspNetCore.Components.Routing
+@inject NavigationManager Navigation
+@inject ExchangeAdminWeb.Modules.ModuleCatalog Catalog
+@inject UsageSession Session
+@inject UsageTelemetryService Usage
+@inject IJSRuntime JS
+
+@* Renders nothing. It exists only to record anonymous usage (docs/UsageTelemetry-Plan.md,
+   AC6): one session row per interactive circuit, one open row per navigation, and the theme
+   the visit is on. It lives inside <Authorized> in MainLayout so an anonymous circuit - the
+   sign-in bounce - records nothing at all. *@
+
+@code {
+    private bool _subscribed;
+
+    // Everything happens after the FIRST interactive render, never in OnInitialized: a
+    // prerendered pass would record a second session row for the same visit, and JS interop
+    // is unreachable there anyway.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        Usage.RecordSessionStart(Session.Id);
+        RecordOpen(Navigation.Uri);
+
+        Navigation.LocationChanged += OnLocationChanged;
+        _subscribed = true;
+
+        try
+        {
+            var stored = await JS.InvokeAsync<string>("getTheme");
+            Usage.RecordTheme(Session.Id, UiThemeCatalog.Resolve(stored).Id);
+        }
+        catch (Exception)
+        {
+            // A disconnected or prerendering circuit cannot answer. The theme is simply
+            // unknown for this visit; telemetry never breaks the page it observes.
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e) =>
+        RecordOpen(e.Location);
+
+    private void RecordOpen(string uri)
+    {
+        var route = RouteOf(Navigation.ToBaseRelativePath(uri));
+        var module = Catalog.GetByRoute(route)?.Id;
+
+        // A route belonging to no module is recorded only when it is one of the two the
+        // report cares about; anything else (a static asset, an unknown path) is ignored so
+        // the table cannot fill with stray rows.
+        if (module is null && !IsTrackedModulelessRoute(route))
+        {
+            return;
+        }
+
+        Usage.RecordOpen(Session.Id, module, route);
+    }
+
+    /// <summary>
+    /// Base-relative uri to catalog route, byte for byte the derivation in
+    /// ModuleVersion.razor: query string cut, surrounding slashes trimmed. The two must agree
+    /// or a page would report a version this records no opens for.
+    /// </summary>
+    internal static string RouteOf(string baseRelative)
+    {
+        var route = baseRelative ?? string.Empty;
+        var queryIndex = route.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            route = route[..queryIndex];
+        }
+
+        return route.Trim('/');
+    }
+
+    /// <summary>The only two module-less routes worth counting: the home page and the bounce.</summary>
+    internal static bool IsTrackedModulelessRoute(string route) =>
+        route.Length == 0 || string.Equals(route, "access-denied", StringComparison.OrdinalIgnoreCase);
+
+    public void Dispose()
+    {
+        if (_subscribed)
+        {
+            Navigation.LocationChanged -= OnLocationChanged;
+        }
+    }
+}

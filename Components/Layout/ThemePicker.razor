@@ -1,6 +1,8 @@
 @rendermode InteractiveServer
 @using ExchangeAdminWeb.Services
 @inject IJSRuntime JS
+@inject UsageSession Session
+@inject UsageTelemetryService Usage
 
 @* Replaces the two-state sun/moon toggle, which could not express ten themes.
    The list comes from UiThemeCatalog -- see there for why it is not inline. *@
@@ -50,5 +52,9 @@
         // written into the DOM, and an unknown id would leave the page unstyled.
         currentId = UiThemeCatalog.Resolve(e.Value?.ToString()).Id;
         await JS.InvokeVoidAsync("setTheme", currentId);
+
+        // After the browser has actually taken the theme, never before: a failed setTheme
+        // throws out of the line above and no row is written for a change that did not happen.
+        Usage.RecordTheme(Session.Id, currentId);
     }
 }
