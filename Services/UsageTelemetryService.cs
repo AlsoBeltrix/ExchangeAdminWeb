@@ -42,12 +42,29 @@ public class UsageTelemetryService
         ["MigrationAction"] = "Migration",
     };
 
+    /// <summary>
+    /// Backstop for the cached kill switch when the change token itself cannot be read. The
+    /// watcher normally notices a write - including one by the other instance on the shared
+    /// database - within its own two-second throttle. Same value the other config readers use.
+    /// </summary>
+    private static readonly TimeSpan SwitchCacheTtl = TimeSpan.FromSeconds(30);
+
     private readonly UsageEventRepository _repository;
     private readonly ModuleConfigService _moduleConfig;
     private readonly ModuleCatalog _catalog;
     private readonly ILogger<UsageTelemetryService> _logger;
+    private readonly ConfigChangeWatcher _changeWatcher;
+    private readonly Lock _switchLock = new();
+
+    private bool _switchLoaded;
+    private bool _switchValue;
+    private long _switchToken = ConfigChangeWatcher.Unknown;
+    private DateTime _switchLoadedAt = DateTime.MinValue;
 
     private int _switchReadFailureLogged;
+
+    // Test seam for the cache clock; production uses the real clock.
+    internal Func<DateTime> UtcNow = () => DateTime.UtcNow;
 
     public UsageTelemetryService(
         UsageEventRepository repository,
@@ -59,16 +76,57 @@ public class UsageTelemetryService
         _moduleConfig = moduleConfig;
         _catalog = catalog;
         _logger = logger;
+        _changeWatcher = moduleConfig.CreateChangeWatcher(logger);
     }
+
+    /// <summary>The watcher behind the cached kill switch; exposed for tests only.</summary>
+    internal ConfigChangeWatcher ChangeWatcher => _changeWatcher;
 
     /// <summary>
     /// The kill switch: the UsageTelemetryEnabled Boolean field on the Event Log module,
-    /// defaulting to on when it was never configured. An unreadable config reads as OFF and is
-    /// logged once - a switch whose state cannot be established must not be assumed permissive.
-    /// The Home page disclosure is driven by this same read, so the notice cannot claim
-    /// collection that is not happening.
+    /// defaulting to on when it was never configured. An unreadable config, and a stored value
+    /// that is not a Boolean, both read as OFF and are logged once - a switch whose state
+    /// cannot be established must not be assumed permissive, and the module config page renders
+    /// such a value as an unchecked box, so off is also what the operator is being shown
+    /// (review finding utei-2). The Home page disclosure is driven by this same read, so the
+    /// notice cannot claim collection that is not happening.
     /// </summary>
+    /// <remarks>
+    /// The answer is cached (review finding utei-3). This is called once per audited operation,
+    /// on the caller's thread, before the fire-and-forget hand-off; reading the config store
+    /// there put a SQLite read on the operator's path, and since the shared config database
+    /// landed that file is one the OTHER instance also writes, so a lock could add up to the
+    /// 5-second busy timeout to an operation that telemetry is required not to affect at all.
+    /// Cache invalidation is the standard one for this app's config readers: a
+    /// <see cref="ConfigChangeWatcher"/> notices a write by either instance within its own
+    /// two-second throttle, and <see cref="SwitchCacheTtl"/> bounds staleness if the token
+    /// itself cannot be read. A cache hit costs a lock, a compare and a clock read.
+    /// </remarks>
     public virtual bool Enabled()
+    {
+        lock (_switchLock)
+        {
+            if (_switchLoaded
+                && !_changeWatcher.HasChangedSince(_switchToken)
+                && UtcNow() - _switchLoadedAt < SwitchCacheTtl)
+            {
+                return _switchValue;
+            }
+
+            // Token BEFORE the read (the scd-2 protocol documented on ConfigChangeWatcher): a
+            // write that races the read below moves the stored token past this value, so the
+            // next check reloads instead of serving a value that was already stale when cached.
+            var token = _changeWatcher.CurrentToken();
+            _switchValue = ReadSwitch();
+            _switchToken = token;
+            _switchLoadedAt = UtcNow();
+            _switchLoaded = true;
+            return _switchValue;
+        }
+    }
+
+    /// <summary>The uncached read behind <see cref="Enabled"/>. Never throws.</summary>
+    private bool ReadSwitch()
     {
         try
         {
@@ -167,8 +225,8 @@ public class UsageTelemetryService
     }
 
     /// <summary>
-    /// The one path every Record method takes. The kill-switch read is inside the try because
-    /// it touches the config store: a store fault here must be as harmless as an insert fault.
+    /// The one path every Record method takes. The kill-switch read stays inside the try: it is
+    /// cached (utei-3) but a fault behind it must be as harmless as an insert fault.
     /// </summary>
     private void Record(string? session, string kind, string? module, string? category, string? detail, bool? success)
     {

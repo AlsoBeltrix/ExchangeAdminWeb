@@ -70,6 +70,19 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         return moduleConfig;
     }
 
+    /// <summary>A module-config service over a caller-supplied store, so a test can wrap it.</summary>
+    private ModuleConfigService ConfigOver(IConfigStore store)
+    {
+        var env = Substitute.For<Microsoft.AspNetCore.Hosting.IWebHostEnvironment>();
+        env.ContentRootPath.Returns(_dir);
+
+        return new ModuleConfigService(
+            new ModuleCatalog(),
+            env,
+            new ModuleConfigRepository(store),
+            NullLogger<ModuleConfigService>.Instance);
+    }
+
     private UsageEventRepository Repo() =>
         new(new SqliteConnectionFactory(Path.Combine(_dir, "usage.db")));
 
@@ -302,11 +315,79 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         var logger = new CapturingLogger<UsageTelemetryService>();
         var service = new UsageTelemetryService(Repo(), Config("flase"), new ModuleCatalog(), logger);
 
+        // Step the cache clock past its TTL between calls so all three genuinely re-read the
+        // switch (utei-3 caching would otherwise make this assertion vacuous).
+        var clock = DateTime.UtcNow;
+        service.UtcNow = () => clock;
+
         Assert.False(service.Enabled());
+        clock = clock.AddMinutes(5);
         Assert.False(service.Enabled());
+        clock = clock.AddMinutes(5);
         Assert.False(service.Enabled());
 
-        Assert.Equal(1, logger.WarningCount);
+        Assert.Single(logger.Warnings);
+    }
+
+    /// <summary>
+    /// utei-3: the switch is read once per audited operation, on the operator's thread, before
+    /// the fire-and-forget hand-off. Uncached that is a SQLite read per action against the
+    /// database the OTHER instance also writes, so a lock could add up to the 5-second busy
+    /// timeout to an operation telemetry must not affect. A burst of records must reach the
+    /// store a handful of times, not once each.
+    /// </summary>
+    [Fact]
+    public void Switch_IsReadOnceForABurstOfRecords()
+    {
+        var counting = new CountingConfigStore(TestConfigStore.Create(_dir));
+        var service = new CapturingTelemetry(
+            Repo(), ConfigOver(counting), new ModuleCatalog(),
+            NullLogger<UsageTelemetryService>.Instance);
+
+        // Prime the cache, then count only what the burst itself costs.
+        Assert.True(service.Enabled());
+        counting.Reset();
+
+        for (var i = 0; i < 200; i++)
+            service.RecordAction("GroupManagement", "AddMember", success: true);
+
+        Assert.Equal(200, service.Events.Count);
+
+        // One load is two store reads plus a token read; a cache hit is at most one throttled
+        // token read per two seconds. Uncached this burst costs 400+.
+        Assert.InRange(counting.Reads, 0, 4);
+    }
+
+    /// <summary>
+    /// The other half of utei-3: caching must not make the switch sticky. A write by the OTHER
+    /// instance on the shared config database moves the change token, and the watcher is how
+    /// this instance notices without a restart (docs/SharedConfigDb-Plan.md AC4).
+    /// </summary>
+    [Fact]
+    public void Switch_ReloadsWhenTheOtherInstanceTurnsItOff()
+    {
+        var store = TestConfigStore.Create(_dir);
+        var service = new CapturingTelemetry(
+            Repo(), ConfigOver(store), new ModuleCatalog(),
+            NullLogger<UsageTelemetryService>.Instance);
+
+        Assert.True(service.Enabled());
+
+        // A second service over the SAME store stands in for the other instance.
+        ConfigOver(store).SaveModuleConfig(
+            UsageTelemetryService.ConfigModuleId,
+            new Dictionary<string, string>
+            {
+                [UsageTelemetryService.ConfigKey] = "false",
+            });
+
+        // The watcher reads the token at most once per throttle; move its clock past that.
+        var later = DateTime.UtcNow.Add(ConfigChangeWatcher.Throttle).AddSeconds(1);
+        service.ChangeWatcher.UtcNow = () => later;
+
+        Assert.False(service.Enabled());
+        service.RecordOpen("s", "GroupManagement", "group-management");
+        Assert.Empty(service.Events);
     }
 
     // --- AC3: a telemetry fault never reaches the caller -------------------
@@ -484,11 +565,48 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Counts every read that reaches the config store, so utei-3's guard can assert the
+    /// kill switch is not read once per audited action. Writes pass through uncounted.
+    /// </summary>
+    private sealed class CountingConfigStore : IConfigStore
+    {
+        private readonly IConfigStore _inner;
+        private int _reads;
+
+        public CountingConfigStore(IConfigStore inner) => _inner = inner;
+
+        public int Reads => Volatile.Read(ref _reads);
+
+        public void Reset() => Interlocked.Exchange(ref _reads, 0);
+
+        public long GetChangeToken()
+        {
+            Interlocked.Increment(ref _reads);
+            return _inner.GetChangeToken();
+        }
+
+        public T Read<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, T> read)
+        {
+            Interlocked.Increment(ref _reads);
+            return _inner.Read(read);
+        }
+
+        public T Write<T>(Func<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction, T> write) =>
+            _inner.Write(write);
+
+        public void Write(Action<Microsoft.Data.Sqlite.SqliteConnection, Microsoft.Data.Sqlite.SqliteTransaction> write) =>
+            _inner.Write(write);
+    }
+
     private sealed class CapturingLogger<T> : ILogger<T>
     {
         private int _warnings;
 
         public int WarningCount => Volatile.Read(ref _warnings);
+
+        /// <summary>Warning texts, so a count assertion can say WHICH warnings fired.</summary>
+        public List<string> Warnings { get; } = [];
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -501,8 +619,12 @@ public sealed class UsageTelemetryServiceTests : IDisposable
             Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            if (logLevel == LogLevel.Warning)
-                Interlocked.Increment(ref _warnings);
+            if (logLevel != LogLevel.Warning)
+                return;
+
+            Interlocked.Increment(ref _warnings);
+            lock (Warnings)
+                Warnings.Add(formatter(state, exception));
         }
     }
 

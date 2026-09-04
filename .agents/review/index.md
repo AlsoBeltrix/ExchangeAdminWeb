@@ -105,7 +105,7 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | scdi-3 | MEDIUM | Cutover script's "already shared, nothing to do" shortcut runs before the shared-file existence check | `[x]` | | same dispatch as scdi-1 - fixed: `Assert-SharedDbUsable` (exists + `Test-SqliteConfigDbIntegrity`) runs inside the both-shared branch before its return, plan mode included, printing the restore commands and `Write-Fail`ing naming the path; guards: 3 Pester rows (missing file, garbage file, real db = only no-op), probe A call removed -> 2 FAIL, probe B integrity dropped -> 1 FAIL, restore -> 77/0 |
 | utei-1 | MEDIUM | Bulk job pump inherits the submitting browser circuits usage session id (AsyncLocal flows across Task.Run), cross-attributing other operators jobs | `[ ]` | | codex/gpt-5.5-dzs/xhigh/std |
 | utei-2 | MEDIUM | Malformed UsageTelemetryEnabled value renders as OFF on the config page but reads as ON in the service, so a corrupted privacy switch keeps collecting | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
-| utei-3 | MEDIUM | Kill-switch config read runs synchronously on the caller path before the fire-and-forget hand-off, so a locked shared config db can delay an audited operation | `[ ]` | | codex/gpt-5.5-dzs/xhigh/std |
+| utei-3 | MEDIUM | Kill-switch config read runs synchronously on the caller path before the fire-and-forget hand-off, so a locked shared config db can delay an audited operation | `[x]` | | codex/gpt-5.5-dzs/xhigh/std |
 | utei-4 | MEDIUM | Changing dates in the Usage view leaves the Events table, count and CSV on the old range when switching back | `[ ]` | | codex/gpt-5.5-dzs/xhigh/std |
 
 Notes:
