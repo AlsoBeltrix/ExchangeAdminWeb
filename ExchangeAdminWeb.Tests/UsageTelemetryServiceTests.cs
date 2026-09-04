@@ -366,6 +366,27 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         throw new InvalidOperationException($"Unbalanced braces after {signature}.");
     }
 
+
+    /// <summary>
+    /// AC10, the switch half: the field the service reads must exist on the module the service
+    /// names, as a Boolean defaulting to on. Both sides come from the same constants, so a
+    /// rename cannot half-land and silently leave the switch unreachable.
+    /// </summary>
+    [Fact]
+    public void KillSwitch_IsABooleanConfigFieldOnTheEventLogModule()
+    {
+        var module = new ModuleCatalog().GetById(UsageTelemetryService.ConfigModuleId);
+        Assert.NotNull(module);
+
+        var field = Assert.Single(
+            module.ConfigFields,
+            f => f.Key == UsageTelemetryService.ConfigKey);
+
+        Assert.Equal(ConfigFieldType.Boolean, field.FieldType);
+        Assert.Equal("true", field.DefaultValue);
+        Assert.False(field.Required);
+        Assert.False(field.IsSecret);
+    }
     private IConfiguration AuditConfig() =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>

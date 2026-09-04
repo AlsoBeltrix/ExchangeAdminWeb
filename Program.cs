@@ -322,6 +322,29 @@ try
             if (removed > 0)
                 Log.Information("Export retention: removed {Count} expired Message Analysis export(s)", removed);
         }
+
+        // Usage-telemetry retention, in the same one-shot startup pass (docs/UsageTelemetry-Plan.md,
+        // AC8). Its own try/catch rather than sharing one with the passes above: the usage database
+        // is disposable environment-local telemetry, and a missing, locked or unwritable file must
+        // never be able to stop the app booting or to hide a failure of a pass that matters.
+        try
+        {
+            var usageEvents = app.Services
+                .GetRequiredService<ExchangeAdminWeb.Services.Storage.UsageEventRepository>();
+            var prunedUsage = usageEvents.PruneOlderThan(
+                DateTime.UtcNow.AddDays(-UsageTelemetryService.RetentionDays));
+            if (prunedUsage > 0)
+            {
+                Log.Information(
+                    "Usage telemetry retention: removed {Count} usage event(s) older than {Days} days",
+                    prunedUsage,
+                    UsageTelemetryService.RetentionDays);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Usage telemetry retention pass failed; old usage rows remain");
+        }
     }
 
     var pathBase = (builder.Configuration["Application:PathBase"] ?? "/ExchangeAdminWeb").TrimEnd('/');

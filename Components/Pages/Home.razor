@@ -10,6 +10,7 @@
 @inject IConfiguration Config
 @inject ModuleCatalog Catalog
 @inject ModuleEnablementService Enablement
+@inject UsageTelemetryService Usage
 
 <PageTitle>@(Config["Application:Name"] ?? "Admin Portal")</PageTitle>
 
@@ -38,6 +39,10 @@
             @if (bool.Parse(Config["Email:NotifyUsersOnPermissionGrant"] ?? "false"))
             {
                 <li><strong>End users are notified:</strong> When you grant or remove permissions, the affected user will receive an email notification about the change.</li>
+            }
+            @if (Usage.Enabled())
+            {
+                <li><strong>Anonymous usage data is collected:</strong> which pages you open, which actions you run, and the theme you use are recorded to improve the portal. This data contains no username, IP address, or details of the items you act on, and is kept for @UsageTelemetryService.RetentionDays days.</li>
             }
         </ul>
     </div>

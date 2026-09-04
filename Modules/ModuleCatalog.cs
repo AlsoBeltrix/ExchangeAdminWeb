@@ -867,6 +867,9 @@ public sealed class ModuleCatalog
                 new("Undo", "UndoAuditedActions",
                     "Reverse an audited action from the log, which writes the previous value back to the live target; the undo is itself audited.",
                     FailClosed: true)
+            ],
+            ConfigFields = [
+                new("UsageTelemetryEnabled", "Record anonymous usage", "Records which modules are opened and which actions run, with no user, IP or target. Off stops new rows and hides the Home page disclosure; the Usage view keeps showing existing rows.", Required: false, DefaultValue: "true", FieldType: ConfigFieldType.Boolean)
             ]
         },
         new()

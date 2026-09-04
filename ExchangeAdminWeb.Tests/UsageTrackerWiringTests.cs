@@ -110,4 +110,31 @@ public class UsageTrackerWiringTests
             record > set,
             "The theme must be recorded only after setTheme succeeds, never before.");
     }
+
+    /// <summary>
+    /// AC13: the notice and the behaviour cannot disagree, because the bullet is gated on the
+    /// same Enabled() read the recorder uses, and the retention figure is read from the
+    /// constant rather than typed a second time.
+    /// </summary>
+    [Fact]
+    public void Home_DisclosesTelemetry_OnlyWhenEnabled()
+    {
+        var text = File.ReadAllText(
+            AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "Home.razor"));
+
+        const string phrase = "Anonymous usage data is collected";
+        var first = text.IndexOf(phrase, StringComparison.Ordinal);
+        Assert.True(first >= 0, "Home.razor no longer discloses usage telemetry.");
+        Assert.Equal(first, text.LastIndexOf(phrase, StringComparison.Ordinal));
+
+        var gate = text.IndexOf("@if (Usage.Enabled())", StringComparison.Ordinal);
+        Assert.True(gate >= 0, "The disclosure is no longer gated on the telemetry switch.");
+        Assert.True(gate < first, "The disclosure must sit inside the Enabled() gate.");
+
+        var close = text.IndexOf('}', first);
+        Assert.True(close > first, "The gated block is not closed.");
+
+        Assert.Contains("@UsageTelemetryService.RetentionDays days", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("kept for 90 days", text, StringComparison.Ordinal);
+    }
 }
