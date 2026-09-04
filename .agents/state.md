@@ -6,27 +6,32 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **SHARED CONFIG DATABASE: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN
-  OWNER GO TO IMPLEMENT. NO CODE.** `docs/SharedConfigDb-Plan.md` (drafted `8bb46a4`,
-  review fold the commit after). Owner rulings 2026-09-04: prod promotion must stop
-  overwriting prod's config DB with dev's; a prod-keeps-its-own-copy answer was REJECTED
-  ("not more compromises"); the ruling is ONE shared `exchangeadmin.db` for both
-  instances, promotion never copies it, every deploy backs it up first, dev's DB becomes
-  the shared one (`.agents/decisions.md` 2026-09-04, superseding the 2026-06-18 dev-wins
-  rule and repo-guidance invariant 2). Shape: `ConfigStore:Path` appsettings key (must
-  exist when set, opened without create); migrator accepts a NEWER database after a
-  table-and-column schema check, migrations additive-only from now on (tripwire);
-  the four caching readers consult the change token the store already bumps on every
-  write (recorded as of each load); deploy/promote backups from the resolved path and
-  fail on an absent shared file; promote loses the copy, `-SkipConfigFragments`,
-  `-Refresh` and the DB rollback; a one-time `tools/Move-ConfigDbToShared.ps1` cutover
-  (-PlanOnly first). Codex openreview over `e36e798..8bb46a4`: `acceptable_with_changes`,
-  four findings all folded in (`.agents/review/findings/scd-{1,2,3,4}.md`) - the two
-  HIGHs: a missing shared file would have started the app on a fresh empty DB seeded at
-  defaults, and the cache watcher would have missed a change made before its first poll.
-  **CUTOVER ORDER IS LOAD-BEARING: the tolerant build must be on BOTH instances (deploy
-  dev, then promote - the last two-database promotion) BEFORE the file is shared.**
-  Jobs and usage databases stay per instance. **NEXT: owner go, then S1.**
+- **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**
+  `docs/SharedConfigDb-Plan.md` Status Implemented; slices S1 `be507f0` (ConfigStore:Path
+  key, must-exist open, tolerant migrator with table+column check, additive-only tripwire,
+  base app `2.18.0` -> `2.19.0`), S2 `5a9c832` (ConfigChangeWatcher in the four caching
+  readers, token recorded as of each load), S3 `5776965` (backup from the resolved path,
+  deploy/promote Write-Fail on an absent configured file, promote loses the copy /
+  `-SkipConfigFragments` / `-Refresh` / DB rollback, pipeline wording), S4 `8657b57`
+  (`tools/Move-ConfigDbToShared.ps1` cutover, installer `-ConfigStorePath`), S5 = the
+  docs commit that set the plan Implemented (Constitution, repo-guidance invariants 2-3,
+  README, machines.md, this entry). A test-only commit `129d091` ahead of S1 fixed a
+  pre-existing format-gate failure. Final: .NET 2320/0/3, Pester 125/0, ScriptAnalyzer 0
+  errors, 45 mutation probes all biting. Owner rulings and the decision: `.agents/decisions.md`
+  2026-09-04 (supersedes the 2026-06-18 dev-wins rule). Two FLAGS for the owner, recorded
+  in plan section 9: the decision entry's "`data_version`" wording vs the implemented
+  change token (read at most once per 2 s per reader); the additive-only migration rule is
+  in the decision, repo-guidance and a tripwire test but not in the Constitution.
+  **CUTOVER IS OWNER-RUN, ELEVATED, IN THIS EXACT ORDER: (1) `deploy-pipeline.ps1 -Dev`
+  (dev gets 2.19.0); (2) `deploy-pipeline.ps1 -Prod` - the LAST two-database promotion,
+  prod must be on 2.19.0 before the file is shared or the first dev-only migration stops
+  prod; (3) `tools\Move-ConfigDbToShared.ps1 -PlanOnly` (eight steps printed, nothing
+  changed; it refuses if either DLL is below 2.19.0); (4) `-Apply`; then the plan's
+  section 8 manual checks (both logs show "Config store schema ready" once; a setting saved
+  on dev shows on prod within seconds).** Until step 4 both instances keep their own
+  `config\exchangeadmin.db` and behave exactly as before (no key = today's path). Jobs and
+  usage databases stay per instance. **NEXT: owner deploys dev, then decides when to cut
+  over; UsageTelemetry-Plan S1 is the next code stream (its base bump is now `2.20.0`).**
 
 - **USAGE TELEMETRY: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN OWNER GO
   TO IMPLEMENT. NO CODE.** `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
@@ -42,7 +47,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   ConferenceRooms, Migration and MfaReset audit through their own methods (now the common
   `WriteAuditEvent`). ute-3: action rows now carry the throwaway session id through a
   `CircuitHandler.CreateInboundActivityHandler` + `AsyncLocal` ambient. Six slices; base
-  app `2.18.0` -> `2.19.0` in S1, `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
+  app bump in S1 (the plan text says `2.19.0`, but SharedConfigDb landed first and took it -
+  the bump is now `2.19.0` -> `2.20.0`), `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
   **NEXT: owner go, then S1.**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev

@@ -55,13 +55,13 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 
 ### Configuration
 
-- Runtime operational config (module enablement, section access, module settings, protected principals, editable attributes) lives in the SQLite store at `config/exchangeadmin.db`. There are no hand-authored JSON config fragments for these stores.
+- Runtime operational config (module enablement, section access, module settings, protected principals, editable attributes) lives in the SQLite store `exchangeadmin.db`: ONE file shared by the dev and prod instances on a server, named by `ConfigStore:Path` in each instance's `appsettings.json` (decision 2026-09-04). A single instance without that key uses its own `config/exchangeadmin.db`. A configured path must already exist; the app never creates it. There are no hand-authored JSON config fragments for these stores.
 - Module-specific settings belong to that module's config, not global `appsettings.json`, unless explicitly retained as upgrade fallback.
 - Per-module config corruption must affect only that module unless a shared store is actually corrupt.
 - If a config store is corrupt or unreadable, fail closed. Do not silently fall back to stale defaults.
 - Legacy appsettings fallback is allowed only for upgrade compatibility and only when the module-specific config is absent.
 - Config writes must be transactional (SQLite). The atomic temp-file pattern is retired for DB-backed stores.
-- Deployment and promotion scripts must preserve runtime config, logs, and state files intentionally. `config/` is excluded from robocopy mirroring; the DB lives there and is backed up via verified online backup before any deploy.
+- Deployment and promotion scripts must preserve runtime config, logs, and state files intentionally. `config/` is excluded from robocopy mirroring; the shared config database lives outside every publish folder and is backed up via verified online backup, from the path `appsettings.json` names, before any deploy of either instance. Promotion never copies, replaces or merges the config database.
 - Startup must not perform destructive writes to the config store. Non-destructive seeding (`INSERT … ON CONFLICT DO NOTHING`) of missing module rows is permitted; overwriting existing rows at startup is forbidden.
 
 ### Auditing And Tracing
@@ -114,7 +114,7 @@ If the mode is not stated, infer conservatively from the wording. "Review", "eva
 - Adding a new module does not bump the base app version; only the new module's own
   version is set. A new module is not a shared-infrastructure change.
 - Deployment scripts must support dry-run behavior for destructive promotion steps.
-- Production promotion should preserve prod appsettings and prod-specific config values unless explicitly told to overwrite them.
+- Production promotion should preserve prod appsettings and prod-specific config values unless explicitly told to overwrite them. Promotion never copies the config database: dev and prod share one (decision 2026-09-04), so a setting saved on dev is already live on prod.
 
 ## Code Change Discipline
 

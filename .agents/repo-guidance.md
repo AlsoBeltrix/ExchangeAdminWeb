@@ -117,11 +117,17 @@ only the new module's own version is set (Constitution "Deployment And Versionin
 
 1. `tools/Install-ExchangeAdminWeb.ps1` is environment-neutral and standalone. Never
    couple it to `deploy.ps1` or ADI-specific configuration.
-2. Config promotion is dev-wins (`tools/promote-dev-to-prod.ps1`).
+2. One shared config database; promotion never copies it (`.agents/decisions.md`
+   2026-09-04). Dev and prod open the same `exchangeadmin.db`; a setting saved on dev is
+   live on prod at once. Schema migration steps are additive-only from now on (a tripwire
+   test enforces it).
 3. Deploys never overwrite runtime config: `appsettings*.json`, `config/`, `logs/`
    are excluded from robocopy mirroring. Preserve these exclusions in any deploy
-   change. Runtime operational config lives in `config/exchangeadmin.db` (SQLite); it <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
-   is backed up via verified online backup before each deploy, not by raw file copy.
+   change. Runtime operational config lives in the SQLite database named by
+   `ConfigStore:Path` in each instance's `appsettings.json` (the shared file, outside both <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
+   publish folders; without the key, the instance's own `config/exchangeadmin.db`); it is
+   backed up via verified online backup from that path before each deploy, not by raw file
+   copy. A configured path must already exist - the app and the scripts refuse a missing one.
 4. Every ops-script step must support `-PlanOnly` (via `Invoke-PlanOrAction` /
    `Write-Plan`).
 5. PowerShell error model: `$ErrorActionPreference = "Stop"`; failures go through

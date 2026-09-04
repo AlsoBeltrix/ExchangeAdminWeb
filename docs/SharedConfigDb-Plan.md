@@ -1,15 +1,17 @@
 # One shared config database for dev and prod
 
-Status: Draft 2026-09-04, codex openreview over `e36e798..8bb46a4` returned
-`acceptable_with_changes` (scd-1..4, section 10), all admitted and folded in. AWAITING
-AN OWNER GO to implement. The governing decision is RULED (`.agents/decisions.md`
-2026-09-04, "Dev and prod share ONE config database"); no owner decision is outstanding.
+Status: Implemented 2026-09-04 (S1 `be507f0`, S2 `5a9c832`, S3 `5776965`, S4 `8657b57`,
+S5 = the commit that set this line; traceability in section 9). NOT DEPLOYED; cutover per
+section 7/8 is owner-run, in this order: deploy to dev, promote to prod (the last
+two-database promotion), `Move-ConfigDbToShared.ps1 -PlanOnly`, then `-Apply`. Codex
+openreview over `e36e798..8bb46a4` returned `acceptable_with_changes` (scd-1..4, section
+10), all folded in before implementation. The governing decision is RULED
+(`.agents/decisions.md` 2026-09-04, "Dev and prod share ONE config database").
 Owner: Michael
-Last verified against code: `e36e798` / 2026-09-04
-Versions: base app bump in S1 (shared infrastructure: startup path resolution,
-migrator, cache readers). The bump is "next minor above whatever `<VersionPrefix>`
-reads when S1 lands" - `docs/UsageTelemetry-Plan.md` also claims a base bump and the
-two plans are independent, so whichever lands first takes `2.19.0`. No module bumps.
+Last verified against code: `8657b57` / 2026-09-04
+Versions: base app `2.18.0` -> `2.19.0` in S1 (shared infrastructure: startup path
+resolution, migrator, cache readers). `docs/UsageTelemetry-Plan.md` also claims a base
+bump; it now takes the next minor above `2.19.0`. No module bumps.
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`. On conflict the
 higher source wins. This plan changes two Constitution lines and two repo-guidance
 invariants (S5); until S5 lands, the decision entry is the authority for the change.
@@ -440,7 +442,75 @@ PASS.
 
 ## 9. Traceability check
 
-Completed in S5.
+Completed 2026-09-04. Every slice commit passed `dotnet build -c Release`, the FULL
+`dotnet test ExchangeAdminWeb.slnx`, `dotnet format --verify-no-changes`, `git diff
+--check` and the ASCII scan; S3 and S4 also passed `Invoke-ScriptAnalyzer -Path .
+-Recurse` (0 errors; CI fails on errors only) and `Invoke-Pester tests/ps`.
+
+**Final figures:** .NET suite 2320 passed / 0 failed / 3 skipped (2323 total) at S4
+`8657b57` (S3 and S4 touched no C#; the S2 tree is byte-identical). Pester 125 passed / 0
+failed. ScriptAnalyzer 0 errors. Mutation probes: S1 10, S2 12, S3 12, S4 11 = 45, each
+failed its target test on the mutant and passed on restore.
+
+| AC | Slice / commit | Tests (all mutation-probed) |
+|---|---|---|
+| AC1 path key, must-exist open | S1 `be507f0` | `ConfigStorePathTests`: `Resolve_Blank_UsesContentRootDefault` (x3 theory), `Resolve_Absolute_ReturnsConfigured`, `Resolve_Unc_Throws_NamingTheKey`, `Resolve_Relative_Throws` (x3), `Resolve_Configured_MustExist_DefaultMustNot`, `Factory_MustExist_MissingFile_Throws_AndCreatesNothing`, `Factory_MustExist_ExistingFile_Opens`, `Factory_Default_CreatesTheFile` |
+| AC2 tolerant migrator, tables AND columns | S1 `be507f0` | `ConfigStoreMigratorTests`: `Migrate_DatabaseNewerThanBuild_IsAcceptedWhenTablesExist` (replaces `_FailsFast`), `_ThrowsWhenARequiredTableIsMissing`, `_ThrowsWhenARequiredColumnIsMissing`, `RequiredSchema_MatchesTheMigrationStatements` |
+| AC3 additive-only tripwire | S1 `be507f0` | `MigrationsAreAdditiveOnly`, `MigrationsAreAdditiveOnly_Tripwire_CatchesADrop` (DROP, RENAME, DROP COLUMN on copies of the array) |
+| AC12 base bump | S1 `be507f0` | csproj `2.18.0` -> `2.19.0` (VersionPrefix, AssemblyVersion, FileVersion) |
+| AC4 change watcher in the four readers | S2 `5a9c832` | `ConfigChangeWatcherTests` (8: unthrottled CurrentToken, same/moved, throttles, store throws -> false + logs once, Unknown always changed, CurrentToken throws -> Unknown, CurrentToken refreshes the comparison, first check after a load reaches the store); per reader `ProtectedPrincipal_ReloadsWhenTokenMoves` / `_DetectsAChangeMadeBeforeItsFirstPoll`, `AttributeEditor_ReloadsWhenTokenMoves` / `_DetectsAChangeMadeBeforeItsFirstPoll` / `_LegendDetectsAChangeMadeBeforeItsFirstPoll`, `PermissionValidator_ReloadsWhenTokenMoves` / `_DetectsAChangeMadeBeforeItsFirstPoll`, `ExtendedLogService_MinimumLevel_FollowsAnOutOfBandWrite` / `_DetectsAChangeMadeBeforeItsFirstPoll` / `_OwnSetLevel_ThenForeignWrite_BothApply` |
+| AC5 backup module path resolution | S3 `5776965` | `SqliteConfigBackup.Tests`: exports, pure ASCII, `Resolve-ConfigDbPath` context (set / absent / blank / no appsettings), `Test-IsSqliteConfigDbPresent -DbPath/-ConfigDir`, `Backup-SqliteConfigDb -DbPath` non-standard name, `Copy-SqliteDbFile` x4 (seed, replace + sidecars, absent source, -WhatIf) |
+| AC6 deploy.ps1 + pipeline wording | S3 `5776965` | `DeployInvariants` deploy.ps1 row "backs up the config DB from the path appsettings resolves, and stops when a configured path is missing (scd-1)"; deploy-pipeline row "never claims that config was promoted (scd-4)" |
+| AC7 promote loses the copy / -Refresh / DB rollback | S3 `5776965` | `DeployInvariants` promote rows: "never copies, replaces or merges the config database", "backs up the config DB prod opens (resolved via ConfigStore:Path) before the pool stops", "stops (Write-Fail) when ConfigStore:Path is set and the file is absent (scd-1)", "rollback restores binaries only and names the DB backup instead of restoring it", "keeps every remaining step behind the -Apply gate" |
+| AC8 cutover script | S4 `8657b57` | `MoveConfigDbToShared.Tests` (9, behavioural in plan mode: all eight steps printed and nothing changed, plan by default, UNC, relative, below minimum, existing file, no dev DB, split state, PlanOnly+Apply); `DeployInvariants` static describe (10 rows) |
+| AC9 installer -ConfigStorePath | S4 `8657b57` | `DeployInvariants` installer rows "with -ConfigStorePath: still ACLs config\, ACLs the shared directory too, and refuses a missing shared file (scd-1, scd-4)" and "generated appsettings carries ConfigStore:Path only when -ConfigStorePath is given (byte-identical otherwise)" (runs the real `New-AppSettingsObject`) |
+| AC10 Pester replacements | S3 `5776965`, S4 `8657b57` | rows `:349,:361,:372,:382,:391,:406,:412` (pre-S3 numbering) replaced as above; the "grants the pool identity inheritable Modify on config/" row kept and re-asserted |
+| AC11 docs | S5 (this commit) | Constitution Configuration bullets 1 and 7 and Deployment bullet 5; repo-guidance invariants 2 and 3; README "Shared config database" under Deploy to IIS, "Config Store" under Configuration Details, prerequisites bullet; `.agents/machines.md` shared path; this status; `.agents/state.md` |
+
+**Deviations and implementation notes (nothing here changes an AC):**
+
+1. A separate test-only commit `129d091` landed ahead of S1: `dotnet format
+   --verify-no-changes` already failed on master (three xUnit2013 warnings in
+   `GroupMemberNestingProtectionTests` from the 2026-09-03 GroupBulkActions slices). Same
+   assertion, analyzer-clean form; nothing shipped changes.
+2. `ConfigChangeWatcher` takes `ILogger?` (not `ILogger<ConfigChangeWatcher>`) and is created
+   via `CreateChangeWatcher(logger)` on `ProtectedPrincipalRepository`,
+   `AttributeEditorRepository`, `AppSettingRepository`, `ModuleConfigRepository` and
+   `ModuleConfigService`, so no reader constructor changed (nine test files build them
+   directly). An `internal Func<DateTime> UtcNow` is the throttle clock seam; each reader
+   exposes `internal ChangeWatcher` for the tests.
+3. `CurrentToken()` also refreshes the value `HasChangedSince` compares against (NOT the
+   throttle timer). Without it a reader that reloaded after its own save would be told
+   "changed" by an older throttled reading on every call for up to 2 s - for
+   `PermissionValidator` that is an AD group expansion per call. Pinned by
+   `CurrentToken_RefreshesWhatHasChangedSinceComparesAgainst`; the scd-2 property is
+   pinned by `FirstCheckAfterALoad_ReachesTheStore`.
+4. `ExtendedLogService.LoadLevel` no longer calls `SetLevel` (which persists): a write in
+   the load path bumps the token and would make every reload trigger the next one. Own
+   `SetLevel` re-reads after persisting so its own write is not counted as foreign.
+5. Two existing `ADAttributeEditorServiceTests` (`InvalidateAllowlistCache_ForcesReload`,
+   `IsAllowlistCorrupt_ValidThenCorruptedWithinTtl_...`) pinned "stale until the 30 s TTL";
+   they now pin "stale inside the 2 s throttle, then reloaded / fail-closed (null)".
+6. The promote rollback robocopy excludes `config\` as well as `logs` (binaries only, as
+   AC7 says); the pre-promotion robocopy backup still includes `config\`.
+7. `-DevAppPoolName` was removed from `promote-dev-to-prod.ps1` (only `-Refresh` used it).
+8. `Move-ConfigDbToShared.ps1` defines its own Stop/Start pool helpers: `deploy.ps1` and
+   `promote-dev-to-prod.ps1` each define theirs inline and neither exports, so there was
+   nothing to reuse without a module refactor of two shipping scripts (out of slice scope).
+9. The plan-by-default probe on the cutover script was run against the static guard only:
+   the behavioural suite would have executed apply mode against the real IIS pools named by
+   the defaults. All other cutover probes ran the behavioural suite.
+10. FLAGGED, not changed: the decision entry (`.agents/decisions.md` 2026-09-04) says the
+    other instance's change is "picked up on the next read (SQLite's `data_version`
+    counter)". The implemented mechanism is the store's own change token, read at most once
+    per 2 s per reader (section 1 of this plan explains why `data_version` does not fit a
+    connection-per-operation store). Owner to amend the decision wording if wanted.
+11. FLAGGED, not changed: the additive-only migration rule lives in the decision entry, the
+    migrator comment, repo-guidance invariant 2 and the tripwire test - not in the
+    Constitution, whose text this plan changed only where AC11 says.
+12. Probe hygiene lesson recorded in the token log: restoring a probe backup with
+    `Copy-Item` keeps the backup's timestamp, so the incremental build served the mutant
+    once; the probe scripts now touch the restored file.
 
 ## 10. Review log
 

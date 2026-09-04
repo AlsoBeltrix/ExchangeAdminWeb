@@ -436,7 +436,8 @@ View and unblock Exchange Online accounts blocked from sending mail for outbound
 - **ExchangeOnlineManagement PowerShell Module** (v3.7.0+ required for Get-MessageTraceV2)
 - **SQLite command-line tools (`sqlite3.exe` on PATH)** — required by the deploy/promote
   scripts to make a verified, consistent online backup of the runtime config database
-  (`config/exchangeadmin.db`) before each deploy. Install with `winget install SQLite.SQLite`.
+  (the shared `exchangeadmin.db`, see "Shared config database" below) before each deploy.
+  Install with `winget install SQLite.SQLite`.
   The deploy/promote scripts fail fast if `sqlite3` is not on PATH rather than fall back to an
   unverified file copy. (The app itself bundles its own SQLite engine and does not need this;
   it is a *deployment-host* dependency only.)
@@ -574,6 +575,47 @@ The deploy/install scripts will:
 - Restart the application pool
 
 **Default URL:** `http://yourserver/ExchangeAdminWeb`
+
+#### Shared config database (dev and prod on one server)
+
+All runtime settings that admins change in the app (which modules are on, who can see
+which section, module settings, protected principals, editable attributes) live in one
+SQLite file, `exchangeadmin.db`. When a server hosts both a dev and a prod instance, they
+open the **same** file: each instance's `appsettings.json` names it under
+`ConfigStore:Path` (on the ADI host: `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db`).
+What this means day to day:
+
+- A setting saved on dev is live on prod within a couple of seconds. Dev is not a place
+  to try a setting first; there is one set of settings, on purpose.
+- Promotion copies binaries only. It never copies, replaces or merges the config
+  database, and its rollback never restores the database either (that would undo dev's
+  changes too). Every deploy of either instance first takes a verified backup of the
+  shared file into `<LogRoot>\ExchangeAdminWeb\ConfigBackups\config.<timestamp>.bak\`.
+- New database tables reach prod through the shared file: whichever instance starts
+  first adds them, and the other accepts a database newer than itself. Schema changes
+  are therefore additive-only.
+- If `ConfigStore:Path` names a file that does not exist, the app refuses to start and
+  the deploy/promote scripts stop before changing anything. Nothing ever creates the
+  shared database silently.
+- The bulk-job database (`config\exchangeadmin-jobs.db`) stays per instance.
+
+A single instance without `ConfigStore:Path` keeps using its own `config\exchangeadmin.db`,
+created on first start, exactly as before.
+
+**Moving to the shared file (one-time, elevated, both instances already on a build that
+accepts a newer database - 2.19.0 or later):**
+
+```powershell
+.\tools\Move-ConfigDbToShared.ps1 -PlanOnly   # prints the eight steps, changes nothing
+.\tools\Move-ConfigDbToShared.ps1 -Apply      # stops both pools, backs up both databases,
+                                              # copies dev's to the shared path, writes the key
+                                              # into both appsettings.json, starts both pools
+```
+
+Dev's database becomes the shared one (prod's only ever held copies of it). The script
+prints the commands that return to two databases, both after success and on any failure.
+A new instance that should join an existing shared database is installed with
+`.\tools\Install-ExchangeAdminWeb.ps1 -ConfigStorePath <path>`; the file must already exist.
 
 ### 5. Configure IIS Windows Authentication (if needed)
 
@@ -772,6 +814,18 @@ Module secrets must be directly readable by the Delinea API bootstrap credential
 | `Application:PathBase` | IIS sub-application path |
 | `Application:ContactEmail` | Displayed in the UI as the support contact (nav footer) |
 | `Application:PublicBaseUrl` | Absolute external URL of the app, used to build links in notification emails. Optional: when unset or not an absolute URL, emails describe the page in prose instead of linking to it (an email client cannot resolve a relative path, so a partial URL would be a dead link). Set it per environment - dev and prod must not share one value. |
+
+### Config Store
+
+```json
+"ConfigStore": {
+  "Path": "D:\\inetpub\\ExchangeAdminWebShared\\config\\exchangeadmin.db"
+}
+```
+
+| Key | Purpose |
+|-----|---------|
+| `ConfigStore:Path` | Absolute local path of the SQLite config database this instance opens. Set the same value on every instance that should share settings (see "Shared config database" under Deploy to IIS). The file must already exist - a missing file, a network (UNC) path or a relative path stops the app at startup with a message naming this key. Leave the key out for a standalone instance: it then uses `config\exchangeadmin.db` under its own folder, created on first start. |
 
 ### Email Notifications
 

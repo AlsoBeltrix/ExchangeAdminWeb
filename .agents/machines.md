@@ -76,6 +76,12 @@ _First recorded 2026-07-21._
 - `sqlite3.exe` is on PATH via winget (ops-script dependency for config backup). Re-verified
   2026-08-14 at
   `C:\Users\mcoelho\AppData\Local\Microsoft\WinGet\Packages\SQLite.SQLite_Microsoft.Winget.Source_8wekyb3d8bbwe\sqlite3.exe`.
+- **Shared config database path** (SharedConfigDb-Plan, decision 2026-09-04):
+  `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db` - the default `-SharedDbPath` of
+  `tools/Move-ConfigDbToShared.ps1` and the value both instances' `appsettings.json` carry
+  under `ConfigStore:Path` after the cutover. Prod app root: `D:\inetpub\ExchangeAdminWeb`.
+  NOT yet cut over as of 2026-09-04 (code implemented, not deployed): both instances still
+  use their own `config\exchangeadmin.db` until the owner runs the cutover.
 
 ### Test tooling
 
