@@ -797,7 +797,7 @@ public class GroupMemberNestingProtectionTests
         var addEnd = text.IndexOf("finally { isLoading = false; }", addStart, StringComparison.Ordinal);
         Assert.True(addStart >= 0 && addEnd > addStart, "Could not bound AddMember - update the tripwire.");
         var add = text[addStart..addEnd];
-        Assert.Equal(1, Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")).Count);
+        Assert.Single(Regex.Matches(add, Regex.Escape("[\"memberDn\"] = selection?.DistinguishedName")));
 
         var addOneStart = text.IndexOf("private async Task<BulkRowOutcome> AddOneAsync(", StringComparison.Ordinal);
         Assert.True(addOneStart >= 0, "AddOneAsync not found - tripwire is stale.");
@@ -814,8 +814,8 @@ public class GroupMemberNestingProtectionTests
         var remEnd = text.IndexOf("finally { isLoading = false; }", remStart, StringComparison.Ordinal);
         Assert.True(remStart >= 0 && remEnd > remStart, "Could not bound RemoveMember - update the tripwire.");
         var remove = text[remStart..remEnd];
-        Assert.Equal(1, Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")).Count);
-        Assert.Equal(1, Regex.Matches(remove, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")).Count);
+        Assert.Single(Regex.Matches(remove, Regex.Escape("[\"memberObjectGuid\"] = listed.ObjectGuid")));
+        Assert.Single(Regex.Matches(remove, Regex.Escape("[\"memberDn\"] = listed.DistinguishedName")));
 
         var oneStart = text.IndexOf("private async Task<BulkRowOutcome> RemoveOneAsync(", StringComparison.Ordinal);
         Assert.True(oneStart >= 0, "RemoveOneAsync not found - tripwire is stale.");
