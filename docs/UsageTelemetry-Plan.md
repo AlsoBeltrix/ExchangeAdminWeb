@@ -1,12 +1,14 @@
 # Anonymous usage telemetry
 
-Status: Draft 2026-09-04, awaiting codex openreview, then an owner go per slice. The
-one owner decision (D1, event rows) is RULED (`.agents/decisions.md` 2026-09-04); no
-owner decision is outstanding.
+Status: Draft 2026-09-04, codex openreview over `2938db7..4af217e` returned
+`acceptable_with_changes` (ute-1..3 plus one further material change, section 10), all
+admitted and folded in. AWAITING AN OWNER GO to implement. The one owner decision (D1,
+event rows) is RULED (`.agents/decisions.md` 2026-09-04); no owner decision is
+outstanding.
 Owner: Michael
 Last verified against code: `2938db7` / 2026-09-04
-Versions: base app `2.18.0` -> `2.19.0` in S1 (new table, migrator step, shared
-service, layout component, audit hook); `AdminEventLog` `1.1.0` -> `1.2.0` in S5
+Versions: base app `2.18.0` -> `2.19.0` in S1 (new database, shared service, layout
+component, circuit handler, audit hook); `AdminEventLog` `1.1.0` -> `1.2.0` in S5
 (Usage view + kill-switch config field).
 Authority: subordinate to `docs/ProjectConstitution.md`, `AGENTS.md`,
 `docs/AdminModuleSpec.md`. On conflict the higher source wins.
@@ -17,8 +19,8 @@ theme, modules opened and not used, etc. would be useful. it can be anonymous an
 lightweight."* Ruling on the offered fork (daily counters vs anonymous event rows):
 *"event rows"*.
 
-The Constitution requires a written plan: persistence/storage change (new table and
-migration step) and a change to the audit path (a hook in `AuditService`).
+The Constitution requires a written plan: persistence/storage change (a new database)
+and a change to the audit path (a hook in `AuditService`).
 
 ## 1. Owner decisions
 
@@ -46,13 +48,37 @@ Settled by the ruling, existing code, or repo policy - not open:
   `UsageTelemetryEnabled`, default true (`ConfigFieldType.Boolean`, renders as a
   checkbox per `docs/BooleanConfigControls-Plan.md`). Off means no rows are written; the
   Usage view still shows what exists.
-- **Action rows carry no session id.** Actions are captured at the one choke point every
-  module already passes through, `AuditService.LogModuleAction` (a singleton, called
-  from 27 modules' pages). A per-circuit id is not reachable from a singleton without
-  threading a new parameter through every page. Declined as disproportionate: the
-  question "opened but not used" is answered per module and per day by opens vs
-  actions, and per visit by the session's open sequence. If the per-visit join ever
-  matters, that is a later plan touching every page.
+- **Storage is its own database, `config/exchangeadmin-usage.db` (ute-1).** The first
+  draft put the table in the config database; `tools/promote-dev-to-prod.ps1:400-408`
+  replaces prod's config DB WHOLESALE with dev's on every promotion, so prod telemetry
+  would have been overwritten with dev's each time. The jobs database
+  (`exchangeadmin-jobs.db`, `Program.cs:63-70`) is the precedent: same deploy-excluded
+  `config/` folder, its own `SqliteConnectionFactory`, not promoted, not in
+  `SqliteConfigBackup.psm1`'s scope (which names `exchangeadmin.db` only). Telemetry is
+  disposable, so no backup is added.
+- **Actions are captured at the ONE common audit write, `AuditService.WriteAuditEvent`
+  (ute-2),** which every public audit method ends in - not at `LogModuleAction` alone.
+  The first draft claimed every module passes through `LogModuleAction`; it does not
+  (`LogMailboxPermission`, `LogCalendarPermission`, `LogMigrationCheck/Batch/Action`,
+  `LogLookupAction`, `LogMfaResetAction`, `LogConferenceRoomAction`, `LogADAttributeEdit`,
+  `LogSettingsChange` each hard-code their own `category`). The hook reads `category`,
+  `action` and `result` off the event dictionary the method already built. Reporting
+  maps `category` to a module id: a catalog id verbatim, else a small static table for
+  the legacy categories the Event Log dropdown already enumerates
+  (`AdminEventLog.razor:47-64`: `MailboxPermission` -> `MailboxPermissions`,
+  `CalendarPermission` -> `CalendarPermissions`, `MigrationCheck` / `MigrationBatch` /
+  `MigrationAction` -> `Migration`, `Lookup` -> reported as "Lookup", `AdminSettings` ->
+  reported as "Admin Settings"), else reported under "Other" with the category shown.
+- **Action rows DO carry the throwaway session id when the action came from a browser
+  circuit (ute-3).** `CircuitHandler.CreateInboundActivityHandler` (in the framework
+  since .NET 8) wraps every inbound circuit activity - event handlers, JS interop
+  callbacks - in the same async flow, so a scoped handler can set
+  `UsageSession.Current` (a static `AsyncLocal<string?>`) around each one, and the
+  singleton `UsageTelemetryService` reads it. Actions raised outside a circuit
+  (background jobs, startup) have no session and stay null - the only nullable case.
+  The first draft declared the id unreachable from the singleton and then still promised
+  per-visit "opened and left"; the two could not both hold. With the id on the row,
+  `SessionSummary` is exact, not a time-window guess.
 - **The `detail` column is an enum-like short string** (a route, a theme id, an
   action name), never free text from the operator.
 - **The Home page notice states that telemetry is active (owner, 2026-09-04: "that
@@ -79,53 +105,67 @@ Settled by the ruling, existing code, or repo policy - not open:
 
 ## 3. Acceptance criteria
 
-- AC1: Migration step v7 creates `usage_event` (`id INTEGER PRIMARY KEY`, `ts TEXT NOT
-  NULL` ISO-8601 UTC, `session TEXT COLLATE NOCASE` nullable, `kind TEXT NOT NULL
-  COLLATE NOCASE`, `module TEXT COLLATE NOCASE` nullable, `detail TEXT` nullable,
-  `success INTEGER` nullable) plus indexes on `ts` and `(module, kind)`. The table has
-  no user, ip, target or ticket column (a tripwire test asserts the column list).
-- AC2: `UsageEventRepository` (pattern `AppSettingRepository`) offers `Insert(UsageEvent)`,
-  `PruneOlderThan(DateTime cutoffUtc)` returning the deleted count, and three
-  aggregates over a UTC range: `ModuleSummary(from, to)` -> per module `{ Opens,
-  Actions, FailedActions, DistinctSessions }`; `ThemeSummary(from, to)` -> per theme id
-  the count of distinct sessions whose latest `theme` row in range has that id;
-  `SessionSummary(from, to)` -> `{ Sessions, AvgModulesPerSession, SessionsWithNoAction }`
-  where a session "acted" if any `action` row for a module it opened exists within the
-  session's open window (first to last open + 30 minutes; the per-module, per-day
-  approximation the settled note above accepts).
+- AC1: `UsageEventRepository` owns `config/exchangeadmin-usage.db` through its own
+  `SqliteConnectionFactory` (never the config store's) and creates its schema
+  idempotently on first use (`CREATE TABLE IF NOT EXISTS usage_event` with `id INTEGER
+  PRIMARY KEY`, `ts TEXT NOT NULL` ISO-8601 UTC, `session TEXT COLLATE NOCASE` nullable,
+  `kind TEXT NOT NULL COLLATE NOCASE`, `module TEXT COLLATE NOCASE` nullable, `detail
+  TEXT` nullable, `success INTEGER` nullable; indexes on `ts` and `(module, kind)`).
+  The table has no user, ip, target or ticket column (a tripwire test asserts the
+  column list). `ConfigStoreMigrator` is untouched.
+- AC2: `UsageEventRepository` offers `Insert(UsageEvent)`, `PruneOlderThan(DateTime
+  cutoffUtc)` returning the deleted count, and three aggregates over a UTC range:
+  `ModuleSummary(from, to)` -> per module `{ Opens, Actions, FailedActions,
+  DistinctSessions }`; `ThemeSummary(from, to)` -> per theme id the count of distinct
+  sessions whose latest `theme` row in range has that id; `SessionSummary(from, to)` ->
+  `{ Sessions, AvgModulesPerSession, SessionsWithNoAction }` where a session "acted" if
+  any `action` row carries its session id (exact join on the column, ute-3).
 - AC3: `UsageTelemetryService` (singleton) exposes `RecordOpen(session, module,
   route)`, `RecordTheme(session, themeId)`, `RecordSessionStart(session)`,
-  `RecordAction(module, action, success)`. Each checks the kill switch, then queues one
-  `Insert` on `Task.Run`, catches every exception and logs a warning. No method
-  returns a Task the caller must await; none throws.
+  `RecordAction(category, action, success)`. Each checks the kill switch, then queues
+  one `Insert` on `Task.Run`, catches every exception and logs a warning. No method
+  returns a Task the caller must await; none throws. `RecordAction` takes the session
+  from `UsageSession.Current` (null outside a circuit) and maps `category` to the
+  stored `module` through `UsageTelemetryService.ModuleOf(category)` (section 1
+  table; pure, tested).
 - AC4: `UsageSession` is `AddScoped`; its `Id` is `Guid.NewGuid().ToString("N")`
-  minted at construction. It holds nothing else. It is never written anywhere but the
-  `session` column.
-- AC5: `AuditService.LogModuleAction` calls `RecordAction(category, action, success)`
-  after `WriteAuditEvent` and outside its own try flow so a telemetry fault can never
-  reach the audit path; the constructor takes `UsageTelemetryService? usage = null` so
-  every existing construction compiles and a null sink is a no-op.
+  minted at construction; it holds nothing else and is never written anywhere but the
+  `session` column. `UsageSession.Current` is a static `AsyncLocal<string?>`.
+  `UsageSessionCircuitHandler : CircuitHandler` (scoped, registered like
+  `ClientInfoCircuitHandler` at `Program.cs:207`) overrides
+  `CreateInboundActivityHandler` to set `Current.Value = session.Id` for the duration of
+  each inbound activity and restore the prior value after (try/finally).
+- AC5: `AuditService.WriteAuditEvent` - the common path of EVERY public audit method -
+  calls `_usage?.RecordAction(category, action, success)` as its LAST statement, after
+  `_log.Write(evt)` and the trace step, reading the three values off `evt`; a telemetry
+  fault cannot reach the audit write because `RecordAction` never throws (AC3) and runs
+  after it. The constructor takes `UsageTelemetryService? usage = null` so every
+  existing construction compiles and a null sink is a no-op.
 - AC6: A `UsageTracker` component (`@rendermode InteractiveServer`, rendered once in
-  `MainLayout.razor` beside `ThemePicker`) records `session` once per circuit, records
-  `open` for the current route on first render and on every `NavigationManager.
-  LocationChanged`, mapping route -> module id through `ModuleCatalog.GetByRoute`
-  after the same route derivation `ModuleVersion.razor:18-22` uses; a route with no
-  module records `open` with `module = null` and `detail = route` only for the
-  well-known non-module routes (`""` home, `access-denied`), and nothing otherwise.
-  It reads the theme once via `JS.InvokeAsync<string>("getTheme")` in
-  `OnAfterRenderAsync(firstRender)` (the `ThemePicker.razor:28-45` shape, since
-  localStorage is unreachable during prerender) and records `theme`. It renders no
-  markup and unsubscribes in `Dispose`.
+  `MainLayout.razor` beside `ThemePicker`) records `session` and the first `open` in
+  `OnAfterRenderAsync(firstRender)` - NOT `OnInitialized`, which runs once more during
+  prerender and would double-count (material change 4) - and subscribes to
+  `NavigationManager.LocationChanged` there too, recording `open` on every change. Route
+  -> module id through `ModuleCatalog.GetByRoute` after the same route derivation
+  `ModuleVersion.razor:18-22` uses; a route with no module records `open` with `module
+  = null` and `detail = route` only for the well-known non-module routes (`""` home,
+  `access-denied`), and nothing otherwise. It reads the theme once via
+  `JS.InvokeAsync<string>("getTheme")` in the same first-render pass (the
+  `ThemePicker.razor:28-45` shape, since localStorage is unreachable during prerender)
+  and records `theme`. It renders no markup and unsubscribes in `Dispose`.
 - AC7: `ThemePicker` records `theme` on every change, through the same service.
 - AC8: The startup block in `Program.cs` calls `PruneOlderThan(UtcNow - 90 days)` once,
-  after `migrator.Migrate()`, logging the count; a failure logs and does not stop
-  startup (the `MessageTraceExportStore.PruneExpired` posture).
+  beside the jobs-DB prune, logging the count; a failure (including a missing or
+  unwritable usage DB) logs and does not stop startup (the
+  `MessageTraceExportStore.PruneExpired` posture).
 - AC9: `AdminEventLog.razor` gains an "Events | Usage" toggle (C# state, no Bootstrap
   JS). The Usage view reuses the page's date range and shows: a module table (Module
-  display name, Opens, Actions, Failed, Sessions, Actions per open), a theme table
-  (Theme name via `UiThemeCatalog.Resolve`, Sessions), and a one-line session summary.
-  Modules with zero rows in range are listed with zeros (from `ModuleCatalog.GetAll()`)
-  so "never opened" is visible. Same `EventLog` policy gates it; no new permission.
+  display name, Opens, Actions, Failed, Sessions, Actions per open; plus "Lookup",
+  "Admin Settings" and "Other" rows for actions with no module), a theme table (Theme
+  name via `UiThemeCatalog.Resolve`, Sessions), and a one-line session summary
+  (sessions, average modules per session, sessions with no action). Modules with zero
+  rows in range are listed with zeros (from `ModuleCatalog.GetAll()`) so "never opened"
+  is visible. Same `EventLog` policy gates it; no new permission.
 - AC10: `UsageTelemetryEnabled` off -> no `Insert` is reached (behavioral test on the
   service with a fake repository); the Usage view still renders existing rows.
 - AC11: Versions per the header; `ModuleCatalogTests` alias/permission counts
@@ -141,28 +181,30 @@ Settled by the ruling, existing code, or repo policy - not open:
 
 | Step / dependency | If it fails | The operator sees | System state afterward |
 |---|---|---|---|
-| Migration v7 at startup | Startup fails fast, as every migration does today (`Program.cs:218-230`) | App does not start; Serilog names the step | DB unchanged (each step is its own transaction) |
+| Usage DB missing, locked or unwritable at first use | `CREATE TABLE IF NOT EXISTS` runs inside the first insert's try/catch; failure logged | Nothing | No telemetry until the next attempt; startup unaffected (the usage DB is never on the fail-fast path) |
 | Telemetry insert (any kind) | Caught inside the `Task.Run`, warning logged | Nothing | One row missing; the triggering operation unaffected |
-| `RecordAction` throws synchronously (should be impossible - guarded) | AC5 places the call after `WriteAuditEvent`; a throw would surface to the page like any audit exception does today | Existing page error handling | Audit row already written |
+| `RecordAction` throws synchronously (should be impossible - guarded) | AC5 places the call LAST in `WriteAuditEvent`, after the file write; a throw would surface to the page like any audit exception does today | Existing page error handling | Audit row already written |
+| Inbound-activity handler cannot set the session (no circuit: background job, startup) | `UsageSession.Current` stays null | Nothing | Action row with `session = NULL`, counted per module, not per visit |
+| Prod promotion | Not involved: `exchangeadmin-usage.db` is not copied by `Copy-SqliteConfigDb` and `config/` is excluded from robocopy | Nothing | Each environment keeps its own telemetry |
 | Kill switch config unreadable | `ModuleConfigService` fail-closed semantics apply: treat as disabled, log once | Nothing | No rows written until config reads again |
 | `getTheme` JS interop fails (prerender, disconnected) | Caught; no `theme` row | Nothing | Theme unknown for that session |
 | Route has no module | Only home / access-denied are recorded (module null); anything else ignored | Nothing | No stray rows |
 | Prune at startup fails | Logged, startup continues | Nothing | Old rows linger until the next start |
 | Usage view query fails | Error alert in the view (the page's existing alert shape) | Alert | Read-only, nothing changes |
-| **Rollback after v7 applied** | `ConfigStoreMigrator.Migrate` THROWS when `user_version` exceeds the build's `Migrations.Length` (`ConfigStoreMigrator.cs:163-169`), so a build that removes the v7 step will not start | App down until fixed | See section 5 - the migration step must survive any revert, or the DB must be restored from the pre-deploy backup |
+| Rollback | Revert the commits; `exchangeadmin-usage.db` stays on disk, unread, harmless - no migrator version to refuse | Nothing | Delete the file by hand if wanted |
 
 ## 5. Rollback / blast radius
 
-Revert S2-S6 freely. **Do not revert the S1 migration step** once any deploy has run
-it: the migrator refuses a database newer than the build, so the reverted app would
-fail to start. Two safe rollbacks: (a) revert everything except the v7 array element
-(an unused table is harmless), or (b) restore `config/exchangeadmin.db` from the
-verified backup `deploy-pipeline.ps1` takes before every deploy (and lose config
-changes made since). Say which in the revert commit.
+Revert any or all commits freely. The usage database is a separate file that nothing
+else opens, has no version cursor, and is not backed up or promoted; a reverted build
+simply stops writing to it. (The first draft put the table in the config database
+behind a migrator step, which would have made a revert refuse to start - ute-1
+removed that hazard along with the promotion one.)
 
-Blast radius otherwise: one new table nobody else reads, one optional constructor
-parameter on `AuditService` (null-safe), one invisible layout component, one config
-field, one view on the Event Log page. No authorization decision changes. The
+Blast radius: one new database nobody else reads, one optional constructor parameter
+on `AuditService` (null-safe), one `AsyncLocal` read in a singleton, one scoped circuit
+handler, one invisible layout component, one config field, one bullet on the Home
+notice, one view on the Event Log page. No authorization decision changes. The
 telemetry sink is null in every existing test, so the audit suites run unchanged.
 
 ## 6. Design sketch
@@ -190,10 +232,15 @@ telemetry sink is null in every existing test, so the audit suites run unchanged
   registered `AddSingleton` (`Program.cs:183`).
 - Retention precedent: one-shot startup block `Program.cs:265-291`.
 
-### New: migration v7 (append to `Migrations`)
+### New: `config/exchangeadmin-usage.db` (own factory, idempotent schema)
+
+`Program.cs` builds a second `SqliteConnectionFactory` at
+`Path.Combine(ContentRootPath, "config", "exchangeadmin-usage.db")` exactly as the
+jobs DB does at `:68-70`, and hands it to `UsageEventRepository`. The repository runs
+this once per process (lazy, under a lock, inside the first operation's try/catch):
 
 ```
-CREATE TABLE usage_event (
+CREATE TABLE IF NOT EXISTS usage_event (
     id      INTEGER PRIMARY KEY,
     ts      TEXT    NOT NULL,
     session TEXT    COLLATE NOCASE,
@@ -202,12 +249,12 @@ CREATE TABLE usage_event (
     detail  TEXT,
     success INTEGER
 );
-CREATE INDEX ix_usage_event_ts ON usage_event(ts);
-CREATE INDEX ix_usage_event_module_kind ON usage_event(module, kind);
+CREATE INDEX IF NOT EXISTS ix_usage_event_ts ON usage_event(ts);
+CREATE INDEX IF NOT EXISTS ix_usage_event_module_kind ON usage_event(module, kind);
 ```
 
 Kinds: `session` (detail null), `open` (detail = route), `theme` (detail = theme id),
-`action` (detail = action name, success 0/1, session null).
+`action` (detail = action name, success 0/1, session = the circuit's id or null).
 
 ### New: `Services/Storage/UsageEventRepository.cs`
 
@@ -217,7 +264,7 @@ public sealed record ModuleUsage(string Module, int Opens, int Actions, int Fail
 public sealed record ThemeUsage(string ThemeId, int Sessions);
 public sealed record SessionUsage(int Sessions, double AvgModulesPerSession, int SessionsWithNoAction);
 
-public sealed class UsageEventRepository(IConfigStore store)
+public sealed class UsageEventRepository(SqliteConnectionFactory usageDb)
 {
     public void Insert(UsageEvent e);
     public int PruneOlderThan(DateTime cutoffUtc);
@@ -228,47 +275,88 @@ public sealed class UsageEventRepository(IConfigStore store)
 ```
 
 All SQL parameterised; `ts` stored as `DateTime.UtcNow.ToString("O")` and compared
-as text (ISO-8601 sorts lexically). Registered `AddSingleton` beside the other
-repositories. `TestConfigStore.CreateUsageEvents(dir)` added.
+as text (ISO-8601 sorts lexically); connections opened per operation through
+`usageDb.Open()` and disposed. Registered `AddSingleton`. Tests build one from a
+temp-path factory (`new SqliteConnectionFactory(Path.Combine(dir, "exchangeadmin-usage.db"))`);
+no `TestConfigStore` change.
 
-### New: `Services/UsageSession.cs` and `Services/UsageTelemetryService.cs`
+### New: `Services/UsageSession.cs`, `Services/UsageSessionCircuitHandler.cs`, `Services/UsageTelemetryService.cs`
 
 ```
-public sealed class UsageSession { public string Id { get; } = Guid.NewGuid().ToString("N"); }   // AddScoped
-
-public sealed class UsageTelemetryService(UsageEventRepository repo, ModuleConfigService config, ILogger<UsageTelemetryService> log)
+public sealed class UsageSession                       // AddScoped
 {
+    public string Id { get; } = Guid.NewGuid().ToString("N");
+    public static readonly AsyncLocal<string?> Current = new();   // set per inbound circuit activity
+}
+
+public sealed class UsageSessionCircuitHandler(UsageSession session) : CircuitHandler   // AddScoped<CircuitHandler, ...>
+{
+    public override Func<CircuitInboundActivityContext, Task> CreateInboundActivityHandler(Func<CircuitInboundActivityContext, Task> next)
+        => async context =>
+        {
+            var prior = UsageSession.Current.Value;
+            UsageSession.Current.Value = session.Id;
+            try { await next(context); }
+            finally { UsageSession.Current.Value = prior; }
+        };
+}
+
+public sealed class UsageTelemetryService(UsageEventRepository repo, ModuleConfigService config, ModuleCatalog catalog, ILogger<UsageTelemetryService> log)
+{
+    public const int RetentionDays = 90;
     internal const string ConfigModuleId = "AdminEventLog";
     internal const string ConfigKey = "UsageTelemetryEnabled";
-    internal bool Enabled();                      // reads the Boolean field; unreadable -> false, logged once
+    public bool Enabled();                        // reads the Boolean field; unreadable -> false, logged once
     public void RecordSessionStart(string session);
     public void RecordOpen(string session, string? module, string? route);
     public void RecordTheme(string session, string themeId);
-    public void RecordAction(string? module, string action, bool success);
+    public void RecordAction(string category, string action, bool success);   // session = UsageSession.Current.Value
+    internal static string? ModuleOf(string category, ModuleCatalog catalog);  // pure: catalog id | legacy map | null
     internal virtual void Enqueue(UsageEvent e);  // Task.Run + try/catch + LogWarning; TEST SEAM
 }
 ```
 
 `Enabled()` reads the field the way `BitLockerRecoveryService` reads `ValidateTickets`
 (the `ITicketValidator` plan's switch) - copy that call shape at implementation.
+`ModuleOf`: `catalog.GetById(category)?.Id`, else the legacy table in section 1, else
+null (stored `module = NULL`, `detail = action`, reported under "Other" with the
+category kept in a second detail-free way: the Usage view groups NULL-module actions
+by their original category, which the repository returns from a `category` column
+added for exactly this - see below).
+
+Schema note for the above: `usage_event` gains `category TEXT COLLATE NOCASE` nullable
+(the raw audit category on `action` rows) so unmapped categories can still be
+reported by name. It is an audit category string, never operator input.
 
 ### Change: `AuditService`
 
-Constructor gains `UsageTelemetryService? usage = null`; `LogModuleAction` ends with
-`_usage?.RecordAction(category, action, success);` after `WriteAuditEvent(evt)`.
-Nothing else in the class changes. (`LogPermissionChange`, `LogMigrationAction`,
-`LogLookup` are not hooked: the module-action path is the one every module page uses;
-the others are legacy shapes - record this scope in the README paragraph.)
+Constructor gains `UsageTelemetryService? usage = null`. `WriteAuditEvent(evt)` -
+the private method every public audit method ends in (`AuditService.cs:384-422`) -
+gains one final statement after `_log.Write(evt)` and the `AuditWritten` trace step:
+
+```
+_usage?.RecordAction(
+    evt.GetValueOrDefault("category")?.ToString() ?? "",
+    evt.GetValueOrDefault("action")?.ToString() ?? "",
+    string.Equals(evt.GetValueOrDefault("result")?.ToString(), "Success", StringComparison.Ordinal));
+```
+
+Nothing else in the class changes. Every audit method - `LogMailboxPermission`,
+`LogCalendarPermission`, `LogMigrationCheck`, `LogMigrationBatch`, `LogMigrationAction`,
+`LogModuleAction`, `LogLookupAction`, `LogMfaResetAction`, the ConferenceRooms and
+ADAttributeEditor writers, `LogSettingsChange` - therefore counts (ute-2).
 
 ### New: `Components/Layout/UsageTracker.razor`
 
 `@rendermode InteractiveServer`, `@implements IDisposable`, injects `NavigationManager`,
 `ModuleCatalog`, `UsageSession`, `UsageTelemetryService`, `IJSRuntime`. Renders
-nothing. `OnInitialized`: `RecordSessionStart`, record the current route, subscribe
-`LocationChanged`. `OnAfterRenderAsync(firstRender)`: try `getTheme`, `RecordTheme`.
-`Dispose`: unsubscribe. Route -> module: `Navigation.ToBaseRelativePath(uri)`, cut at
-`?`, trim `/`, `Catalog.GetByRoute(route)?.Id`; null module recorded only for `""`
-and `access-denied`. Placed in `MainLayout.razor` inside `<Authorized>` next to
+nothing. Everything happens in `OnAfterRenderAsync(firstRender)`, which runs only in
+the interactive circuit, never during prerender (material change 4): `RecordSessionStart`,
+record the current route as `open`, subscribe `LocationChanged`, then try `getTheme`
+and `RecordTheme`. `LocationChanged` handler records `open`. `Dispose`: unsubscribe.
+Route -> module: `Navigation.ToBaseRelativePath(uri)`, cut at `?`, trim `/`,
+`Catalog.GetByRoute(route)?.Id`; null module recorded only for `""` and
+`access-denied`. Placed in `MainLayout.razor` inside `<Authorized>` next to
 `ThemePicker` so anonymous circuits (the sign-in bounce) record nothing.
 
 ### Change: `ThemePicker.razor`
@@ -277,10 +365,21 @@ After `setTheme` succeeds: `Usage.RecordTheme(Session.Id, currentId)`.
 
 ### Change: `Program.cs`
 
-Register `UsageEventRepository`, `UsageTelemetryService` (singletons) and
-`UsageSession` (scoped). In the startup block after `migrator.Migrate()`:
-`var pruned = usageRepo.PruneOlderThan(DateTime.UtcNow.AddDays(-UsageTelemetryService.RetentionDays)); Log.Information(...)`
+Build the usage-DB `SqliteConnectionFactory` beside the jobs one (`:68-70`); register
+`UsageEventRepository`, `UsageTelemetryService` (singletons), `UsageSession` (scoped)
+and `AddScoped<CircuitHandler, UsageSessionCircuitHandler>()` beside
+`ClientInfoCircuitHandler` (`:207`). In the startup block beside the jobs prune
+(`:271-272`): `var pruned = usageRepo.PruneOlderThan(DateTime.UtcNow.AddDays(-UsageTelemetryService.RetentionDays)); Log.Information(...)`
 inside its own try/catch that logs and continues.
+
+### Deploy scripts
+
+No change needed: `config/` is already excluded from robocopy mirroring in
+`deploy.ps1` and `promote-dev-to-prod.ps1` (`/XD logs config`), and
+`Copy-SqliteConfigDb` copies `exchangeadmin.db` by name. S6 adds one sentence to
+`.agents/repo-guidance.md` Architectural Invariant 3 naming `exchangeadmin-usage.db`
+as a third runtime file in `config/` that is neither backed up nor promoted, so the
+next deploy change does not "fix" its absence from the backup.
 
 ### Change: `ModuleCatalog.cs` (`AdminEventLog`)
 
@@ -317,11 +416,12 @@ so it is unit-testable.
 
 One commit per slice; S2 depends on S1, S3 and S5 on S2, S4 on S1; S6 last.
 
-**S1 - migration v7 + `UsageEventRepository` + `TestConfigStore.CreateUsageEvents` +
-base app bump `2.18.0` -> `2.19.0`.** Serves AC1, AC2, base half of AC11.
+**S1 - usage-DB factory + `UsageEventRepository` (idempotent schema) + base app bump
+`2.18.0` -> `2.19.0`.** Serves AC1, AC2, base half of AC11.
 
-**S2 - `UsageSession`, `UsageTelemetryService`, `AuditService` hook, DI.** Serves
-AC3, AC4, AC5, AC10.
+**S2 - `UsageSession`, `UsageSessionCircuitHandler`, `UsageTelemetryService`
+(`ModuleOf`, `Enqueue`), `AuditService.WriteAuditEvent` hook, DI.** Serves AC3, AC4,
+AC5, AC10.
 
 **S3 - `UsageTracker` component in `MainLayout`, `ThemePicker` hook.** Serves AC6, AC7.
 
@@ -334,21 +434,23 @@ bump here.)
 **S5 - Usage view on the Event Log page, `AdminEventLog` `1.1.0` -> `1.2.0`.** Serves
 AC9, module half of AC11.
 
-**S6 - README paragraph, plan status, state.** Serves AC12.
+**S6 - README paragraph, repo-guidance invariant 3 sentence, plan status, state.**
+Serves AC12.
 
 ## 8. Test plan
 
-`ExchangeAdminWeb.Tests/UsageEventRepositoryTests.cs` (S1, real temp SQLite via
-`TestConfigStore`):
+`ExchangeAdminWeb.Tests/UsageEventRepositoryTests.cs` (S1, real temp SQLite through a
+temp-path `SqliteConnectionFactory`):
 
 | AC | Test | What it proves | Non-vacuity |
 |---|---|---|---|
-| AC1 | `Schema_HasNoIdentityColumns` | `PRAGMA table_info(usage_event)` yields exactly id, ts, session, kind, module, detail, success | Add a `user` column; FAIL |
-| AC1 | `Migrate_ReachesVersion7_AndIsIdempotent` | Fresh DB migrates to `TargetVersion` = 7, second run no-ops | n/a (shape) |
+| AC1 | `Schema_HasNoIdentityColumns` | `PRAGMA table_info(usage_event)` yields exactly id, ts, session, kind, module, category, detail, success | Add a `user` column; FAIL |
+| AC1 | `Schema_IsCreatedLazily_AndIdempotent` | Two repositories on the same file both work; no error on the second create | n/a (shape) |
+| AC1 | `ConfigStoreMigrator_IsUntouched` | `TargetVersion` is still 6 | Append a step; FAIL |
 | AC2 | `Insert_ThenModuleSummary_CountsOpensActionsFailedSessions` | 3 opens / 2 sessions, 2 actions (1 failed) -> one row {3,2,1,2} | Miscount any; FAIL |
 | AC2 | `ModuleSummary_RespectsRange` | A row outside [from,to) is not counted | Drop the WHERE; FAIL |
 | AC2 | `ThemeSummary_UsesLatestThemePerSession` | Session A: light then oled -> counts once under oled | Count all rows; FAIL |
-| AC2 | `SessionSummary_FlagsSessionsWithNoAction` | Session with opens and no action counted in `SessionsWithNoAction` | Invert; FAIL |
+| AC2 | `SessionSummary_FlagsSessionsWithNoAction_ByExactSessionJoin` | Session A opens and acts; session B opens only; an action with session NULL in the same module and minute does NOT make B "acted" | Join by time window; FAIL |
 | AC2 | `PruneOlderThan_DeletesOnlyOlderRows` | Returns 2, leaves the newer 1 | Remove the cutoff; FAIL |
 
 `ExchangeAdminWeb.Tests/UsageTelemetryServiceTests.cs` (S2, S4; `Enqueue` seam
@@ -357,19 +459,23 @@ captures events synchronously):
 | AC | Test | What it proves | Non-vacuity |
 |---|---|---|---|
 | AC3 | `RecordOpen_QueuesOneOpenRow_WithSessionAndRoute` | Kind `open`, module, detail = route, success null | Swap fields; FAIL |
-| AC3 | `RecordAction_QueuesActionRow_WithoutSession` | Kind `action`, session null, success carried | Put a session in; FAIL |
+| AC3/AC4 | `RecordAction_CarriesTheAmbientSession` | With `UsageSession.Current.Value = "abc"` set in the test flow -> row session "abc"; with it null -> null | Ignore the ambient; FAIL |
+| AC3 | `ModuleOf_MapsCatalogIds_LegacyCategories_AndUnknown` | `GroupManagement` -> itself; `MailboxPermission` -> `MailboxPermissions`; `MigrationBatch` -> `Migration`; `Bogus` -> null | Drop the legacy table; FAIL |
+| AC3 | `RecordAction_KeepsTheRawCategory` | Unknown category -> module null, category stored | Drop the column; FAIL |
 | AC3 | `Enqueue_SwallowsRepositoryExceptions` | Repository throws -> no exception escapes, warning logged | Rethrow; FAIL |
+| AC4 | `CircuitHandler_SetsAndRestoresCurrent` | Invoking the wrapped activity sees `Current == session.Id`; afterwards the prior value is back | Drop the finally; FAIL |
 | AC10 | `Disabled_RecordsNothing` | Kill switch false -> `Enqueue` never called | Ignore the switch; FAIL |
 | AC10 | `UnreadableSwitch_IsDisabled` | Config throws -> nothing recorded | Default to true; FAIL |
-| AC5 | `AuditService_LogModuleAction_CallsRecordAction` (behavioral: fake sink) | One `action` row with category, action, success | Remove the hook; FAIL |
+| AC5 | `AuditService_EveryPublicAuditMethod_CallsRecordAction` (behavioral: fake sink) | Calling each public `Log*` method once yields one `action` row each with that method's category | Hook only `LogModuleAction`; FAIL |
 | AC5 | `AuditService_NullSink_IsNoOp` | Existing constructor shape still works | n/a |
-| AC5 | `AuditService_HookFollowsTheAuditWrite` (source guard) | `_usage?.RecordAction(` appears after `WriteAuditEvent(evt)` in the method body | Move it; FAIL |
+| AC5 | `AuditService_HookIsLastInWriteAuditEvent` (source guard) | `_usage?.RecordAction(` is the last statement of `WriteAuditEvent`, after `_log.Write(evt)` | Move it above; FAIL |
 
 `ExchangeAdminWeb.Tests/UsageTrackerWiringTests.cs` (S3, S5, source guards, no bUnit):
 
 | AC | Test | What it proves | Non-vacuity |
 |---|---|---|---|
 | AC6 | `UsageTracker_RecordsOnLocationChanged_AndDisposes` | `LocationChanged +=` and `-=`, `GetByRoute(`, `RecordSessionStart(`, `RecordOpen(` present | Remove any; FAIL |
+| AC6 | `UsageTracker_RecordsOnlyAfterFirstInteractiveRender` | `RecordSessionStart(` and the subscription sit inside `OnAfterRenderAsync` under `if (firstRender)`; the file has no `OnInitialized` override | Move to OnInitialized; FAIL |
 | AC6 | `UsageTracker_RendersInsideAuthorized` | `MainLayout.razor` has `<UsageTracker />` after `<Authorized>` and before `</Authorized>` | Move it; FAIL |
 | AC6 | `RouteToModule_MatchesModuleVersionDerivation` (pure) | The extracted `internal static string RouteOf(string baseRelative)` strips query and slashes like `ModuleVersion.razor` | Change; FAIL |
 | AC7 | `ThemePicker_RecordsThemeAfterSet` | `RecordTheme(` follows `setTheme` | Remove; FAIL |
@@ -380,7 +486,11 @@ captures events synchronously):
 Manual checks after deploy:
 
 1. Open three modules, act in one, switch theme once. Event Log -> Usage for today
-   shows the three opens, one action, the theme under its new id, one session.
+   shows the three opens, one action, the theme under its new id, one session; the
+   action row's `session` equals the open rows' (query the DB). Act in Mailbox
+   Permissions specifically: its action counts (the legacy `MailboxPermission` category
+   maps, ute-2). Reload the page: still ONE `session` row for the new circuit, not two
+   (prerender, material change 4).
 2. Inspect the DB: `SELECT DISTINCT session, kind, module, detail FROM usage_event` -
    no value is a user name, an email, an IP, or a target.
 3. Turn `UsageTelemetryEnabled` off in Module Config, open two modules: no new rows;
@@ -410,4 +520,29 @@ Completed in S6.
 
 ## 10. Review log
 
-(Filled by the openreview dispatch.)
+- 2026-09-04: openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+  grade fallback; codex-cli 0.152.1, `codex exec -s read-only`) over
+  `2938db7..4af217e`: verdict `acceptable_with_changes`, capability_ok true, both
+  SHAs echoed. The reviewer's own approach matched the plan's shape (event rows,
+  short-lived session id, small service, layout and theme instrumentation, a usage
+  view under Event Log, disclosure, retention, focused tests) and named two
+  load-bearing choices that would have produced misleading telemetry. Four material
+  changes, three findings, all admitted and folded in:
+  **ute-1 (HIGH)** - the table was planned for the config database, which
+  `promote-dev-to-prod.ps1` replaces wholesale with dev's on every promotion; now its
+  own `config/exchangeadmin-usage.db` beside the jobs DB, never promoted or backed up,
+  no migrator step (which also removed the revert-refuses-to-start hazard the first
+  draft had documented as a rollback rule). `.agents/decisions.md` entry corrected.
+  **ute-2 (HIGH)** - only `LogModuleAction` was hooked while MailboxPermissions,
+  ConferenceRooms, Migration and others audit through their own methods; now the hook
+  is the last statement of the common `WriteAuditEvent`, with a category-to-module
+  map for the legacy categories and a `category` column so unmapped ones still report.
+  **ute-3 (MEDIUM)** - the plan declared action rows session-less and still promised
+  per-visit "opened and left"; now a scoped `CircuitHandler.CreateInboundActivityHandler`
+  sets an `AsyncLocal` session for every inbound circuit activity, so page-originated
+  actions carry the id and the session join is exact; only background actions stay null.
+  **Material change 4 (no finding record - a plan-text correction)** - the tracker
+  recorded in `OnInitialized`, which prerender runs once more; now everything happens
+  in `OnAfterRenderAsync(firstRender)`, pinned by a source guard and manual check 1.
+  Records: `.agents/review/findings/ute-{1,2,3}.md`; envelope
+  `.agents/review/ute.result.json` (gitignored scratch).

@@ -29,8 +29,13 @@ What this settles:
 - Lightweight means fire-and-forget: a telemetry write can never change, delay, or
   mask the operation that triggered it, and a failed telemetry write is logged, not
   surfaced.
-- Storage is the existing SQLite config database with an age-based sweep; the plan
-  fixes the retention period.
+- Storage is a SEPARATE operational SQLite database beside the jobs database
+  (`config/exchangeadmin-usage.db`), never the config database: prod promotion replaces
+  prod's config DB wholesale with dev's, so telemetry in it would be overwritten with
+  dev's on every promotion (codex openreview finding ute-1, 2026-09-04; the first draft
+  of this entry said "the existing SQLite config database" and was wrong). Age-based
+  sweep; the plan fixes the retention period. The file is deploy-excluded with the rest
+  of `config/`, not promoted, and not backed up - it is disposable.
 
 ### 2026-09-02 - Intune Devices notification and Entra-removal defaults are not Module Config settings
 
