@@ -13,17 +13,30 @@ namespace ExchangeAdminWeb.Services.Storage;
 public sealed class SqliteConnectionFactory
 {
     private readonly string _connectionString;
+    private readonly bool _mustExist;
 
     /// <summary>The resolved absolute path of the config database file.</summary>
     public string DatabasePath { get; }
 
-    public SqliteConnectionFactory(string databasePath)
+    /// <summary>
+    /// <paramref name="mustExist"/> false (the default, and the jobs database): the directory is
+    /// created and the file is created on first open. True (a configured shared
+    /// <c>ConfigStore:Path</c>, docs/SharedConfigDb-Plan.md AC1): nothing is created, the file
+    /// is opened read/write WITHOUT create, and <see cref="Open"/> throws
+    /// <see cref="FileNotFoundException"/> when the file is missing - a missing shared database
+    /// must stop the app, never be replaced by a fresh empty one (review finding scd-1).
+    /// </summary>
+    public SqliteConnectionFactory(string databasePath, bool mustExist = false)
     {
         DatabasePath = databasePath;
+        _mustExist = mustExist;
 
-        var dir = Path.GetDirectoryName(databasePath);
-        if (!string.IsNullOrEmpty(dir))
-            Directory.CreateDirectory(dir);
+        if (!mustExist)
+        {
+            var dir = Path.GetDirectoryName(databasePath);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
+        }
 
         // Default (private) cache, NOT shared cache: shared cache makes in-process connections
         // share table locks, which surfaces SQLITE_LOCKED to readers instead of the WAL
@@ -33,7 +46,7 @@ public sealed class SqliteConnectionFactory
         _connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
+            Mode = mustExist ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadWriteCreate,
         }.ToString();
     }
 
@@ -44,6 +57,17 @@ public sealed class SqliteConnectionFactory
     /// </summary>
     public SqliteConnection Open()
     {
+        // Checked explicitly rather than relying on SQLITE_CANTOPEN so the operator sees the
+        // path and the key, not an opaque native error code.
+        if (_mustExist && !File.Exists(DatabasePath))
+        {
+            throw new FileNotFoundException(
+                $"Config database not found at '{DatabasePath}' ({ConfigStorePath.Key}). The configured " +
+                "shared database must already exist; the app never creates it. Check the key in " +
+                "appsettings.json, or run tools/Move-ConfigDbToShared.ps1 to create the shared file.",
+                DatabasePath);
+        }
+
         var connection = new SqliteConnection(_connectionString);
         connection.Open();
 

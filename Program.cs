@@ -40,14 +40,28 @@ try
 
     builder.Services.AddSingleton(catalog);
 
-    // Config store infrastructure (SqliteConfigStore-Plan Phase A). The DB lives in the
-    // persistent, deploy-excluded config/ directory (decision 2026-06-18, Option A), one per
-    // environment. The path is derived from the content root - not a new appsettings key and
-    // not hardcoded. The factory opens short-lived connections (never a shared singleton
-    // connection), so it is safe across the mix of Singleton/Scoped consumers. No existing
-    // service reads from the DB yet; Phase B moves the stores over one at a time.
-    var configDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin.db");
-    builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(configDbPath));
+    // Config store infrastructure (SqliteConfigStore-Plan Phase A). Without ConfigStore:Path the
+    // DB lives in the persistent, deploy-excluded config/ directory and is created on first
+    // start. With it (docs/SharedConfigDb-Plan.md, decision 2026-09-04) both instances on this
+    // server open ONE shared file that must already exist - a UNC or relative value, or a
+    // missing file, is fatal here rather than a silent fresh database. The factory opens
+    // short-lived connections (never a shared singleton connection), so it is safe across the
+    // mix of Singleton/Scoped consumers.
+    ExchangeAdminWeb.Services.Storage.ConfigStorePath.Resolution configDb;
+    try
+    {
+        configDb = ExchangeAdminWeb.Services.Storage.ConfigStorePath.Resolve(
+            builder.Configuration[ExchangeAdminWeb.Services.Storage.ConfigStorePath.Key],
+            builder.Environment.ContentRootPath);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Log.Fatal(ex.Message);
+        throw;
+    }
+
+    var configDbPath = configDb.Path;
+    builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(configDbPath, configDb.MustExist));
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.ConfigStoreMigrator>();
     builder.Services.AddSingleton<ExchangeAdminWeb.Services.Storage.IConfigStore,
         ExchangeAdminWeb.Services.Storage.SqliteConfigStore>();

@@ -141,15 +141,57 @@ public sealed class ConfigStoreMigrator
         """,
     ];
 
+    /// <summary>
+    /// Every table the steps above create and every column they declare or add - the schema
+    /// this build reads and writes. Consulted only when the database is NEWER than this build
+    /// (a shared database the other instance migrated first, decision 2026-09-04): the build
+    /// serves on the newer schema as long as everything it needs is present. Columns are
+    /// listed too, not table names alone, because v6 adds a column SectionAccessRepository
+    /// writes and a table-only check would pass and then fail inside a save (review scd-3).
+    /// Pinned to the steps by ConfigStoreMigratorTests.RequiredSchema_MatchesTheMigrationStatements.
+    /// </summary>
+    internal static readonly IReadOnlyList<(string Table, string[] Columns)> RequiredSchema =
+    [
+        ("schema_meta", ["key", "value"]),
+        ("module_enablement", ["module_id", "enabled", "updated_at"]),
+        ("module_config", ["module_id", "config_key", "config_value", "updated_at"]),
+        ("section_access", ["policy_alias", "group_value", "group_display_name"]),
+        ("module_admins", ["module_id", "admin_group"]),
+        ("protected_principal", ["kind", "value"]),
+        ("editable_attribute", ["name", "label", "type", "choices_json", "required", "allow_clear", "max_length", "pattern", "level"]),
+        ("attribute_legend", ["attribute_name", "choice_value", "description", "note", "source"]),
+        ("app_setting", ["key", "value"]),
+        ("module_config_present", ["module_id"]),
+        ("section_access_present", ["marker"]),
+        ("protected_principal_present", ["marker"]),
+        ("editable_attribute_present", ["marker"]),
+        ("attribute_legend_present", ["marker"]),
+    ];
+
     /// <summary>The schema version this build expects (the count of migration steps).</summary>
     public static int TargetVersion => Migrations.Length;
 
-    public ConfigStoreMigrator(SqliteConnectionFactory factory) => _factory = factory;
+    /// <summary>
+    /// The step texts, for the tests that pin <see cref="RequiredSchema"/> to them and enforce
+    /// the additive-only rule (decision 2026-09-04: a step may add tables, nullable-or-defaulted
+    /// columns and indexes; never drop, rename or repurpose).
+    /// </summary>
+    internal static IReadOnlyList<string> MigrationSteps => Migrations;
+
+    private readonly ILogger<ConfigStoreMigrator>? _logger;
+
+    public ConfigStoreMigrator(SqliteConnectionFactory factory, ILogger<ConfigStoreMigrator>? logger = null)
+    {
+        _factory = factory;
+        _logger = logger;
+    }
 
     /// <summary>
     /// Brings the database up to <see cref="TargetVersion"/>. Idempotent and safe to run on
     /// every startup: applies only the steps newer than the database's current user_version,
     /// each in its own transaction. Returns the version the database is at afterward.
+    /// A database NEWER than this build is accepted (with a warning) once its schema is
+    /// verified to contain everything this build requires; a missing table or column throws.
     /// </summary>
     public int Migrate()
     {
@@ -157,15 +199,26 @@ public sealed class ConfigStoreMigrator
 
         var current = GetUserVersion(connection);
 
-        // Fail fast if the database was migrated by a NEWER build than this one (e.g. an
-        // environment rolled back after a later schema shipped). Silently skipping the loop
-        // would report "ready" against a schema this binary may not understand.
         if (current > Migrations.Length)
         {
-            throw new InvalidOperationException(
-                $"Config database schema version {current} is newer than this build supports " +
-                $"(max {Migrations.Length}). Deploy a build at or above the schema version, or " +
-                "restore a compatible database backup.");
+            // Shared-DB rule (decisions 2026-09-04): the other instance is newer and steps are
+            // additive-only, so serve on its schema. Verify this build's tables and columns
+            // exist first - a non-additive step that slipped through must stop us here, not
+            // inside a later read or write.
+            var missing = FindMissingSchema(connection);
+            if (missing.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Config database schema version {current} is newer than this build ({Migrations.Length}) " +
+                    $"and lacks schema this build requires: {string.Join(", ", missing)}. A migration step " +
+                    "was not additive-only; restore a compatible database backup or deploy a matching build.");
+            }
+
+            _logger?.LogWarning(
+                "Config database schema version {DbVersion} is newer than this build supports ({BuildVersion}); " +
+                "serving on the newer schema (additive-only rule, decision 2026-09-04)",
+                current, Migrations.Length);
+            return current;
         }
 
         for (var version = current; version < Migrations.Length; version++)
@@ -191,6 +244,49 @@ public sealed class ConfigStoreMigrator
         }
 
         return GetUserVersion(connection);
+    }
+
+    /// <summary>
+    /// Names every <see cref="RequiredSchema"/> table absent from <c>sqlite_master</c> and every
+    /// column absent from <c>PRAGMA table_info</c>, as "table" or "table.column". Empty when the
+    /// database has everything this build needs.
+    /// </summary>
+    internal static List<string> FindMissingSchema(SqliteConnection connection)
+    {
+        var missing = new List<string>();
+
+        foreach (var (table, columns) in RequiredSchema)
+        {
+            using (var exists = connection.CreateCommand())
+            {
+                exists.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $name;";
+                exists.Parameters.AddWithValue("$name", table);
+                if (exists.ExecuteScalar() is null)
+                {
+                    missing.Add(table);
+                    continue;
+                }
+            }
+
+            var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            using (var info = connection.CreateCommand())
+            {
+                // PRAGMA arguments cannot be parameterized; the table name comes from our own
+                // static list, never from input.
+                info.CommandText = $"PRAGMA table_info(\"{table}\");";
+                using var reader = info.ExecuteReader();
+                while (reader.Read())
+                    present.Add(reader.GetString(1));
+            }
+
+            foreach (var column in columns)
+            {
+                if (!present.Contains(column))
+                    missing.Add($"{table}.{column}");
+            }
+        }
+
+        return missing;
     }
 
     private static int GetUserVersion(SqliteConnection connection)
