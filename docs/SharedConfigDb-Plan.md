@@ -1,8 +1,9 @@
 # One shared config database for dev and prod
 
-Status: Draft 2026-09-04, awaiting codex openreview, then an owner go per slice. The
-governing decision is RULED (`.agents/decisions.md` 2026-09-04, "Dev and prod share ONE
-config database"); no owner decision is outstanding.
+Status: Draft 2026-09-04, codex openreview over `e36e798..8bb46a4` returned
+`acceptable_with_changes` (scd-1..4, section 10), all admitted and folded in. AWAITING
+AN OWNER GO to implement. The governing decision is RULED (`.agents/decisions.md`
+2026-09-04, "Dev and prod share ONE config database"); no owner decision is outstanding.
 Owner: Michael
 Last verified against code: `e36e798` / 2026-09-04
 Versions: base app bump in S1 (shared infrastructure: startup path resolution,
@@ -67,6 +68,27 @@ Settled by the ruling or existing code, not open:
   restore is a deliberate manual act.
 - **Install-ExchangeAdminWeb.ps1 stays environment-neutral** (invariant 1): it gains an
   OPTIONAL `-ConfigStorePath`; without it, the single-instance default is unchanged.
+  With it, the instance's own `config\` directory is STILL created and ACLed (the
+  per-instance jobs database and the first-run seed files live there) and the shared
+  directory is ACLed in addition (scd-4).
+- **A configured path names a database that must already exist (scd-1).** When
+  `ConfigStore:Path` is set, startup opens it read/write WITHOUT create and fails fast
+  if the file is missing, and the deploy and promote backups THROW when the resolved
+  shared file is absent. Otherwise a mistyped key, a moved file or a deleted file would
+  start the app on a brand-new empty database - the startup seeding would then
+  populate module rows at their defaults and the app would serve with no protected
+  principals and no section access, looking healthy. Only the cutover script (S4) and
+  the default no-key path (a fresh single-instance install) create a database.
+- **Every cache records the change token as of its own load, not as of its first poll
+  (scd-2).** A watcher that "seeds on first call" would miss a change made between a
+  cache load and that first poll - for the log level, which never expires, until the
+  next unrelated write. The token is read BEFORE the load so a write racing the load
+  moves the token past the recorded value and is detected.
+- **The tolerant migrator verifies the schema this build reads and writes - tables
+  AND columns (scd-3)** - not table names alone: v6 is an `ALTER TABLE ... ADD COLUMN`
+  (`section_access.group_display_name`) that `SectionAccessRepository` reads and
+  writes, and a newer-labelled database lacking it would pass a table-only check and
+  fail later inside a save.
 - **The shared path on this server** is `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db`
   - a deploy-host fact, the cutover script's default parameter, recorded in
   `.agents/machines.md`, never in code.
@@ -86,37 +108,51 @@ Settled by the ruling or existing code, not open:
 
 - AC1: `Program.cs` resolves the config DB path from `ConfigStore:Path` when set (an
   absolute file path), else today's `<ContentRoot>\config\exchangeadmin.db`. A UNC path
-  (`\\`) or a relative path is refused at startup with a fatal log naming the key. The
-  jobs DB path derivation is untouched.
+  (`\\`) or a relative path is refused at startup with a fatal log naming the key. When
+  the key is set, the file MUST exist: the factory opens it with `Mode=ReadWrite` (no
+  create) and a missing file is a fatal startup error naming the path and the key
+  (scd-1). When the key is absent, today's `ReadWriteCreate` behaviour stands (a fresh
+  single-instance install creates its own database). The jobs DB path derivation is
+  untouched.
 - AC2: `ConfigStoreMigrator.Migrate()` treats `user_version > TargetVersion` as
-  acceptable: it logs a warning naming both versions, verifies every table this build's
-  steps create exists (`sqlite_master` check against a static list derived from the
-  steps), and returns the database's version without writing. A missing required table
-  still throws (fail fast). `user_version < TargetVersion` migrates as today.
+  acceptable: it logs a warning naming both versions, verifies the REQUIRED SCHEMA -
+  every table this build's steps create AND every column they add (`PRAGMA
+  table_info`), from a static `RequiredSchema` list pinned to the steps by a test - and
+  returns the database's version without writing. A missing table or column still
+  throws naming it (fail fast, scd-3). `user_version < TargetVersion` migrates as today.
 - AC3: A tripwire test fails if any element of `Migrations` contains `DROP `, `RENAME`,
   or `ALTER TABLE ... DROP COLUMN` (case-insensitive), with a message pointing at the
   decision's additive-only rule.
 - AC4: The four caching readers re-read when the change token moves: `ProtectedPrincipalService`
   (30 s TTL cache, `:110-123`), `ADAttributeEditorService` (allowlist and legend caches,
   `:59-63`), `PermissionValidator` (30-min cache, `:19-22`), `ExtendedLogService`
-  (`_minimumLevel` loaded once, `:27,:52`). Each keeps its cache hit path but first asks
-  a shared `ConfigChangeWatcher.HasChangedSince(ref lastSeenToken)`, which reads the
-  token at most once per 2 seconds per watcher (throttle) and returns true when the
-  stored token differs from the last seen. A token read failure returns false and logs
-  once (stale-but-serving beats a hot loop of failures; the TTLs still bound staleness).
+  (`_minimumLevel` loaded once, `:27,:52`). Each reader records the change token AS OF
+  ITS LOAD: `var token = watcher.CurrentToken(); load...; _loadedToken = token;` (token
+  read first, so a write racing the load is detected on the next check - scd-2). Each
+  cache-hit path first asks `watcher.HasChangedSince(_loadedToken)`, which reads the
+  stored token at most once per 2 seconds per watcher (throttle) and returns true when
+  it differs. `CurrentToken()` is never throttled. A token read failure inside
+  `HasChangedSince` returns false and logs once (stale-but-serving beats a hot loop of
+  failures; the TTLs still bound staleness); a failure inside `CurrentToken()` at load
+  time records `long.MinValue`, which every later successful read differs from, so the
+  next check reloads.
 - AC5: `tools/SqliteConfigBackup.psm1` gains `Resolve-ConfigDbPath -PublishPath` which
   reads `<PublishPath>\appsettings.json` `ConfigStore:Path` when present, else returns
   `<PublishPath>\config\exchangeadmin.db`; every existing function gains an optional
   `-DbPath` that overrides the `<ConfigDir>\exchangeadmin.db` derivation. Pure ASCII
   (invariant 6 - `deploy.ps1` imports this module under Windows PowerShell 5.1).
 - AC6: `deploy.ps1` backs up and integrity-checks the resolved path (AC5), not the
-  publish folder's `config\`. The robocopy exclusions are unchanged. `deploy-pipeline.ps1`
-  is unchanged except passing nothing new.
+  publish folder's `config\`. When appsettings names `ConfigStore:Path` and the file is
+  absent, the backup step THROWS (`Write-Fail`) before anything is mirrored; the
+  no-key case keeps today's "no DB yet, nothing to back up" warning (scd-1). The
+  robocopy exclusions are unchanged. `deploy-pipeline.ps1` passes nothing new; its
+  help text and final messages stop claiming that config was promoted (scd-4).
 - AC7: `tools/promote-dev-to-prod.ps1`: the config-copy block (`:400-427`), the
   `-SkipConfigFragments` and `-Refresh` parameters and the `-Refresh` branch (`:274-324`)
-  are removed; the pre-promotion verified backup is taken from the resolved path; the
-  rollback restores binaries only and prints where the DB backup is. `-PlanOnly`
-  behaviour is preserved for every remaining step.
+  are removed; the pre-promotion verified backup is taken from the resolved path and
+  THROWS when the key is set and the file is absent (scd-1); the rollback restores
+  binaries only and prints where the DB backup is. `-PlanOnly` behaviour is preserved
+  for every remaining step.
 - AC8: `tools/Move-ConfigDbToShared.ps1` (new, `-PlanOnly` by default, `-Apply` to act):
   given `-DevPublishPath`, `-ProdPublishPath`, `-SharedDbPath` (default the section 1
   path) and the two app pool names, it (1) asserts both builds are at or above the
@@ -130,9 +166,11 @@ Settled by the ruling or existing code, not open:
   logs "Config store schema ready" once. Every step honours `-PlanOnly`; any failure
   after step 3 prints the exact restore commands. Pure ASCII.
 - AC9: `Install-ExchangeAdminWeb.ps1` accepts optional `-ConfigStorePath`; when given,
-  it writes the key into the generated appsettings and ACLs that directory for the app
-  pool identity instead of (in addition to) `config\`; when absent, behaviour is
-  byte-identical to today.
+  it writes the key into the generated appsettings, still creates and ACLs the
+  instance's `config\` (jobs DB, seed files - scd-4), ACLs the shared directory for the
+  app pool identity IN ADDITION, and requires the shared file to exist already
+  (refuses otherwise, pointing at the cutover script - the installer never creates the
+  shared database, scd-1); when absent, behaviour is byte-identical to today.
 - AC10: Pester: `DeployInvariants.Tests.ps1` rows that pinned the wholesale copy
   (`:349`), the DB rollback restore (`:372`) and `-Refresh` (`:391,:406,:412`) are
   replaced by rows asserting their absence; new describes cover `Resolve-ConfigDbPath`,
@@ -151,14 +189,17 @@ Settled by the ruling or existing code, not open:
 | Step / dependency | If it fails | The operator sees | System state afterward |
 |---|---|---|---|
 | `ConfigStore:Path` is UNC or relative | Startup refuses (fatal log names the key) | App does not start | Unchanged |
-| Shared file unreachable at startup (ACL, missing dir) | `SqliteConnectionFactory` creates the directory; an open failure surfaces from `Migrate()` as today | App does not start; log names the path | Unchanged |
-| DB newer than the build (dev migrated first) | Accepted with a warning; required-table check passes | Nothing | Prod serves on the newer schema |
-| DB newer AND a required table missing (a non-additive step slipped through) | `Migrate()` throws | App does not start | The tripwire (AC3) exists to make this unreachable |
+| `ConfigStore:Path` set but the file is missing (mistyped key, moved or deleted file) | Startup refuses: the factory opens without create and the missing file is fatal, naming path and key (scd-1) | App does not start | Unchanged - NEVER a fresh empty database served as healthy |
+| Shared file present but unreadable (ACL) | Open failure surfaces from `Migrate()` as today | App does not start; log names the path | Unchanged |
+| DB newer than the build (dev migrated first) | Accepted with a warning; required-schema check passes | Nothing | Prod serves on the newer schema |
+| DB newer AND a required table or column missing (a non-additive step slipped through) | `Migrate()` throws naming it (scd-3) | App does not start | The tripwire (AC3) exists to make this unreachable |
+| Change committed on dev between prod's cache load and its first watcher poll | Detected: the token recorded at load predates the write (scd-2) | Prod reflects it within the throttle | - |
 | Both instances start at once on an older DB | Each step runs in its own transaction; the second process's `PRAGMA user_version` read sees the first's commit or waits on busy_timeout; a step that already ran is skipped by the version loop | Nothing | One migration |
 | Two processes write the same row | SQLite serialises; last commit wins; token bumps twice | Nothing | Last write wins - accepted (same as two operators on one instance today) |
 | Token read fails inside a cache check | Returns "unchanged", logs once | Nothing | Cache serves until its TTL as today |
 | Change made on dev while prod caches | Prod's next cache check (at most 2 s later) sees the token and reloads | Prod reflects it within seconds | - |
-| Backup (deploy or promote) cannot find the DB at the resolved path | `Backup-SqliteConfigDb` returns null and the caller warns, as today for a first install | Warning | Deploy proceeds (no DB to protect) - unchanged posture |
+| Backup (deploy or promote) cannot find the DB at the resolved path, key SET | `Write-Fail` before any mirror (scd-1) | Deploy stops naming the path | Nothing changed |
+| Backup cannot find the DB, key ABSENT (fresh single-instance install) | `Backup-SqliteConfigDb` returns null and the caller warns, as today | Warning | Deploy proceeds - unchanged posture |
 | Cutover: a build below the minimum on either pool | Script refuses before stopping anything | Message naming the pool and version | Unchanged |
 | Cutover: VACUUM INTO or integrity check fails | Script stops; pools stay stopped; prints restore commands | Message | Original files untouched (VACUUM INTO writes a new file) |
 | Cutover: appsettings write fails on the second instance | Script stops; prints that instance 1 now points at the shared file and instance 2 at its own | Message | Split state - the printed commands revert instance 1's key from the backup |
@@ -210,9 +251,14 @@ var configDbPath = ConfigStorePath.Resolve(configuredDbPath, builder.Environment
 ```
 
 New `Services/Storage/ConfigStorePath.cs`, pure: `Resolve(string? configured, string
-contentRoot)` returns the default when `configured` is blank; throws
+contentRoot)` returns `(path, mustExist: false)` when `configured` is blank; throws
 `InvalidOperationException` naming `ConfigStore:Path` when it is relative or starts
-with `\\`; else returns it. Tested.
+with `\\`; else returns `(configured, mustExist: true)`. Tested.
+`SqliteConnectionFactory` gains a constructor flag `mustExist`: when true it does not
+create the directory, uses `SqliteOpenMode.ReadWrite` instead of `ReadWriteCreate`, and
+`Open()` on a missing file throws `FileNotFoundException` naming the path and the key
+(scd-1). `Program.cs` passes the flag from `Resolve`; the jobs factory keeps today's
+create mode.
 
 `ConfigStoreMigrator.Migrate()`:
 
@@ -221,17 +267,20 @@ if (current > Migrations.Length)
 {
     // Shared-DB rule (decisions 2026-09-04): the other instance is newer and steps are
     // additive-only, so serve on its schema. Verify this build's tables exist first.
-    var missing = RequiredTables.Where(t => !TableExists(connection, t)).ToList();
+    var missing = RequiredSchema.Missing(connection);   // "table" or "table.column" names
     if (missing.Count > 0)
-        throw new InvalidOperationException($"Config database schema version {current} is newer than this build ({Migrations.Length}) and lacks tables this build requires: {string.Join(", ", missing)}.");
+        throw new InvalidOperationException($"Config database schema version {current} is newer than this build ({Migrations.Length}) and lacks schema this build requires: {string.Join(", ", missing)}.");
     _logger?.LogWarning("Config database schema version {Db} is newer than this build supports ({Build}); serving on the newer schema (additive-only rule)", current, Migrations.Length);
     return current;
 }
 ```
 
-`RequiredTables` is a static `string[]` of the table names v1-v6 create (derived by
-reading the steps at implementation and pinned by a test that regexes `CREATE TABLE`
-names out of `Migrations` and compares). The migrator gains an optional
+`RequiredSchema` is a static list of `(table, columns[])` for every table v1-v6 create
+and every column they add - including `section_access.group_display_name` from v6
+(scd-3) - derived by reading the steps at implementation and pinned by a test that
+regexes `CREATE TABLE` names and column lists plus `ALTER TABLE ... ADD COLUMN` out of
+`Migrations` and compares. `Missing(connection)` checks `sqlite_master` for tables and
+`PRAGMA table_info` for columns. The migrator gains an optional
 `ILogger<ConfigStoreMigrator>?` constructor parameter (null in tests).
 
 Tripwire `MigrationsAreAdditiveOnly` (AC3) reads `ConfigStoreMigrator.Migrations` via
@@ -243,20 +292,27 @@ an `internal static` accessor.
 public sealed class ConfigChangeWatcher(IConfigStore store, ILogger<ConfigChangeWatcher> log)
 {
     public static readonly TimeSpan Throttle = TimeSpan.FromSeconds(2);
-    // Returns true when the stored token differs from lastSeen (and updates it).
-    // Reads the DB at most once per Throttle per instance; a failed read returns false
-    // and logs once until the next success.
-    public bool HasChangedSince(ref long lastSeen);
+    public const long Unknown = long.MinValue;
+    // The stored token right now, unthrottled; Unknown when the read fails (logged).
+    // Callers read it BEFORE loading the value they cache (scd-2).
+    public long CurrentToken();
+    // True when the stored token differs from loadedToken. Reads the DB at most once
+    // per Throttle per watcher; a failed read returns false and logs once until the
+    // next success. Unknown always compares as changed.
+    public bool HasChangedSince(long loadedToken);
 }
 ```
 
 One instance per caching reader (constructed from the injected `IConfigStore`; the
 readers already take the store or a repository - add the watcher where the store is
 already in reach, or inject `ConfigChangeWatcherFactory`; decide at implementation,
-record in the slice). Each cache-hit path becomes: `if (watcher.HasChangedSince(ref
-_token)) invalidate; then the existing TTL check`. `ExtendedLogService.MinimumLevel`
-getter checks the watcher and reloads `_minimumLevel` when it moved (the 2 s throttle
-keeps the per-log-line cost to a field compare). `IConfigStore.cs:15-18` and
+record in the slice). Each reader's load becomes `var t = watcher.CurrentToken(); ...
+load ...; _loadedToken = t;` and each cache-hit path becomes `if
+(watcher.HasChangedSince(_loadedToken)) invalidate; then the existing TTL check`. A
+reader's own save records the token the same way (its write bumped it).
+`ExtendedLogService.MinimumLevel` getter checks the watcher and reloads
+`_minimumLevel` when it moved (the 2 s throttle keeps the per-log-line cost to a field
+compare); its constructor load records the token too. `IConfigStore.cs:15-18` and
 `ConfigChangeToken.cs:13-15` comments updated: the token is now consulted.
 
 ### S3 - deploy scripts
@@ -268,8 +324,11 @@ file is missing); `-DbPath` optional on `Test-IsSqliteConfigDbPresent`,
 (the `Copy-SqliteConfigDb` body generalised to file paths; the old function is deleted
 with its only caller). `deploy.ps1:436-442, :607-616` use the resolved path.
 `promote-dev-to-prod.ps1`: delete `:14-15` params, `:274-324`, `:400-427`; backup `:373-376`
-from the resolved prod path; rollback `:445-455` replaced by a `Write-Warn` naming the
-backup file. Every remaining step keeps `Invoke-PlanOrAction` / `Write-Plan`.
+from the resolved prod path, `Write-Fail` when the key is set and the file is absent;
+rollback `:445-455` replaced by a `Write-Warn` naming the backup file. Every remaining
+step keeps `Invoke-PlanOrAction` / `Write-Plan`. `deploy-pipeline.ps1`: help and final
+messages no longer say config was promoted (scd-4). `deploy.ps1` backup step: same
+`Write-Fail` rule when the key is set.
 
 ### S4 - `tools/Move-ConfigDbToShared.ps1`
 
@@ -311,6 +370,9 @@ build); run `Move-ConfigDbToShared.ps1 -PlanOnly`, then `-Apply`.
 | AC1 | `Resolve_Absolute_ReturnsConfigured` | `D:\x\y.db` -> itself | n/a |
 | AC1 | `Resolve_Unc_Throws_NamingTheKey` | `\\server\share\x.db` throws, message contains `ConfigStore:Path` | Drop the guard; FAIL |
 | AC1 | `Resolve_Relative_Throws` | `config\x.db` throws | Drop the guard; FAIL |
+| AC1 | `Resolve_Configured_MustExist_DefaultMustNot` | Configured -> mustExist true; blank -> false | Flip; FAIL |
+| AC1 | `Factory_MustExist_MissingFile_Throws_AndCreatesNothing` (real temp path) | `Open()` throws `FileNotFoundException` naming the path; no file or directory created afterwards | Use ReadWriteCreate; FAIL |
+| AC1 | `Factory_Default_CreatesTheFile` | Today's behaviour preserved | n/a |
 
 `ConfigStoreMigratorTests.cs` (S1, real temp SQLite):
 
@@ -318,18 +380,22 @@ build); run `Move-ConfigDbToShared.ps1 -PlanOnly`, then `-Apply`.
 |---|---|---|---|
 | AC2 | `Migrate_DatabaseNewerThanBuild_IsAcceptedWhenTablesExist` (replaces `_FailsFast`) | Fresh DB migrated to target, then `user_version = target + 5`: `Migrate()` returns target + 5, no throw, tables intact | Restore the throw; FAIL |
 | AC2 | `Migrate_DatabaseNewerThanBuild_ThrowsWhenARequiredTableIsMissing` | Same, then `DROP TABLE app_setting`: throws naming `app_setting` | Drop the check; FAIL |
-| AC2 | `RequiredTables_MatchTheCreateTableStatements` | Regex over `Migrations` equals `RequiredTables` | Remove one; FAIL |
+| AC2 | `Migrate_DatabaseNewerThanBuild_ThrowsWhenARequiredColumnIsMissing` (scd-3) | Same, then rebuild `section_access` without `group_display_name`: throws naming `section_access.group_display_name` | Check tables only; FAIL |
+| AC2 | `RequiredSchema_MatchesTheMigrationStatements` | Regex over `Migrations` (CREATE TABLE columns + ADD COLUMN) equals `RequiredSchema` | Remove one column; FAIL |
 | AC3 | `MigrationsAreAdditiveOnly` | No step contains DROP / RENAME / DROP COLUMN | Append a `DROP TABLE x;` step in a test copy; FAIL (the test takes the array as input) |
 
 `ExchangeAdminWeb.Tests/ConfigChangeWatcherTests.cs` (S2, fake store):
 
 | AC | Test | What it proves | Non-vacuity |
 |---|---|---|---|
-| AC4 | `HasChangedSince_FirstCall_SeedsAndReturnsFalse` | First call records the token, returns false | Return true; FAIL |
-| AC4 | `HasChangedSince_TokenMoved_ReturnsTrueOnce` | Bump -> true, then false | Never true; FAIL |
+| AC4 | `CurrentToken_ReturnsStoredValue_Unthrottled` | Two immediate calls both hit the store | Throttle it; FAIL |
+| AC4 | `HasChangedSince_SameToken_False_MovedToken_True` | Loaded 5, stored 5 -> false; stored 6 -> true | Invert; FAIL |
 | AC4 | `HasChangedSince_Throttles` | Two calls within 2 s hit the store once (fake counts) | Remove throttle; FAIL |
 | AC4 | `HasChangedSince_StoreThrows_ReturnsFalseAndLogsOnce` | Throwing store -> false twice, one log | Rethrow; FAIL |
+| AC4 | `HasChangedSince_UnknownLoadedToken_IsAlwaysChanged` | `Unknown` -> true | Compare numerically; FAIL |
 | AC4 | per reader: `<Reader>_ReloadsWhenTokenMoves` (existing seamed harnesses) | Cached value replaced after a token bump within TTL | Skip the watcher; FAIL |
+| AC4 | per reader: `<Reader>_DetectsAChangeMadeBeforeItsFirstPoll` (scd-2) | Load; bump the token and change the row; FIRST watcher check -> reloaded value | Seed on first poll; FAIL |
+| AC4 | `ExtendedLogService_MinimumLevel_FollowsAnOutOfBandWrite` | Level written through a second repository instance on the same store is read back after the throttle | Load once; FAIL |
 
 Pester (S3, S4) in `tests/ps/`:
 
@@ -337,10 +403,11 @@ Pester (S3, S4) in `tests/ps/`:
 |---|---|---|
 | AC5 | `Resolve-ConfigDbPath` returns the key's value, else the default; missing appsettings -> default | behavioural, temp dirs |
 | AC5 | `Backup-SqliteConfigDb -DbPath` backs up a DB not named exchangeadmin.db | behavioural (skip without sqlite3) |
-| AC6 | `deploy.ps1` calls `Resolve-ConfigDbPath` before `Backup-SqliteConfigDb` and for the post-deploy integrity check | source guard |
+| AC6 | `deploy.ps1` calls `Resolve-ConfigDbPath` before `Backup-SqliteConfigDb` and for the post-deploy integrity check, and `Write-Fail`s when the key is set and the file is absent | source guard |
+| AC6 | `deploy-pipeline.ps1` help/final text contains no "config" promotion claim | source guard (scd-4) |
 | AC7 | `promote-dev-to-prod.ps1` contains no `Copy-SqliteConfigDb`, no `SkipConfigFragments`, no `Refresh`, and the rollback block has no `exchangeadmin.*.db` restore | source guard (replaces `:349,:372,:391,:406,:412`) |
 | AC8 | `Move-ConfigDbToShared.ps1 -PlanOnly` prints all eight steps and changes nothing; refuses a UNC path; refuses when a DLL version is below `-MinimumAppVersion` | behavioural with fake publish dirs |
-| AC9 | Installer with `-ConfigStorePath` writes the key and ACLs the directory; without it the generated appsettings has no `ConfigStore` node | source guard + generated-object check |
+| AC9 | Installer with `-ConfigStorePath` writes the key, STILL ACLs `config\`, ACLs the shared directory too, and refuses when the shared file is absent; without it the generated appsettings has no `ConfigStore` node | source guard + generated-object check (scd-1, scd-4) |
 
 Manual checks (owner-run, elevated), after S1-S5 are on BOTH instances:
 
@@ -377,4 +444,29 @@ Completed in S5.
 
 ## 10. Review log
 
-(Filled by the openreview dispatch.)
+- 2026-09-04: openreview codex (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh,
+  grade fallback; codex-cli 0.152.1, `codex exec -s read-only`) over
+  `e36e798..8bb46a4`: verdict `acceptable_with_changes`, capability_ok true, both
+  SHAs echoed. The reviewer's own approach was the plan's ("I would keep this
+  approach, but harden the plan before implementation"; it would not replace it with
+  a separate prod DB or merge-based promotion). Four material changes, four findings,
+  all admitted and folded in:
+  **scd-1 (HIGH)** - with the key set, a missing shared file would have opened a fresh
+  empty database (`ReadWriteCreate`) that startup seeding then populates at defaults:
+  the app serves with no protected principals and no section access, looking healthy,
+  and the deploy backup only warns. Now: configured path => file must exist, opened
+  without create, fatal otherwise; deploy and promote backups `Write-Fail` on an absent
+  file when the key is set; only the cutover script and the no-key default create a DB.
+  **scd-2 (HIGH)** - the watcher's "seed on first poll" would miss a change made
+  between a cache load and that first poll, permanently for the log level. Now every
+  reader records the token as of its own load (token read before the load), and a new
+  per-reader test changes the DB before the first poll.
+  **scd-3 (MEDIUM)** - the tolerant migrator checked table names only; v6 adds a
+  column `SectionAccessRepository` reads and writes. Now `RequiredSchema` covers tables
+  and columns via `PRAGMA table_info`, pinned to the steps by a test.
+  **scd-4 (MEDIUM)** - the installer note read as replacing the local `config\` ACL,
+  which would have left the per-instance jobs database unwritable on a fresh install;
+  now local `config\` is always created and ACLed and the shared directory is ACLed in
+  addition; `deploy-pipeline.ps1` messages stop claiming config was promoted.
+  Records: `.agents/review/findings/scd-{1,2,3,4}.md`; envelope
+  `.agents/review/scd.result.json` (gitignored scratch).

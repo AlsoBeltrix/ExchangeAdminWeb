@@ -6,6 +6,28 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **SHARED CONFIG DATABASE: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN
+  OWNER GO TO IMPLEMENT. NO CODE.** `docs/SharedConfigDb-Plan.md` (drafted `8bb46a4`,
+  review fold the commit after). Owner rulings 2026-09-04: prod promotion must stop
+  overwriting prod's config DB with dev's; a prod-keeps-its-own-copy answer was REJECTED
+  ("not more compromises"); the ruling is ONE shared `exchangeadmin.db` for both
+  instances, promotion never copies it, every deploy backs it up first, dev's DB becomes
+  the shared one (`.agents/decisions.md` 2026-09-04, superseding the 2026-06-18 dev-wins
+  rule and repo-guidance invariant 2). Shape: `ConfigStore:Path` appsettings key (must
+  exist when set, opened without create); migrator accepts a NEWER database after a
+  table-and-column schema check, migrations additive-only from now on (tripwire);
+  the four caching readers consult the change token the store already bumps on every
+  write (recorded as of each load); deploy/promote backups from the resolved path and
+  fail on an absent shared file; promote loses the copy, `-SkipConfigFragments`,
+  `-Refresh` and the DB rollback; a one-time `tools/Move-ConfigDbToShared.ps1` cutover
+  (-PlanOnly first). Codex openreview over `e36e798..8bb46a4`: `acceptable_with_changes`,
+  four findings all folded in (`.agents/review/findings/scd-{1,2,3,4}.md`) - the two
+  HIGHs: a missing shared file would have started the app on a fresh empty DB seeded at
+  defaults, and the cache watcher would have missed a change made before its first poll.
+  **CUTOVER ORDER IS LOAD-BEARING: the tolerant build must be on BOTH instances (deploy
+  dev, then promote - the last two-database promotion) BEFORE the file is shared.**
+  Jobs and usage databases stay per instance. **NEXT: owner go, then S1.**
+
 - **USAGE TELEMETRY: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN OWNER GO
   TO IMPLEMENT. NO CODE.** `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
   `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
