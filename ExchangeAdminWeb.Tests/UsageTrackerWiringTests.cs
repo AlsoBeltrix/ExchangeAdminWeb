@@ -1,4 +1,7 @@
 using ExchangeAdminWeb.Components.Layout;
+using ExchangeAdminWeb.Components.Pages;
+using ExchangeAdminWeb.Modules;
+using ExchangeAdminWeb.Services.Storage;
 
 namespace ExchangeAdminWeb.Tests;
 
@@ -136,5 +139,55 @@ public class UsageTrackerWiringTests
 
         Assert.Contains("@UsageTelemetryService.RetentionDays days", text, StringComparison.Ordinal);
         Assert.DoesNotContain("kept for 90 days", text, StringComparison.Ordinal);
+    }
+    /// <summary>
+    /// The Usage module table reads as coverage, not as a top list: every catalog module is a
+    /// row even when nobody opened it, and an aggregate key that is not a module id (an audited
+    /// category such as Lookup) is still listed rather than dropped. The catalog count is read
+    /// from the catalog, never written down here.
+    /// </summary>
+    [Fact]
+    public void BuildModuleRows_FillsZerosForUnopenedModules()
+    {
+        var modules = new ModuleCatalog().GetOrdered();
+        var withData = modules.Take(2).ToList();
+
+        var summary = new List<ModuleUsage>
+        {
+            new(withData[0].Id, Opens: 4, Actions: 6, FailedActions: 1, DistinctSessions: 3),
+            new(withData[1].Id, Opens: 0, Actions: 2, FailedActions: 0, DistinctSessions: 1),
+            new("Lookup", Opens: 0, Actions: 5, FailedActions: 2, DistinctSessions: 2),
+        };
+
+        var rows = AdminEventLog.BuildModuleRows(summary, modules);
+
+        Assert.Equal(modules.Count + 1, rows.Count);
+        Assert.Equal(modules.Count, rows.Count(r => r.IsCatalogModule));
+
+        var first = rows[0];
+        Assert.Equal(withData[0].DisplayName, first.Name);
+        Assert.Equal(4, first.Opens);
+        Assert.Equal(6, first.Actions);
+        Assert.Equal(1, first.Failed);
+        Assert.Equal(3, first.Sessions);
+        Assert.Equal(1.5, first.ActionsPerOpen, 3);
+
+        // Actions with no open must not divide by zero.
+        Assert.Equal(2, rows[1].Actions);
+        Assert.Equal(0d, rows[1].ActionsPerOpen, 3);
+
+        foreach (var row in rows.Skip(2).Where(r => r.IsCatalogModule))
+        {
+            Assert.Equal(0, row.Opens);
+            Assert.Equal(0, row.Actions);
+            Assert.Equal(0, row.Failed);
+            Assert.Equal(0, row.Sessions);
+            Assert.Equal(0d, row.ActionsPerOpen, 3);
+        }
+
+        var other = Assert.Single(rows, r => !r.IsCatalogModule);
+        Assert.Equal("Lookup", other.Name);
+        Assert.Equal(5, other.Actions);
+        Assert.Equal(2, other.Failed);
     }
 }

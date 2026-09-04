@@ -13,6 +13,10 @@
 @inject JsonlLogService JsonlLog
 @inject UndoRegistry UndoRegistry
 @inject ClientInfoService ClientInfo
+@using ExchangeAdminWeb.Modules
+@using ExchangeAdminWeb.Services.Storage
+@inject UsageEventRepository UsageEvents
+@inject ModuleCatalog Catalog
 
 <PageTitle>Event Log</PageTitle>
 
@@ -31,15 +35,22 @@
 <div class="container-fluid">
     <h1 class="mb-4">Event Log<ModuleVersion /></h1>
 
+    <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Event Log view">
+        <button type="button" class="btn @(showUsage ? "btn-outline-primary" : "btn-primary")" @onclick="ShowEventsView">Events</button>
+        <button type="button" class="btn @(showUsage ? "btn-primary" : "btn-outline-primary")" @onclick="ShowUsageView">Usage</button>
+    </div>
+
     <div class="row mb-3 g-2 align-items-end">
         <div class="col-auto">
             <label class="form-label mb-0">Start Date</label>
-            <input type="date" class="form-control form-control-sm" @bind="startDate" @bind:event="onchange" @bind:after="LoadEvents" />
+            <input type="date" class="form-control form-control-sm" @bind="startDate" @bind:event="onchange" @bind:after="OnDateRangeChanged" />
         </div>
         <div class="col-auto">
             <label class="form-label mb-0">End Date</label>
-            <input type="date" class="form-control form-control-sm" @bind="endDate" @bind:event="onchange" @bind:after="LoadEvents" />
+            <input type="date" class="form-control form-control-sm" @bind="endDate" @bind:event="onchange" @bind:after="OnDateRangeChanged" />
         </div>
+        @if (!showUsage)
+        {
         <div class="col-auto">
             <label class="form-label mb-0">Category</label>
             <select class="form-select form-select-sm" @bind="selectedCategory" @bind:after="ApplyFilters">
@@ -91,8 +102,91 @@
             <span class="badge bg-secondary">@filteredEvents.Count events</span>
             <button class="btn btn-outline-secondary btn-sm ms-2" @onclick="DownloadCsv" disabled="@(filteredEvents.Count == 0)">Download CSV</button>
         </div>
+        }
     </div>
 
+    @if (showUsage)
+    {
+        @if (usageError != null)
+        {
+            <div class="alert alert-danger">@usageError</div>
+        }
+
+        <p class="text-muted small mb-3">
+            Anonymous counts only: no user, IP, or target is recorded, and rows are kept for
+            @UsageTelemetryService.RetentionDays days.
+        </p>
+
+        <p>
+            <strong>@usageSessions.Sessions</strong> visit(s) in this range,
+            <strong>@usageSessions.AvgModulesPerSession.ToString("0.0")</strong> module(s) per visit on average,
+            <strong>@usageSessions.SessionsWithNoAction</strong> with no action taken.
+        </p>
+
+        <div class="table-responsive mb-4">
+            <table class="table table-sm table-hover">
+                <thead>
+                    <tr>
+                        <th>Module</th>
+                        <th class="text-end">Opens</th>
+                        <th class="text-end">Actions</th>
+                        <th class="text-end">Failed</th>
+                        <th class="text-end">Sessions</th>
+                        <th class="text-end">Actions per open</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in usageModules)
+                    {
+                        <tr>
+                            <td>
+                                @row.Name
+                                @if (!row.IsCatalogModule)
+                                {
+                                    <span class="badge bg-secondary ms-1">category</span>
+                                }
+                            </td>
+                            <td class="text-end">@row.Opens</td>
+                            <td class="text-end">@row.Actions</td>
+                            <td class="text-end @(row.Failed > 0 ? "text-danger" : "")">@row.Failed</td>
+                            <td class="text-end">@row.Sessions</td>
+                            <td class="text-end">@row.ActionsPerOpen.ToString("0.00")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <h2 class="h6">Themes</h2>
+        @if (usageThemes.Count == 0)
+        {
+            <p class="text-muted">No theme data for the selected dates.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm table-hover" style="max-width: 400px;">
+                    <thead>
+                        <tr>
+                            <th>Theme</th>
+                            <th class="text-end">Sessions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var theme in usageThemes)
+                        {
+                            <tr>
+                                <td>@UiThemeCatalog.Resolve(theme.ThemeId).Name</td>
+                                <td class="text-end">@theme.Sessions</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+    else
+    {
     @if (loadWarning != null)
     {
         <div class="alert alert-info py-2">@loadWarning</div>
@@ -238,9 +332,10 @@
             </nav>
         }
     }
+    }
 </div>
 
-@if (undoPreview != null)
+@if (!showUsage && undoPreview != null)
 {
     <div class="position-fixed top-0 end-0 bottom-0 bg-dark bg-opacity-50" style="left: 0; z-index: 1040;" @onclick="CloseUndoPanel"></div>
     <div class="position-fixed top-0 end-0 bottom-0 bg-body shadow-lg d-flex flex-column" style="width: min(500px, 90vw); z-index: 1050;">
@@ -1083,5 +1178,132 @@
         public bool IsUndoable { get; set; }
         public Dictionary<string, object?> RawFields { get; set; } = new();
         public List<DetailField> Details { get; set; } = new();
+    }
+
+    // ---------------------------------------------------------------------
+    // Usage view (docs/UsageTelemetry-Plan.md, AC9). Anonymous aggregates from the usage
+    // database, behind the same EventLog policy as the events table and reached by the
+    // Events/Usage toggle above the filter row. Nothing here reads the audit log.
+    // ---------------------------------------------------------------------
+
+    private bool showUsage;
+    private string? usageError;
+    private IReadOnlyList<UsageRow> usageModules = [];
+    private IReadOnlyList<ThemeUsage> usageThemes = [];
+    private SessionUsage usageSessions = new(0, 0d, 0);
+
+    /// <summary>
+    /// One row of the Usage module table. <c>IsCatalogModule</c> is false for an audited
+    /// category that belongs to no module (Lookup, AdminSettings and the like), which is
+    /// listed under its own name rather than being hidden.
+    /// </summary>
+    internal sealed record UsageRow(
+        string Name,
+        bool IsCatalogModule,
+        int Opens,
+        int Actions,
+        int Failed,
+        int Sessions)
+    {
+        /// <summary>Actions per open; zero opens means zero rather than a division by zero.</summary>
+        public double ActionsPerOpen => Opens == 0 ? 0d : Actions / (double)Opens;
+    }
+
+    private void ShowEventsView() => showUsage = false;
+
+    private void ShowUsageView()
+    {
+        showUsage = true;
+        LoadUsage();
+    }
+
+    /// <summary>
+    /// The date inputs drive whichever view is showing, so changing the range refreshes the
+    /// usage tables instead of silently reloading events behind them.
+    /// </summary>
+    private void OnDateRangeChanged()
+    {
+        if (showUsage)
+        {
+            LoadUsage();
+        }
+        else
+        {
+            LoadEvents();
+        }
+    }
+
+    /// <summary>
+    /// Loads the three aggregates for the selected dates. A query fault clears the tables
+    /// before it reports, so a stale aggregate can never be shown next to an error.
+    /// </summary>
+    private void LoadUsage()
+    {
+        usageError = null;
+        try
+        {
+            // The date inputs are local days; the store keeps UTC. Half-open [from, to).
+            var fromUtc = startDate.ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+            var toUtc = endDate.AddDays(1).ToDateTime(TimeOnly.MinValue).ToUniversalTime();
+
+            usageModules = BuildModuleRows(UsageEvents.ModuleSummary(fromUtc, toUtc), Catalog.GetOrdered());
+            usageThemes = UsageEvents.ThemeSummary(fromUtc, toUtc);
+            usageSessions = UsageEvents.SessionSummary(fromUtc, toUtc);
+        }
+        catch (Exception ex)
+        {
+            usageModules = [];
+            usageThemes = [];
+            usageSessions = new SessionUsage(0, 0d, 0);
+            Logger.LogWarning(ex, "Failed to read usage telemetry for {Start} to {End}", startDate, endDate);
+            usageError = "Could not read usage telemetry: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// Projects the per-module aggregate onto the catalog: every module gets a row, zeroed
+    /// when it was never opened, so the table reads as coverage rather than as a top list.
+    /// Aggregate keys that are not catalog ids are appended under their own names. Pure and
+    /// internal so it is unit-testable without rendering the page.
+    /// </summary>
+    internal static IReadOnlyList<UsageRow> BuildModuleRows(
+        IReadOnlyList<ModuleUsage> summary,
+        IReadOnlyList<AdminModuleDescriptor> modules)
+    {
+        ArgumentNullException.ThrowIfNull(summary);
+        ArgumentNullException.ThrowIfNull(modules);
+
+        var byKey = new Dictionary<string, ModuleUsage>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in summary)
+        {
+            byKey[row.Module] = row;
+        }
+
+        var rows = new List<UsageRow>(modules.Count);
+        foreach (var module in modules)
+        {
+            var used = byKey.GetValueOrDefault(module.Id);
+            byKey.Remove(module.Id);
+            rows.Add(new UsageRow(
+                module.DisplayName,
+                IsCatalogModule: true,
+                used?.Opens ?? 0,
+                used?.Actions ?? 0,
+                used?.FailedActions ?? 0,
+                used?.DistinctSessions ?? 0));
+        }
+
+        foreach (var leftover in byKey.Values.OrderBy(r => r.Module, StringComparer.OrdinalIgnoreCase))
+        {
+            rows.Add(new UsageRow(
+                leftover.Module,
+                IsCatalogModule: false,
+                leftover.Opens,
+                leftover.Actions,
+                leftover.FailedActions,
+                leftover.DistinctSessions));
+        }
+
+        return rows;
     }
 }

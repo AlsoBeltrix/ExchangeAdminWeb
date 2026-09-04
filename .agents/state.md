@@ -39,7 +39,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the shared file before "nothing to do"); plan section 10 has the log. The current build
   is `2.19.1` (>= the cutover script's 2.19.0 floor).
 
-- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1-S4 LANDED.**
+- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1-S5 LANDED.**
   `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
   `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
   opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
@@ -67,9 +67,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   S4 landed: startup prune of rows older than `UsageTelemetryService.RetentionDays` (90)
   in its own try/catch beside the export-retention pass, the `UsageTelemetryEnabled`
   Boolean config field on `AdminEventLog` (default on), and the Home notice bullet gated
-  on the same `Enabled()` read the recorder uses. Per the plan the `AdminEventLog` module
-  bump waits for S5, which lands the operator-visible view.
-  **NEXT: S5 (Usage view on the Event Log page, `AdminEventLog` `1.1.0` -> `1.2.0`).**
+  on the same `Enabled()` read the recorder uses.
+  S5 landed: an Events/Usage toggle on the Event Log page - Usage hides the events table,
+  the undo panel and every filter but the date range, and shows three anonymous aggregates
+  (per-module opens/actions/failed/sessions/actions-per-open with EVERY catalog module
+  listed, zeros included, plus any audited category that maps to no module under its own
+  name; per-theme sessions; a one-line visit summary), all behind the same `EventLog`
+  policy and with no new permission; `AdminEventLog` `1.1.0` -> `1.2.0`.
+  **NEXT: S6 (docs - README usage paragraph, repo-guidance invariant 3, plan Status
+  Implemented + traceability and implementation log).**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**
