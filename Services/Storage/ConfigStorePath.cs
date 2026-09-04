@@ -12,8 +12,9 @@ namespace ExchangeAdminWeb.Services.Storage;
 ///   protected principals and no section access while looking healthy (review finding scd-1).
 ///
 /// A UNC path is refused: SQLite's WAL locking is only sound on a local file system, and the
-/// two instances live on one server. A relative path is refused because it would resolve
-/// against whichever working directory the host happens to have.
+/// two instances live on one server. A relative or drive-relative path (<c>D:file.db</c>) is
+/// refused because it would resolve against whichever working directory the host happens to
+/// have.
 /// </summary>
 public static class ConfigStorePath
 {
@@ -41,7 +42,11 @@ public static class ConfigStorePath
                 "file on this server - SQLite's locking is not reliable over a network share.");
         }
 
-        if (!System.IO.Path.IsPathRooted(value) || System.IO.Path.GetPathRoot(value) is null or "" or @"\" or "/")
+        // Fully qualified, not merely rooted: "D:exchangeadmin.db" is rooted (it names a drive)
+        // but drive-relative, resolving against that drive's current directory, so two
+        // instances could open two different files while both believe they share one
+        // (review finding scdi-2). "\config\x.db" is rooted but drive-relative too.
+        if (!System.IO.Path.IsPathFullyQualified(value))
         {
             throw new InvalidOperationException(
                 $"{Key} must be an absolute local file path (for example D:\\inetpub\\ExchangeAdminWebShared\\config\\exchangeadmin.db); got '{value}'.");

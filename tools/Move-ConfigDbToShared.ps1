@@ -112,8 +112,11 @@ function Assert-LocalAbsolutePath {
     if ($Path.StartsWith('\\') -or $Path.StartsWith('//')) {
         Write-Fail "$Name must be a local path, not a network share: $Path. SQLite locking is not reliable over a share and both instances run on this server."
     }
-    if (-not [System.IO.Path]::IsPathRooted($Path) -or [string]::IsNullOrEmpty([System.IO.Path]::GetPathRoot($Path).TrimEnd('\', '/'))) {
-        Write-Fail "$Name must be an absolute local path (for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
+    # Fully qualified, not merely rooted: "D:file.db" is rooted (it names a drive) but
+    # drive-relative, resolving against that drive's current directory (review finding scdi-2).
+    # [IO.Path]::IsPathFullyQualified does not exist on .NET Framework (Windows PowerShell 5.1).
+    if ($Path -notmatch '^[A-Za-z]:\\') {
+        Write-Fail "$Name must be an absolute local path (drive letter, colon, backslash - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
     }
 }
 

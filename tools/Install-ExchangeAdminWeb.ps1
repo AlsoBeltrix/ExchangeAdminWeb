@@ -180,6 +180,21 @@ function Assert-SafeDirectoryPath {
     return $full.TrimEnd('\', '/')
 }
 
+function Assert-LocalAbsoluteFilePath {
+    # A shared database path must be fully qualified: "D:file.db" is rooted (it names a drive)
+    # but drive-relative, resolving against that drive's current directory, so two instances
+    # could open two different files (review finding scdi-2). [IO.Path]::IsPathFullyQualified
+    # does not exist on .NET Framework (Windows PowerShell 5.1), hence the explicit drive test.
+    param([string]$Path, [string]$Name)
+
+    if ($Path.StartsWith('\\') -or $Path.StartsWith('//')) {
+        Write-Fail "$Name must be a local path, not a network share: $Path"
+    }
+    if ($Path -notmatch '^[A-Za-z]:\\') {
+        Write-Fail "$Name must be an absolute local file path (drive letter, colon, backslash - for example D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db): $Path"
+    }
+}
+
 function Invoke-PlanOrAction {
     param([string]$Description, [scriptblock]$Action)
 
@@ -513,12 +528,7 @@ $stagingPath = "$PublishPath.staging.$timestamp"
 # instance is tools\Move-ConfigDbToShared.ps1's job, run once.
 $sharedConfigDir = $null
 if (-not [string]::IsNullOrWhiteSpace($ConfigStorePath)) {
-    if ($ConfigStorePath.StartsWith('\\') -or $ConfigStorePath.StartsWith('//')) {
-        Write-Fail "ConfigStorePath must be a local path, not a network share: $ConfigStorePath"
-    }
-    if (-not [System.IO.Path]::IsPathRooted($ConfigStorePath)) {
-        Write-Fail "ConfigStorePath must be an absolute local file path: $ConfigStorePath"
-    }
+    Assert-LocalAbsoluteFilePath -Path $ConfigStorePath -Name 'ConfigStorePath'
     $ConfigStorePath = [System.IO.Path]::GetFullPath($ConfigStorePath)
     if (-not (Test-Path -LiteralPath $ConfigStorePath -PathType Leaf)) {
         Write-Fail "ConfigStorePath names $ConfigStorePath but no database exists there. The installer never creates the shared database; create it once from an existing instance with tools\Move-ConfigDbToShared.ps1, then re-run the installer."

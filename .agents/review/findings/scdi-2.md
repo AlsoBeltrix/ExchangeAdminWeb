@@ -4,9 +4,9 @@
 drive-relative and resolves against the process's current directory on that drive, so
 the app or a script would open a different file than the one the operator meant, or
 fail later with the missing-file error instead of the intended validation error.
-**Status**: Open
+**Status**: Verified
 **Branch**: -
-**Commit**: (filled by the fix)
+**Commit**: the commit that completes this record; read it from `git log -1 -- .agents/review/findings/scdi-2.md`
 
 ## Evidence
 
@@ -30,19 +30,37 @@ Validation used "rooted" where "fully qualified" was meant.
 
 ## Approach
 
-(To be filled by the fix.) Direction: C# uses `Path.IsPathFullyQualified`; the two
-scripts must stay Windows PowerShell 5.1-compatible (`IsPathFullyQualified` is absent
-from .NET Framework), so they use an explicit `^[A-Za-z]:\\` test plus the existing
-UNC refusal. Tests: C# `Resolve_DriveRelative_Throws` for `D:exchangeadmin.db` and
-`C:config\exchangeadmin.db`; Pester rows for both scripts with the same inputs.
+`ConfigStorePath.Resolve` now tests `Path.IsPathFullyQualified(value)` instead of
+`IsPathRooted` plus a root-shape check; the UNC refusal and the key-naming message are
+unchanged. Both scripts must stay Windows PowerShell 5.1-compatible
+(`[IO.Path]::IsPathFullyQualified` does not exist on .NET Framework), so they test
+`$Path -notmatch '^[A-Za-z]:\\'` after the existing UNC refusal. In the installer the
+inline block became a function, `Assert-LocalAbsoluteFilePath`, so the Pester test can
+lift it by AST and run it against the drive-relative inputs the way the existing
+`New-AppSettingsObject` test does; the main body calls it on `-ConfigStorePath` and the
+test asserts that call site too. `Move-ConfigDbToShared.ps1` keeps its
+`Assert-LocalAbsolutePath` name and gains the regex.
 
 ## Files changed
 
-(filled by the fix)
+- `Services/Storage/ConfigStorePath.cs:15-18,45-50` - `IsPathFullyQualified`; remarks name the drive-relative case
+- `ExchangeAdminWeb.Tests/ConfigStorePathTests.cs:52-63` - `Resolve_DriveRelative_Throws` theory (two rows)
+- `tools/Install-ExchangeAdminWeb.ps1:183-197,531` - new `Assert-LocalAbsoluteFilePath` (UNC + `^[A-Za-z]:\\`), called for `-ConfigStorePath`
+- `tools/Move-ConfigDbToShared.ps1:115-120` - `Assert-LocalAbsolutePath` uses `^[A-Za-z]:\\`
+- `tests/ps/MoveConfigDbToShared.Tests.ps1:127-139` - behavioural rows `refuses a drive-relative -SharedDbPath` for both inputs
+- `tests/ps/DeployInvariants.Tests.ps1:388-410` - installer rows lifting the function, plus the call-site and no-`IsPathRooted` asserts
 
 ## Guard proof
 
-(filled by the fix)
+- `ExchangeAdminWeb.Tests/ConfigStorePathTests.cs::Resolve_DriveRelative_Throws` (2 rows) -
+  mutation: put the old `!IsPathRooted(value) || GetPathRoot(value) is null or "" or @"\" or "/"`
+  test back in place of `!IsPathFullyQualified(value)` -> 2 FAIL (12 pass); restore -> 14/14.
+- `tests/ps/MoveConfigDbToShared.Tests.ps1::refuses a drive-relative -SharedDbPath (<Path>)` (2 rows) -
+  mutation: `if (-not [System.IO.Path]::IsPathRooted($Path))` in place of the regex -> 2 FAIL; restore -> 74/74.
+- `tests/ps/DeployInvariants.Tests.ps1::-ConfigStorePath refuses a drive-relative path (<Path>)` (2 rows) -
+  mutation A: same `IsPathRooted` swap inside `Assert-LocalAbsoluteFilePath` -> 2 FAIL;
+  mutation B: delete the `Assert-LocalAbsoluteFilePath -Path $ConfigStorePath` call from the main body -> 2 FAIL; restore -> 74/74.
+- Full suite after the restore and a rebuild: 2322 passed / 0 failed / 3 skipped; ScriptAnalyzer 0 errors.
 
 ## Coder dispute (if any)
 

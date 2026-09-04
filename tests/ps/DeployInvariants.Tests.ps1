@@ -385,6 +385,29 @@ Describe 'tools/Install-ExchangeAdminWeb.ps1' {
         $json.ConfigStore.Path | Should -Be 'D:\shared\config\exchangeadmin.db'
     }
 
+    It '-ConfigStorePath refuses a drive-relative path (<Path>) - rooted is not fully qualified (scdi-2)' -TestCases @(
+        @{ Path = 'D:exchangeadmin.db' }
+        @{ Path = 'C:config\exchangeadmin.db' }
+    ) {
+        # Runs the real Assert-LocalAbsoluteFilePath (lifted by AST) with the script's own
+        # throwing Write-Fail, and checks the main body actually routes -ConfigStorePath through it.
+        $fn = Find-FunctionDefinition $s 'Assert-LocalAbsoluteFilePath'
+        $fn | Should -Not -BeNullOrEmpty
+        $s.Text | Should -Match 'Assert-LocalAbsoluteFilePath -Path \$ConfigStorePath -Name ''ConfigStorePath''' `
+            -Because 'the validation must sit on the -ConfigStorePath path, not only be defined'
+        $s.Text | Should -Not -Match 'IsPathRooted\(\$ConfigStorePath\)' `
+            -Because 'IsPathRooted accepts D:file.db; the drive-relative form is exactly the bug'
+        Invoke-Expression (Find-FunctionDefinition $s 'Write-Fail').Extent.Text
+        Invoke-Expression $fn.Extent.Text
+
+        { Assert-LocalAbsoluteFilePath -Path $Path -Name 'ConfigStorePath' } |
+            Should -Throw -ExpectedMessage '*absolute local file path*'
+        { Assert-LocalAbsoluteFilePath -Path '\\server\share\exchangeadmin.db' -Name 'ConfigStorePath' } |
+            Should -Throw -ExpectedMessage '*network share*'
+        { Assert-LocalAbsoluteFilePath -Path 'D:\shared\config\exchangeadmin.db' -Name 'ConfigStorePath' } |
+            Should -Not -Throw
+    }
+
     It 'still writes the section-access seed file (consumed as first-run DB import seed)' {
         # Fresh installs get correct initial authorization via this seed, which the app imports
         # into section_access on first start. Assert the actual WRITE call + path, not just the

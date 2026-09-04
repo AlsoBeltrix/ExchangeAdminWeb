@@ -49,6 +49,19 @@ public class ConfigStorePathTests
         Assert.Contains("ConfigStore:Path", ex.Message);
     }
 
+    // scdi-2: rooted is not fully qualified. "D:exchangeadmin.db" names a drive but resolves
+    // against that drive's current directory, so two processes could open two different files.
+    [Theory]
+    [InlineData(@"D:exchangeadmin.db")]
+    [InlineData(@"C:config\exchangeadmin.db")]
+    public void Resolve_DriveRelative_Throws(string configured)
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() => ConfigStorePath.Resolve(configured, Root));
+
+        Assert.Contains("ConfigStore:Path", ex.Message);
+        Assert.Contains("absolute local file path", ex.Message);
+    }
+
     [Fact]
     public void Resolve_Configured_MustExist_DefaultMustNot()
     {

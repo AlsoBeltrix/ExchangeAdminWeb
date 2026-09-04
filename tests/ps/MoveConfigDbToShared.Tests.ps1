@@ -124,6 +124,21 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
         }
     }
 
+    # scdi-2: rooted is not fully qualified. "D:exchangeadmin.db" names a drive but resolves
+    # against that drive's current directory, so two instances could open two different files.
+    It 'refuses a drive-relative -SharedDbPath (<Path>)' -TestCases @(
+        @{ Path = 'D:exchangeadmin.db' }
+        @{ Path = 'C:config\exchangeadmin.db' }
+    ) {
+        $fake = New-FakeInstances
+        try {
+            { & $script:ScriptPath -DevPublishPath $fake.Dev -ProdPublishPath $fake.Prod -SharedDbPath $Path -PlanOnly -MinimumAppVersion '1.0' *>&1 | Out-Null } |
+                Should -Throw -ExpectedMessage '*absolute local path*'
+        } finally {
+            Remove-Item -LiteralPath $fake.Root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'refuses when a build is below -MinimumAppVersion, before stopping anything' {
         $fake = New-FakeInstances
         try {
