@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-04 - Anonymous usage telemetry: event rows with a throwaway session id
+
+Status: Active. Governs `docs/UsageTelemetry-Plan.md` (drafted the same day).
+
+Owner request 2026-09-04: "is it possible to add some telemetry to this so I can see
+how people are using it? the event log shows actual changes made, but things like
+theme, modules opened and not used, etc. would be useful. it can be anonymous and
+lightweight." Offered the fork daily counters vs anonymous event rows; owner ruling:
+"event rows".
+
+What this settles:
+
+- Usage telemetry is a separate store from the audit log and never duplicates it: it
+  records that a module was opened and that an action of a given name ran in it, never
+  the target, the outcome detail, the operator name or the IP. The audit log remains
+  the record of who did what.
+- Rows are anonymous by construction: no user identity field exists in the table. Each
+  row carries a random session id minted when the browser circuit opens and discarded
+  with it, so "opened and left without acting" can be answered per visit. The owner
+  accepted that long sequences could in theory hint at who was working when; identity
+  itself is never stored.
+- Lightweight means fire-and-forget: a telemetry write can never change, delay, or
+  mask the operation that triggered it, and a failed telemetry write is logged, not
+  surfaced.
+- Storage is the existing SQLite config database with an age-based sweep; the plan
+  fixes the retention period.
+
 ### 2026-09-02 - Intune Devices notification and Entra-removal defaults are not Module Config settings
 
 Status: Active. Supersedes the config-default half of D2 in
