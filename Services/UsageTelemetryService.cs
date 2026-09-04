@@ -82,10 +82,16 @@ public class UsageTelemetryService
             if (string.IsNullOrWhiteSpace(configured))
                 return true;
 
-            // An unparseable value follows the PreventSelfGrant convention and means the
-            // default, because this guards a behavior preference rather than a control an
-            // operator relies on for safety.
-            return !bool.TryParse(configured, out var enabled) || enabled;
+            // A non-blank value that will not parse reads as OFF (review finding utei-2).
+            // The module config page renders any unparseable Boolean as an UNCHECKED box, so
+            // defaulting such a value to ON would make the switch and the screen that shows it
+            // disagree, and would keep the Home disclosure claiming collection the operator
+            // believes they turned off. Where a privacy control's state cannot be established,
+            // the safe reading and the displayed reading are the same one: off.
+            if (!bool.TryParse(configured, out var enabled))
+                return LogSwitchUnreadableOnce(null, malformed: configured);
+
+            return enabled;
         }
         catch (Exception ex)
         {
@@ -179,15 +185,32 @@ public class UsageTelemetryService
         }
     }
 
-    private bool LogSwitchUnreadableOnce(Exception? ex)
+    /// <summary>
+    /// Reports the switch as OFF and logs why, at most once per process so a fault on a hot
+    /// path cannot flood the log. <paramref name="malformed"/> is the stored value when the
+    /// switch was readable but not parseable (utei-2); it is null when the read itself failed.
+    /// </summary>
+    private bool LogSwitchUnreadableOnce(Exception? ex, string? malformed = null)
     {
         if (Interlocked.Exchange(ref _switchReadFailureLogged, 1) == 0)
         {
-            _logger.LogWarning(
-                ex,
-                "Could not read the {Key} switch on {Module}; usage telemetry is treated as disabled",
-                ConfigKey,
-                ConfigModuleId);
+            if (malformed is null)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Could not read the {Key} switch on {Module}; usage telemetry is treated as disabled",
+                    ConfigKey,
+                    ConfigModuleId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    ex,
+                    "The {Key} switch on {Module} holds {Value}, which is not a Boolean; usage telemetry is treated as disabled",
+                    ConfigKey,
+                    ConfigModuleId,
+                    malformed);
+            }
         }
         return false;
     }

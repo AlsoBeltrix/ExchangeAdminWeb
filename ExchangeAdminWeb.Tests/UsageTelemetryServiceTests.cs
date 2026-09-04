@@ -253,6 +253,62 @@ public sealed class UsageTelemetryServiceTests : IDisposable
         Assert.Empty(service.Events);
     }
 
+    /// <summary>
+    /// utei-2: the module config page renders any unparseable Boolean as an unchecked box, so a
+    /// malformed stored value must read as OFF in the service too - otherwise the switch and the
+    /// screen showing it disagree and the Home disclosure claims collection the operator believes
+    /// is off. Blank and absent are a separate, documented case (default ON) and are asserted by
+    /// <see cref="DefaultOn_WhenNeverConfigured"/> and the blank rows below.
+    /// </summary>
+    [Theory]
+    [InlineData("flase")]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("yes")]
+    [InlineData("on")]
+    public void MalformedSwitch_IsDisabled(string stored)
+    {
+        var service = Service(stored);
+
+        Assert.False(service.Enabled());
+        service.RecordSessionStart("s");
+        service.RecordOpen("s", "GroupManagement", "group-management");
+        service.RecordTheme("s", "midnight");
+        service.RecordAction("GroupManagement", "AddMember", success: true);
+
+        Assert.Empty(service.Events);
+    }
+
+    /// <summary>
+    /// The other half of utei-2: blank is NOT malformed. It means the field was never configured,
+    /// and the documented default is on - the fix must not turn "never touched" into "off".
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BlankSwitch_IsStillDefaultOn(string stored)
+    {
+        var service = Service(stored);
+
+        Assert.True(service.Enabled());
+        service.RecordOpen("s", "GroupManagement", "group-management");
+        Assert.Single(service.Events);
+    }
+
+    /// <summary>utei-2: the operator gets exactly one warning, however often the switch is read.</summary>
+    [Fact]
+    public void MalformedSwitch_LogsOnce()
+    {
+        var logger = new CapturingLogger<UsageTelemetryService>();
+        var service = new UsageTelemetryService(Repo(), Config("flase"), new ModuleCatalog(), logger);
+
+        Assert.False(service.Enabled());
+        Assert.False(service.Enabled());
+        Assert.False(service.Enabled());
+
+        Assert.Equal(1, logger.WarningCount);
+    }
+
     // --- AC3: a telemetry fault never reaches the caller -------------------
 
     [Fact]
