@@ -44,6 +44,14 @@ internal readonly record struct PooledOutcome<T>(T Result, bool ConnectionFailur
 /// </summary>
 internal enum PoolFailurePolicy { Return, Discard }
 
+/// <summary>
+/// The three values that define an Exchange Online connection - exactly what
+/// <c>Components/Pages/ExchangeOnlineConfig.razor</c> saves and <c>Connect-ExchangeOnline</c>
+/// is given. Two runspaces connected under equal values are interchangeable; a change to any
+/// one of them retires every runspace connected under the old values.
+/// </summary>
+internal readonly record struct ExoConnectionConfig(string AppId, string Organization, string CertificateSubject);
+
 public sealed class ExoConnectionPool : IDisposable
 {
     public const string ConfigModuleKey = "ExchangeOnline";
@@ -60,19 +68,45 @@ public sealed class ExoConnectionPool : IDisposable
     private readonly IConfiguration _config;
     private readonly TimeSpan _idleTimeout = TimeSpan.FromMinutes(20);
     private readonly Timer _cleanupTimer;
+    private readonly Func<ExoConnectionConfig, long, PooledRunspace> _connect;
+    private readonly object _connectedLock = new();
     private long _configGeneration;
     private bool _disposed;
 
+    // The connection config every runspace in the pool (and every one still borrowed) was
+    // connected under; null until the first borrow. Review finding scdi-1: with the shared
+    // config database an ExchangeOnline save on the OTHER instance is live here at once for
+    // reads, but only the saving process's page calls DrainPool - so each borrow compares the
+    // config it just read against this and drains itself when the connection fields moved.
+    private ExoConnectionConfig? _connectedUnder;
+
     public ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ModuleEnablementService enablement, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace)
+        : this(config, moduleConfig, enablement, logger, operationTrace, connect: null)
+    {
+    }
+
+    /// <summary>
+    /// Test seam: <paramref name="connect"/> replaces the live <c>Connect-ExchangeOnline</c> step.
+    /// It receives the config to connect under and the pool generation the runspace must carry.
+    /// </summary>
+    internal ExoConnectionPool(IConfiguration config, ModuleConfigService moduleConfig, ModuleEnablementService enablement, ILogger<ExoConnectionPool> logger, OperationTraceService operationTrace,
+        Func<ExoConnectionConfig, long, PooledRunspace>? connect)
     {
         _logger = logger;
         _operationTrace = operationTrace;
         _enablement = enablement;
         _moduleConfig = moduleConfig;
         _config = config;
+        _connect = connect ?? CreateConnected;
         _slots = new SemaphoreSlim(5, 5);
         _cleanupTimer = new Timer(CleanupIdle, null, TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
+
+    /// <summary>Test seam: the current pool generation (incremented by every drain).</summary>
+    internal long ConfigGeneration => Interlocked.Read(ref _configGeneration);
+
+    /// <summary>Test seam: how many idle runspaces the pool holds right now.</summary>
+    internal int AvailableCount => _available.Count;
 
     public bool IsConfigured
     {
@@ -85,7 +119,7 @@ public sealed class ExoConnectionPool : IDisposable
         }
     }
 
-    private (string appId, string organization, string certSubject) GetExoConfig()
+    private ExoConnectionConfig GetExoConfig()
     {
         var appId = _moduleConfig.GetValue(ConfigModuleKey, ConfigAppIdKey);
         var organization = _moduleConfig.GetValue(ConfigModuleKey, ConfigOrganizationKey);
@@ -94,14 +128,14 @@ public sealed class ExoConnectionPool : IDisposable
         if (_moduleConfig.HasModuleConfigFile(ConfigModuleKey) && _moduleConfig.IsModuleCorrupt(ConfigModuleKey))
         {
             _logger.LogError("ExchangeOnline module config is corrupt - refusing to fall back to appsettings");
-            return ("", "", "");
+            return new ExoConnectionConfig("", "", "");
         }
 
         appId ??= _config["ExchangeOnline:AppId"] ?? "";
         organization ??= _config["ExchangeOnline:Organization"] ?? "";
         certSubject ??= _config["ExchangeOnline:CertificateSubject"]
             ?? "CN=EXO-Automation";
-        return (appId, organization, certSubject);
+        return new ExoConnectionConfig(appId, organization, certSubject);
     }
 
     public Task<PooledRunspace> BorrowAsync(CancellationToken ct = default)
@@ -117,8 +151,12 @@ public sealed class ExoConnectionPool : IDisposable
         if (!_enablement.IsModuleEnabled("ExchangeOnline"))
             throw new InvalidOperationException("Exchange Online module is not enabled. Enable it in Admin Settings and configure the connection on the Exchange Online config page.");
 
-        var (appId, org, _) = GetExoConfig();
-        if (string.IsNullOrWhiteSpace(appId) || string.IsNullOrWhiteSpace(org))
+        // Read fresh on every borrow (ModuleConfigService has no cache; this is the shared
+        // database). The same values decide the not-configured refusal below, the stale-pool
+        // check inside the slot, and what a new runspace connects under.
+        var current = GetExoConfig();
+        var org = current.Organization;
+        if (string.IsNullOrWhiteSpace(current.AppId) || string.IsNullOrWhiteSpace(org))
             throw new InvalidOperationException("Exchange Online is not configured. Set AppId and Organization on the Exchange Online config page.");
 
         _operationTrace.Step("ExoPoolSlotRequested", backend: "ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = org });
@@ -132,6 +170,12 @@ public sealed class ExoConnectionPool : IDisposable
 
         try
         {
+            // scdi-1: a save on the other instance never reaches this process's DrainPool, so
+            // the pool retires its own runspaces when the connection config it just read
+            // differs from the one they connected under. Runs BEFORE the generation is read,
+            // so the drain below makes every pooled runspace fail the generation test.
+            DrainIfConnectionConfigChanged(current);
+
             var currentGen = Interlocked.Read(ref _configGeneration);
             if (_available.TryTake(out var pooled))
             {
@@ -154,7 +198,12 @@ public sealed class ExoConnectionPool : IDisposable
             // handler, running it inline blocks the circuit dispatcher and freezes
             // every UI event for that user until the connect finishes - run it on
             // the thread pool instead.
-            return await Task.Run(CreateConnected, ct);
+            //
+            // The runspace carries the generation read BEFORE the connect (currentGen), under
+            // the config read before it: a drain that lands while Connect-ExchangeOnline runs
+            // retired exactly that config, so the runspace must come back stale and be
+            // discarded on Return instead of being stamped with the post-drain generation.
+            return await Task.Run(() => _connect(current, currentGen), ct);
         }
         catch (Exception ex)
         {
@@ -300,9 +349,56 @@ public sealed class ExoConnectionPool : IDisposable
 
     /// <summary>
     /// Destroys all pooled connections so that subsequent borrows create new
-    /// connections using the current config. Call after EXO config changes.
+    /// connections using the current config. Call after EXO config changes made IN THIS
+    /// PROCESS (the config page). A change made by the other instance on the shared database
+    /// is caught by the borrow path itself (<see cref="DrainIfConnectionConfigChanged"/>).
     /// </summary>
     public void DrainPool()
+    {
+        DrainPoolCore();
+
+        // The caller saved first, so what the store holds now is what the next runspace will
+        // connect under; recording it keeps the next borrow from draining a second time.
+        var now = GetExoConfig();
+        lock (_connectedLock)
+        {
+            _connectedUnder = now;
+        }
+    }
+
+    /// <summary>
+    /// Review finding scdi-1. Compares the connection config this borrow just read against the
+    /// one the pooled runspaces connected under and, when any of the three fields differs,
+    /// drains (increments the generation exactly as <see cref="DrainPool"/> does) so no runspace
+    /// connected under the previous AppId / Organization / certificate is handed out or
+    /// returned to the pool. A write to any OTHER module's config leaves these values equal and
+    /// drains nothing. Returns true when it drained.
+    /// </summary>
+    internal bool DrainIfConnectionConfigChanged(ExoConnectionConfig current)
+    {
+        ExoConnectionConfig previous;
+        lock (_connectedLock)
+        {
+            if (_connectedUnder is null || _connectedUnder.Value == current)
+            {
+                _connectedUnder = current;
+                return false;
+            }
+
+            previous = _connectedUnder.Value;
+            _connectedUnder = current;
+        }
+
+        _logger.LogInformation(
+            "EXO pool: connection config changed outside this process (Org {OldOrg} -> {NewOrg}); discarding runspaces connected under the previous config",
+            previous.Organization, current.Organization);
+        _operationTrace.Step("ExoPoolSharedConfigChanged", backend: "ExchangeOnline",
+            details: new Dictionary<string, object?> { ["previousOrganization"] = previous.Organization, ["organization"] = current.Organization });
+        DrainPoolCore();
+        return true;
+    }
+
+    private void DrainPoolCore()
     {
         Interlocked.Increment(ref _configGeneration);
         var drained = 0;
@@ -319,9 +415,9 @@ public sealed class ExoConnectionPool : IDisposable
             details: new Dictionary<string, object?> { ["connectionsDestroyed"] = drained });
     }
 
-    private PooledRunspace CreateConnected()
+    private PooledRunspace CreateConnected(ExoConnectionConfig config, long generation)
     {
-        var (appId, organization, certSubject) = GetExoConfig();
+        var (appId, organization, certSubject) = config;
 
         var iss = InitialSessionState.CreateDefault();
         iss.ExecutionPolicy = Microsoft.PowerShell.ExecutionPolicy.Bypass;
@@ -360,7 +456,7 @@ public sealed class ExoConnectionPool : IDisposable
 
             _logger.LogInformation("EXO pool: created new connection (Org={Org})", organization);
             _operationTrace.Step("ExoConnectionCreated", backend: "ExchangeOnline", command: "Connect-ExchangeOnline", details: new Dictionary<string, object?> { ["organization"] = organization });
-            return new PooledRunspace(runspace, ps, Interlocked.Read(ref _configGeneration));
+            return new PooledRunspace(runspace, ps, generation);
         }
         catch (Exception ex)
         {
