@@ -32,6 +32,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `config\exchangeadmin.db` and behave exactly as before (no key = today's path). Jobs and
   usage databases stay per instance. **NEXT: owner deploys dev, then decides when to cut
   over; UsageTelemetry-Plan S1 is the next code stream (its base bump is now `2.20.0`).**
+  Codereview (codex, 2026-09-04) over the implementation closed three findings, all
+  fixed and probed: scdi-1 `3f8bd0e` (EXO pool now drains itself when the shared
+  ExchangeOnline config changed in the other process; base app `2.19.1`), scdi-2
+  `b481d2e` (drive-relative `D:x.db` refused), scdi-3 `a1103cc` (cutover script verifies
+  the shared file before "nothing to do"); plan section 10 has the log. The current build
+  is `2.19.1` (>= the cutover script's 2.19.0 floor).
 
 - **USAGE TELEMETRY: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN OWNER GO
   TO IMPLEMENT. NO CODE.** `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold

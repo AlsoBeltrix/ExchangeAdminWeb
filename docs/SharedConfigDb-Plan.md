@@ -540,3 +540,28 @@ failed its target test on the mutant and passed on restore.
   addition; `deploy-pipeline.ps1` messages stop claiming config was promoted.
   Records: `.agents/review/findings/scd-{1,2,3,4}.md`; envelope
   `.agents/review/scd.result.json` (gitignored scratch).
+- 2026-09-04: codereview codex (owner dispatch "codereview codex default the first
+  agent's work"; `@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, codex-cli 0.152.1,
+  `codex exec -s read-only`) over the implementation `8d9ccb0..b9e944f`: verdict
+  `findings` (3), capability_ok true, both SHAs echoed. All three admitted and fixed, one
+  commit each, every guard mutation-probed:
+  **scdi-1 (HIGH)** `3f8bd0e` - the EXO connection pool was a fifth holder of
+  config-derived state the plan's S2 list missed: a dev-side ExchangeOnline save drained
+  only dev's pool, so prod's pooled runspaces kept the old AppId / Organization /
+  certificate. The pool now records the connection config its runspaces connected under
+  and every borrow compares the config it already reads against it, draining on any
+  difference and never on an unrelated module's write; the generation is read before the
+  connect so a mid-connect drain leaves the new runspace stale. Base app `2.19.1`.
+  Deviation from the finding's direction recorded in the finding (direct value compare on
+  the existing per-borrow read, not a change-token pre-check).
+  **scdi-2 (MEDIUM)** `b481d2e` - AC1's "absolute path" was checked with `IsPathRooted`,
+  which accepts drive-relative `D:exchangeadmin.db`; now `Path.IsPathFullyQualified` in
+  C# and a 5.1-safe `^[A-Za-z]:\\` test in the installer and the cutover script.
+  **scdi-3 (MEDIUM)** `a1103cc` - the cutover script's "both already shared, nothing to
+  do" shortcut ran before the shared-file check, so a deleted shared database was
+  reported as success; the shortcut now requires the file to exist and pass
+  `Test-SqliteConfigDbIntegrity`, plan mode included, else prints the restore commands
+  and fails naming the path.
+  Records: `.agents/review/findings/scdi-{1,2,3}.md`; envelope
+  `.agents/review/scd-impl.result.json` (gitignored scratch). Final: .NET 2330/0/3,
+  Pester 77/0 for the two touched files, ScriptAnalyzer 0 errors.
