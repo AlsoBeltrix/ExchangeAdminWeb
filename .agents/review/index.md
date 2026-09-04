@@ -100,6 +100,9 @@ Per-finding detail: see `.agents/review/findings/<id>.md`.
 | scd-2 | HIGH | Cache watcher seeded its baseline on first poll, missing a change made between load and poll (permanently for the log level) | `[x]` | | same dispatch as scd-1 - plan revised: every reader records the change token as of its own load (token read before the load); `CurrentToken()` + `HasChangedSince(loadedToken)`; per-reader change-before-first-poll tests |
 | scd-3 | MEDIUM | Tolerant migrator checked table names only; v6 adds a column the section-access repository reads and writes | `[x]` | | same dispatch as scd-1 - plan revised: `RequiredSchema` covers tables and columns via `PRAGMA table_info`, pinned to the migration statements by a test |
 | scd-4 | MEDIUM | Installer note read as replacing the local `config\` ACL the per-instance jobs DB needs; deploy-pipeline messages still claimed config promotion | `[x]` | | same dispatch as scd-1 - plan revised: local `config\` always created and ACLed, shared directory ACLed in addition; `deploy-pipeline.ps1` messages updated with a guard |
+| scdi-1 | HIGH | Prod's pooled EXO runspaces keep the OLD connection config after a dev-side ExchangeOnline save (pool drains only in-process) | `[ ]` | | codex/@azure-openai-eus2-global/gpt-5.5-dzs/xhigh/standard (codereview generation half over `8d9ccb0..b9e944f`, verdict `findings` (3), capability_ok, both SHAs echoed; owner dispatch "codereview codex default") |
+| scdi-2 | MEDIUM | `ConfigStore:Path` validation accepts drive-relative `D:exchangeadmin.db` (IsPathRooted, not fully qualified) in C# and both scripts | `[ ]` | | same dispatch as scdi-1 |
+| scdi-3 | MEDIUM | Cutover script's "already shared, nothing to do" shortcut runs before the shared-file existence check | `[ ]` | | same dispatch as scdi-1 |
 
 Notes:
 - **The second openreview pass over this plan (`6aef9e3..236b91b`) returned two findings and
