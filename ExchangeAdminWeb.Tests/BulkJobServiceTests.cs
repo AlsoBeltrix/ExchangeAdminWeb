@@ -1,3 +1,4 @@
+using ExchangeAdminWeb.Services;
 using ExchangeAdminWeb.Services.Jobs;
 using ExchangeAdminWeb.Services.Storage;
 using Microsoft.Extensions.Configuration;
@@ -19,6 +20,12 @@ public class BulkJobServiceTests
         public readonly List<string> ScopeIds = new();
         public readonly Guid ScopeMarker;
 
+        /// <summary>
+        /// The ambient usage session observed on the pump thread, one entry per row (review
+        /// finding utei-1). Must be null: the pump has no browser circuit behind it.
+        /// </summary>
+        public readonly List<string?> SessionsSeen = new();
+
         public FakeProcessor(ScopeMarker marker)
         {
             ScopeMarker = marker.Id;
@@ -29,6 +36,8 @@ public class BulkJobServiceTests
         public Task<BulkJobRowOutcome> ProcessRowAsync(BulkJob job, int rowIndex, CancellationToken ct)
         {
             Interlocked.Increment(ref RowsProcessed);
+            lock (SessionsSeen)
+                SessionsSeen.Add(UsageSession.Current.Value);
             var c = job.PayloadJson[rowIndex];
             return c switch
             {
@@ -415,6 +424,45 @@ public class BulkJobServiceTests
         await h.Service.DrainQueueAsync(CancellationToken.None);
 
         Assert.Equal(BulkJobStatus.Interrupted, h.Repository.Get("j1")!.Status);
+    }
+
+    // -------------------------------------------------------------------------
+    // Ambient state must not leak into the shared pump (review finding utei-1)
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// utei-1: the pump is started by whichever browser circuit enqueues first and then drains
+    /// EVERY operator's jobs. If its Task.Run captured that circuit's execution context, every
+    /// job the pump ever runs would see the first operator's <see cref="UsageSession"/>, and the
+    /// audited rows of jobs submitted by other operators would be stamped with a visit they had
+    /// nothing to do with. This goes through Enqueue on purpose: the other tests in this file
+    /// call DrainQueueAsync directly and so never exercise how the pump task is started.
+    /// </summary>
+    [Fact]
+    public async Task Pump_DoesNotInheritTheEnqueueingCircuitsUsageSession()
+    {
+        using var h = new Harness();
+        UsageSession.Current.Value = "circuit-A";
+        try
+        {
+            h.Service.Enqueue(h.NewJob("j1", "SS"));
+
+            await WaitUntil(() => h.Repository.Get("j1")?.Status == BulkJobStatus.Completed);
+
+            // The circuit that enqueued still has its own session; only the pump is clean.
+            Assert.Equal("circuit-A", UsageSession.Current.Value);
+
+            string?[] seen;
+            lock (h.CreatedProcessors)
+                seen = h.CreatedProcessors.SelectMany(p => { lock (p.SessionsSeen) return p.SessionsSeen.ToArray(); }).ToArray();
+
+            Assert.Equal(2, seen.Length);
+            Assert.All(seen, Assert.Null);
+        }
+        finally
+        {
+            UsageSession.Current.Value = null;
+        }
     }
 
     private static async Task WaitUntil(Func<bool> condition, int timeoutMs = 5000)

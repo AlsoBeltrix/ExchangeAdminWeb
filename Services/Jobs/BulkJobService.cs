@@ -257,6 +257,18 @@ public sealed class BulkJobService
     // Pump - single loop, drains the FIFO queue one job at a time
     // -------------------------------------------------------------------------
 
+    /// <summary>
+    /// Starts the pump if it is not already running. The task is started with execution-context
+    /// flow SUPPRESSED (review finding utei-1). The pump is long-lived and shared: it is started
+    /// by whichever operator's browser circuit happened to enqueue first, then drains EVERY
+    /// operator's jobs. Without suppression the ambient <see cref="AsyncLocal{T}"/> state of that
+    /// first circuit - including <see cref="UsageSession.Current"/> - is captured once and
+    /// inherited by every job the pump ever runs, so a second operator's audited rows would be
+    /// stamped with the first operator's session id. Suppressing at the start makes the pump a
+    /// clean root for all ambient state, which is what a background loop with no caller should be;
+    /// <see cref="OperationTraceService.BeginRootOperation"/> is the downstream workaround for the
+    /// same leak and stays correct either way.
+    /// </summary>
     private void EnsurePump()
     {
         bool start = false;
@@ -268,7 +280,17 @@ public sealed class BulkJobService
                 start = true;
             }
         }
-        if (start)
+        if (!start)
+            return;
+
+        // SuppressFlow throws if flow is already suppressed, so only take it when it is not.
+        if (ExecutionContext.IsFlowSuppressed())
+        {
+            _ = Task.Run(() => DrainQueueAsync(CancellationToken.None));
+            return;
+        }
+
+        using (ExecutionContext.SuppressFlow())
             _ = Task.Run(() => DrainQueueAsync(CancellationToken.None));
     }
 

@@ -38,15 +38,51 @@ and everything it awaits - inherits the session of whoever started it, permanent
 
 ## Approach
 
-TBD - fix commit will fill this in.
+`EnsurePump` now starts the pump task inside `ExecutionContext.SuppressFlow()`, so the
+task captures no ambient state at all rather than a snapshot of whichever circuit
+happened to enqueue first.
+
+The fix is at the pump start rather than at the reader, and it suppresses the whole
+execution context rather than clearing `UsageSession.Current` alone, for two reasons.
+First, the leak is a property of how the pump is started, not of the usage session:
+the pump is one long-lived loop shared by every operator, so ANY ambient value it
+inherits from its accidental first caller is wrong for every job after the first.
+Second, the repo already met this exact leak once - `OperationTraceService.cs:22-27`
+documents that `AsyncLocal` flows across `Task.Run` and works around it downstream
+with `BeginRootOperation`. Fixing the cause makes that workaround belt-and-braces
+instead of load-bearing, and stops the next `AsyncLocal` anyone adds from repeating
+the finding.
+
+`SuppressFlow` throws if flow is already suppressed, so the call is guarded by
+`ExecutionContext.IsFlowSuppressed()`. Nothing in the pump depends on flowed state:
+`RunJobAsync` opens its own DI scope per job (`using var scope =
+_scopeFactory.CreateScope()`), and the cancellation token is passed explicitly.
 
 ## Files changed
 
-TBD
+- `Services/Jobs/BulkJobService.cs` - `EnsurePump` starts the pump task with
+  execution-context flow suppressed, with the reasoning recorded on the method.
+- `ExchangeAdminWeb.Tests/BulkJobServiceTests.cs` - one test; `FakeProcessor` records
+  the ambient session it sees per row.
 
 ## Guard proof
 
-TBD
+Test: `Pump_DoesNotInheritTheEnqueueingCircuitsUsageSession`
+(`ExchangeAdminWeb.Tests/BulkJobServiceTests.cs`). It sets
+`UsageSession.Current.Value` to a stand-in circuit id, submits a two-row job through
+`Enqueue` (NOT `DrainQueueAsync` - every other test in the file calls the drain
+directly and so never exercises how the pump task is started), waits for the job to
+reach `Completed`, and asserts both rows saw a null session. It also asserts the
+enqueueing flow still has its own session, so the fix cannot be satisfied by clearing
+the caller's value.
+
+Mutation probe (non-vacuity): with the `SuppressFlow` guard replaced by the pre-fix
+`_ = Task.Run(() => DrainQueueAsync(CancellationToken.None));`, exactly this test
+fails and the other 19 in the class pass. Restored from a copy outside the working
+tree, not by `git checkout`, and the file was re-stamped
+(`(Get-Item $path).LastWriteTime = Get-Date`) so MSBuild actually rebuilt - a
+`Copy-Item` restore carries the backup's old timestamp and will otherwise leave the
+mutated assembly in place.
 
 ## Coder dispute (if any)
 
@@ -54,7 +90,11 @@ None. Verified against the cited lines.
 
 ## Known gaps
 
-TBD
+Suppression happens where the pump is started. A future background loop started
+elsewhere with a bare `Task.Run` from a circuit path would reintroduce the same class
+of leak; nothing enforces the rule repo-wide. The narrower alternative - clearing
+`UsageSession.Current` inside the task body - would have had the same gap and covered
+less.
 
 ## Reviewer comments
 
