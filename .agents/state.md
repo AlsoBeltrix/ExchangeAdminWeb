@@ -39,8 +39,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the shared file before "nothing to do"); plan section 10 has the log. The current build
   is `2.19.1` (>= the cutover script's 2.19.0 floor).
 
-- **USAGE TELEMETRY: PLAN DRAFTED AND CODEX-REVIEWED 2026-09-04, AWAITING AN OWNER GO
-  TO IMPLEMENT. NO CODE.** `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
+- **USAGE TELEMETRY: IMPLEMENTING (owner go 2026-09-04). S1 LANDED.**
+  `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
   `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
   opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
   2026-09-04); the Home page Important Notice must state telemetry is active (owner, same
@@ -55,7 +55,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `CircuitHandler.CreateInboundActivityHandler` + `AsyncLocal` ambient. Six slices; base
   app bump in S1 (the plan text says `2.19.0`, but SharedConfigDb landed first and took it -
   the bump is now `2.19.0` -> `2.20.0`), `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
-  **NEXT: owner go, then S1.**
+  S1 landed: `config/exchangeadmin-usage.db` with its own factory and
+  `UsageEventRepository` (idempotent table, no migrator step), base app `2.20.0`.
+  **NEXT: S2 (session ambient, `UsageTelemetryService`, `AuditService` hook, DI).**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**

@@ -82,6 +82,16 @@ try
     var jobsDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin-jobs.db");
     builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Jobs.BulkJobRepository(
         new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(jobsDbPath)));
+
+    // Anonymous usage telemetry (docs/UsageTelemetry-Plan.md, AC1). A THIRD operational SQLite
+    // database in the same deploy-excluded config/ directory, separate from both the shared
+    // config DB and the jobs DB: it is disposable environment-local telemetry that is never
+    // promoted and never backed up (review finding ute-1), so it gets its own factory pointed
+    // at its own file and has no migrator - the repository creates its table idempotently.
+    var usageDbPath = Path.Combine(builder.Environment.ContentRootPath, "config", "exchangeadmin-usage.db");
+    builder.Services.AddSingleton(new ExchangeAdminWeb.Services.Storage.UsageEventRepository(
+        new ExchangeAdminWeb.Services.Storage.SqliteConnectionFactory(usageDbPath)));
+
     builder.Services.AddSingleton(_ => new ExchangeAdminWeb.Services.Jobs.BulkJobProcessorRegistry(
         new KeyValuePair<string, Type>[]
         {
