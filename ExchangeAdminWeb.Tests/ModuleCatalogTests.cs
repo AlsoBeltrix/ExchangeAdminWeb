@@ -13,7 +13,7 @@ public class ModuleCatalogTests
     [Fact]
     public void Catalog_HasExpectedModuleCount()
     {
-        Assert.Equal(27, _catalog.GetAll().Count); // 27 modules (26 operational + 1 config-only)
+        Assert.Equal(28, _catalog.GetAll().Count); // 28 modules (27 operational + 1 config-only)
     }
 
     [Fact]
@@ -93,6 +93,48 @@ public class ModuleCatalogTests
         Assert.Contains("IntuneDevicesDelete", aliases);
         Assert.Contains("IntuneDevicesPrivileged", aliases);
         Assert.Contains("IntuneDevicesEntraDelete", aliases);
+    }
+
+    [Fact]
+    public void Catalog_HasServiceHealthModule()
+    {
+        var module = _catalog.GetById("ServiceHealth");
+        Assert.NotNull(module);
+        Assert.Equal("service-health", module!.Route);
+        Assert.Equal("Infrastructure", module.Category);
+        Assert.False(module.EnabledByDefault);
+        Assert.False(module.IsSystemModule);
+    }
+
+    [Fact]
+    public void Catalog_ServiceHealth_MainPermissionIsFailClosed()
+    {
+        var module = _catalog.GetById("ServiceHealth")!;
+        Assert.Equal("ServiceHealth", module.MainPermission.PolicyAlias);
+        Assert.True(module.MainPermission.FailClosed);
+    }
+
+    [Fact]
+    public void Catalog_ServiceHealth_HasNoGranularPermissions()
+    {
+        // The module reads and renders; there is no second tier to grant. A granular permission
+        // appearing here later means something mutating was added without a plan.
+        var module = _catalog.GetById("ServiceHealth")!;
+        Assert.Empty(module.GranularPermissions);
+    }
+
+    [Fact]
+    public void Catalog_ServiceHealth_PolicyAliasIsConfigurable()
+    {
+        Assert.Contains("ServiceHealth", _catalog.GetConfigurablePolicyAliases());
+    }
+
+    [Fact]
+    public void Catalog_ServiceHealth_DeclaresGraphSecretConfigField()
+    {
+        var module = _catalog.GetById("ServiceHealth")!;
+        var field = Assert.Single(module.ConfigFields);
+        Assert.Equal("GraphDelineaSecretId", field.Key);
     }
 
     [Fact]
@@ -210,7 +252,8 @@ public class ModuleCatalogTests
         Assert.Contains("IntuneDevicesDelete", aliases);
         Assert.Contains("IntuneDevicesPrivileged", aliases);
         Assert.Contains("IntuneDevicesEntraDelete", aliases);
-        Assert.Equal(40, aliases.Count);
+        Assert.Contains("ServiceHealth", aliases);
+        Assert.Equal(41, aliases.Count);
     }
 
     [Fact]

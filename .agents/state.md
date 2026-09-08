@@ -6,6 +6,26 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **SERVICE HEALTH MODULE: IMPLEMENTED 2026-09-08, NOT DEPLOYED, NOT CONFIGURED.**
+  `docs/ServiceHealth-Plan.md` Status Implemented. New module `ServiceHealth` (version
+  `1.0.0`, route `/service-health`, `EnabledByDefault = false`) - a read-only port of the
+  standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365 service
+  status plus open incidents/advisories with Microsoft's own update timeline, read from
+  Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new module;
+  Constitution "Deployment And Versioning", `.agents/decisions.md` 2026-07-21). Incident
+  HTML renders formatted, never stripped (owner ruling 2026-09-08: L1/L2 forward it to
+  executives); the trust boundary is `HtmlSanitizer` 9.2.1039 in `ServiceHealthService`,
+  and `MarkupString` on the page may only ever touch a field that came through it - a
+  source-text test enforces that. **TWO OPERATIONAL PREREQUISITES, BOTH OWNER-RUN, BEFORE
+  THE PAGE CAN WORK: (1) create the Delinea record for the EXISTING app registration
+  `e4fa5e51-d226-4a02-9a8b-d8de27133cdb` (tenant `eaa689b4-8f87-40e0-9c6f-7228de4d754a`,
+  already consented for `ServiceHealth.Read.All`; the secret lives in a DPAPI file on
+  ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its
+  id in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant
+  the `ServiceHealth` section access group.** Until (1) the page shows a not-configured
+  banner rather than an empty board. NEXT: owner deploys dev, then does the two steps
+  above and runs the plan's manual checks.
+
 - **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**
   `docs/SharedConfigDb-Plan.md` Status Implemented; slices S1 `be507f0` (ConfigStore:Path
   key, must-exist open, tolerant migrator with table+column check, additive-only tripwire,

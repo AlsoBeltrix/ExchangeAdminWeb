@@ -1,0 +1,281 @@
+@page "/service-health"
+@using Microsoft.AspNetCore.Authorization
+@attribute [Authorize(Policy = "ServiceHealth")]
+@rendermode InteractiveServer
+@inject ServiceHealthService HealthService
+@inject AuditService Audit
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IAuthorizationService AuthorizationService
+@inject NavigationManager Navigation
+@inject ClientInfoService ClientInfo
+@inject ILogger<ServiceHealth> Logger
+
+<PageTitle>Service Health</PageTitle>
+
+@if (!authChecked)
+{
+    <div class="container-fluid">
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Checking authorization...</span>
+            </div>
+        </div>
+    </div>
+    return;
+}
+
+<div class="container-fluid">
+    <div class="alert alert-info py-2 mb-3">
+        <small>Current Microsoft 365 service status and the tenant's open service incidents, read live from Microsoft. Read-only.</small>
+    </div>
+    <h1 class="mb-4">Service Health<ModuleVersion /></h1>
+
+    @if (!HealthService.IsAvailable)
+    {
+        <div class="alert alert-danger">Service Health module is not configured. Set Graph App Delinea Secret ID in Module Config.</div>
+        return;
+    }
+
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@isLoading">
+            @if (isLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                <span>Refreshing...</span>
+            }
+            else
+            {
+                <span>Refresh</span>
+            }
+        </button>
+        @if (status != null)
+        {
+            <small class="text-muted">Last updated @status.LastUpdatedUtc.ToLocalTime().ToString("g")</small>
+        }
+    </div>
+
+    @if (loadError != null)
+    {
+        @* AC6: a failed fetch must never render as a healthy, empty board. *@
+        <div class="alert alert-danger">
+            <strong>Could not read service health.</strong>
+            <div class="mt-1"><small>@loadError</small></div>
+        </div>
+    }
+    else if (isLoading && status == null)
+    {
+        <div class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading service health...</span>
+            </div>
+        </div>
+    }
+    else if (status != null)
+    {
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body py-3">
+                        <div class="text-muted small">Services</div>
+                        <div class="fs-3">@status.TotalServices</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body py-3">
+                        <div class="text-muted small">Healthy</div>
+                        <div class="fs-3 text-success">@status.HealthyServices</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body py-3">
+                        <div class="text-muted small">Not healthy</div>
+                        <div class="fs-3 @(status.DegradedServices > 0 ? "text-danger" : "")">@status.DegradedServices</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card h-100">
+                    <div class="card-body py-3">
+                        <div class="text-muted small">Open incidents</div>
+                        <div class="fs-3 @(status.ActiveIssues > 0 ? "text-danger" : "")">@status.ActiveIssues</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <h2 class="h5 mb-3">Services</h2>
+        @if (status.Services.Count == 0)
+        {
+            <div class="alert alert-warning">Microsoft returned no services for this tenant.</div>
+        }
+        else
+        {
+            <div class="row g-2 mb-4">
+                @foreach (var service in status.Services)
+                {
+                    <div class="col-12 col-md-6 col-xl-4">
+                        <div class="card h-100">
+                            <div class="card-body py-2 d-flex justify-content-between align-items-center">
+                                <span>@service.DisplayName</span>
+                                <span class="badge @StatusBadgeClass(service.IsHealthy)">@service.StatusText</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        <h2 class="h5 mb-3">Open incidents and advisories</h2>
+        @if (status.Issues.Count == 0)
+        {
+            <div class="alert alert-success">No open service incidents or advisories.</div>
+        }
+        else
+        {
+            <div class="accordion mb-4">
+                @foreach (var issue in status.Issues)
+                {
+                    var isOpen = expandedIssues.Contains(issue.Id);
+                    <div class="card mb-2">
+                        <div class="card-header py-2" role="button" @onclick="() => ToggleIssue(issue.Id)">
+                            <div class="d-flex justify-content-between align-items-start gap-3">
+                                <div>
+                                    <span class="badge @ClassificationBadgeClass(issue) me-2">@(issue.IsIncident ? "Incident" : "Advisory")</span>
+                                    <strong>@issue.Id</strong>
+                                    <span class="ms-2">@issue.Title</span>
+                                    <div class="text-muted small mt-1">
+                                        @issue.ServiceName
+                                        @if (issue.StartDateTime != null)
+                                        {
+                                            <span> &middot; started @issue.StartDateTime.Value.ToLocalTime().ToString("g")</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(issue.StatusText))
+                                        {
+                                            <span> &middot; @issue.StatusText</span>
+                                        }
+                                    </div>
+                                </div>
+                                <span class="text-muted small text-nowrap">@(isOpen ? "Hide" : "Details")</span>
+                            </div>
+                        </div>
+                        @if (isOpen)
+                        {
+                            <div class="card-body">
+                                @if (!string.IsNullOrEmpty(issue.ImpactDescriptionHtml))
+                                {
+                                    <div class="mb-3">
+                                        <div class="text-muted small text-uppercase mb-1">User impact</div>
+                                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                                        <div>@((MarkupString)issue.ImpactDescriptionHtml)</div>
+                                    </div>
+                                }
+                                <div class="text-muted small text-uppercase mb-2">Updates</div>
+                                @if (issue.Posts.Count == 0)
+                                {
+                                    <div class="text-muted"><em>Microsoft has not posted an update on this issue yet.</em></div>
+                                }
+                                else
+                                {
+                                    @foreach (var post in issue.Posts)
+                                    {
+                                        <div class="border-start ps-3 mb-3">
+                                            <div class="text-muted small">
+                                                @(post.CreatedDateTime?.ToLocalTime().ToString("g") ?? "Undated")
+                                                @if (!string.IsNullOrEmpty(post.PostType))
+                                                {
+                                                    <span> &middot; @post.PostType</span>
+                                                }
+                                            </div>
+                                            @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                                            <div>@((MarkupString)post.ContentHtml)</div>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    private bool authChecked;
+    private bool isLoading;
+    private string currentUser = "";
+    private string clientIpAddress = "";
+    private string? loadError;
+    private ServiceHealthStatus? status;
+    private readonly HashSet<string> expandedIssues = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var user = authState.User;
+        currentUser = user.Identity?.Name ?? "Unknown";
+
+        var authResult = await AuthorizationService.AuthorizeAsync(user, "ServiceHealth");
+        if (!authResult.Succeeded)
+        {
+            Navigation.NavigateTo("access-denied", forceLoad: true);
+            return;
+        }
+
+        clientIpAddress = ClientInfo.IpAddress != "Unknown"
+            ? ClientInfo.IpAddress
+            : ClientInfo.GetIpForUser(currentUser);
+        authChecked = true;
+
+        await LoadAsync(forceRefresh: false);
+    }
+
+    private Task RefreshAsync() => LoadAsync(forceRefresh: true);
+
+    private async Task LoadAsync(bool forceRefresh)
+    {
+        isLoading = true;
+        loadError = null;
+        await Task.Yield();
+        try
+        {
+            status = await HealthService.GetStatusAsync(forceRefresh);
+            Audit.LogLookupAction(currentUser, clientIpAddress, "ServiceHealthView",
+                "Microsoft 365 service health", true,
+                extra: new Dictionary<string, object?>
+                {
+                    ["Refresh"] = forceRefresh,
+                    ["Services"] = status.TotalServices,
+                    ["OpenIssues"] = status.ActiveIssues
+                });
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+            Logger.LogError(ex, "Failed to load Microsoft 365 service health");
+            Audit.LogLookupAction(currentUser, clientIpAddress, "ServiceHealthView",
+                "Microsoft 365 service health", false, ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleIssue(string issueId)
+    {
+        if (!expandedIssues.Remove(issueId))
+            expandedIssues.Add(issueId);
+    }
+
+    /// <summary>Pure projector, exposed for the source-text page tests.</summary>
+    internal static string StatusBadgeClass(bool isHealthy) => isHealthy ? "bg-success" : "bg-danger";
+
+    /// <summary>Pure projector, exposed for the source-text page tests.</summary>
+    internal static string ClassificationBadgeClass(ServiceIncident issue) =>
+        issue.IsIncident ? "bg-danger" : "bg-warning text-dark";
+}

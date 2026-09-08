@@ -773,6 +773,34 @@ public sealed class ModuleCatalog
         },
         new()
         {
+            Id = "ServiceHealth",
+            DisplayName = "Service Health",
+            Description = "Microsoft 365 service status and open service incidents, read from the Microsoft Graph service announcements API.",
+            Route = "service-health",
+            // Reused deliberately, same reason as IntuneDevices above: no status/heartbeat icon
+            // class exists in wwwroot/app.css today and the package validator rejects an icon
+            // class it cannot find. Adding one is a separate change.
+            IconCss = "bi bi-gear-fill-nav-menu",
+            Category = "Infrastructure",
+            SortOrder = 830,
+            EnabledByDefault = false,
+            IsSystemModule = false,
+            Version = "1.0.0",
+            // One permission, no granular tier: the module reads and renders, and mutates
+            // nothing (docs/ServiceHealth-Plan.md).
+            MainPermission = new(
+                "Access",
+                "ServiceHealth",
+                "Open the module and view current Microsoft 365 service status and the tenant open service incidents. Read-only - grants no ability to change anything.",
+                FailClosed: true),
+            GranularPermissions = [],
+            ConfigFields = [
+                new("GraphDelineaSecretId", "Graph App Delinea Secret ID",
+                    "Secret Server secret containing Tenant ID, Application ID, and Client Secret fields (the app registration needs ServiceHealth.Read.All)")
+            ]
+        },
+        new()
+        {
             Id = "LicensingUpdates",
             DisplayName = "Licensing Updates",
             Description = "Bulk update Exchange licensing SKU assignments (extensionAttribute11) via CSV upload.",

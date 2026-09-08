@@ -154,6 +154,10 @@ try
     // services: no per-request state, and GraphTokenClient is constructed per operation from the
     // named "MicrosoftGraph" client above.
     builder.Services.AddSingleton<RiskyUsersService>();
+    // Service Health read path (docs/ServiceHealth-Plan.md). Singleton like the other Graph
+    // services, and deliberately so here: the 10-minute status cache lives on the instance, so a
+    // scoped registration would give every operator their own cache and defeat it.
+    builder.Services.AddSingleton<ServiceHealthService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     // BitLocker recovery. Scoped: the service opens a short-lived SQLite connection per query and
     // holds no state between them. Needs no HttpClient, no Graph registration and no Exchange
