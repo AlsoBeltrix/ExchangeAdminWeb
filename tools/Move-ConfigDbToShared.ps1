@@ -9,6 +9,8 @@
 
     Plan mode is the DEFAULT: without -Apply the script prints every step and changes nothing.
     Run it elevated (it stops and starts IIS app pools) and with -PlanOnly first, then -Apply.
+    Run the plan ELEVATED too: only then can it read the IIS app pool identities that step 5
+    needs. Unelevated, the plan says so and skips that one check rather than pretending.
 
     THE ORDER MATTERS: both instances must already run a build that accepts a database newer
     than itself (app version 2.19.0 or later, SharedConfigDb-Plan S1). Deploy that build to dev
@@ -148,13 +150,26 @@ function Assert-BuildTolerates {
 }
 
 function Get-AppPoolIdentity {
+    # Get-Item on an app pool makes the IIS provider materialize processModel.identityType as an
+    # integer, so a pool set to SpecificUser throws "Cannot convert value SpecificUser to type
+    # System.Int32" and the pool object never comes back - the caller's own cast is never even
+    # reached. Every other IIS read in this repo (deploy.ps1, Install-ExchangeAdminWeb.ps1, and
+    # the State reads below) uses Get-ItemProperty, which returns the element without that cast.
+    # Match identityType as text: the provider yields the name under PowerShell 7 and the number
+    # under Windows PowerShell 5.1.
     param([string]$Name)
 
-    $pool = Get-Item "IIS:\AppPools\$Name"
-    switch ([int]$pool.processModel.identityType) {
-        3 { return $pool.processModel.userName }
-        default { return "IIS AppPool\$Name" }
+    $model = Get-ItemProperty "IIS:\AppPools\$Name" -Name processModel -ErrorAction Stop
+    if ($null -eq $model) { Write-Fail "App pool $Name has no processModel configuration." }
+
+    if ("$($model.identityType)" -in @('SpecificUser', '3')) {
+        if ([string]::IsNullOrWhiteSpace($model.userName)) {
+            Write-Fail "App pool $Name is set to run as a specific user but IIS carries no user name for it."
+        }
+        return $model.userName
     }
+
+    return "IIS AppPool\$Name"
 }
 
 function Stop-AppPoolChecked {
@@ -385,12 +400,59 @@ if (Test-Path -LiteralPath $SharedDbPath -PathType Leaf) {
 Assert-BuildTolerates -Label 'Dev' -PublishPath $DevPublishPath
 Assert-BuildTolerates -Label 'Prod' -PublishPath $ProdPublishPath
 
+# Step 1b - resolve both app pool identities BEFORE anything is stopped.
+#
+# On 2026-09-08 this read lived inside step 5, so it ran after both pools were already stopped;
+# it threw, and the failure left both sites down behind a half-finished cutover. It is a pure
+# read, so it belongs here where a bad lookup costs nothing.
+#
+# Plan mode attempts the same read whenever it can, because a dry run that cannot look at what
+# it is about to change is not a dry run - that is exactly why the 2026-09-08 plan came back
+# clean. But plan mode must stay runnable without IIS or elevation (that is how the Pester
+# suite and CI exercise it), so there it degrades to a warning instead of a failure. Apply mode
+# demands all of it.
+$poolIdentities = @()
+$identityLabel = 'both app pool identities'
+
 if ($PlanOnly) {
-    Write-Plan "Import-Module WebAdministration"
+    $iisReason = $null
+    if (-not (Test-IsAdministrator)) {
+        $iisReason = 'this session is not elevated'
+    } elseif (-not (Get-Module -ListAvailable -Name WebAdministration)) {
+        $iisReason = 'the WebAdministration module is not installed on this host'
+    }
+
+    if ($iisReason) {
+        Write-Warn "Skipping the IIS app pool identity check: $iisReason. Run the plan elevated on the deploy host to have it verified."
+    } else {
+        try {
+            Import-Module WebAdministration -ErrorAction Stop
+            $poolIdentities = @(
+                (Get-AppPoolIdentity -Name $DevAppPoolName),
+                (Get-AppPoolIdentity -Name $ProdAppPoolName)
+            ) | Select-Object -Unique
+            # The plan line keeps its generic wording so the printed plan does not depend on
+            # which host it was rendered on; the resolved names are reported here instead.
+            Write-Ok "App pool identities resolved: $($poolIdentities -join ' and ')"
+        } catch {
+            Write-Warn "Could not read the IIS app pool identities: $($_.Exception.Message)"
+            Write-Warn "-Apply would FAIL here. Fix this before running it."
+            $poolIdentities = @()
+        }
+    }
 } else {
-    if (-not (Test-IsAdministrator)) { Write-Fail "Run this script from an elevated PowerShell session when using -Apply." }
+    if (-not (Test-IsAdministrator)) {
+        Write-Fail "Run this script from an elevated PowerShell session when using -Apply."
+    }
     Import-Module WebAdministration -ErrorAction Stop
     Assert-Sqlite3Available | Out-Null
+
+    $poolIdentities = @(
+        (Get-AppPoolIdentity -Name $DevAppPoolName),
+        (Get-AppPoolIdentity -Name $ProdAppPoolName)
+    ) | Select-Object -Unique
+    $identityLabel = $poolIdentities -join ' and '
+    Write-Ok "App pool identities resolved: $identityLabel"
 }
 
 # --- Steps 2-8 -------------------------------------------------------------------------------
@@ -430,9 +492,11 @@ try {
     if (-not $PlanOnly) { $sharedWritten = $true }
 
     # Step 5 - both pool identities get Modify on the shared directory (WAL/SHM need write).
-    Invoke-PlanOrAction "Grant both app pool identities (OI)(CI)M on $sharedDir" {
-        foreach ($pool in @($DevAppPoolName, $ProdAppPoolName)) {
-            $identity = Get-AppPoolIdentity -Name $pool
+    Invoke-PlanOrAction "Grant $identityLabel (OI)(CI)M on $sharedDir" {
+        if ($poolIdentities.Count -eq 0) {
+            Write-Fail "No app pool identity was resolved; refusing to leave the shared directory ungranted."
+        }
+        foreach ($identity in $poolIdentities) {
             & icacls $sharedDir /grant "${identity}:(OI)(CI)M" | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "icacls failed (exit $LASTEXITCODE) granting $identity (OI)(CI)M on $sharedDir"
@@ -457,13 +521,30 @@ try {
 } catch {
     Write-Host ""
     Write-Host "  X  Cutover FAILED: $_" -ForegroundColor Red
-    if ($sharedWritten -or $appsettingsTouched.Count -gt 0) {
+    if ($appsettingsTouched.Count -eq 0) {
+        # Neither instance has been repointed, so both are still exactly as they were: their own
+        # appsettings.json, their own database. The only damage is that they are STOPPED, and
+        # leaving them that way is a self-inflicted outage - on 2026-09-08 a failure at step 5
+        # took both sites down and kept them down. Bring them back before reporting anything.
+        if (-not $PlanOnly) {
+            Write-Warn "Both instances are unchanged; restarting their app pools so the outage ends here."
+            foreach ($pool in @($DevAppPoolName, $ProdAppPoolName)) {
+                try {
+                    Start-AppPoolChecked -Name $pool
+                } catch {
+                    Write-Warn "Could not restart app pool ${pool}: $($_.Exception.Message). Start it by hand: Start-WebAppPool -Name $pool"
+                }
+            }
+        }
+        if ($sharedWritten) {
+            Write-Warn "An orphan shared database was left at $SharedDbPath. Nothing points at it. Delete it before re-running this script, which refuses to start when that path already holds a file."
+        }
+        Write-Warn "Nothing else was changed: both appsettings.json files and both databases are untouched."
+    } else {
         if ($appsettingsTouched.Count -eq 1) {
             Write-Warn "SPLIT STATE: the $($appsettingsTouched[0]) instance now names $SharedDbPath and the other still uses its own database. Revert with the commands below (the appsettings backups carry the '.$appsettingsBackupSuffix' suffix)."
         }
         Write-RestoreInstructions -DevDb $devDb -ProdDb $prodDb -DevBackup $devBackupFile -ProdBackup $prodBackupFile -DevAppSettings $devAppSettings -ProdAppSettings $prodAppSettings -Suffix $appsettingsBackupSuffix
-    } else {
-        Write-Warn "Nothing was changed: the original databases and appsettings files are untouched. App pools may be stopped - start them with Start-WebAppPool if so."
     }
     throw
 }

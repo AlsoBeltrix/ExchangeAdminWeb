@@ -255,3 +255,71 @@ Describe 'Move-ConfigDbToShared.ps1 plan mode' {
         }
     }
 }
+
+Describe 'Get-AppPoolIdentity' {
+    # Regression cover for the 2026-09-08 cutover failure. The function used Get-Item, which
+    # makes the IIS provider materialize processModel.identityType as an integer and throw
+    # "Cannot convert value SpecificUser to type System.Int32" on any pool that runs as a
+    # specific user - which both ExchangeAdminWeb pools do. It threw at step 5, after both
+    # pools had already been stopped, and took the sites down.
+    #
+    # The function is lifted out of the script by AST rather than dot-sourcing (dot-sourcing
+    # would run the whole cutover), so these tests read the real source text.
+    BeforeAll {
+        $tokens = $null
+        $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:ScriptPath, [ref]$tokens, [ref]$errors)
+        $errors | Should -BeNullOrEmpty
+
+        $fn = $ast.FindAll(
+            {
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Get-AppPoolIdentity'
+            }, $true) | Select-Object -First 1
+        $fn | Should -Not -BeNullOrEmpty -Because 'the script must still define Get-AppPoolIdentity'
+
+        # Write-Fail is the script's throw helper; the extracted function calls it.
+        function Write-Fail { param([string]$Message) throw $Message }
+        . ([scriptblock]::Create($fn.Extent.Text))
+    }
+
+    It 'returns the account name for a SpecificUser pool (<IdentityType>)' -TestCases @(
+        @{ IdentityType = 'SpecificUser' }   # what PowerShell 7 yields
+        @{ IdentityType = 3 }                # what Windows PowerShell 5.1 yields
+    ) {
+        Mock Get-ItemProperty { [pscustomobject]@{ identityType = $IdentityType; userName = 'ANALOG\svc_scriptadm' } }
+
+        Get-AppPoolIdentity -Name 'ExchangeAdminWeb' | Should -Be 'ANALOG\svc_scriptadm'
+    }
+
+    It 'never uses Get-Item, which is what threw on a SpecificUser pool' {
+        Mock Get-ItemProperty { [pscustomobject]@{ identityType = 'SpecificUser'; userName = 'ANALOG\svc_scriptadm' } }
+        Mock Get-Item { throw 'Cannot convert value "SpecificUser" to type "System.Int32".' }
+
+        Get-AppPoolIdentity -Name 'ExchangeAdminWeb' | Should -Be 'ANALOG\svc_scriptadm'
+        Should -Invoke Get-Item -Times 0 -Exactly
+    }
+
+    It 'falls back to the virtual account for a pool that is not SpecificUser (<IdentityType>)' -TestCases @(
+        @{ IdentityType = 'ApplicationPoolIdentity' }
+        @{ IdentityType = 4 }
+        @{ IdentityType = 'NetworkService' }
+    ) {
+        Mock Get-ItemProperty { [pscustomobject]@{ identityType = $IdentityType; userName = '' } }
+
+        Get-AppPoolIdentity -Name 'ExchangeAdminWebDev' | Should -Be 'IIS AppPool\ExchangeAdminWebDev'
+    }
+
+    It 'fails rather than granting rights to an empty account name' {
+        Mock Get-ItemProperty { [pscustomobject]@{ identityType = 'SpecificUser'; userName = '  ' } }
+
+        { Get-AppPoolIdentity -Name 'ExchangeAdminWeb' } | Should -Throw -ExpectedMessage '*no user name*'
+    }
+
+    It 'fails when the pool has no processModel at all' {
+        Mock Get-ItemProperty { $null }
+
+        { Get-AppPoolIdentity -Name 'ExchangeAdminWeb' } | Should -Throw -ExpectedMessage '*no processModel*'
+    }
+}
