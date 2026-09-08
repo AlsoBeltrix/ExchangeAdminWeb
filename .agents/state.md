@@ -6,15 +6,20 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **SERVICE HEALTH MODULE: 1.1.0 IMPLEMENTED 2026-09-08, NOT YET DEPLOYED, NOT CONFIGURED.**
+- **SERVICE HEALTH MODULE: 1.2.0 IMPLEMENTED 2026-09-08, NOT YET DEPLOYED, NOT CONFIGURED.**
   1.0.0 was deployed to dev and FAILED owner acceptance (service rows did not link to the
-  incident data). 1.1.0 is the parity fix: service rows expand in place to their incidents
-  and drive the list below, per-service issue counts, the original's service/status filters,
-  short status words, and Microsoft's `details` blocks (which are HTML, so
-  `ServiceIncidentDetail.ValueHtml` joins the `MarkupString` allow-list). Detail in the plan's
-  review log, round 2.
+  incident data). 1.1.0 was the parity fix: service rows expand in place to their incidents,
+  per-service issue counts, short status words, and Microsoft's `details` blocks (which are
+  HTML, so `ServiceIncidentDetail.ValueHtml` joins the `MarkupString` allow-list). 1.2.0 is
+  the owner's design ruling on top of it: the standalone "Open incidents and advisories"
+  list is GONE (incidents live only under their service - do not reintroduce a flat list),
+  the service board sorts worst-first then alphabetically by default with `Open incidents`
+  and `Name` alternatives, the service dropdown is replaced by a wildcard text filter
+  (empty or `*` = all, plain word = contains, `*`/`?` = anchored match), and opening a
+  service opens its incidents with details already expanded. Detail in the plan's review
+  log, rounds 2 and 3.
   `docs/ServiceHealth-Plan.md` Status Implemented. Module `ServiceHealth` (version
-  `1.1.0`, route `/service-health`, `EnabledByDefault = false`) - a read-only port of the
+  `1.2.0`, route `/service-health`, `EnabledByDefault = false`) - a read-only port of the
   standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365 service
   status plus open incidents/advisories with Microsoft's own update timeline, read from
   Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new module;
@@ -29,7 +34,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its
   id in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant
   the `ServiceHealth` section access group.** Until (1) the page shows a not-configured
-  banner rather than an empty board. NEXT: owner deploys dev to pick up 1.1.0, then does the
+  banner rather than an empty board. NEXT: owner deploys dev to pick up 1.2.0, then does the
   two steps above and runs the plan's manual checks.
 
 - **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**

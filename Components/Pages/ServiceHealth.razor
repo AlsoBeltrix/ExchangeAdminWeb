@@ -1,5 +1,6 @@
 @page "/service-health"
 @using Microsoft.AspNetCore.Authorization
+@using System.Text.RegularExpressions
 @attribute [Authorize(Policy = "ServiceHealth")]
 @rendermode InteractiveServer
 @inject ServiceHealthService HealthService
@@ -107,42 +108,57 @@
             </div>
         </div>
 
-        <div class="row g-2 align-items-end mb-3">
+        <div class="row g-2 align-items-end mb-2">
             <div class="col-md-4">
-                <label class="form-label mb-1" for="service-filter">Filter by service</label>
-                <select id="service-filter" class="form-select form-select-sm" value="@serviceFilter"
-                        @onchange="e => serviceFilter = e.Value?.ToString() ?? AllFilter">
-                    <option value="@AllFilter">All services</option>
-                    @foreach (var service in status.Services)
-                    {
-                        <option value="@service.Id">@service.DisplayName</option>
-                    }
-                </select>
+                <label class="form-label mb-1" for="service-filter">Find a service</label>
+                <input id="service-filter" class="form-control form-control-sm" type="search"
+                       placeholder="Name, wildcards allowed (exch*)"
+                       value="@nameFilter"
+                       @oninput="OnNameFilterChanged" />
             </div>
-            <div class="col-md-4">
-                <label class="form-label mb-1" for="status-filter">Filter by status</label>
+            <div class="col-md-3">
+                <label class="form-label mb-1" for="status-filter">Status</label>
                 <select id="status-filter" class="form-select form-select-sm" value="@statusFilter"
                         @onchange="e => statusFilter = e.Value?.ToString() ?? AllFilter">
                     <option value="@AllFilter">All statuses</option>
-                    <option value="serviceOperational">Healthy</option>
-                    <option value="serviceDegradation">Degraded</option>
-                    <option value="serviceInterruption">Interrupted</option>
                     <option value="@NotHealthyFilter">Anything not healthy</option>
+                    <option value="@WithIssuesFilter">Has open incidents</option>
+                    <option value="serviceInterruption">Interrupted</option>
+                    <option value="serviceDegradation">Degraded</option>
+                    <option value="serviceOperational">Healthy</option>
                 </select>
             </div>
-            @if (serviceFilter != AllFilter || statusFilter != AllFilter)
+            <div class="col-md-3">
+                <label class="form-label mb-1" for="sort-order">Sort by</label>
+                <select id="sort-order" class="form-select form-select-sm" value="@sortOrder"
+                        @onchange="e => sortOrder = e.Value?.ToString() ?? SortByStatus">
+                    <option value="@SortByStatus">Status, then name</option>
+                    <option value="@SortByIssues">Open incidents</option>
+                    <option value="@SortByName">Name</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-outline-secondary btn-sm w-100" @onclick="ClearFilters"
+                        disabled="@(nameFilter.Length == 0 && statusFilter == AllFilter && sortOrder == SortByStatus)">
+                    Reset
+                </button>
+            </div>
+        </div>
+
+        var visibleServices = SortServices(FilterServices(status, nameFilter, statusFilter), status, sortOrder);
+
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <small class="text-muted">
+                Showing @visibleServices.Count of @status.TotalServices services. Select one to read its incidents.
+            </small>
+            @if (visibleServices.Count > 0)
             {
-                <div class="col-md-4">
-                    <button class="btn btn-outline-secondary btn-sm" @onclick="ClearFilters">Clear filters</button>
-                </div>
+                <button class="btn btn-link btn-sm p-0" @onclick="() => ToggleAll(visibleServices)">
+                    @(expandedServices.Count > 0 ? "Collapse all" : "Expand all with incidents")
+                </button>
             }
         </div>
 
-        var visibleServices = FilterServices(status, serviceFilter, statusFilter);
-        var visibleIssues = FilterIssues(status, serviceFilter);
-
-        <h2 class="h5 mb-1">Services</h2>
-        <div class="text-muted small mb-3">Select a service to see the incidents Microsoft has attributed to it.</div>
         @if (status.Services.Count == 0)
         {
             <div class="alert alert-warning">Microsoft returned no services for this tenant.</div>
@@ -153,75 +169,49 @@
         }
         else
         {
-            <div class="row g-2 mb-4">
+            <div class="mb-4">
                 @foreach (var service in visibleServices)
                 {
-                    var issueCount = status.IssueCountFor(service.Id);
+                    var serviceIssues = status.IssuesFor(service.Id);
                     var isExpanded = expandedServices.Contains(service.Id);
-                    <div class="col-12 col-md-6 col-xl-4">
-                        <div class="card h-100">
-                            <div class="card-body py-2" role="button" @onclick="() => ToggleService(service.Id)"
-                                 title="Show the incidents for this service">
-                                <div class="d-flex justify-content-between align-items-center gap-2">
-                                    <span>
-                                        <span class="text-muted me-1">@(isExpanded ? "-" : "+")</span>
-                                        @service.DisplayName
-                                    </span>
-                                    <span class="text-nowrap">
-                                        @if (issueCount > 0)
-                                        {
-                                            <span class="badge bg-secondary me-1">@issueCount @(issueCount == 1 ? "issue" : "issues")</span>
-                                        }
-                                        <span class="badge @ServiceBadgeClass(service.Status)">@service.StatusText</span>
-                                    </span>
-                                </div>
+                    <div class="card mb-2">
+                        <div class="card-body py-2" role="button" @onclick="() => ToggleService(service.Id, serviceIssues)"
+                             title="Show the incidents for this service">
+                            <div class="d-flex justify-content-between align-items-center gap-2">
+                                <span>
+                                    <span class="text-muted me-2">@(isExpanded ? "-" : "+")</span>
+                                    <strong>@service.DisplayName</strong>
+                                </span>
+                                <span class="text-nowrap">
+                                    @if (serviceIssues.Count > 0)
+                                    {
+                                        <span class="badge bg-secondary me-1">
+                                            @serviceIssues.Count @(serviceIssues.Count == 1 ? "incident" : "incidents")
+                                        </span>
+                                    }
+                                    <span class="badge @ServiceBadgeClass(service.Status)">@service.StatusText</span>
+                                </span>
                             </div>
-                            @if (isExpanded)
-                            {
-                                var serviceIssues = status.IssuesFor(service.Id);
-                                <div class="card-body border-top pt-2">
-                                    @if (serviceIssues.Count == 0)
-                                    {
-                                        <div class="text-muted small">
-                                            <em>Microsoft has no open incidents or advisories for this service.</em>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        @foreach (var issue in serviceIssues)
-                                        {
-                                            @IncidentCard(issue)
-                                        }
-                                    }
-                                </div>
-                            }
                         </div>
+                        @if (isExpanded)
+                        {
+                            <div class="card-body border-top">
+                                @if (serviceIssues.Count == 0)
+                                {
+                                    <div class="text-muted small">
+                                        <em>Microsoft has no open incidents or advisories for this service.</em>
+                                    </div>
+                                }
+                                else
+                                {
+                                    @foreach (var issue in serviceIssues)
+                                    {
+                                        @IncidentCard(issue)
+                                    }
+                                }
+                            </div>
+                        }
                     </div>
-                }
-            </div>
-        }
-
-        <h2 class="h5 mb-3">
-            Open incidents and advisories
-            @if (serviceFilter != AllFilter)
-            {
-                <span class="badge bg-secondary ms-2">@FilteredServiceName(status, serviceFilter)</span>
-            }
-        </h2>
-        @if (visibleIssues.Count == 0)
-        {
-            <div class="alert alert-success">
-                @(serviceFilter == AllFilter
-                    ? "No open service incidents or advisories."
-                    : "No open incidents or advisories for the selected service.")
-            </div>
-        }
-        else
-        {
-            <div class="mb-4">
-                @foreach (var issue in visibleIssues)
-                {
-                    @IncidentCard(issue)
                 }
             </div>
         }
@@ -231,6 +221,10 @@
 @code {
     private const string AllFilter = "all";
     private const string NotHealthyFilter = "notHealthy";
+    private const string WithIssuesFilter = "withIssues";
+    private const string SortByStatus = "status";
+    private const string SortByName = "name";
+    private const string SortByIssues = "issues";
 
     private bool authChecked;
     private bool isLoading;
@@ -238,14 +232,16 @@
     private string clientIpAddress = "";
     private string? loadError;
     private ServiceHealthStatus? status;
-    private string serviceFilter = AllFilter;
+    private string nameFilter = "";
     private string statusFilter = AllFilter;
+    private string sortOrder = SortByStatus;
     private readonly HashSet<string> expandedIssues = [];
     private readonly HashSet<string> expandedServices = [];
 
     /// <summary>
-    /// One incident renderer, used both inline under an expanded service and in the full list
-    /// below, so the two can never drift apart.
+    /// One incident, rendered under the service it belongs to. Opening the service opens these
+    /// with it - the operator asked one question ("what is wrong with Exchange") and should not
+    /// have to click again to get the answer. The header still collapses a long one back down.
     /// </summary>
     private RenderFragment<ServiceIncident> IncidentCard => issue =>
     @<div class="card mb-2">
@@ -256,18 +252,21 @@
                     <strong>@issue.Id</strong>
                     <span class="ms-2">@issue.Title</span>
                     <div class="text-muted small mt-1">
-                        @issue.ServiceName
+                        @if (!string.IsNullOrEmpty(issue.StatusText))
+                        {
+                            <span>@issue.StatusText</span>
+                        }
                         @if (issue.StartDateTime != null)
                         {
                             <span> &middot; started @issue.StartDateTime.Value.ToLocalTime().ToString("g")</span>
                         }
-                        @if (!string.IsNullOrEmpty(issue.StatusText))
+                        @if (!issue.IsResolved)
                         {
-                            <span> &middot; @issue.StatusText</span>
+                            <span class="text-danger"> &middot; ongoing</span>
                         }
                     </div>
                 </div>
-                <span class="text-muted small text-nowrap">@(expandedIssues.Contains(issue.Id) ? "Hide" : "Details")</span>
+                <span class="text-muted small text-nowrap">@(expandedIssues.Contains(issue.Id) ? "Collapse" : "Expand")</span>
             </div>
         </div>
         @if (expandedIssues.Contains(issue.Id))
@@ -405,50 +404,118 @@
     }
 
     /// <summary>
-    /// Expanding a service also points the incident list below at it, so the two halves of the
-    /// board always agree about what the operator is looking at.
+    /// Opening a service opens its incidents with it, details and all. Closing it puts them back.
     /// </summary>
-    private void ToggleService(string serviceId)
+    private void ToggleService(string serviceId, List<ServiceIncident> serviceIssues)
     {
         if (expandedServices.Remove(serviceId))
         {
-            if (serviceFilter == serviceId) serviceFilter = AllFilter;
+            foreach (var issue in serviceIssues) expandedIssues.Remove(issue.Id);
             return;
         }
 
         expandedServices.Add(serviceId);
-        serviceFilter = serviceId;
+        foreach (var issue in serviceIssues) expandedIssues.Add(issue.Id);
     }
+
+    private void ToggleAll(List<ServiceHealthEntry> visibleServices)
+    {
+        if (expandedServices.Count > 0)
+        {
+            expandedServices.Clear();
+            expandedIssues.Clear();
+            return;
+        }
+
+        foreach (var service in visibleServices)
+        {
+            var issues = status?.IssuesFor(service.Id) ?? [];
+            if (issues.Count == 0) continue;
+            expandedServices.Add(service.Id);
+            foreach (var issue in issues) expandedIssues.Add(issue.Id);
+        }
+    }
+
+    private void OnNameFilterChanged(ChangeEventArgs e) => nameFilter = e.Value?.ToString() ?? "";
 
     private void ClearFilters()
     {
-        serviceFilter = AllFilter;
+        nameFilter = "";
         statusFilter = AllFilter;
+        sortOrder = SortByStatus;
     }
 
-    /// <summary>Pure projector, exposed for tests.</summary>
+    /// <summary>
+    /// Pure projector, exposed for tests. The name box is a wildcard match against the display
+    /// name and the service id - "*" or empty means everything, and a pattern with no wildcard in
+    /// it is treated as "contains", which is what an operator typing "exch" expects.
+    /// </summary>
     internal static List<ServiceHealthEntry> FilterServices(
-        ServiceHealthStatus status, string serviceFilter, string statusFilter) =>
+        ServiceHealthStatus status, string nameFilter, string statusFilter) =>
         status.Services
-            .Where(s => serviceFilter == AllFilter
-                || string.Equals(s.Id, serviceFilter, StringComparison.OrdinalIgnoreCase))
-            .Where(s => statusFilter == AllFilter
-                || (statusFilter == NotHealthyFilter
-                    ? !s.IsHealthy
-                    : string.Equals(s.Status, statusFilter, StringComparison.OrdinalIgnoreCase)))
+            .Where(s => MatchesName(s, nameFilter))
+            .Where(s => statusFilter switch
+            {
+                AllFilter => true,
+                NotHealthyFilter => !s.IsHealthy,
+                WithIssuesFilter => status.IssueCountFor(s.Id) > 0,
+                _ => string.Equals(s.Status, statusFilter, StringComparison.OrdinalIgnoreCase)
+            })
             .ToList();
 
-    /// <summary>
-    /// Pure projector, exposed for tests. Issues follow the SERVICE filter only - the status
-    /// filter narrows the service grid, and applying it here as well would hide the incident
-    /// that explains why a service is degraded.
-    /// </summary>
-    internal static List<ServiceIncident> FilterIssues(ServiceHealthStatus status, string serviceFilter) =>
-        serviceFilter == AllFilter ? status.Issues : status.IssuesFor(serviceFilter);
+    internal static bool MatchesName(ServiceHealthEntry service, string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern)) return true;
 
-    internal static string FilteredServiceName(ServiceHealthStatus status, string serviceFilter) =>
-        status.Services.FirstOrDefault(s =>
-            string.Equals(s.Id, serviceFilter, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? serviceFilter;
+        var trimmed = pattern.Trim();
+        if (trimmed == "*") return true;
+
+        if (!trimmed.Contains('*') && !trimmed.Contains('?'))
+            return service.DisplayName.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
+                || service.Id.Contains(trimmed, StringComparison.OrdinalIgnoreCase);
+
+        var regex = "^" + Regex.Escape(trimmed).Replace("\\*", ".*").Replace("\\?", ".") + "$";
+        return Regex.IsMatch(service.DisplayName, regex, RegexOptions.IgnoreCase)
+            || Regex.IsMatch(service.Id, regex, RegexOptions.IgnoreCase);
+    }
+
+    /// <summary>
+    /// Pure projector, exposed for tests. Default is worst-first then alphabetical, so the board
+    /// opens on what is broken rather than on whatever order Graph happened to return.
+    /// </summary>
+    internal static List<ServiceHealthEntry> SortServices(
+        List<ServiceHealthEntry> services, ServiceHealthStatus status, string sortOrder) => sortOrder switch
+        {
+            SortByName => [.. services.OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase)],
+            SortByIssues =>
+            [
+                .. services
+                    .OrderByDescending(s => status.IssueCountFor(s.Id))
+                    .ThenBy(s => StatusRank(s.Status))
+                    .ThenBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase)
+            ],
+            _ =>
+            [
+                .. services
+                    .OrderBy(s => StatusRank(s.Status))
+                    .ThenByDescending(s => status.IssueCountFor(s.Id))
+                    .ThenBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase)
+            ]
+        };
+
+    /// <summary>
+    /// Severity order for the default sort. An unrecognised future status sorts above healthy,
+    /// not below it - the same fail-loud choice ServiceHealthEntry.IsHealthy makes.
+    /// </summary>
+    internal static int StatusRank(string status) => status switch
+    {
+        "serviceInterruption" => 0,
+        "serviceDegradation" => 1,
+        "extendedRecovery" or "restoringService" or "restoreService" or "investigating" => 2,
+        "falsePositive" => 8,
+        "serviceOperational" => 9,
+        _ => 5
+    };
 
     /// <summary>Pure projector, exposed for the source-text page tests.</summary>
     internal static string StatusBadgeClass(bool isHealthy) => isHealthy ? "bg-success" : "bg-danger";

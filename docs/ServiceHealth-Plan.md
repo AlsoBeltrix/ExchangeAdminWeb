@@ -421,3 +421,49 @@ Coverage limits, in addition to the three stated in the round above: the filter 
 are now genuinely tested (they are `internal static` and pure), but nothing tests that the
 page WIRES them up - that a click reaches `ToggleService`, or that the expanded card renders
 the fragment - because there is still no bUnit harness. Those remain source-text tripwires.
+
+### Round 3 - 2026-09-08 - owner design ruling: sort, filter, no flat incident list
+
+Owner: "add sort and filter for services, expand details when the service card is clicked.
+do not dump an unsorted list of TLDRs under a vague open incidents and advisories section.
+default to sorting by service status then alpha, filter *."
+
+Changes to `Components/Pages/ServiceHealth.razor`:
+
+1. The standalone "Open incidents and advisories" section is **gone**. Incidents now live
+   under the service they belong to and nowhere else - one `IncidentCard` call site, pinned
+   by `Page_HasNoSeparateIncidentDumpBelowTheServices`. No incident is lost: every issue
+   Graph returns carries a `serviceId` that came from the same `healthOverviews` list the
+   service rows are built from, so each one has a row to sit under.
+2. **Sort** (`#sort-order`), defaulting to `Status, then name`: severity rank first
+   (interrupted, degraded, recovering, unknown, false positive, healthy), then open-incident
+   count descending, then display name. Alternatives: `Open incidents`, `Name`. An
+   unrecognised future status ranks above healthy - the same fail-loud choice `IsHealthy`
+   makes, so a status Microsoft adds later cannot hide at the bottom of the board.
+3. **Filter** (`#service-filter`), a free-text box: empty or `*` means everything, a plain
+   word is a case-insensitive "contains" against display name and service id, and a pattern
+   containing `*` or `?` is an anchored wildcard match. The old service dropdown is replaced
+   by it; the status dropdown gains `Has open incidents`.
+4. **Clicking a service expands its incidents with their details already open** - the
+   operator asked one question and should not have to click twice for the answer. The
+   per-incident header still collapses a long one. `Expand all with incidents` /
+   `Collapse all` acts on the visible, filtered set.
+
+Module `ServiceHealth` version `1.1.0` -> `1.2.0`. Base app version unchanged at `2.20.2`
+(module-scoped behaviour change only).
+
+Gates: Release build 0 errors; full `dotnet test ExchangeAdminWeb.slnx` 2478 passed, 0
+failed, 3 skipped (from 2465); `dotnet format --verify-no-changes` clean; `git diff --check
+HEAD` clean; no non-ASCII in any touched file.
+
+Non-vacuity: flattening `StatusRank` (interrupted ranked equal to healthy) and dropping the
+`^...$` anchors from the wildcard regex failed exactly 3 of the new tests
+(`StatusRank_SortsAnUnknownFutureStatusAboveHealthy`,
+`SortServices_DefaultsToWorstFirstThenAlphabetical`,
+`MatchesName_AnchorsAWildcardPatternSoItCannotMatchEverything`); restored, file touched to
+defeat the MSBuild timestamp skip, 89/89 ServiceHealth tests green.
+
+Coverage limits: unchanged from round 2. The sort and filter projectors are genuinely
+tested; the page's wiring of them - that typing in the box re-filters, that a click reaches
+`ToggleService`, that opening a service opens its incidents - is source-text tripwire only,
+because this repo still has no bUnit harness.

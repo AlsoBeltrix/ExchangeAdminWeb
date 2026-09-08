@@ -77,38 +77,40 @@ public class ServiceHealthPageTests
         Assert.Contains("<ModuleVersion />", PageSource());
     }
 
+
     [Fact]
     public void Page_ServiceRowsAreClickableAndCarryAnIssueCount()
     {
         var source = PageSource();
 
-        Assert.Contains("ToggleService(service.Id)", source);
-        Assert.Contains("status.IssueCountFor(service.Id)", source);
+        Assert.Contains("ToggleService(service.Id, serviceIssues)", source);
         Assert.Contains("status.IssuesFor(service.Id)", source);
     }
 
     [Fact]
-    public void Page_OffersTheServiceAndStatusFilters()
+    public void Page_OffersTheNameFilterStatusFilterAndSortOrder()
     {
         var source = PageSource();
 
         Assert.Contains("id=\"service-filter\"", source);
         Assert.Contains("id=\"status-filter\"", source);
+        Assert.Contains("id=\"sort-order\"", source);
         Assert.Contains("ClearFilters", source);
     }
 
     [Fact]
-    public void Page_RendersEveryIncidentThroughOneSharedFragment()
+    public void Page_HasNoSeparateIncidentDumpBelowTheServices()
     {
-        // Two call sites (inline under a service, and the list below), one renderer - so the
-        // expanded view can never drift between the two places an operator meets it.
+        // Owner ruling 2026-09-08: incidents live under the service they belong to and nowhere
+        // else. One call site, one renderer - a second one would be the flat list coming back.
         var source = PageSource();
 
         Assert.Single(Regex.Matches(source, @"private RenderFragment<ServiceIncident> IncidentCard"));
-        Assert.Equal(2, Regex.Matches(source, @"@IncidentCard\(issue\)").Count);
+        Assert.Single(Regex.Matches(source, @"@IncidentCard\(issue\)"));
+        Assert.DoesNotContain("Open incidents and advisories", source);
     }
 
-    // ---- Filter projectors (real behaviour, not source text) --------------------------------
+    // ---- Filter and sort projectors (real behaviour, not source text) ------------------------
 
     private static ServiceHealthStatus Sample() => new()
     {
@@ -121,21 +123,23 @@ public class ServiceHealthPageTests
         Issues =
         [
             new ServiceIncident { Id = "EX1", ServiceId = "Exchange" },
+            new ServiceIncident { Id = "EX2", ServiceId = "Exchange" },
             new ServiceIncident { Id = "TM1", ServiceId = "Teams" }
         ]
     };
 
     [Fact]
-    public void FilterServices_AllAndAllReturnsEverything()
+    public void FilterServices_AnEmptyNameAndAllStatusesReturnsEverything()
     {
-        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "all", "all").Count);
+        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "", "all").Count);
+        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "*", "all").Count);
     }
 
     [Fact]
-    public void FilterServices_NarrowsByServiceThenByStatus()
+    public void FilterServices_NarrowsByNameThenByStatus()
     {
         Assert.Equal(["Exchange"], ServiceHealth.FilterServices(Sample(), "Exchange", "all").Select(s => s.Id));
-        Assert.Equal(["SharePoint"], ServiceHealth.FilterServices(Sample(), "all", "serviceOperational").Select(s => s.Id));
+        Assert.Equal(["SharePoint"], ServiceHealth.FilterServices(Sample(), "", "serviceOperational").Select(s => s.Id));
         Assert.Empty(ServiceHealth.FilterServices(Sample(), "Exchange", "serviceOperational"));
     }
 
@@ -144,22 +148,102 @@ public class ServiceHealthPageTests
     {
         Assert.Equal(
             ["Exchange", "Teams"],
-            ServiceHealth.FilterServices(Sample(), "all", "notHealthy").Select(s => s.Id));
+            ServiceHealth.FilterServices(Sample(), "", "notHealthy").Select(s => s.Id));
     }
 
     [Fact]
-    public void FilterIssues_FollowsTheServiceFilterOnly()
+    public void FilterServices_WithIssuesKeepsOnlyTheServicesThatHaveOpenOnes()
     {
-        Assert.Equal(2, ServiceHealth.FilterIssues(Sample(), "all").Count);
-        Assert.Equal(["EX1"], ServiceHealth.FilterIssues(Sample(), "Exchange").Select(i => i.Id));
-        Assert.Empty(ServiceHealth.FilterIssues(Sample(), "SharePoint"));
+        Assert.Equal(
+            ["Exchange", "Teams"],
+            ServiceHealth.FilterServices(Sample(), "", "withIssues").Select(s => s.Id));
+    }
+
+    [Theory]
+    [InlineData("exch", "Exchange")]
+    [InlineData("EXCH", "Exchange")]
+    [InlineData("online", "Exchange,SharePoint")]
+    [InlineData("*online", "Exchange,SharePoint")]
+    [InlineData("exch*", "Exchange")]
+    [InlineData("*teams*", "Teams")]
+    [InlineData("micros?ft teams", "Teams")]
+    [InlineData("nothing", "")]
+    public void MatchesName_TreatsAPlainWordAsContainsAndHonoursWildcards(string pattern, string expectedIds)
+    {
+        string[] expected = expectedIds.Length == 0 ? [] : expectedIds.Split(',');
+        var actual = ServiceHealth.FilterServices(Sample(), pattern, "all").Select(s => s.Id).ToArray();
+
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
-    public void FilteredServiceName_FallsBackToTheIdWhenTheServiceIsGone()
+    public void MatchesName_AnchorsAWildcardPatternSoItCannotMatchEverything()
     {
-        Assert.Equal("Exchange Online", ServiceHealth.FilteredServiceName(Sample(), "exchange"));
-        Assert.Equal("Ghost", ServiceHealth.FilteredServiceName(Sample(), "Ghost"));
+        // "exch*" is anchored: it must start the name. A bare "contains" would also match
+        // "Microsoft Exchange", which is not what an operator typing a trailing star asked for.
+        var status = new ServiceHealthStatus
+        {
+            Services = [new ServiceHealthEntry { Id = "X", DisplayName = "Microsoft Exchange" }]
+        };
+
+        Assert.Empty(ServiceHealth.FilterServices(status, "exch*", "all"));
+        Assert.Single(ServiceHealth.FilterServices(status, "exch", "all"));
+    }
+
+    [Fact]
+    public void SortServices_DefaultsToWorstFirstThenAlphabetical()
+    {
+        var status = Sample();
+        var sorted = ServiceHealth.SortServices(status.Services, status, "status").Select(s => s.Id);
+
+        Assert.Equal(["Teams", "Exchange", "SharePoint"], sorted);
+    }
+
+    [Fact]
+    public void SortServices_BreaksAStatusTieOnIssueCountThenName()
+    {
+        var status = new ServiceHealthStatus
+        {
+            Services =
+            [
+                new ServiceHealthEntry { Id = "Zulu", DisplayName = "Zulu", Status = "serviceDegradation" },
+                new ServiceHealthEntry { Id = "Alpha", DisplayName = "Alpha", Status = "serviceDegradation" },
+                new ServiceHealthEntry { Id = "Busy", DisplayName = "Busy", Status = "serviceDegradation" }
+            ],
+            Issues = [new ServiceIncident { Id = "B1", ServiceId = "Busy" }]
+        };
+
+        Assert.Equal(
+            ["Busy", "Alpha", "Zulu"],
+            ServiceHealth.SortServices(status.Services, status, "status").Select(s => s.Id));
+    }
+
+    [Fact]
+    public void SortServices_NameIgnoresStatusEntirely()
+    {
+        var status = Sample();
+
+        Assert.Equal(
+            ["Exchange", "Teams", "SharePoint"],
+            ServiceHealth.SortServices(status.Services, status, "name").Select(s => s.Id));
+    }
+
+    [Fact]
+    public void SortServices_IssuesPutsTheBusiestServiceFirst()
+    {
+        var status = Sample();
+
+        Assert.Equal(
+            ["Exchange", "Teams", "SharePoint"],
+            ServiceHealth.SortServices(status.Services, status, "issues").Select(s => s.Id));
+    }
+
+    [Fact]
+    public void StatusRank_SortsAnUnknownFutureStatusAboveHealthy()
+    {
+        Assert.True(ServiceHealth.StatusRank("somethingNew") < ServiceHealth.StatusRank("serviceOperational"));
+        Assert.True(ServiceHealth.StatusRank("serviceInterruption") < ServiceHealth.StatusRank("serviceDegradation"));
+        Assert.True(ServiceHealth.StatusRank("serviceDegradation") < ServiceHealth.StatusRank("somethingNew"));
     }
 
     [Theory]
