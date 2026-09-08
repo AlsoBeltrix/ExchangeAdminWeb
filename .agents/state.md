@@ -658,7 +658,6 @@ here is superseded by the QUEUE PRIORITY list above and is archived verbatim**
 (`docs/history/state-archive.md`, Archived 2026-09-02) - it had drifted (item 5 still read
 `docs/TokenBudget-Plan.md` as "Draft, awaiting a go" after that stream was already DONE).
 
-*Push status is deliberately not recorded here.* Git owns it and sessions check it live
 (`git ls-remote origin master` against `git rev-parse HEAD`) - `.agents/playbooks/drift.md`,
 2026-07-11 ruling. Successive revisions of this paragraph recorded a count, then a sha, each
 stale within hours; the rule is that the fact does not belong in a state file at all.
