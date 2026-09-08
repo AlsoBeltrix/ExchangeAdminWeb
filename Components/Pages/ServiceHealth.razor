@@ -107,97 +107,121 @@
             </div>
         </div>
 
-        <h2 class="h5 mb-3">Services</h2>
+        <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-4">
+                <label class="form-label mb-1" for="service-filter">Filter by service</label>
+                <select id="service-filter" class="form-select form-select-sm" value="@serviceFilter"
+                        @onchange="e => serviceFilter = e.Value?.ToString() ?? AllFilter">
+                    <option value="@AllFilter">All services</option>
+                    @foreach (var service in status.Services)
+                    {
+                        <option value="@service.Id">@service.DisplayName</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label mb-1" for="status-filter">Filter by status</label>
+                <select id="status-filter" class="form-select form-select-sm" value="@statusFilter"
+                        @onchange="e => statusFilter = e.Value?.ToString() ?? AllFilter">
+                    <option value="@AllFilter">All statuses</option>
+                    <option value="serviceOperational">Healthy</option>
+                    <option value="serviceDegradation">Degraded</option>
+                    <option value="serviceInterruption">Interrupted</option>
+                    <option value="@NotHealthyFilter">Anything not healthy</option>
+                </select>
+            </div>
+            @if (serviceFilter != AllFilter || statusFilter != AllFilter)
+            {
+                <div class="col-md-4">
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="ClearFilters">Clear filters</button>
+                </div>
+            }
+        </div>
+
+        var visibleServices = FilterServices(status, serviceFilter, statusFilter);
+        var visibleIssues = FilterIssues(status, serviceFilter);
+
+        <h2 class="h5 mb-1">Services</h2>
+        <div class="text-muted small mb-3">Select a service to see the incidents Microsoft has attributed to it.</div>
         @if (status.Services.Count == 0)
         {
             <div class="alert alert-warning">Microsoft returned no services for this tenant.</div>
         }
+        else if (visibleServices.Count == 0)
+        {
+            <div class="alert alert-secondary">No services match the current filters.</div>
+        }
         else
         {
             <div class="row g-2 mb-4">
-                @foreach (var service in status.Services)
+                @foreach (var service in visibleServices)
                 {
+                    var issueCount = status.IssueCountFor(service.Id);
+                    var isExpanded = expandedServices.Contains(service.Id);
                     <div class="col-12 col-md-6 col-xl-4">
                         <div class="card h-100">
-                            <div class="card-body py-2 d-flex justify-content-between align-items-center">
-                                <span>@service.DisplayName</span>
-                                <span class="badge @StatusBadgeClass(service.IsHealthy)">@service.StatusText</span>
+                            <div class="card-body py-2" role="button" @onclick="() => ToggleService(service.Id)"
+                                 title="Show the incidents for this service">
+                                <div class="d-flex justify-content-between align-items-center gap-2">
+                                    <span>
+                                        <span class="text-muted me-1">@(isExpanded ? "-" : "+")</span>
+                                        @service.DisplayName
+                                    </span>
+                                    <span class="text-nowrap">
+                                        @if (issueCount > 0)
+                                        {
+                                            <span class="badge bg-secondary me-1">@issueCount @(issueCount == 1 ? "issue" : "issues")</span>
+                                        }
+                                        <span class="badge @ServiceBadgeClass(service.Status)">@service.StatusText</span>
+                                    </span>
+                                </div>
                             </div>
+                            @if (isExpanded)
+                            {
+                                var serviceIssues = status.IssuesFor(service.Id);
+                                <div class="card-body border-top pt-2">
+                                    @if (serviceIssues.Count == 0)
+                                    {
+                                        <div class="text-muted small">
+                                            <em>Microsoft has no open incidents or advisories for this service.</em>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var issue in serviceIssues)
+                                        {
+                                            @IncidentCard(issue)
+                                        }
+                                    }
+                                </div>
+                            }
                         </div>
                     </div>
                 }
             </div>
         }
 
-        <h2 class="h5 mb-3">Open incidents and advisories</h2>
-        @if (status.Issues.Count == 0)
+        <h2 class="h5 mb-3">
+            Open incidents and advisories
+            @if (serviceFilter != AllFilter)
+            {
+                <span class="badge bg-secondary ms-2">@FilteredServiceName(status, serviceFilter)</span>
+            }
+        </h2>
+        @if (visibleIssues.Count == 0)
         {
-            <div class="alert alert-success">No open service incidents or advisories.</div>
+            <div class="alert alert-success">
+                @(serviceFilter == AllFilter
+                    ? "No open service incidents or advisories."
+                    : "No open incidents or advisories for the selected service.")
+            </div>
         }
         else
         {
-            <div class="accordion mb-4">
-                @foreach (var issue in status.Issues)
+            <div class="mb-4">
+                @foreach (var issue in visibleIssues)
                 {
-                    var isOpen = expandedIssues.Contains(issue.Id);
-                    <div class="card mb-2">
-                        <div class="card-header py-2" role="button" @onclick="() => ToggleIssue(issue.Id)">
-                            <div class="d-flex justify-content-between align-items-start gap-3">
-                                <div>
-                                    <span class="badge @ClassificationBadgeClass(issue) me-2">@(issue.IsIncident ? "Incident" : "Advisory")</span>
-                                    <strong>@issue.Id</strong>
-                                    <span class="ms-2">@issue.Title</span>
-                                    <div class="text-muted small mt-1">
-                                        @issue.ServiceName
-                                        @if (issue.StartDateTime != null)
-                                        {
-                                            <span> &middot; started @issue.StartDateTime.Value.ToLocalTime().ToString("g")</span>
-                                        }
-                                        @if (!string.IsNullOrEmpty(issue.StatusText))
-                                        {
-                                            <span> &middot; @issue.StatusText</span>
-                                        }
-                                    </div>
-                                </div>
-                                <span class="text-muted small text-nowrap">@(isOpen ? "Hide" : "Details")</span>
-                            </div>
-                        </div>
-                        @if (isOpen)
-                        {
-                            <div class="card-body">
-                                @if (!string.IsNullOrEmpty(issue.ImpactDescriptionHtml))
-                                {
-                                    <div class="mb-3">
-                                        <div class="text-muted small text-uppercase mb-1">User impact</div>
-                                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
-                                        <div>@((MarkupString)issue.ImpactDescriptionHtml)</div>
-                                    </div>
-                                }
-                                <div class="text-muted small text-uppercase mb-2">Updates</div>
-                                @if (issue.Posts.Count == 0)
-                                {
-                                    <div class="text-muted"><em>Microsoft has not posted an update on this issue yet.</em></div>
-                                }
-                                else
-                                {
-                                    @foreach (var post in issue.Posts)
-                                    {
-                                        <div class="border-start ps-3 mb-3">
-                                            <div class="text-muted small">
-                                                @(post.CreatedDateTime?.ToLocalTime().ToString("g") ?? "Undated")
-                                                @if (!string.IsNullOrEmpty(post.PostType))
-                                                {
-                                                    <span> &middot; @post.PostType</span>
-                                                }
-                                            </div>
-                                            @* Sanitized in ServiceHealthService before it ever reaches this page. *@
-                                            <div>@((MarkupString)post.ContentHtml)</div>
-                                        </div>
-                                    }
-                                }
-                            </div>
-                        }
-                    </div>
+                    @IncidentCard(issue)
                 }
             </div>
         }
@@ -205,13 +229,121 @@
 </div>
 
 @code {
+    private const string AllFilter = "all";
+    private const string NotHealthyFilter = "notHealthy";
+
     private bool authChecked;
     private bool isLoading;
     private string currentUser = "";
     private string clientIpAddress = "";
     private string? loadError;
     private ServiceHealthStatus? status;
+    private string serviceFilter = AllFilter;
+    private string statusFilter = AllFilter;
     private readonly HashSet<string> expandedIssues = [];
+    private readonly HashSet<string> expandedServices = [];
+
+    /// <summary>
+    /// One incident renderer, used both inline under an expanded service and in the full list
+    /// below, so the two can never drift apart.
+    /// </summary>
+    private RenderFragment<ServiceIncident> IncidentCard => issue =>
+    @<div class="card mb-2">
+        <div class="card-header py-2" role="button" @onclick="() => ToggleIssue(issue.Id)">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+                <div>
+                    <span class="badge @ClassificationBadgeClass(issue) me-2">@(issue.IsIncident ? "Incident" : "Advisory")</span>
+                    <strong>@issue.Id</strong>
+                    <span class="ms-2">@issue.Title</span>
+                    <div class="text-muted small mt-1">
+                        @issue.ServiceName
+                        @if (issue.StartDateTime != null)
+                        {
+                            <span> &middot; started @issue.StartDateTime.Value.ToLocalTime().ToString("g")</span>
+                        }
+                        @if (!string.IsNullOrEmpty(issue.StatusText))
+                        {
+                            <span> &middot; @issue.StatusText</span>
+                        }
+                    </div>
+                </div>
+                <span class="text-muted small text-nowrap">@(expandedIssues.Contains(issue.Id) ? "Hide" : "Details")</span>
+            </div>
+        </div>
+        @if (expandedIssues.Contains(issue.Id))
+        {
+            <div class="card-body">
+                <dl class="row mb-3 small">
+                    @if (!string.IsNullOrEmpty(issue.Feature))
+                    {
+                        <dt class="col-sm-3">Feature</dt>
+                        <dd class="col-sm-9">@issue.Feature</dd>
+                    }
+                    @if (!string.IsNullOrEmpty(issue.FeatureGroup))
+                    {
+                        <dt class="col-sm-3">Feature group</dt>
+                        <dd class="col-sm-9">@issue.FeatureGroup</dd>
+                    }
+                    @if (!string.IsNullOrEmpty(issue.Origin))
+                    {
+                        <dt class="col-sm-3">Origin</dt>
+                        <dd class="col-sm-9">@issue.Origin</dd>
+                    }
+                    @if (issue.EndDateTime != null)
+                    {
+                        <dt class="col-sm-3">Resolved</dt>
+                        <dd class="col-sm-9">@issue.EndDateTime.Value.ToLocalTime().ToString("g")</dd>
+                    }
+                    @if (issue.LastModifiedDateTime != null)
+                    {
+                        <dt class="col-sm-3">Last modified</dt>
+                        <dd class="col-sm-9">@issue.LastModifiedDateTime.Value.ToLocalTime().ToString("g")</dd>
+                    }
+                </dl>
+
+                @if (!string.IsNullOrEmpty(issue.ImpactDescriptionHtml))
+                {
+                    <div class="mb-3">
+                        <div class="text-muted small text-uppercase mb-1">User impact</div>
+                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                        <div>@((MarkupString)issue.ImpactDescriptionHtml)</div>
+                    </div>
+                }
+
+                @foreach (var detail in issue.Details)
+                {
+                    <div class="mb-3">
+                        <div class="text-muted small text-uppercase mb-1">@detail.Name</div>
+                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                        <div>@((MarkupString)detail.ValueHtml)</div>
+                    </div>
+                }
+
+                <div class="text-muted small text-uppercase mb-2">Updates</div>
+                @if (issue.Posts.Count == 0)
+                {
+                    <div class="text-muted"><em>Microsoft has not posted an update on this issue yet.</em></div>
+                }
+                else
+                {
+                    @foreach (var post in issue.Posts)
+                    {
+                        <div class="border-start ps-3 mb-3">
+                            <div class="text-muted small">
+                                @(post.CreatedDateTime?.ToLocalTime().ToString("g") ?? "Undated")
+                                @if (!string.IsNullOrEmpty(post.PostType))
+                                {
+                                    <span> &middot; @post.PostType</span>
+                                }
+                            </div>
+                            @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                            <div>@((MarkupString)post.ContentHtml)</div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>;
 
     protected override async Task OnInitializedAsync()
     {
@@ -272,8 +404,68 @@
             expandedIssues.Add(issueId);
     }
 
+    /// <summary>
+    /// Expanding a service also points the incident list below at it, so the two halves of the
+    /// board always agree about what the operator is looking at.
+    /// </summary>
+    private void ToggleService(string serviceId)
+    {
+        if (expandedServices.Remove(serviceId))
+        {
+            if (serviceFilter == serviceId) serviceFilter = AllFilter;
+            return;
+        }
+
+        expandedServices.Add(serviceId);
+        serviceFilter = serviceId;
+    }
+
+    private void ClearFilters()
+    {
+        serviceFilter = AllFilter;
+        statusFilter = AllFilter;
+    }
+
+    /// <summary>Pure projector, exposed for tests.</summary>
+    internal static List<ServiceHealthEntry> FilterServices(
+        ServiceHealthStatus status, string serviceFilter, string statusFilter) =>
+        status.Services
+            .Where(s => serviceFilter == AllFilter
+                || string.Equals(s.Id, serviceFilter, StringComparison.OrdinalIgnoreCase))
+            .Where(s => statusFilter == AllFilter
+                || (statusFilter == NotHealthyFilter
+                    ? !s.IsHealthy
+                    : string.Equals(s.Status, statusFilter, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+    /// <summary>
+    /// Pure projector, exposed for tests. Issues follow the SERVICE filter only - the status
+    /// filter narrows the service grid, and applying it here as well would hide the incident
+    /// that explains why a service is degraded.
+    /// </summary>
+    internal static List<ServiceIncident> FilterIssues(ServiceHealthStatus status, string serviceFilter) =>
+        serviceFilter == AllFilter ? status.Issues : status.IssuesFor(serviceFilter);
+
+    internal static string FilteredServiceName(ServiceHealthStatus status, string serviceFilter) =>
+        status.Services.FirstOrDefault(s =>
+            string.Equals(s.Id, serviceFilter, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? serviceFilter;
+
     /// <summary>Pure projector, exposed for the source-text page tests.</summary>
     internal static string StatusBadgeClass(bool isHealthy) => isHealthy ? "bg-success" : "bg-danger";
+
+    /// <summary>
+    /// Pure projector, exposed for tests. Degraded and interrupted are different severities to an
+    /// operator, so they do not share one red badge.
+    /// </summary>
+    internal static string ServiceBadgeClass(string status) => status switch
+    {
+        "serviceOperational" => "bg-success",
+        "serviceDegradation" => "bg-warning text-dark",
+        "serviceInterruption" => "bg-danger",
+        "extendedRecovery" or "restoringService" or "restoreService" or "investigating" => "bg-warning text-dark",
+        "falsePositive" => "bg-secondary",
+        _ => "bg-secondary"
+    };
 
     /// <summary>Pure projector, exposed for the source-text page tests.</summary>
     internal static string ClassificationBadgeClass(ServiceIncident issue) =>

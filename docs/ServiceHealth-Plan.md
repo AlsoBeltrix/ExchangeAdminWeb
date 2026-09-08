@@ -370,3 +370,54 @@ Known limits of this coverage, stated rather than implied:
 - The 12 hostile-markup vectors are a sample, not a proof. The security property rests on
   `HtmlSanitizer`'s allow-list, which is why the allow-lists are cleared before being
   populated rather than added to the package defaults.
+
+**2026-09-08 - parity fix after owner acceptance failure. Self-reported.**
+
+Owner verdict on the deployed 1.0.0 page: "the services section does not link to the
+incident data, it's a dumb, long text list". Correct. The first pass rendered a static
+service grid and a separate incident list with nothing joining them, and it dropped five
+fields the original dashboard shows. Re-read `D:\source\servicehealthmonitor\Production\
+templates\dashboard.html` and closed the gaps:
+
+- Service rows are now the primary control. Selecting one expands it in place to the
+  incidents Microsoft attributes to that service, and points the list below at the same
+  service, so the two halves of the board always agree. `ServiceHealthStatus.IssuesFor` /
+  `IssueCountFor` match on service id, case-insensitively, the way the original did.
+- Per-service issue-count badge, and the original's two filters (service, status) with a
+  clear-filters control. Services filter by service AND status; issues by service ONLY -
+  the original's asymmetry, kept deliberately: filtering issues by status would hide the
+  incident that explains why a service is degraded. An extra "anything not healthy" status
+  option was added; it is not in the original.
+- Short operator-facing status words ("Healthy", not "Service Operational") from the
+  original's `getStatusText` map, with the camel split kept as the fallback for a status
+  Microsoft has not shipped yet.
+- Incident detail now carries `featureGroup`, `origin`, `isResolved`, `endDateTime`, and
+  Microsoft's named `details` blocks. Empty detail values are dropped; names are split into
+  words. **`details[].value` is HTML** (confirmed against `issue_EX1120751_full_data.json`),
+  so it goes through the same sanitizer, and `ServiceIncidentDetail.ValueHtml` is the third
+  and last field on the page's `MarkupString` allow-list. The page test enforcing that
+  allow-list was widened by exactly one entry.
+- One `RenderFragment<ServiceIncident>` renders every incident, at both call sites, so the
+  inline and list views cannot drift apart. A test pins the one-renderer/two-call-sites
+  shape.
+
+No JS was added: the original's `scrollIntoView` had no seam here (this app ships no custom
+script file), and expanding in place makes the scroll unnecessary.
+
+Module `ServiceHealth` version `1.0.0` -> `1.1.0`. Base app version unchanged at `2.20.2`
+(module-scoped behaviour change only).
+
+Gates: Release build 0 errors; full `dotnet test ExchangeAdminWeb.slnx` 2465 passed, 0
+failed, 3 skipped (from 2440 - 25 new tests); `dotnet format --verify-no-changes` clean;
+`git diff --check HEAD` clean; no non-ASCII in any touched file.
+
+Non-vacuity: making `IssuesFor` ignore its `serviceId` argument failed 3 of the new tests
+(`IssuesFor_MatchesTheServiceIdCaseInsensitively`,
+`IssuesFor_ReturnsNothingForAServiceWithNoOpenIssues`,
+`FilterIssues_FollowsTheServiceFilterOnly`); restored, file touched to defeat the MSBuild
+timestamp skip, 76/76 ServiceHealth tests green.
+
+Coverage limits, in addition to the three stated in the round above: the filter projectors
+are now genuinely tested (they are `internal static` and pure), but nothing tests that the
+page WIRES them up - that a click reaches `ToggleService`, or that the expanded card renders
+the fragment - because there is still no bUnit harness. Those remain source-text tripwires.

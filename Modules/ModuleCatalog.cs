@@ -785,7 +785,7 @@ public sealed class ModuleCatalog
             SortOrder = 830,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.0.0",
+            Version = "1.1.0",
             // One permission, no granular tier: the module reads and renders, and mutates
             // nothing (docs/ServiceHealth-Plan.md).
             MainPermission = new(

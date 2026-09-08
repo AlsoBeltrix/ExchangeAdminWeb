@@ -200,10 +200,35 @@ public sealed class ServiceHealthService
             Status = GetString(item, "status"),
             StatusText = HumanizeStatus(GetString(item, "status")),
             Feature = GetString(item, "feature"),
+            FeatureGroup = GetString(item, "featureGroup"),
+            Origin = GetString(item, "origin"),
+            IsResolved = item.TryGetProperty("isResolved", out var resolved)
+                && resolved.ValueKind == JsonValueKind.True,
             StartDateTime = GetDate(item, "startDateTime"),
+            EndDateTime = GetDate(item, "endDateTime"),
             LastModifiedDateTime = GetDate(item, "lastModifiedDateTime"),
             ImpactDescriptionHtml = Sanitize(GetString(item, "impactDescription"))
         };
+
+        if (item.TryGetProperty("details", out var details) && details.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var detail in details.EnumerateArray())
+            {
+                // Microsoft sends the empty ones too (UserCountImpact with value ""), and a
+                // heading with nothing under it is noise on a board meant to be read at a glance.
+                var value = GetString(detail, "value");
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                var name = GetString(detail, "name");
+                if (string.IsNullOrWhiteSpace(name)) name = "Detail";
+
+                incident.Details.Add(new ServiceIncidentDetail
+                {
+                    Name = SpaceOutName(name),
+                    ValueHtml = Sanitize(value)
+                });
+            }
+        }
 
         if (item.TryGetProperty("posts", out var posts) && posts.ValueKind == JsonValueKind.Array)
         {
@@ -244,9 +269,48 @@ public sealed class ServiceHealthService
     /// Turns a Graph status token into something an L1 can read at a glance:
     /// "serviceOperational" becomes "Service Operational".
     /// </summary>
+    /// <summary>
+    /// The short operator-facing words the original dashboard used (app.py's companion
+    /// dashboard.html getStatusText map), not a camel-case split of the raw Graph token. A
+    /// wall of "Service Operational" badges is what an at-a-glance board must not be. An
+    /// unrecognised future status still falls through to the split so it reads as words
+    /// rather than as a raw token.
+    /// </summary>
+    private static readonly Dictionary<string, string> StatusWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["serviceOperational"] = "Healthy",
+        ["serviceDegradation"] = "Degraded",
+        ["serviceInterruption"] = "Interrupted",
+        ["extendedRecovery"] = "Extended Recovery",
+        ["falsePositive"] = "False Positive",
+        ["restoringService"] = "Restoring Service",
+        ["restoreService"] = "Restoring Service",
+        ["investigating"] = "Investigating",
+        ["serviceRestored"] = "Service Restored",
+        ["postIncidentReviewPublished"] = "Post-Incident Review Published",
+        ["confirmed"] = "Confirmed",
+        ["reported"] = "Reported",
+        ["mitigated"] = "Mitigated",
+        ["mitigatedExternal"] = "Mitigated (External)",
+        ["resolved"] = "Resolved",
+        ["resolvedExternal"] = "Resolved (External)"
+    };
+
     internal static string HumanizeStatus(string status)
     {
         if (string.IsNullOrWhiteSpace(status)) return "";
+        if (StatusWords.TryGetValue(status, out var word)) return word;
+        return SpaceOutName(status);
+    }
+
+    /// <summary>
+    /// "UserCountImpact" -&gt; "User Count Impact". The original dashboard's detail-name
+    /// formatter, and the fallback for a Graph status nobody has mapped yet.
+    /// </summary>
+    internal static string SpaceOutName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var status = value;
 
         var sb = new StringBuilder(status.Length + 8);
         for (var i = 0; i < status.Length; i++)
@@ -379,6 +443,22 @@ public sealed class ServiceHealthStatus
     public int HealthyServices => Services.Count(s => s.IsHealthy);
     public int DegradedServices => Services.Count(s => !s.IsHealthy);
     public int ActiveIssues => Issues.Count;
+
+    /// <summary>
+    /// The open issues Microsoft attributes to one service, matched the way the original
+    /// dashboard matched them: on the service id, case-insensitively. This is the link the
+    /// board is for - a service row that says "Degraded" is useless unless the operator can
+    /// get from it to the incident that says why.
+    /// </summary>
+    public List<ServiceIncident> IssuesFor(string serviceId) =>
+        string.IsNullOrWhiteSpace(serviceId)
+            ? []
+            : Issues.Where(i => string.Equals(i.ServiceId, serviceId, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    public int IssueCountFor(string serviceId) =>
+        string.IsNullOrWhiteSpace(serviceId)
+            ? 0
+            : Issues.Count(i => string.Equals(i.ServiceId, serviceId, StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed class ServiceHealthEntry
@@ -407,16 +487,36 @@ public sealed class ServiceIncident
     public string Status { get; init; } = "";
     public string StatusText { get; init; } = "";
     public string Feature { get; init; } = "";
+    public string FeatureGroup { get; init; } = "";
+    public string Origin { get; init; } = "";
+    public bool IsResolved { get; init; }
     public DateTimeOffset? StartDateTime { get; init; }
+    public DateTimeOffset? EndDateTime { get; init; }
     public DateTimeOffset? LastModifiedDateTime { get; init; }
 
     /// <summary>Sanitized HTML. Safe to render with MarkupString; never assign a raw Graph
     /// string to this.</summary>
     public string ImpactDescriptionHtml { get; init; } = "";
 
+    public List<ServiceIncidentDetail> Details { get; init; } = [];
+
     public List<ServiceIncidentPost> Posts { get; init; } = [];
 
     public bool IsIncident => string.Equals(Classification, "incident", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// One of Microsoft's named detail blocks on an issue (Recommendations, UserCountImpact and
+/// friends). The values arrive as HTML, so they go through the same sanitizer as every other
+/// third-party string on this page.
+/// </summary>
+public sealed class ServiceIncidentDetail
+{
+    public string Name { get; init; } = "";
+
+    /// <summary>Sanitized HTML. Safe to render with MarkupString; never assign a raw Graph
+    /// string to this.</summary>
+    public string ValueHtml { get; init; } = "";
 }
 
 public sealed class ServiceIncidentPost

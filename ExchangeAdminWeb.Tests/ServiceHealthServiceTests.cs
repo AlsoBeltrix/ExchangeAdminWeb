@@ -370,13 +370,29 @@ public class ServiceHealthServiceTests
     // ---- Presentation helpers --------------------------------------------------------------
 
     [Theory]
-    [InlineData("serviceOperational", "Service Operational")]
-    [InlineData("serviceDegradation", "Service Degradation")]
-    [InlineData("postIncidentReviewPublished", "Post Incident Review Published")]
+    [InlineData("serviceOperational", "Healthy")]
+    [InlineData("serviceDegradation", "Degraded")]
+    [InlineData("serviceInterruption", "Interrupted")]
+    [InlineData("postIncidentReviewPublished", "Post-Incident Review Published")]
     [InlineData("", "")]
-    public void HumanizeStatus_SplitsCamelCase(string input, string expected)
+    public void HumanizeStatus_UsesTheShortOperatorFacingWords(string input, string expected)
     {
         Assert.Equal(expected, ServiceHealthService.HumanizeStatus(input));
+    }
+
+    [Fact]
+    public void HumanizeStatus_FallsBackToACamelSplitForAnUnmappedFutureStatus()
+    {
+        Assert.Equal("Some Future Status", ServiceHealthService.HumanizeStatus("someFutureStatus"));
+    }
+
+    [Theory]
+    [InlineData("UserCountImpact", "User Count Impact")]
+    [InlineData("Recommendations", "Recommendations")]
+    [InlineData("", "")]
+    public void SpaceOutName_SplitsCamelCase(string input, string expected)
+    {
+        Assert.Equal(expected, ServiceHealthService.SpaceOutName(input));
     }
 
     [Fact]
@@ -389,5 +405,117 @@ public class ServiceHealthServiceTests
         var incident = ServiceHealthService.ParseIncident(doc.RootElement);
 
         Assert.Equal("", Assert.Single(incident.Posts).ContentHtml);
+    }
+
+    // ---- Service-to-incident linkage -------------------------------------------------------
+
+    private static ServiceHealthStatus LinkageStatus() => new()
+    {
+        Services =
+        [
+            new ServiceHealthEntry { Id = "Exchange", DisplayName = "Exchange Online", Status = "serviceDegradation" },
+            new ServiceHealthEntry { Id = "SharePoint", DisplayName = "SharePoint Online", Status = "serviceOperational" }
+        ],
+        Issues =
+        [
+            new ServiceIncident { Id = "EX1", ServiceId = "exchange" },
+            new ServiceIncident { Id = "EX2", ServiceId = "Exchange" },
+            new ServiceIncident { Id = "SP1", ServiceId = "SharePoint" }
+        ]
+    };
+
+    [Fact]
+    public void IssuesFor_MatchesTheServiceIdCaseInsensitively()
+    {
+        var issues = LinkageStatus().IssuesFor("EXCHANGE");
+
+        Assert.Equal(["EX1", "EX2"], issues.Select(i => i.Id));
+    }
+
+    [Fact]
+    public void IssuesFor_ReturnsNothingForAServiceWithNoOpenIssues()
+    {
+        Assert.Empty(LinkageStatus().IssuesFor("Teams"));
+        Assert.Equal(0, LinkageStatus().IssueCountFor("Teams"));
+    }
+
+    [Fact]
+    public void IssuesFor_TreatsABlankServiceIdAsNoMatchRatherThanMatchingEverything()
+    {
+        Assert.Empty(LinkageStatus().IssuesFor(""));
+        Assert.Equal(0, LinkageStatus().IssueCountFor("  "));
+    }
+
+    [Fact]
+    public void IssueCountFor_CountsOnlyThatServicesIssues()
+    {
+        var status = LinkageStatus();
+
+        Assert.Equal(2, status.IssueCountFor("Exchange"));
+        Assert.Equal(1, status.IssueCountFor("sharepoint"));
+    }
+
+    // ---- Detail blocks ---------------------------------------------------------------------
+
+    [Fact]
+    public void ParseIncident_ReadsTheDetailBlocksAndSanitizesTheirHtml()
+    {
+        using var doc = JsonDocument.Parse("""
+            {"id":"EX1","featureGroup":"E-Mail timely delivery","origin":"Microsoft",
+             "isResolved":false,"endDateTime":null,
+             "details":[
+               {"name":"Recommendations","value":"<div>Do <b>this</b><script>alert(1)</script></div>"},
+               {"name":"UserCountImpact","value":""},
+               {"name":"","value":"<p>Nameless</p>"}]}
+            """);
+
+        var incident = ServiceHealthService.ParseIncident(doc.RootElement);
+
+        Assert.Equal("E-Mail timely delivery", incident.FeatureGroup);
+        Assert.Equal("Microsoft", incident.Origin);
+        Assert.False(incident.IsResolved);
+        Assert.Null(incident.EndDateTime);
+
+        // The empty UserCountImpact block is dropped; a heading with nothing under it is noise.
+        Assert.Equal(2, incident.Details.Count);
+        Assert.Equal("Recommendations", incident.Details[0].Name);
+        Assert.Contains("<b>this</b>", incident.Details[0].ValueHtml);
+        Assert.DoesNotContain("script", incident.Details[0].ValueHtml, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Detail", incident.Details[1].Name);
+    }
+
+    [Fact]
+    public void ParseIncident_SplitsDetailNamesIntoWords()
+    {
+        using var doc = JsonDocument.Parse("""
+            {"id":"EX1","details":[{"name":"UserCountImpact","value":"<p>Some users</p>"}]}
+            """);
+
+        var incident = ServiceHealthService.ParseIncident(doc.RootElement);
+
+        Assert.Equal("User Count Impact", Assert.Single(incident.Details).Name);
+    }
+
+    [Fact]
+    public void ParseIncident_ReadsTheResolvedMarkerAndEndDate()
+    {
+        using var doc = JsonDocument.Parse("""
+            {"id":"EX1","isResolved":true,"endDateTime":"2026-09-02T11:00:00Z"}
+            """);
+
+        var incident = ServiceHealthService.ParseIncident(doc.RootElement);
+
+        Assert.True(incident.IsResolved);
+        Assert.Equal(
+            new DateTimeOffset(2026, 9, 2, 11, 0, 0, TimeSpan.Zero),
+            incident.EndDateTime!.Value.ToUniversalTime());
+    }
+
+    [Fact]
+    public void ParseIncident_ToleratesADetailsPropertyThatIsNotAnArray()
+    {
+        using var doc = JsonDocument.Parse("""{"id":"EX1","details":null}""");
+
+        Assert.Empty(ServiceHealthService.ParseIncident(doc.RootElement).Details);
     }
 }
