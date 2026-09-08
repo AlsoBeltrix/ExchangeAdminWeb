@@ -125,11 +125,11 @@ only the new module's own version is set (Constitution "Deployment And Versionin
    are excluded from robocopy mirroring. Preserve these exclusions in any deploy
    change. Runtime operational config lives in the SQLite database named by
    `ConfigStore:Path` in each instance's `appsettings.json` (the shared file, outside both <!-- lint: allow (owner ruled leave-it, 2026-07-27: runtime config DB is intentionally created outside source control) -->
-   publish folders; without the key, the instance's own `config/exchangeadmin.db`); it is
+   publish folders; without the key, the instance's own `config/exchangeadmin.db`); it is <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime config DB is intentionally created outside source control) -->
    backed up via verified online backup from that path before each deploy, not by raw file
    copy. A configured path must already exist - the app and the scripts refuse a missing
-   one. The jobs database (`config/exchangeadmin-jobs.db`) and the anonymous
-   usage-telemetry database (`config/exchangeadmin-usage.db`) are per-instance runtime
+   one. The jobs database (`config/exchangeadmin-jobs.db`) and the anonymous <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime jobs DB is intentionally created outside source control) -->
+   usage-telemetry database (`config/exchangeadmin-usage.db`) are per-instance runtime <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
    files that are deliberately neither backed up nor promoted: do not "fix" their absence
    from the backup or the promotion copy.
 4. Every ops-script step must support `-PlanOnly` (via `Invoke-PlanOrAction` /

@@ -6,37 +6,40 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **SERVICE HEALTH MODULE: 1.2.0 IMPLEMENTED 2026-09-08, NOT YET DEPLOYED, NOT CONFIGURED.**
-  1.0.0 was deployed to dev and FAILED owner acceptance (service rows did not link to the
-  incident data). 1.1.0 was the parity fix: service rows expand in place to their incidents,
-  per-service issue counts, short status words, and Microsoft's `details` blocks (which are
-  HTML, so `ServiceIncidentDetail.ValueHtml` joins the `MarkupString` allow-list). 1.2.0 is
-  the owner's design ruling on top of it: the standalone "Open incidents and advisories"
-  list is GONE (incidents live only under their service - do not reintroduce a flat list),
-  the service board sorts worst-first then alphabetically by default with `Open incidents`
-  and `Name` alternatives, the service dropdown is replaced by a wildcard text filter
-  (empty or `*` = all, plain word = contains, `*`/`?` = anchored match), and opening a
-  service opens its incidents with details already expanded. Detail in the plan's review
-  log, rounds 2 and 3.
-  `docs/ServiceHealth-Plan.md` Status Implemented. Module `ServiceHealth` (version
-  `1.2.0`, route `/service-health`, `EnabledByDefault = false`) - a read-only port of the
-  standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365 service
-  status plus open incidents/advisories with Microsoft's own update timeline, read from
-  Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new module;
-  Constitution "Deployment And Versioning", `.agents/decisions.md` 2026-07-21). Incident
-  HTML renders formatted, never stripped (owner ruling 2026-09-08: L1/L2 forward it to
-  executives); the trust boundary is `HtmlSanitizer` 9.2.1039 in `ServiceHealthService`,
-  and `MarkupString` on the page may only ever touch a field that came through it - a
-  source-text test enforces that. **TWO OPERATIONAL PREREQUISITES, BOTH OWNER-RUN, BEFORE
-  THE PAGE CAN WORK: (1) create the Delinea record for the EXISTING app registration
+- **SERVICE HEALTH MODULE: 1.3.0 IMPLEMENTED 2026-09-08, NOT YET DEPLOYED, NOT CONFIGURED.**
+  Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
+  port of the standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365
+  service status plus open incidents/advisories with Microsoft's own update timeline, read
+  from Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new
+  module; Constitution "Deployment And Versioning", `.agents/decisions.md` 2026-07-21).
+  Behaviour has been right since 1.1.0; 1.2.0 and 1.3.0 are presentation. **1.3.0 is the
+  owner's closing design ruling ("just make it look like the fucking original"): the page is
+  now a fidelity port of the original dashboard's appearance - new scoped stylesheet
+  `Components/Pages/ServiceHealth.razor.css` (the first one under `Components/Pages/`)
+  reproducing the original's geometry with every colour mapped onto a `--ui-*` theme token,
+  gradient header, four summary cards, the original filter row plus the retained sort
+  dropdown, a compact service-card grid, and the "Current Issues" section below whose cards
+  the grid filters. Do not redesign this page and do not add charts - five rounds of design
+  proposals were rejected, and the earlier praise for a donut chart was explicitly
+  retracted.** Two earlier decisions were reversed by that ruling and are recorded in the
+  plan's round 4: the separate incident section is back (filtered by the clicked service),
+  and the wildcard text filter is replaced by the original's service dropdown, so
+  `FilterServices` now matches the service id exactly. "Active Issues" counts issues with no
+  `endDateTime`, the original's definition, which closes the old 17-vs-15 discrepancy in
+  favour of 15. Incident HTML renders formatted, never stripped (owner ruling 2026-09-08:
+  L1/L2 forward it to executives); the trust boundary is `HtmlSanitizer` 9.2.1039 in
+  `ServiceHealthService`, and `MarkupString` on the page may only ever touch a field that
+  came through it - a source-text test enforces that. `docs/ServiceHealth-Plan.md` Status
+  Implemented. **TWO OPERATIONAL PREREQUISITES, BOTH OWNER-RUN, BEFORE THE PAGE CAN WORK:
+  (1) create the Delinea record for the EXISTING app registration
   `e4fa5e51-d226-4a02-9a8b-d8de27133cdb` (tenant `eaa689b4-8f87-40e0-9c6f-7228de4d754a`,
   already consented for `ServiceHealth.Read.All`; the secret lives in a DPAPI file on
-  ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its
-  id in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant
-  the `ServiceHealth` section access group.** Until (1) the page shows a not-configured
-  banner rather than an empty board. NEXT: owner deploys dev to pick up 1.2.0, then does the
-  two steps above and runs the plan's manual checks.
-
+  ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its id
+  in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant the
+  `ServiceHealth` section access group.** Until (1) the page shows a not-configured banner
+  rather than an empty board. NEXT: owner deploys dev to pick up 1.3.0 and accepts or
+  rejects the look, then does the two steps above and runs the plan's manual checks. A
+  `/codereview codex` pass on the module is still outstanding.
 - **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**
   `docs/SharedConfigDb-Plan.md` Status Implemented; slices S1 `be507f0` (ConfigStore:Path
   key, must-exist open, tolerant migrator with table+column check, additive-only tripwire,
@@ -79,14 +82,14 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `2938db7..4af217e`: `acceptable_with_changes`, three findings + one material change, all
   folded in (`.agents/review/findings/ute-{1,2,3}.md`). **Two were mine to have caught:**
   ute-1 put the table in the config DB that `promote-dev-to-prod.ps1` replaces wholesale
-  with dev's (now its own `config/exchangeadmin-usage.db`, never promoted or backed up, no
+  with dev's (now its own `config/exchangeadmin-usage.db`, never promoted or backed up, no <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
   migrator step); ute-2 hooked `LogModuleAction` only, while MailboxPermissions,
   ConferenceRooms, Migration and MfaReset audit through their own methods (now the common
   `WriteAuditEvent`). ute-3: action rows now carry the throwaway session id through a
   `CircuitHandler.CreateInboundActivityHandler` + `AsyncLocal` ambient. Six slices; base
   app bump in S1 (the plan text says `2.19.0`, but SharedConfigDb landed first and took it -
   the bump is now `2.19.0` -> `2.20.0`), `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
-  S1 landed: `config/exchangeadmin-usage.db` with its own factory and
+  S1 landed: `config/exchangeadmin-usage.db` with its own factory and <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
   `UsageEventRepository` (idempotent table, no migrator step), base app `2.20.0`.
   S2 landed: `UsageSession` + `UsageSessionCircuitHandler` (ambient per-circuit id),
   `UsageTelemetryService` (kill switch defaulting on, fail-closed on an unreadable
@@ -107,7 +110,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   policy and with no new permission; `AdminEventLog` `1.1.0` -> `1.2.0`.
   S6 landed: README "Usage telemetry" under the Admin Event Log page (what is and is not
   recorded, the 90-day retention, where the kill switch lives), repo-guidance invariant 3
-  naming both `exchangeadmin-jobs.db` and `exchangeadmin-usage.db` as per-instance files
+  naming both `exchangeadmin-jobs.db` and `exchangeadmin-usage.db` as per-instance files <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
   deliberately neither backed up nor promoted, and the plan set to Implemented with its
   traceability table, seven recorded deviations and an implementation-log entry.
   Final: 2373/0/3, format clean, `git diff --check` clean, 33 mutation probes across the

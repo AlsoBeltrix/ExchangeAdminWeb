@@ -1,0 +1,522 @@
+/* Scoped styles for the Service Health board.
+   This is a deliberate port of the standalone dashboard's stylesheet
+   (servicehealthmonitor/static/style.css): same geometry, same rhythm, same
+   card sizes. The only change is colour - every literal hex in the original is
+   mapped onto the app's theme tokens so the nine non-default themes still work.
+   Owner ruling 2026-09-08: the module mirrors the original's appearance. */
+
+.sh-page {
+    max-width: 1200px;
+    margin: 0 auto;
+    line-height: 1.6;
+    font-family: var(--ui-font);
+}
+
+/* ---- Header band -------------------------------------------------------- */
+
+.sh-header {
+    background: var(--ui-brand);
+    background: linear-gradient(135deg, var(--ui-brand), var(--ui-info));
+    color: var(--ui-brand-fg);
+    padding: 1rem 1.25rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+}
+
+.sh-header h1 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+}
+
+.sh-header h1 i {
+    color: #4fc3f7;
+}
+
+.sh-header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.sh-updated {
+    font-size: .9rem;
+    opacity: .9;
+}
+
+.sh-refresh {
+    background: rgba(255, 255, 255, .2);
+    border: 1px solid rgba(255, 255, 255, .3);
+    color: var(--ui-brand-fg);
+    padding: .5rem 1rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: .95rem;
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    transition: background .2s, transform .2s;
+}
+
+.sh-refresh:hover:not(:disabled) {
+    background: rgba(255, 255, 255, .3);
+    transform: translateY(-1px);
+}
+
+.sh-refresh:disabled {
+    opacity: .6;
+    cursor: default;
+}
+
+/* ---- Summary cards ------------------------------------------------------ */
+
+.sh-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.sh-card {
+    background: var(--ui-surface);
+    border-radius: 10px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .1);
+    transition: transform .2s, box-shadow .2s;
+}
+
+.sh-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, .15);
+}
+
+.sh-card-header {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: .75rem;
+}
+
+.sh-card-header i {
+    font-size: 1.2rem;
+    color: var(--ui-brand);
+}
+
+.sh-card-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ui-fg2);
+    margin: 0;
+}
+
+.sh-metric {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--ui-fg);
+    line-height: 1.1;
+}
+
+.sh-metric.healthy {
+    color: var(--ui-on);
+}
+
+.sh-metric.warning {
+    color: var(--ui-warn);
+}
+
+.sh-metric.error {
+    color: var(--ui-danger);
+}
+
+/* ---- Filters ------------------------------------------------------------ */
+
+.sh-filters {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.5rem;
+}
+
+.sh-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+}
+
+.sh-filter-group label {
+    font-weight: 600;
+    color: var(--ui-fg2);
+    font-size: .9rem;
+}
+
+.sh-filter-group select {
+    padding: .5rem;
+    border: 1px solid var(--ui-line);
+    border-radius: 5px;
+    background: var(--ui-surface);
+    color: var(--ui-fg);
+    font-size: .95rem;
+    min-width: 220px;
+}
+
+.sh-filter-group select:focus {
+    outline: none;
+    border-color: var(--ui-brand);
+    box-shadow: 0 0 0 2px rgba(var(--ui-brand-rgb), .15);
+}
+
+/* ---- Service grid ------------------------------------------------------- */
+
+.sh-services-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-bottom: 3rem;
+}
+
+.sh-service-card {
+    background: var(--ui-surface);
+    border-radius: 8px;
+    padding: .75rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
+    border-left: 4px solid var(--ui-line);
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    border-top: 0;
+    border-right: 0;
+    border-bottom: 0;
+    transition: transform .15s, box-shadow .15s;
+}
+
+.sh-service-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 16px rgba(0, 0, 0, .15);
+}
+
+.sh-service-card:focus-visible {
+    outline: 2px solid var(--ui-brand);
+    outline-offset: 2px;
+}
+
+.sh-service-card.selected {
+    box-shadow: 0 0 0 2px var(--ui-brand);
+}
+
+.sh-service-card[data-status="serviceOperational"] {
+    border-left-color: var(--ui-on);
+}
+
+.sh-service-card[data-status="serviceDegradation"] {
+    border-left-color: var(--ui-warn);
+}
+
+.sh-service-card[data-status="serviceInterruption"] {
+    border-left-color: var(--ui-danger);
+}
+
+.sh-service-header {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: .5rem;
+}
+
+.sh-service-header h3 {
+    font-size: .95rem;
+    font-weight: 600;
+    color: var(--ui-fg);
+    margin: 0;
+    flex: 1;
+}
+
+.sh-service-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
+.sh-issue-count {
+    font-size: .9rem;
+    color: var(--ui-danger);
+    font-weight: 600;
+}
+
+/* ---- Status badges and icons -------------------------------------------- */
+
+.sh-status-badge {
+    padding: .25rem .75rem;
+    border-radius: 15px;
+    font-size: .8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: var(--ui-header);
+    color: var(--ui-fg2);
+    white-space: nowrap;
+}
+
+.sh-status-badge.status-serviceOperational {
+    background: var(--ui-on-bg);
+    color: var(--ui-on);
+}
+
+.sh-status-badge.status-serviceDegradation {
+    background: var(--ui-warn-bg);
+    color: var(--ui-warn);
+}
+
+.sh-status-badge.status-serviceInterruption {
+    background: var(--ui-danger-bg);
+    color: var(--ui-danger);
+}
+
+.status-healthy {
+    color: var(--ui-on);
+}
+
+.status-warning {
+    color: var(--ui-warn);
+}
+
+.status-error {
+    color: var(--ui-danger);
+}
+
+.status-info {
+    color: var(--ui-info);
+}
+
+.status-unknown {
+    color: var(--ui-fg3);
+}
+
+/* ---- Issues section ----------------------------------------------------- */
+
+.sh-issues-section {
+    margin-top: 3rem;
+}
+
+.sh-issues-section h2 {
+    font-size: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: 1rem;
+    color: var(--ui-fg);
+}
+
+.sh-issues-section h2 i {
+    color: var(--ui-danger);
+}
+
+.sh-issue-card {
+    background: var(--ui-surface);
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .1);
+    border-left: 4px solid var(--ui-danger);
+    margin-bottom: 1rem;
+}
+
+.sh-issue-card.expanded {
+    box-shadow: 0 5px 20px rgba(0, 0, 0, .15);
+}
+
+.sh-issue-header {
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    cursor: pointer;
+    background: none;
+    border: 0;
+    padding: 0;
+    width: 100%;
+    text-align: left;
+    color: inherit;
+}
+
+.sh-issue-header h4 {
+    flex: 1;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--ui-fg);
+}
+
+.sh-issue-id {
+    font-size: .8rem;
+    color: var(--ui-fg2);
+    font-family: var(--ui-mono);
+    background: var(--ui-zebra);
+    padding: .25rem .5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.sh-issue-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: .75rem;
+    font-size: .9rem;
+    margin-top: 1rem;
+    color: var(--ui-fg);
+}
+
+.sh-issue-summary strong {
+    color: var(--ui-fg2);
+}
+
+.sh-issue-expanded-details {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--ui-grid);
+}
+
+.sh-issue-expanded-details h5 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--ui-fg);
+    margin: 1.5rem 0 .75rem;
+}
+
+.sh-detail-item,
+.sh-issue-post,
+.sh-issue-description {
+    background: var(--ui-zebra);
+    border-left: 3px solid var(--ui-brand);
+    border-radius: 5px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: var(--ui-fg);
+}
+
+.sh-detail-item h6 {
+    color: var(--ui-brand);
+    font-size: .95rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    margin: 0 0 .5rem;
+}
+
+.sh-post-header {
+    font-size: .85rem;
+    color: var(--ui-fg2);
+    margin-bottom: .5rem;
+}
+
+.sh-issue-metadata {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--ui-zebra);
+    border-radius: 5px;
+    font-size: .9rem;
+    color: var(--ui-fg);
+}
+
+.sh-issue-metadata strong {
+    color: var(--ui-fg2);
+}
+
+.sh-issue-ongoing {
+    margin-top: 1rem;
+    background: var(--ui-warn-bg);
+    color: var(--ui-warn);
+    border-radius: 5px;
+    padding: .5rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+/* Sanitized third-party HTML lands inside these blocks, so it never carries the
+   scope attribute - ::deep is the only way to reach it. */
+.sh-detail-item ::deep p,
+.sh-issue-post ::deep p,
+.sh-issue-description ::deep p {
+    margin: 0 0 .75rem;
+}
+
+.sh-detail-item ::deep p:last-child,
+.sh-issue-post ::deep p:last-child,
+.sh-issue-description ::deep p:last-child {
+    margin-bottom: 0;
+}
+
+.sh-detail-item ::deep ul,
+.sh-issue-post ::deep ul,
+.sh-issue-description ::deep ul {
+    margin: 0 0 .75rem;
+    padding-left: 1.25rem;
+}
+
+/* ---- Empty and error states --------------------------------------------- */
+
+.sh-no-results {
+    background: var(--ui-surface);
+    border: 2px dashed var(--ui-line);
+    border-radius: 8px;
+    padding: 2rem;
+    text-align: center;
+    color: var(--ui-fg2);
+    grid-column: 1 / -1;
+}
+
+.sh-no-issues {
+    background: var(--ui-on-bg);
+    color: var(--ui-on);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .5rem;
+}
+
+.sh-error {
+    background: var(--ui-danger-bg);
+    color: var(--ui-danger);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.sh-loading {
+    text-align: center;
+    padding: 3rem 0;
+    color: var(--ui-fg2);
+}
+
+@media (max-width: 768px) {
+    .sh-services-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .sh-filters {
+        flex-direction: column;
+    }
+
+    .sh-filter-group select {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .sh-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

@@ -2,7 +2,7 @@
 
 Status: Implemented
 Owner: Michael
-Last verified against code: 7ba6b25 (2026-09-08)
+Last verified against code: 1.3.0 round 4 (2026-09-08)
 
 ## 1. Goal  [YOU]
 
@@ -467,3 +467,84 @@ Coverage limits: unchanged from round 2. The sort and filter projectors are genu
 tested; the page's wiring of them - that typing in the box re-filters, that a click reaches
 `ToggleService`, that opening a service opens its incidents - is source-text tripwire only,
 because this repo still has no bUnit harness.
+
+### Round 4 - 2026-09-08 - owner design ruling: mirror the original's appearance
+
+Five rounds of design work were rejected. Round 2's chart-first prototypes drew "no all of
+these are a mess. too much noise. I need a simple, fast glance, OBVIOUS, EASY TO READ STATUS
+PAGE. I mistakenly told you the circle chart thing was good and now everything is a fucking
+circle-chart first chaotic shitshow" - which explicitly retracts the earlier praise for the
+donut, so **no charts**. The ruling that closed the exploration: **"just make it look like
+the fucking original since you are incapable of improving it."** That is the whole remaining
+spec. This round is a fidelity port of the standalone dashboard's appearance, not a design.
+
+**New file `Components/Pages/ServiceHealth.razor.css`** - the first scoped stylesheet under
+`Components/Pages/` (`Components/App.razor` already loads `ExchangeAdminWeb.styles.css`, so
+no wiring was needed). It reproduces `servicehealthmonitor/static/style.css` geometry
+literally - same card sizes, grid minimums, radii, shadows, spacing rhythm - with one
+substitution: every literal hex in the original is mapped onto an existing `--ui-*` theme
+token, because `wwwroot/app.css` states "Everything below this block should reference a
+token, never a literal hex" and nine non-default themes would otherwise render unreadable
+text on the wrong ground. One literal survives, `#4fc3f7` (the header icon on the brand
+gradient, which has no token); `Styles_UseThemeTokensRatherThanLiteralColours` pins it as
+the only one allowed. Sanitized third-party HTML never carries the scope attribute, so the
+blocks that hold it reach it with `::deep`.
+
+**`Components/Pages/ServiceHealth.razor` rewritten to the original's structure:** gradient
+header band with the title, last-updated stamp and Refresh; four summary cards in the
+original's order (Total Services / Healthy Services / Active Issues / Services Degraded);
+the original's filter row; a compact 300px-minimum service-card grid with 4px status-coloured
+left borders and uppercase pill badges; and the "Current Issues" section below, whose cards
+expand to Feature, User Impact, Details, newest-first Updates, metadata, and an "Ongoing
+Issue" foot.
+
+Three tensions were resolved without asking, each recorded here because each reverses an
+earlier decision in this document:
+
+1. **The separate incident section is back.** Round 3 removed it on the owner's "do not dump
+   an unsorted list of TLDRs under a vague open incidents and advisories section", and
+   `Page_HasNoSeparateIncidentDumpBelowTheServices` pinned its absence. The original *has*
+   that section, filtered by the service card you click rather than unsorted-and-vague, and
+   "make it look like the original" is the newer instruction. The guard is replaced by
+   `Page_MirrorsTheOriginalDashboardStructure`, which still pins the single
+   `RenderFragment<ServiceIncident>` / single call site shape.
+2. **The wildcard text box is gone**, replaced by the original's service `<select>`. The
+   owner's "filter *" reads as "default the filter to everything", which "All Services"
+   satisfies. `MatchesName` and its tests are deleted; `FilterServices` now matches the
+   service id exactly, pinned by
+   `FilterServices_MatchesTheServiceIdExactlyNotAsASubstring` (Teams must not select
+   TeamsLiveEvents).
+3. **The sort control stays**, as a third dropdown styled identically to the original's
+   filter row - the owner asked for it explicitly and the original lacks it, so the feature
+   is retained and the look is not changed.
+
+Also settled: **"Active Issues" now uses the original's `!endDateTime` definition**
+(`ActiveIssueCount`), not "not resolved". That explains and closes the carried 17-vs-15
+discrepancy in favour of 15. An issue can carry an end time while Microsoft still reports it
+unresolved; the original does not count those.
+
+No JS was added: the original's `scrollIntoView` has no seam here, and selecting a service
+narrows the grid to one card, so the issues section rises into view anyway.
+
+Module `ServiceHealth` version `1.2.0` -> `1.3.0`. Base app version unchanged at `2.20.2`
+(module-scoped presentation change only).
+
+Gates: Release build 0 errors; full `dotnet test ExchangeAdminWeb.slnx` 2478 passed, 0
+failed, 3 skipped; `dotnet format --verify-no-changes` clean; `git diff --check HEAD` clean;
+no non-ASCII in any touched file.
+
+Non-vacuity: 11 mutation probes, all biting - hard-coding a hex in the stylesheet, renaming
+the "Current Issues" heading, breaking the `IncidentCard` call site, unhooking the service
+card's `SelectService`, renaming `#sort-order`, swapping `ActiveIssueCount` to `!IsResolved`,
+loosening the exact service-id match to `Contains`, dropping the `IssuesFor` service scope,
+reversing its sort, collapsing two `StatusIcon` severities onto one icon, and dropping the
+`Humanize` capitalisation. Each failed exactly its own test and nothing else; restored, file
+touched to defeat the MSBuild timestamp skip. **One probe caught a vacuous test:**
+`ActiveIssueCount_CountsIssuesWithNoEndTimeNotUnresolvedOnes` originally used a resolved
+issue with no end time, so both definitions returned 2 and the mutant passed. The fixture
+now gives the resolved issue an end time (expected 1), and the probe bites.
+
+Coverage limits: unchanged. The projectors are genuinely tested; the page's wiring of them -
+that a click reaches `SelectService`, that the grid re-renders - is source-text tripwire
+only, because this repo still has no bUnit harness. Appearance itself is not testable here;
+the owner's visual acceptance on dev is the gate.

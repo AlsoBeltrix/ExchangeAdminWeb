@@ -14,17 +14,21 @@ namespace ExchangeAdminWeb.Tests;
 /// </summary>
 public class ServiceHealthPageTests
 {
-    private static string PageSource()
+    private static string RepoFile(params string[] parts)
     {
         var dir = AppContext.BaseDirectory;
         while (dir != null && !File.Exists(Path.Combine(dir, "ExchangeAdminWeb.csproj")))
             dir = Path.GetDirectoryName(dir);
 
         Assert.NotNull(dir);
-        var path = Path.Combine(dir!, "Components", "Pages", "ServiceHealth.razor");
-        Assert.True(File.Exists(path), $"Page not found at {path}");
+        var path = Path.Combine([dir!, .. parts]);
+        Assert.True(File.Exists(path), $"File not found at {path}");
         return File.ReadAllText(path);
     }
+
+    private static string PageSource() => RepoFile("Components", "Pages", "ServiceHealth.razor");
+
+    private static string PageStyles() => RepoFile("Components", "Pages", "ServiceHealth.razor.css");
 
     [Fact]
     public void Page_MarkupStringIsOnlyEverUsedOnSanitizedFields()
@@ -77,18 +81,17 @@ public class ServiceHealthPageTests
         Assert.Contains("<ModuleVersion />", PageSource());
     }
 
-
     [Fact]
-    public void Page_ServiceRowsAreClickableAndCarryAnIssueCount()
+    public void Page_ServiceCardsAreClickableAndCarryAnIssueCount()
     {
         var source = PageSource();
 
-        Assert.Contains("ToggleService(service.Id, serviceIssues)", source);
-        Assert.Contains("status.IssuesFor(service.Id)", source);
+        Assert.Contains("SelectService(service.Id)", source);
+        Assert.Contains("status.IssueCountFor(service.Id)", source);
     }
 
     [Fact]
-    public void Page_OffersTheNameFilterStatusFilterAndSortOrder()
+    public void Page_OffersTheServiceFilterStatusFilterAndSortOrder()
     {
         var source = PageSource();
 
@@ -99,18 +102,39 @@ public class ServiceHealthPageTests
     }
 
     [Fact]
-    public void Page_HasNoSeparateIncidentDumpBelowTheServices()
+    public void Page_MirrorsTheOriginalDashboardStructure()
     {
-        // Owner ruling 2026-09-08: incidents live under the service they belong to and nowhere
-        // else. One call site, one renderer - a second one would be the flat list coming back.
+        // Owner ruling 2026-09-08: the module reproduces the standalone dashboard's appearance.
+        // That board is a compact service grid over a single "Current Issues" list, and a card
+        // click narrows both halves to that service rather than expanding in place.
         var source = PageSource();
 
+        Assert.Contains("sh-summary", source);
+        Assert.Contains("sh-services-grid", source);
+        Assert.Contains("Current Issues", source);
+        Assert.Contains("No issues for selected filters", source);
+        Assert.Contains("No services match your filter criteria.", source);
         Assert.Single(Regex.Matches(source, @"private RenderFragment<ServiceIncident> IncidentCard"));
         Assert.Single(Regex.Matches(source, @"@IncidentCard\(issue\)"));
-        Assert.DoesNotContain("Open incidents and advisories", source);
     }
 
-    // ---- Filter and sort projectors (real behaviour, not source text) ------------------------
+    [Fact]
+    public void Styles_UseThemeTokensRatherThanLiteralColours()
+    {
+        // wwwroot/app.css: "Everything below this block should reference a token, never a literal
+        // hex." The port keeps the original's geometry but must not hard-code its light palette,
+        // or the nine non-default themes render unreadable text on the wrong ground.
+        var css = PageStyles();
+        var hexes = Regex.Matches(css, @"#[0-9a-fA-F]{3,8}\b").Select(m => m.Value).ToArray();
+
+        // The one deliberate literal is the header icon accent, which sits on the brand gradient
+        // in every theme and so has no token to take.
+        Assert.All(hexes, hex => Assert.Equal("#4fc3f7", hex));
+        Assert.Contains("var(--ui-surface)", css);
+        Assert.Contains("var(--ui-danger)", css);
+    }
+
+    // ---- Filter, sort and projection behaviour (real behaviour, not source text) --------------
 
     private static ServiceHealthStatus Sample() => new()
     {
@@ -129,18 +153,34 @@ public class ServiceHealthPageTests
     };
 
     [Fact]
-    public void FilterServices_AnEmptyNameAndAllStatusesReturnsEverything()
+    public void FilterServices_AllServicesAndAllStatusesReturnsEverything()
     {
-        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "", "all").Count);
-        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "*", "all").Count);
+        Assert.Equal(3, ServiceHealth.FilterServices(Sample(), "all", "all").Count);
     }
 
     [Fact]
-    public void FilterServices_NarrowsByNameThenByStatus()
+    public void FilterServices_NarrowsByServiceThenByStatus()
     {
         Assert.Equal(["Exchange"], ServiceHealth.FilterServices(Sample(), "Exchange", "all").Select(s => s.Id));
-        Assert.Equal(["SharePoint"], ServiceHealth.FilterServices(Sample(), "", "serviceOperational").Select(s => s.Id));
+        Assert.Equal(["SharePoint"], ServiceHealth.FilterServices(Sample(), "all", "serviceOperational").Select(s => s.Id));
         Assert.Empty(ServiceHealth.FilterServices(Sample(), "Exchange", "serviceOperational"));
+    }
+
+    [Fact]
+    public void FilterServices_MatchesTheServiceIdExactlyNotAsASubstring()
+    {
+        // The dropdown carries an id. A substring match would let "Teams" also select
+        // "TeamsLiveEvents", which is a different service with a different status.
+        var status = new ServiceHealthStatus
+        {
+            Services =
+            [
+                new ServiceHealthEntry { Id = "Teams", DisplayName = "Microsoft Teams" },
+                new ServiceHealthEntry { Id = "TeamsLiveEvents", DisplayName = "Teams Live Events" }
+            ]
+        };
+
+        Assert.Equal(["Teams"], ServiceHealth.FilterServices(status, "Teams", "all").Select(s => s.Id));
     }
 
     [Fact]
@@ -148,7 +188,7 @@ public class ServiceHealthPageTests
     {
         Assert.Equal(
             ["Exchange", "Teams"],
-            ServiceHealth.FilterServices(Sample(), "", "notHealthy").Select(s => s.Id));
+            ServiceHealth.FilterServices(Sample(), "all", "notHealthy").Select(s => s.Id));
     }
 
     [Fact]
@@ -156,38 +196,51 @@ public class ServiceHealthPageTests
     {
         Assert.Equal(
             ["Exchange", "Teams"],
-            ServiceHealth.FilterServices(Sample(), "", "withIssues").Select(s => s.Id));
-    }
-
-    [Theory]
-    [InlineData("exch", "Exchange")]
-    [InlineData("EXCH", "Exchange")]
-    [InlineData("online", "Exchange,SharePoint")]
-    [InlineData("*online", "Exchange,SharePoint")]
-    [InlineData("exch*", "Exchange")]
-    [InlineData("*teams*", "Teams")]
-    [InlineData("micros?ft teams", "Teams")]
-    [InlineData("nothing", "")]
-    public void MatchesName_TreatsAPlainWordAsContainsAndHonoursWildcards(string pattern, string expectedIds)
-    {
-        string[] expected = expectedIds.Length == 0 ? [] : expectedIds.Split(',');
-        var actual = ServiceHealth.FilterServices(Sample(), pattern, "all").Select(s => s.Id).ToArray();
-
-        Assert.Equal(expected, actual);
+            ServiceHealth.FilterServices(Sample(), "all", "withIssues").Select(s => s.Id));
     }
 
     [Fact]
-    public void MatchesName_AnchorsAWildcardPatternSoItCannotMatchEverything()
+    public void IssuesFor_ShowsOnlyTheIssuesOfTheServicesLeftOnTheGrid()
     {
-        // "exch*" is anchored: it must start the name. A bare "contains" would also match
-        // "Microsoft Exchange", which is not what an operator typing a trailing star asked for.
+        var status = Sample();
+        var visible = ServiceHealth.FilterServices(status, "Exchange", "all");
+
+        Assert.Equal(["EX1", "EX2"], ServiceHealth.IssuesFor(status, visible).Select(i => i.Id).Order());
+    }
+
+    [Fact]
+    public void IssuesFor_PutsTheMostRecentlyStartedIssueFirst()
+    {
         var status = new ServiceHealthStatus
         {
-            Services = [new ServiceHealthEntry { Id = "X", DisplayName = "Microsoft Exchange" }]
+            Services = [new ServiceHealthEntry { Id = "Exchange", DisplayName = "Exchange Online" }],
+            Issues =
+            [
+                new ServiceIncident { Id = "OLD", ServiceId = "Exchange", StartDateTime = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero) },
+                new ServiceIncident { Id = "NEW", ServiceId = "Exchange", StartDateTime = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero) }
+            ]
         };
 
-        Assert.Empty(ServiceHealth.FilterServices(status, "exch*", "all"));
-        Assert.Single(ServiceHealth.FilterServices(status, "exch", "all"));
+        Assert.Equal(["NEW", "OLD"], ServiceHealth.IssuesFor(status, status.Services).Select(i => i.Id));
+    }
+
+    [Fact]
+    public void ActiveIssueCount_CountsIssuesWithNoEndTimeNotUnresolvedOnes()
+    {
+        // This is the original dashboard's own definition. An issue can carry an end time while
+        // Microsoft still reports it unresolved, and the original does not count those.
+        var status = new ServiceHealthStatus
+        {
+            Issues =
+            [
+                new ServiceIncident { Id = "A", IsResolved = false },
+                new ServiceIncident { Id = "B", IsResolved = false, EndDateTime = DateTimeOffset.UtcNow },
+                new ServiceIncident { Id = "C", IsResolved = true, EndDateTime = DateTimeOffset.UtcNow }
+            ]
+        };
+
+        // Only A. Counting "not resolved" instead would wrongly include B.
+        Assert.Equal(1, ServiceHealth.ActiveIssueCount(status));
     }
 
     [Fact]
@@ -247,12 +300,23 @@ public class ServiceHealthPageTests
     }
 
     [Theory]
-    [InlineData("serviceOperational", "bg-success")]
-    [InlineData("serviceDegradation", "bg-warning text-dark")]
-    [InlineData("serviceInterruption", "bg-danger")]
-    [InlineData("somethingNew", "bg-secondary")]
-    public void ServiceBadgeClass_KeepsDegradedAndInterruptedApart(string status, string expected)
+    [InlineData("serviceOperational", "bi-check-circle-fill", "status-healthy")]
+    [InlineData("serviceDegradation", "bi-exclamation-triangle-fill", "status-warning")]
+    [InlineData("serviceInterruption", "bi-x-circle-fill", "status-error")]
+    [InlineData("extendedRecovery", "bi-info-circle-fill", "status-info")]
+    [InlineData("somethingNew", "bi-question-circle-fill", "status-unknown")]
+    public void StatusIcon_KeepsEachSeverityVisuallyDistinct(string status, string icon, string colour)
     {
-        Assert.Equal(expected, ServiceHealth.ServiceBadgeClass(status));
+        Assert.Equal(icon, ServiceHealth.StatusIcon(status));
+        Assert.Equal(colour, ServiceHealth.StatusIconClass(status));
+    }
+
+    [Theory]
+    [InlineData("rootCauseSummary", "Root Cause Summary")]
+    [InlineData("summary", "Summary")]
+    [InlineData("", "")]
+    public void Humanize_SplitsACamelCaseGraphKeyIntoWords(string key, string expected)
+    {
+        Assert.Equal(expected, ServiceHealth.Humanize(key));
     }
 }

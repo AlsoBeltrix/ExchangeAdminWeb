@@ -1,6 +1,5 @@
 @page "/service-health"
 @using Microsoft.AspNetCore.Authorization
-@using System.Text.RegularExpressions
 @attribute [Authorize(Policy = "ServiceHealth")]
 @rendermode InteractiveServer
 @inject ServiceHealthService HealthService
@@ -15,57 +14,55 @@
 
 @if (!authChecked)
 {
-    <div class="container-fluid">
-        <div class="text-center py-5">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Checking authorization...</span>
-            </div>
+    <div class="sh-loading">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Checking authorization...</span>
         </div>
     </div>
     return;
 }
 
-<div class="container-fluid">
-    <div class="alert alert-info py-2 mb-3">
-        <small>Current Microsoft 365 service status and the tenant's open service incidents, read live from Microsoft. Read-only.</small>
+<div class="sh-page">
+
+    <div class="sh-header">
+        <h1><i class="bi bi-activity"></i> Microsoft 365 Service Health<ModuleVersion /></h1>
+        <div class="sh-header-right">
+            @if (status != null)
+            {
+                <span class="sh-updated">Last updated @status.LastUpdatedUtc.ToLocalTime().ToString("g")</span>
+            }
+            <button class="sh-refresh" @onclick="RefreshAsync" disabled="@isLoading">
+                @if (isLoading)
+                {
+                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                    <span>Refreshing...</span>
+                }
+                else
+                {
+                    <i class="bi bi-arrow-clockwise"></i>
+                    <span>Refresh</span>
+                }
+            </button>
+        </div>
     </div>
-    <h1 class="mb-4">Service Health<ModuleVersion /></h1>
 
     @if (!HealthService.IsAvailable)
     {
-        <div class="alert alert-danger">Service Health module is not configured. Set Graph App Delinea Secret ID in Module Config.</div>
+        <div class="sh-error">Service Health module is not configured. Set Graph App Delinea Secret ID in Module Config.</div>
         return;
     }
-
-    <div class="d-flex align-items-center gap-3 mb-3">
-        <button class="btn btn-outline-primary btn-sm" @onclick="RefreshAsync" disabled="@isLoading">
-            @if (isLoading)
-            {
-                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                <span>Refreshing...</span>
-            }
-            else
-            {
-                <span>Refresh</span>
-            }
-        </button>
-        @if (status != null)
-        {
-            <small class="text-muted">Last updated @status.LastUpdatedUtc.ToLocalTime().ToString("g")</small>
-        }
-    </div>
 
     @if (loadError != null)
     {
         @* AC6: a failed fetch must never render as a healthy, empty board. *@
-        <div class="alert alert-danger">
+        <div class="sh-error">
             <strong>Could not read service health.</strong>
             <div class="mt-1"><small>@loadError</small></div>
         </div>
     }
     else if (isLoading && status == null)
     {
-        <div class="text-center py-5">
+        <div class="sh-loading">
             <div class="spinner-border text-primary" role="status">
                 <span class="visually-hidden">Loading service health...</span>
             </div>
@@ -73,148 +70,128 @@
     }
     else if (status != null)
     {
-        <div class="row g-3 mb-4">
-            <div class="col-6 col-lg-3">
-                <div class="card h-100">
-                    <div class="card-body py-3">
-                        <div class="text-muted small">Services</div>
-                        <div class="fs-3">@status.TotalServices</div>
-                    </div>
+        var visibleServices = SortServices(FilterServices(status, serviceFilter, statusFilter), status, sortOrder);
+        var visibleIssues = IssuesFor(status, visibleServices);
+
+        <div class="sh-summary">
+            <div class="sh-card">
+                <div class="sh-card-header">
+                    <i class="bi bi-hdd-stack"></i>
+                    <h3>Total Services</h3>
                 </div>
+                <div class="sh-metric">@status.TotalServices</div>
             </div>
-            <div class="col-6 col-lg-3">
-                <div class="card h-100">
-                    <div class="card-body py-3">
-                        <div class="text-muted small">Healthy</div>
-                        <div class="fs-3 text-success">@status.HealthyServices</div>
-                    </div>
+            <div class="sh-card">
+                <div class="sh-card-header">
+                    <i class="bi bi-check-circle-fill"></i>
+                    <h3>Healthy Services</h3>
                 </div>
+                <div class="sh-metric healthy">@status.HealthyServices</div>
             </div>
-            <div class="col-6 col-lg-3">
-                <div class="card h-100">
-                    <div class="card-body py-3">
-                        <div class="text-muted small">Not healthy</div>
-                        <div class="fs-3 @(status.DegradedServices > 0 ? "text-danger" : "")">@status.DegradedServices</div>
-                    </div>
+            <div class="sh-card">
+                <div class="sh-card-header">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <h3>Active Issues</h3>
                 </div>
+                <div class="sh-metric warning">@ActiveIssueCount(status)</div>
             </div>
-            <div class="col-6 col-lg-3">
-                <div class="card h-100">
-                    <div class="card-body py-3">
-                        <div class="text-muted small">Open incidents</div>
-                        <div class="fs-3 @(status.ActiveIssues > 0 ? "text-danger" : "")">@status.ActiveIssues</div>
-                    </div>
+            <div class="sh-card">
+                <div class="sh-card-header">
+                    <i class="bi bi-x-circle-fill"></i>
+                    <h3>Services Degraded</h3>
                 </div>
+                <div class="sh-metric error">@status.DegradedServices</div>
             </div>
         </div>
 
-        <div class="row g-2 align-items-end mb-2">
-            <div class="col-md-4">
-                <label class="form-label mb-1" for="service-filter">Find a service</label>
-                <input id="service-filter" class="form-control form-control-sm" type="search"
-                       placeholder="Name, wildcards allowed (exch*)"
-                       value="@nameFilter"
-                       @oninput="OnNameFilterChanged" />
-            </div>
-            <div class="col-md-3">
-                <label class="form-label mb-1" for="status-filter">Status</label>
-                <select id="status-filter" class="form-select form-select-sm" value="@statusFilter"
-                        @onchange="e => statusFilter = e.Value?.ToString() ?? AllFilter">
-                    <option value="@AllFilter">All statuses</option>
-                    <option value="@NotHealthyFilter">Anything not healthy</option>
-                    <option value="@WithIssuesFilter">Has open incidents</option>
-                    <option value="serviceInterruption">Interrupted</option>
-                    <option value="serviceDegradation">Degraded</option>
-                    <option value="serviceOperational">Healthy</option>
+        <div class="sh-filters">
+            <div class="sh-filter-group">
+                <label for="service-filter">Filter by Service:</label>
+                <select id="service-filter" value="@serviceFilter"
+                        @onchange="e => serviceFilter = e.Value?.ToString() ?? AllFilter">
+                    <option value="@AllFilter">All Services</option>
+                    @foreach (var service in status.Services.OrderBy(s => s.DisplayName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <option value="@service.Id">@service.DisplayName</option>
+                    }
                 </select>
             </div>
-            <div class="col-md-3">
-                <label class="form-label mb-1" for="sort-order">Sort by</label>
-                <select id="sort-order" class="form-select form-select-sm" value="@sortOrder"
+            <div class="sh-filter-group">
+                <label for="status-filter">Filter by Status:</label>
+                <select id="status-filter" value="@statusFilter"
+                        @onchange="e => statusFilter = e.Value?.ToString() ?? AllFilter">
+                    <option value="@AllFilter">All Statuses</option>
+                    <option value="serviceOperational">Healthy</option>
+                    <option value="serviceDegradation">Degraded</option>
+                    <option value="serviceInterruption">Interrupted</option>
+                    <option value="@NotHealthyFilter">Anything not healthy</option>
+                    <option value="@WithIssuesFilter">Has open incidents</option>
+                </select>
+            </div>
+            <div class="sh-filter-group">
+                <label for="sort-order">Sort by:</label>
+                <select id="sort-order" value="@sortOrder"
                         @onchange="e => sortOrder = e.Value?.ToString() ?? SortByStatus">
                     <option value="@SortByStatus">Status, then name</option>
                     <option value="@SortByIssues">Open incidents</option>
                     <option value="@SortByName">Name</option>
                 </select>
             </div>
-            <div class="col-md-2">
-                <button class="btn btn-outline-secondary btn-sm w-100" @onclick="ClearFilters"
-                        disabled="@(nameFilter.Length == 0 && statusFilter == AllFilter && sortOrder == SortByStatus)">
-                    Reset
+            <div class="sh-filter-group">
+                <label for="clear-filters">&nbsp;</label>
+                <button id="clear-filters" class="btn btn-outline-secondary btn-sm" @onclick="ClearFilters"
+                        disabled="@(serviceFilter == AllFilter && statusFilter == AllFilter && sortOrder == SortByStatus)">
+                    Show everything
                 </button>
             </div>
         </div>
 
-        var visibleServices = SortServices(FilterServices(status, nameFilter, statusFilter), status, sortOrder);
-
-        <div class="d-flex justify-content-between align-items-center mb-2">
-            <small class="text-muted">
-                Showing @visibleServices.Count of @status.TotalServices services. Select one to read its incidents.
-            </small>
-            @if (visibleServices.Count > 0)
+        <div class="sh-services-grid">
+            @if (visibleServices.Count == 0)
             {
-                <button class="btn btn-link btn-sm p-0" @onclick="() => ToggleAll(visibleServices)">
-                    @(expandedServices.Count > 0 ? "Collapse all" : "Expand all with incidents")
-                </button>
+                <div class="sh-no-results">No services match your filter criteria.</div>
+            }
+            else
+            {
+                @foreach (var service in visibleServices)
+                {
+                    var issueCount = status.IssueCountFor(service.Id);
+                    <button type="button" class="sh-service-card @SelectedClass(service.Id)" data-status="@service.Status"
+                            title="Show only this service's incidents"
+                            @onclick="() => SelectService(service.Id)">
+                        <div class="sh-service-header">
+                            <i class="bi @StatusIcon(service.Status) @StatusIconClass(service.Status)"></i>
+                            <h3>@service.DisplayName</h3>
+                        </div>
+                        <div class="sh-service-summary">
+                            <span class="sh-status-badge status-@service.Status">@service.StatusText</span>
+                            @if (issueCount > 0)
+                            {
+                                <span class="sh-issue-count">@issueCount @(issueCount == 1 ? "issue" : "issues")</span>
+                            }
+                        </div>
+                    </button>
+                }
             }
         </div>
 
-        @if (status.Services.Count == 0)
-        {
-            <div class="alert alert-warning">Microsoft returned no services for this tenant.</div>
-        }
-        else if (visibleServices.Count == 0)
-        {
-            <div class="alert alert-secondary">No services match the current filters.</div>
-        }
-        else
-        {
-            <div class="mb-4">
-                @foreach (var service in visibleServices)
+        <div class="sh-issues-section">
+            <h2><i class="bi bi-exclamation-circle-fill"></i> Current Issues</h2>
+
+            @if (visibleIssues.Count == 0)
+            {
+                <div class="sh-no-issues">
+                    <i class="bi bi-check-circle-fill"></i> No issues for selected filters
+                </div>
+            }
+            else
+            {
+                @foreach (var issue in visibleIssues)
                 {
-                    var serviceIssues = status.IssuesFor(service.Id);
-                    var isExpanded = expandedServices.Contains(service.Id);
-                    <div class="card mb-2">
-                        <div class="card-body py-2" role="button" @onclick="() => ToggleService(service.Id, serviceIssues)"
-                             title="Show the incidents for this service">
-                            <div class="d-flex justify-content-between align-items-center gap-2">
-                                <span>
-                                    <span class="text-muted me-2">@(isExpanded ? "-" : "+")</span>
-                                    <strong>@service.DisplayName</strong>
-                                </span>
-                                <span class="text-nowrap">
-                                    @if (serviceIssues.Count > 0)
-                                    {
-                                        <span class="badge bg-secondary me-1">
-                                            @serviceIssues.Count @(serviceIssues.Count == 1 ? "incident" : "incidents")
-                                        </span>
-                                    }
-                                    <span class="badge @ServiceBadgeClass(service.Status)">@service.StatusText</span>
-                                </span>
-                            </div>
-                        </div>
-                        @if (isExpanded)
-                        {
-                            <div class="card-body border-top">
-                                @if (serviceIssues.Count == 0)
-                                {
-                                    <div class="text-muted small">
-                                        <em>Microsoft has no open incidents or advisories for this service.</em>
-                                    </div>
-                                }
-                                else
-                                {
-                                    @foreach (var issue in serviceIssues)
-                                    {
-                                        @IncidentCard(issue)
-                                    }
-                                }
-                            </div>
-                        }
-                    </div>
+                    @IncidentCard(issue)
                 }
-            </div>
-        }
+            }
+        </div>
     }
 </div>
 
@@ -232,104 +209,83 @@
     private string clientIpAddress = "";
     private string? loadError;
     private ServiceHealthStatus? status;
-    private string nameFilter = "";
+    private string serviceFilter = AllFilter;
     private string statusFilter = AllFilter;
     private string sortOrder = SortByStatus;
     private readonly HashSet<string> expandedIssues = [];
-    private readonly HashSet<string> expandedServices = [];
 
     /// <summary>
-    /// One incident, rendered under the service it belongs to. Opening the service opens these
-    /// with it - the operator asked one question ("what is wrong with Exchange") and should not
-    /// have to click again to get the answer. The header still collapses a long one back down.
+    /// One issue card, matching the original dashboard: a clickable header with the status icon,
+    /// title and issue id, a summary line, and everything else behind the expansion.
     /// </summary>
     private RenderFragment<ServiceIncident> IncidentCard => issue =>
-    @<div class="card mb-2">
-        <div class="card-header py-2" role="button" @onclick="() => ToggleIssue(issue.Id)">
-            <div class="d-flex justify-content-between align-items-start gap-3">
-                <div>
-                    <span class="badge @ClassificationBadgeClass(issue) me-2">@(issue.IsIncident ? "Incident" : "Advisory")</span>
-                    <strong>@issue.Id</strong>
-                    <span class="ms-2">@issue.Title</span>
-                    <div class="text-muted small mt-1">
-                        @if (!string.IsNullOrEmpty(issue.StatusText))
-                        {
-                            <span>@issue.StatusText</span>
-                        }
-                        @if (issue.StartDateTime != null)
-                        {
-                            <span> &middot; started @issue.StartDateTime.Value.ToLocalTime().ToString("g")</span>
-                        }
-                        @if (!issue.IsResolved)
-                        {
-                            <span class="text-danger"> &middot; ongoing</span>
-                        }
-                    </div>
-                </div>
-                <span class="text-muted small text-nowrap">@(expandedIssues.Contains(issue.Id) ? "Collapse" : "Expand")</span>
-            </div>
+    @<div class="sh-issue-card @(expandedIssues.Contains(issue.Id) ? "expanded" : "")">
+        <button type="button" class="sh-issue-header" @onclick="() => ToggleIssue(issue.Id)">
+            <i class="bi @IssueIcon(issue) @IssueIconClass(issue)"></i>
+            <h4>@issue.Title</h4>
+            <span class="sh-issue-id">ID: @issue.Id</span>
+            <i class="bi @(expandedIssues.Contains(issue.Id) ? "bi-chevron-up" : "bi-chevron-down")"></i>
+        </button>
+
+        <div class="sh-issue-summary">
+            <div><strong>Service:</strong> @issue.ServiceName</div>
+            <div><strong>Started:</strong> @Stamp(issue.StartDateTime)</div>
+            @if (issue.EndDateTime != null)
+            {
+                <div><strong>Resolved:</strong> @Stamp(issue.EndDateTime)</div>
+            }
+            <div><strong>Type:</strong> @(issue.IsIncident ? "Incident" : "Advisory")</div>
         </div>
+
         @if (expandedIssues.Contains(issue.Id))
         {
-            <div class="card-body">
-                <dl class="row mb-3 small">
-                    @if (!string.IsNullOrEmpty(issue.Feature))
-                    {
-                        <dt class="col-sm-3">Feature</dt>
-                        <dd class="col-sm-9">@issue.Feature</dd>
-                    }
-                    @if (!string.IsNullOrEmpty(issue.FeatureGroup))
-                    {
-                        <dt class="col-sm-3">Feature group</dt>
-                        <dd class="col-sm-9">@issue.FeatureGroup</dd>
-                    }
-                    @if (!string.IsNullOrEmpty(issue.Origin))
-                    {
-                        <dt class="col-sm-3">Origin</dt>
-                        <dd class="col-sm-9">@issue.Origin</dd>
-                    }
-                    @if (issue.EndDateTime != null)
-                    {
-                        <dt class="col-sm-3">Resolved</dt>
-                        <dd class="col-sm-9">@issue.EndDateTime.Value.ToLocalTime().ToString("g")</dd>
-                    }
-                    @if (issue.LastModifiedDateTime != null)
-                    {
-                        <dt class="col-sm-3">Last modified</dt>
-                        <dd class="col-sm-9">@issue.LastModifiedDateTime.Value.ToLocalTime().ToString("g")</dd>
-                    }
-                </dl>
+            <div class="sh-issue-expanded-details">
+                @if (!string.IsNullOrEmpty(issue.Feature) || !string.IsNullOrEmpty(issue.FeatureGroup))
+                {
+                    <div class="sh-issue-summary">
+                        @if (!string.IsNullOrEmpty(issue.Feature))
+                        {
+                            <div><strong>Feature:</strong> @issue.Feature</div>
+                        }
+                        @if (!string.IsNullOrEmpty(issue.FeatureGroup))
+                        {
+                            <div><strong>Feature Group:</strong> @issue.FeatureGroup</div>
+                        }
+                    </div>
+                }
 
                 @if (!string.IsNullOrEmpty(issue.ImpactDescriptionHtml))
                 {
-                    <div class="mb-3">
-                        <div class="text-muted small text-uppercase mb-1">User impact</div>
-                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
-                        <div>@((MarkupString)issue.ImpactDescriptionHtml)</div>
-                    </div>
+                    <h5>User Impact:</h5>
+                    @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                    <div class="sh-issue-description">@((MarkupString)issue.ImpactDescriptionHtml)</div>
                 }
 
-                @foreach (var detail in issue.Details)
+                @if (issue.Details.Count > 0)
                 {
-                    <div class="mb-3">
-                        <div class="text-muted small text-uppercase mb-1">@detail.Name</div>
-                        @* Sanitized in ServiceHealthService before it ever reaches this page. *@
-                        <div>@((MarkupString)detail.ValueHtml)</div>
-                    </div>
+                    <h5>Details:</h5>
+                    @foreach (var detail in issue.Details)
+                    {
+                        <div class="sh-detail-item">
+                            <h6>@Humanize(detail.Name)</h6>
+                            @* Sanitized in ServiceHealthService before it ever reaches this page. *@
+                            <div>@((MarkupString)detail.ValueHtml)</div>
+                        </div>
+                    }
                 }
 
-                <div class="text-muted small text-uppercase mb-2">Updates</div>
+                <h5>Updates:</h5>
                 @if (issue.Posts.Count == 0)
                 {
-                    <div class="text-muted"><em>Microsoft has not posted an update on this issue yet.</em></div>
+                    <div class="sh-detail-item">Microsoft has not posted an update on this issue yet.</div>
                 }
                 else
                 {
-                    @foreach (var post in issue.Posts)
+                    @foreach (var post in issue.Posts.OrderByDescending(p => p.CreatedDateTime ?? DateTimeOffset.MinValue))
                     {
-                        <div class="border-start ps-3 mb-3">
-                            <div class="text-muted small">
-                                @(post.CreatedDateTime?.ToLocalTime().ToString("g") ?? "Undated")
+                        <div class="sh-issue-post">
+                            <div class="sh-post-header">
+                                @Stamp(post.CreatedDateTime)
                                 @if (!string.IsNullOrEmpty(post.PostType))
                                 {
                                     <span> &middot; @post.PostType</span>
@@ -340,7 +296,21 @@
                         </div>
                     }
                 }
+
+                <div class="sh-issue-metadata">
+                    <div><strong>Status:</strong> @issue.StatusText</div>
+                    @if (!string.IsNullOrEmpty(issue.Origin))
+                    {
+                        <div><strong>Origin:</strong> @issue.Origin</div>
+                    }
+                    <div><strong>Last Modified:</strong> @Stamp(issue.LastModifiedDateTime)</div>
+                </div>
             </div>
+        }
+
+        @if (!issue.IsResolved)
+        {
+            <div class="sh-issue-ongoing"><i class="bi bi-exclamation-triangle-fill"></i> Ongoing Issue</div>
         }
     </div>;
 
@@ -397,63 +367,50 @@
         }
     }
 
+    /// <summary>
+    /// Clicking a service card narrows the whole board to that service, exactly as the original
+    /// dashboard does. Clicking the selected card again puts everything back.
+    /// </summary>
+    private void SelectService(string serviceId)
+    {
+        serviceFilter = serviceFilter == serviceId ? AllFilter : serviceId;
+    }
+
+    private string SelectedClass(string serviceId) => serviceFilter == serviceId ? "selected" : "";
+
     private void ToggleIssue(string issueId)
     {
         if (!expandedIssues.Remove(issueId))
             expandedIssues.Add(issueId);
     }
 
-    /// <summary>
-    /// Opening a service opens its incidents with it, details and all. Closing it puts them back.
-    /// </summary>
-    private void ToggleService(string serviceId, List<ServiceIncident> serviceIssues)
-    {
-        if (expandedServices.Remove(serviceId))
-        {
-            foreach (var issue in serviceIssues) expandedIssues.Remove(issue.Id);
-            return;
-        }
-
-        expandedServices.Add(serviceId);
-        foreach (var issue in serviceIssues) expandedIssues.Add(issue.Id);
-    }
-
-    private void ToggleAll(List<ServiceHealthEntry> visibleServices)
-    {
-        if (expandedServices.Count > 0)
-        {
-            expandedServices.Clear();
-            expandedIssues.Clear();
-            return;
-        }
-
-        foreach (var service in visibleServices)
-        {
-            var issues = status?.IssuesFor(service.Id) ?? [];
-            if (issues.Count == 0) continue;
-            expandedServices.Add(service.Id);
-            foreach (var issue in issues) expandedIssues.Add(issue.Id);
-        }
-    }
-
-    private void OnNameFilterChanged(ChangeEventArgs e) => nameFilter = e.Value?.ToString() ?? "";
-
     private void ClearFilters()
     {
-        nameFilter = "";
+        serviceFilter = AllFilter;
         statusFilter = AllFilter;
         sortOrder = SortByStatus;
     }
 
+    private static string Stamp(DateTimeOffset? value) =>
+        value?.ToLocalTime().ToString("g") ?? "Unknown";
+
     /// <summary>
-    /// Pure projector, exposed for tests. The name box is a wildcard match against the display
-    /// name and the service id - "*" or empty means everything, and a pattern with no wildcard in
-    /// it is treated as "contains", which is what an operator typing "exch" expects.
+    /// The original counts an issue as active when Microsoft has not stamped an end time on it,
+    /// which is not the same as its isResolved flag. Kept identical so the two boards agree.
+    /// </summary>
+    internal static int ActiveIssueCount(ServiceHealthStatus status) =>
+        status.Issues.Count(i => i.EndDateTime == null);
+
+    /// <summary>
+    /// Pure projector, exposed for tests. The service dropdown carries a service id, so it is an
+    /// exact match, never a substring one - "Teams" must not also select "Microsoft Teams Live".
     /// </summary>
     internal static List<ServiceHealthEntry> FilterServices(
-        ServiceHealthStatus status, string nameFilter, string statusFilter) =>
+        ServiceHealthStatus status, string serviceFilter, string statusFilter) =>
         status.Services
-            .Where(s => MatchesName(s, nameFilter))
+            .Where(s => serviceFilter == AllFilter
+                || string.IsNullOrWhiteSpace(serviceFilter)
+                || string.Equals(s.Id, serviceFilter, StringComparison.OrdinalIgnoreCase))
             .Where(s => statusFilter switch
             {
                 AllFilter => true,
@@ -463,20 +420,18 @@
             })
             .ToList();
 
-    internal static bool MatchesName(ServiceHealthEntry service, string pattern)
+    /// <summary>
+    /// Pure projector, exposed for tests. The issues list below the grid always shows the issues
+    /// belonging to the services currently on the grid, so both filters drive both halves.
+    /// </summary>
+    internal static List<ServiceIncident> IssuesFor(
+        ServiceHealthStatus status, List<ServiceHealthEntry> visibleServices)
     {
-        if (string.IsNullOrWhiteSpace(pattern)) return true;
-
-        var trimmed = pattern.Trim();
-        if (trimmed == "*") return true;
-
-        if (!trimmed.Contains('*') && !trimmed.Contains('?'))
-            return service.DisplayName.Contains(trimmed, StringComparison.OrdinalIgnoreCase)
-                || service.Id.Contains(trimmed, StringComparison.OrdinalIgnoreCase);
-
-        var regex = "^" + Regex.Escape(trimmed).Replace("\\*", ".*").Replace("\\?", ".") + "$";
-        return Regex.IsMatch(service.DisplayName, regex, RegexOptions.IgnoreCase)
-            || Regex.IsMatch(service.Id, regex, RegexOptions.IgnoreCase);
+        var ids = visibleServices.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return status.Issues
+            .Where(i => ids.Contains(i.ServiceId))
+            .OrderByDescending(i => i.StartDateTime ?? DateTimeOffset.MinValue)
+            .ToList();
     }
 
     /// <summary>
@@ -517,24 +472,41 @@
         _ => 5
     };
 
-    /// <summary>Pure projector, exposed for the source-text page tests.</summary>
-    internal static string StatusBadgeClass(bool isHealthy) => isHealthy ? "bg-success" : "bg-danger";
-
-    /// <summary>
-    /// Pure projector, exposed for tests. Degraded and interrupted are different severities to an
-    /// operator, so they do not share one red badge.
-    /// </summary>
-    internal static string ServiceBadgeClass(string status) => status switch
+    /// <summary>Pure projector, exposed for tests. Mirrors the original dashboard's getStatusIcon.</summary>
+    internal static string StatusIcon(string status) => status switch
     {
-        "serviceOperational" => "bg-success",
-        "serviceDegradation" => "bg-warning text-dark",
-        "serviceInterruption" => "bg-danger",
-        "extendedRecovery" or "restoringService" or "restoreService" or "investigating" => "bg-warning text-dark",
-        "falsePositive" => "bg-secondary",
-        _ => "bg-secondary"
+        "serviceOperational" => "bi-check-circle-fill",
+        "serviceDegradation" => "bi-exclamation-triangle-fill",
+        "serviceInterruption" => "bi-x-circle-fill",
+        "extendedRecovery" or "restoringService" or "restoreService" or "investigating" => "bi-info-circle-fill",
+        _ => "bi-question-circle-fill"
     };
 
-    /// <summary>Pure projector, exposed for the source-text page tests.</summary>
-    internal static string ClassificationBadgeClass(ServiceIncident issue) =>
-        issue.IsIncident ? "bg-danger" : "bg-warning text-dark";
+    /// <summary>Pure projector, exposed for tests. The icon colour classes of the original.</summary>
+    internal static string StatusIconClass(string status) => status switch
+    {
+        "serviceOperational" => "status-healthy",
+        "serviceDegradation" => "status-warning",
+        "serviceInterruption" => "status-error",
+        "extendedRecovery" or "restoringService" or "restoreService" or "investigating" => "status-info",
+        _ => "status-unknown"
+    };
+
+    private static string IssueIcon(ServiceIncident issue) =>
+        issue.IsIncident ? "bi-x-circle-fill" : "bi-exclamation-triangle-fill";
+
+    private static string IssueIconClass(ServiceIncident issue) =>
+        issue.IsIncident ? "status-error" : "status-warning";
+
+    /// <summary>
+    /// Turns a Graph detail key such as "rootCauseSummary" into "Root Cause Summary", which is
+    /// what the original dashboard did before printing it.
+    /// </summary>
+    internal static string Humanize(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return "";
+
+        var spaced = System.Text.RegularExpressions.Regex.Replace(key, "([a-z0-9])([A-Z])", "$1 $2");
+        return char.ToUpperInvariant(spaced[0]) + spaced[1..];
+    }
 }

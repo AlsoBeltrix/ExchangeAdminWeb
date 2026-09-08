@@ -5,6 +5,35 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-08 - Service Health mirrors the original dashboard's appearance; no redesign, no charts
+
+Status: Active. Supersedes the round 2 and round 3 presentation decisions in
+`docs/ServiceHealth-Plan.md` where they conflict.
+
+Owner ruling, after five rejected rounds of design work: "just make it look like the
+fucking original since you are incapable of improving it." An earlier remark praising a
+donut chart was explicitly retracted ("I mistakenly told you the circle chart thing was
+good"), so the page carries **no charts**.
+
+What this settles:
+
+- The Service Health page is a fidelity port of the appearance of the standalone Flask
+  dashboard at `D:\source\servicehealthmonitor`, not an improvement on it. Do not redesign
+  it. Changes to its look need a fresh owner ruling.
+- The port reproduces the original's geometry but not its palette: `wwwroot/app.css`
+  requires every colour to come from a `--ui-*` token, so the original's literal hexes are
+  mapped onto tokens and the nine non-default themes keep working. One literal, `#4fc3f7`,
+  is allowed for the header icon on the brand gradient and is pinned by a test.
+- Two earlier decisions are reversed. The separate incident section returns (the original
+  has one, filtered by the clicked service card, and the newer instruction wins over the
+  round 3 "no flat list" ruling). The wildcard text filter is replaced by the original's
+  service dropdown; "filter *" is read as "default to everything", which "All Services"
+  satisfies.
+- The sort control the owner asked for is retained, styled as a third dropdown in the
+  original's filter row - the feature stays, the look does not change.
+- "Active Issues" counts issues with no `endDateTime`, the original's definition, not
+  "not resolved". This closes the carried 17-vs-15 count discrepancy in favour of 15.
+
 ### 2026-09-04 - Dev and prod share ONE config database; promotion never copies it
 
 Status: Active. Supersedes the 2026-06-18 dev-wins promotion rule ("prod's config
@@ -68,7 +97,7 @@ What this settles:
   mask the operation that triggered it, and a failed telemetry write is logged, not
   surfaced.
 - Storage is a SEPARATE operational SQLite database beside the jobs database
-  (`config/exchangeadmin-usage.db`), never the config database: prod promotion replaces
+  (`config/exchangeadmin-usage.db`), never the config database: prod promotion replaces <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
   prod's config DB wholesale with dev's, so telemetry in it would be overwritten with
   dev's on every promotion (codex openreview finding ute-1, 2026-09-04; the first draft
   of this entry said "the existing SQLite config database" and was wrong). Age-based
