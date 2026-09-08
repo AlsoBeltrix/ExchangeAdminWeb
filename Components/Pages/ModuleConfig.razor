@@ -809,9 +809,18 @@
     /// Discards edits by reloading the page from the store. Clears dirty state FIRST, or the
     /// unsaved-changes guard blocks the very navigation the operator asked for.
     /// </summary>
-    private void ReloadAsync()
+    /// <remarks>
+    /// Clearing is not enough on its own: <see cref="UnsavedChangesGuard"/> receives the flag as a
+    /// parameter and arms the browser's beforeunload from it, so until a render carries the
+    /// cleared value down, both the in-app confirm and the browser's "Leave site?" still fire on
+    /// the navigation the operator just asked for. Hence the explicit render and the yield that
+    /// lets its batch go out ahead of the navigation on the same circuit.
+    /// </remarks>
+    private async Task ReloadAsync()
     {
         dirty.Clear();
+        StateHasChanged();
+        await Task.Yield();
         Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
     }
 
@@ -1137,6 +1146,14 @@
             moduleEnabledBaseline = moduleEnabled;
             statusMessage = "Module status saved. Refreshing...";
             statusIsError = false;
+
+            // Render BEFORE the reload. Blazor renders an event handler once at its first await
+            // and once when it completes - and this handler never completes, it navigates. So
+            // without this the browser still holds the pre-save "unsaved changes" flag that
+            // UnsavedChangesGuard armed, and the forced reload trips both the in-app confirm and
+            // the browser's "Leave site?" over a change that has already been written. It also
+            // makes the "Refreshing..." message above actually appear during the delay.
+            StateHasChanged();
             await Task.Delay(500);
             Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
         }

@@ -363,4 +363,42 @@ public class AdminPageDirtyStateTests
         Assert.Contains("SecretIdDelta(ppDirectoryReadSecretId, ppDirectoryReadSecretIdBaseline)", page, StringComparison.Ordinal);
         Assert.Contains("ppDirectoryReadSecretIdBaseline = ppDirectoryReadSecretId;", page, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// The operator saved, and then got asked twice whether to abandon unsaved changes that no
+    /// longer existed: an in-app "1 unsaved change" confirm and the browser's "Leave site?".
+    ///
+    /// Clearing the dirty state is not enough. UnsavedChangesGuard takes the flag as a PARAMETER
+    /// and arms the browser's beforeunload from it, so the cleared value only reaches the browser
+    /// on a render. Blazor renders an event handler exactly twice - at its first await and when it
+    /// completes - and each of these handlers navigates instead of completing, so the second
+    /// render never happens and the browser is still holding the pre-save flag when the forced
+    /// reload arrives. The fix is one explicit render after the clear and before the navigate.
+    ///
+    /// Source-text guard: no bUnit in this repo, and what has to hold is an ORDERING inside one
+    /// method, which is why every assertion is anchored to that method's body rather than run
+    /// loose over the page (the false-coverage trap recorded on blr-4).
+    /// </summary>
+    [Theory]
+    [InlineData("ModuleConfig.razor", "private async Task ReloadAsync()", "dirty.Clear();")]
+    [InlineData("ModuleConfig.razor", "private async Task SaveModuleEnablementAsync()", "dirty.ClearSection(SecStatus);")]
+    [InlineData("AdminSettings.razor", "private async Task DiscardChanges()", "dirty.Clear();")]
+    [InlineData("AdminSettings.razor", "private async Task SaveEnablement()", "dirty.ClearSection(SectionModules);")]
+    public void ClearingDirtyStateIsRenderedBeforeAForcedReload(string page, string signature, string clear)
+    {
+        var text = File.ReadAllText(AuditCategoryFilingTests.FindRepoFile("Components", "Pages", page));
+        var body = AuditCategoryFilingTests.MethodBody(text, signature);
+
+        var cleared = body.IndexOf(clear, StringComparison.Ordinal);
+        Assert.True(cleared >= 0, $"{signature} no longer clears the dirty state ({clear}).");
+
+        var navigate = body.IndexOf("Navigation.NavigateTo(Navigation.Uri, forceLoad: true);", StringComparison.Ordinal);
+        Assert.True(navigate > cleared, $"{signature} no longer forces a reload after clearing.");
+
+        var render = body.IndexOf("StateHasChanged();", StringComparison.Ordinal);
+        Assert.True(
+            render > cleared && render < navigate,
+            $"{signature} must render between clearing the dirty state and forcing the reload, or "
+                + "the browser still holds the stale flag and prompts over a change already saved.");
+    }
 }

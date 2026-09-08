@@ -204,12 +204,12 @@ public class UsageTrackerWiringTests
         var text = File.ReadAllText(
             AuditCategoryFilingTests.FindRepoFile("Components", "Pages", "AdminEventLog.razor"));
 
-        var changed = MethodBody(text, "private void OnDateRangeChanged()");
+        var changed = AuditCategoryFilingTests.MethodBody(text, "private void OnDateRangeChanged()");
         var elseAt = changed.IndexOf("else", StringComparison.Ordinal);
         Assert.True(elseAt > 0, "OnDateRangeChanged no longer branches on the current view.");
         Assert.Contains("eventsRangeStale = true;", changed[..elseAt], StringComparison.Ordinal);
 
-        var toEvents = MethodBody(text, "private void ShowEventsView()");
+        var toEvents = AuditCategoryFilingTests.MethodBody(text, "private void ShowEventsView()");
         Assert.Contains("showUsage = false;", toEvents, StringComparison.Ordinal);
 
         var gate = toEvents.IndexOf("if (eventsRangeStale)", StringComparison.Ordinal);
@@ -220,35 +220,5 @@ public class UsageTrackerWiringTests
         Assert.True(
             toEvents.IndexOf("eventsRangeStale = false;", StringComparison.Ordinal) > gate,
             "The stale flag must be cleared once the reload has been ordered.");
-    }
-
-    /// <summary>
-    /// The source text of one method, from its signature to its matching closing brace. Lets a
-    /// source-text guard assert a statement sits in a PARTICULAR method rather than somewhere
-    /// in a 1300-line page.
-    /// </summary>
-    private static string MethodBody(string text, string signature)
-    {
-        var start = text.IndexOf(signature, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"{signature} is gone from the page.");
-
-        var open = text.IndexOf('{', start);
-        Assert.True(open > start, $"{signature} has no body.");
-
-        var depth = 0;
-        for (var i = open; i < text.Length; i++)
-        {
-            if (text[i] == '{')
-            {
-                depth++;
-            }
-            else if (text[i] == '}' && --depth == 0)
-            {
-                return text[start..(i + 1)];
-            }
-        }
-
-        Assert.Fail($"{signature} has no matching closing brace.");
-        return string.Empty;
     }
 }

@@ -95,8 +95,30 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `.agents/review/findings/utei-{1,2,3,4}.md`; the batch carries base `2.20.0` -> `2.20.1`
   and `AdminEventLog` `1.2.0` -> `1.2.1`. Final: 2385/0/3, format clean, `git diff --check`
   clean.
-  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.1`
+  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.2`
   (usage rows only start being written then).**
+
+- **SAVE-THEN-PROMPT BUG 2026-09-08 (owner-reported, fixed, base `2.20.1` -> `2.20.2`):**
+  saving a module enablement change wrote the change, then asked twice whether to abandon
+  unsaved changes that no longer existed - an in-app "1 unsaved change" confirm and the
+  browser's "Leave site?" - and only then showed the saved state. Nothing was ever at risk:
+  the write had already committed. Cause: `UnsavedChangesGuard` takes the dirty flag as a
+  PARAMETER and arms the browser's `beforeunload` from it, so a cleared flag only reaches
+  the browser on a render; Blazor renders an event handler at its first await and again when
+  it completes, and these handlers navigate instead of completing, so the browser was still
+  holding the pre-save flag when the forced reload arrived. Fix: one explicit
+  `StateHasChanged()` between the clear and the navigate, at all four sites that force a
+  reload - `ModuleConfig.razor` `ReloadAsync` (Discard) and `SaveModuleEnablementAsync`,
+  `AdminSettings.razor` `DiscardChanges` and `SaveEnablement`. Both pages can enable a
+  module and both carried the identical defect, so both were fixed. Guard:
+  `AdminPageDirtyStateTests.ClearingDirtyStateIsRenderedBeforeAForcedReload`, a 4-case
+  source-text theory anchored inside each method body via `AuditCategoryFilingTests.MethodBody`
+  (relocated there from `UsageTrackerWiringTests` so both suites share one copy). Mutation
+  probe: renders removed -> exactly those 4 cases fail, 27 pass. Final: 2389/0/3, format
+  clean, `git diff --check` clean. No module version bump - `module-config/{ModuleId}` and
+  `admin-settings` are app-wide admin infrastructure, not catalog module routes.
+  **NEXT: nothing code-side. Confirm on the next dev deploy that saving a module enablement
+  change no longer prompts.**
 
 - **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
   `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**

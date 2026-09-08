@@ -34,6 +34,37 @@ public class AuditCategoryFilingTests
             $"Could not locate {string.Join('/', relativeSegments)} from test base directory.");
     }
 
+    /// <summary>
+    /// The source text of one method, from its signature to its matching closing brace. Lets a
+    /// source-text guard assert a statement sits in a PARTICULAR method rather than somewhere in
+    /// a 1000-line page - the false-coverage trap recorded on review finding blr-4. Lives here
+    /// beside FindRepoFile because every source-text guard in the suite needs both.
+    /// </summary>
+    internal static string MethodBody(string text, string signature)
+    {
+        var start = text.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{signature} is gone from the page.");
+
+        var open = text.IndexOf('{', start);
+        Assert.True(open > start, $"{signature} has no body.");
+
+        var depth = 0;
+        for (var i = open; i < text.Length; i++)
+        {
+            if (text[i] == '{')
+            {
+                depth++;
+            }
+            else if (text[i] == '}' && --depth == 0)
+            {
+                return text[start..(i + 1)];
+            }
+        }
+
+        Assert.Fail($"{signature} has no matching closing brace.");
+        return string.Empty;
+    }
+
     [Fact]
     public void EmergencyDisable_AuditsUnderOwnCategory_NotBorrowedMigrationAction()
     {
