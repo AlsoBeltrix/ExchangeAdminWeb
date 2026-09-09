@@ -6,22 +6,22 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **SERVICE HEALTH MODULE: 1.3.0 IMPLEMENTED 2026-09-08, NOT YET DEPLOYED, NOT CONFIGURED.**
+- **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
   port of the standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365
   service status plus open incidents/advisories with Microsoft's own update timeline, read
   from Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new
   module; Constitution "Deployment And Versioning", `.agents/decisions.md` 2026-07-21).
-  Behaviour has been right since 1.1.0; 1.2.0 and 1.3.0 are presentation. **1.3.0 is the
+  Behaviour has been right since 1.1.0; 1.2.0, 1.3.0 and 1.3.1 are presentation. **1.3.0 is the
   owner's closing design ruling ("just make it look like the fucking original"): the page is
   now a fidelity port of the original dashboard's appearance - new scoped stylesheet
   `Components/Pages/ServiceHealth.razor.css` (the first one under `Components/Pages/`)
   reproducing the original's geometry with every colour mapped onto a `--ui-*` theme token,
-  gradient header, four summary cards, the original filter row plus the retained sort
-  dropdown, a compact service-card grid, and the "Current Issues" section below whose cards
-  the grid filters. Do not redesign this page and do not add charts - five rounds of design
-  proposals were rejected, and the earlier praise for a donut chart was explicitly
-  retracted.** Two earlier decisions were reversed by that ruling and are recorded in the
+  a flat brand header band (owner ruling 2026-09-09: no gradients), four summary cards, the
+  original filter row plus the retained sort dropdown, a compact service-card grid, and the
+  "Current Issues" section below whose cards the grid filters. Do not redesign this page
+  and do not add charts - five rounds of design proposals were rejected, and the earlier
+  praise for a donut chart was explicitly retracted.** Two earlier decisions were reversed by that ruling and are recorded in the
   plan's round 4: the separate incident section is back (filtered by the clicked service),
   and the wildcard text filter is replaced by the original's service dropdown, so
   `FilterServices` now matches the service id exactly. "Active Issues" counts issues with no
@@ -37,7 +37,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its id
   in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant the
   `ServiceHealth` section access group.** Until (1) the page shows a not-configured banner
-  rather than an empty board. NEXT: owner deploys dev to pick up 1.3.0 and accepts or
+  rather than an empty board. NEXT: owner deploys dev to pick up 1.3.1 and accepts or
   rejects the look, then does the two steps above and runs the plan's manual checks. A
   `/codereview codex` pass on the module is still outstanding.
 - **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**

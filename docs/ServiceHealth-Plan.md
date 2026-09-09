@@ -2,7 +2,7 @@
 
 Status: Implemented
 Owner: Michael
-Last verified against code: 1.3.0 round 4 (2026-09-08)
+Last verified against code: 1.3.1 round 5 (2026-09-09)
 
 ## 1. Goal  [YOU]
 
@@ -485,12 +485,12 @@ literally - same card sizes, grid minimums, radii, shadows, spacing rhythm - wit
 substitution: every literal hex in the original is mapped onto an existing `--ui-*` theme
 token, because `wwwroot/app.css` states "Everything below this block should reference a
 token, never a literal hex" and nine non-default themes would otherwise render unreadable
-text on the wrong ground. One literal survives, `#4fc3f7` (the header icon on the brand
-gradient, which has no token); `Styles_UseThemeTokensRatherThanLiteralColours` pins it as
+text on the wrong ground. One literal survives, `#4fc3f7` (the header icon on the brand-filled
+band, which has no token); `Styles_UseThemeTokensRatherThanLiteralColours` pins it as
 the only one allowed. Sanitized third-party HTML never carries the scope attribute, so the
 blocks that hold it reach it with `::deep`.
 
-**`Components/Pages/ServiceHealth.razor` rewritten to the original's structure:** gradient
+**`Components/Pages/ServiceHealth.razor` rewritten to the original's structure:** a flat brand
 header band with the title, last-updated stamp and Refresh; four summary cards in the
 original's order (Total Services / Healthy Services / Active Issues / Services Degraded);
 the original's filter row; a compact 300px-minimum service-card grid with 4px status-coloured
@@ -548,3 +548,32 @@ Coverage limits: unchanged. The projectors are genuinely tested; the page's wiri
 that a click reaches `SelectService`, that the grid re-renders - is source-text tripwire
 only, because this repo still has no bUnit harness. Appearance itself is not testable here;
 the owner's visual acceptance on dev is the gate.
+
+### Round 5 - 2026-09-09 - owner ruling: no gradients
+
+Owner review of the deployed 1.3.0 board, in full: "no gradients."
+
+The 1.3.0 header band used `linear-gradient(135deg, var(--ui-brand), var(--ui-info))`, a
+straight token substitution for the original stylesheet's own two-stop gradient. That one
+declaration is removed; the band now takes the flat `var(--ui-brand)` fill that already sat
+under it, so the geometry, the brand colour and all ten themes are unchanged and only the
+second stop is gone. `grep -c gradient` over `ServiceHealth.razor.css` returns 0.
+
+This is the one place in the port that deliberately departs from the original's appearance.
+The round 4 ruling ("make it look like the original") still governs everything else; where
+the two rulings meet, the newer one wins, and it is narrow - it names gradients, nothing
+else.
+
+The `#4fc3f7` header-icon literal stays and is still the only literal the style guard
+allows: a light accent on the flat brand fill has no `--ui-*` token either. Every prose
+justification that described it as sitting "on the brand gradient" is reworded to "the
+brand-filled header band" - here, in `.agents/decisions.md`, and in the test comment above
+`Styles_UseThemeTokensRatherThanLiteralColours`.
+
+Module `ServiceHealth` version `1.3.0` -> `1.3.1`. Base app version unchanged at `2.20.2`
+(module-scoped presentation change only).
+
+Gates: see the commit record. No new test: the change deletes one declaration and adds no
+behaviour, and the existing `Styles_UseThemeTokensRatherThanLiteralColours` guard already
+covers the stylesheet's colour contract. Nothing in the suite asserted the gradient, so
+nothing needed updating beyond the stale comment.

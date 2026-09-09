@@ -5,6 +5,23 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-09 - Service Health: no gradients
+
+Owner ruling on the deployed 1.3.0 board, in full: "no gradients."
+
+The header band's `linear-gradient(135deg, var(--ui-brand), var(--ui-info))` is removed; the
+band takes the flat `var(--ui-brand)` fill. This is a narrow exception to the 2026-09-08
+"mirror the original" ruling, which still governs the rest of the page - the original's own
+stylesheet had a gradient there and the port no longer does. Where the two meet, the newer
+ruling wins, and it names gradients and nothing else.
+
+Scope: no gradient anywhere in `Components/Pages/ServiceHealth.razor.css` (`grep -c
+gradient` returns 0). The `#4fc3f7` header-icon literal is unaffected and is still the only
+literal the style guard allows.
+
+Module `ServiceHealth` `1.3.0` -> `1.3.1`; base app unchanged at `2.20.2`. Detail in
+`docs/ServiceHealth-Plan.md` round 5.
+
 ### 2026-09-08 - Service Health mirrors the original dashboard's appearance; no redesign, no charts
 
 Status: Active. Supersedes the round 2 and round 3 presentation decisions in
@@ -23,7 +40,7 @@ What this settles:
 - The port reproduces the original's geometry but not its palette: `wwwroot/app.css`
   requires every colour to come from a `--ui-*` token, so the original's literal hexes are
   mapped onto tokens and the nine non-default themes keep working. One literal, `#4fc3f7`,
-  is allowed for the header icon on the brand gradient and is pinned by a test.
+  is allowed for the header icon on the brand-filled header band and is pinned by a test.
 - Two earlier decisions are reversed. The separate incident section returns (the original
   has one, filtered by the clicked service card, and the newer instruction wins over the
   round 3 "no flat list" ruling). The wildcard text filter is replaced by the original's

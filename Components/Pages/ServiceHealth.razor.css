@@ -16,7 +16,6 @@
 
 .sh-header {
     background: var(--ui-brand);
-    background: linear-gradient(135deg, var(--ui-brand), var(--ui-info));
     color: var(--ui-brand-fg);
     padding: 1rem 1.25rem;
     border-radius: 10px;

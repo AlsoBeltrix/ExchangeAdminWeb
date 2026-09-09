@@ -127,11 +127,21 @@ public class ServiceHealthPageTests
         var css = PageStyles();
         var hexes = Regex.Matches(css, @"#[0-9a-fA-F]{3,8}\b").Select(m => m.Value).ToArray();
 
-        // The one deliberate literal is the header icon accent, which sits on the brand gradient
-        // in every theme and so has no token to take.
+        // The one deliberate literal is the header icon accent. It sits on the brand-filled
+        // header band in every theme and so has no token to take.
         Assert.All(hexes, hex => Assert.Equal("#4fc3f7", hex));
         Assert.Contains("var(--ui-surface)", css);
         Assert.Contains("var(--ui-danger)", css);
+    }
+
+    [Fact]
+    public void Styles_CarryNoGradient()
+    {
+        // Owner ruling 2026-09-09, in full: "no gradients". The 1.3.0 header band carried the
+        // original stylesheet's own two-stop gradient; the band is a flat brand fill now. This
+        // is the one place the port deliberately departs from the original, so nothing may
+        // reintroduce a gradient here - not the header, not a card, not a hover state.
+        Assert.DoesNotContain("gradient", PageStyles(), StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- Filter, sort and projection behaviour (real behaviour, not source text) --------------
