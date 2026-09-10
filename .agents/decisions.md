@@ -5,6 +5,34 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-10 - Audit events go to Splunk, so their fields are an interface
+
+Status: Active. Scope: stated for `CloudPasswordReset`, but the fact is app-wide. Owner,
+verbatim: *"these logs are going to splunk, so they need to be explicit and clear."*
+
+Audit events are forwarded to a SIEM. That makes field names and value types a published
+interface: somebody builds a dashboard or an alert on them, and a rename or a re-typed value
+breaks it silently. Six rules, written into `docs/CloudPasswordReset-Plan.md` (Audit fields,
+and Splunk) and binding on that module:
+
+1. One fact per field - no packed `key=value; key=value` strings. The precedent NOT to copy is
+   `wipeFlags` in `Components/Pages/IntuneDevices.razor:1414`, which crams five settings into
+   one sentence and forces a field extraction on every query.
+2. Booleans are JSON booleans, never `"Yes"` / `"true"` / `"(set)"`.
+3. Enumerated fields draw from a closed list stated in the plan; never free text, never an
+   operator- or upstream-supplied string.
+4. Every field appears on every event of its action, with an explicit null where it does not
+   apply. Absent and null read differently to a search.
+5. Names are frozen once shipped; renaming one is a breaking change to someone's dashboard.
+6. No secret, and nothing derived from one - for a password that means no length, no entropy,
+   no word count, no hash.
+
+`AuditService` already emits one JSON object per event (`AuditService.cs:392-411`) and
+`MergeExtra` (`:38-45`) passes nulls through, so no transport change is needed.
+
+Existing modules were not written against these rules and some pack strings. Bringing them
+into line is a separate stream with its own plan; this entry does not authorize a sweep.
+
 ### 2026-09-10 - Cloud Password Reset: change-at-next-sign-in is an operator option, and the destination address is shown
 
 Status: Active. Two owner corrections to the plan's exec summary, same day.

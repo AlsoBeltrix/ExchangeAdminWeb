@@ -59,6 +59,19 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   the earlier display-name-only rule and it could not be justified). The address is not a
   secret and showing it is the only human check on a mis-resolved owner. The real control is
   unchanged: derived, read-only, never editable, never picked from a list.
+  **Audit events go to Splunk, so the field names are a published interface** (owner: *"these
+  logs are going to splunk, so they need to be explicit and clear."*). The plan now carries an
+  `Audit fields, and Splunk` section fixing the exact `extra` field set every event of this
+  module emits - `targetObjectId`, `targetCloudOnly`, `targetDirectoryRoles` (always an array,
+  never null - this is the field that answers "who reset a Global Admin, and when"),
+  `ownerResolution`, `ownerSam`, `ownerMail`, `forceChangePasswordNextSignIn`,
+  `passwordDelivery`, `revealUsed`, `refusalReason` - plus six rules: one fact per field (no
+  packed strings like `IntuneDevices.razor:1414`'s `wipeFlags`), JSON booleans, closed
+  enumerations, every field on every event with explicit `null`, names frozen once shipped,
+  and nothing derived from the password. `AuditService` already emits one JSON object per
+  event and `MergeExtra` passes nulls through, so no transport change is needed. Other modules
+  were not written to these rules; aligning them is a separate stream and is not authorized
+  here.
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as

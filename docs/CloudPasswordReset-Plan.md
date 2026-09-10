@@ -536,7 +536,9 @@ one and hitting it on a client that cannot service the change is locked out.
   action, category, target, success, ticket, errorDetail, extra)`
   (`Services/AuditService.cs:199`), `category: "CloudPasswordReset"`, actions
   `CloudPasswordReset_Preview`, `CloudPasswordReset_Execute`,
-  `CloudPasswordReset_Revealed` and `CloudPasswordReset_DeliveryFailed`.
+  `CloudPasswordReset_Revealed` and `CloudPasswordReset_DeliveryFailed`. **The exact field set
+  every one of these carries is specified in Audit fields, and Splunk, below** -- these events
+  are forwarded to a SIEM, so the keys are an interface, not a convenience.
 - **The serviced note rides `extra`, never `errorDetail`.** `LogModuleAction` writes
   `["error"] = success ? null : errorDetail`, so a detail passed as `errorDetail` on a success
   is silently discarded -- the failure that lost an authorised-servicer record once already
@@ -556,6 +558,65 @@ one and hitting it on a client that cannot service the change is locked out.
   a log line (Constitution, Credential Isolation: *"Never log secret values ... passwords
   ..."*). A source-text test asserts that no audit or admin-email call site in this module
   receives the password variable.
+
+## Audit fields, and Splunk
+
+**These events are forwarded to Splunk** (owner, 2026-09-10: *"these logs are going to splunk,
+so they need to be explicit and clear"*). That makes the field names a published interface, not
+an implementation detail: somebody will build a dashboard or an alert on them, and a rename or
+a re-typed value silently breaks it. This module's events are therefore specified here rather
+than left to whatever reads well in a log viewer.
+
+`AuditService` already emits one JSON object per event (`AuditService.cs:392-411`), so the
+transport needs nothing new. `MergeExtra` (`:38-45`) copies every key straight in, nulls
+included, so an explicit null survives to the writer.
+
+**The rules, all enforceable:**
+
+1. **One fact per field.** No packed strings. The `wipeFlags` field in IntuneDevices
+   (`Components/Pages/IntuneDevices.razor:1414`) crams five settings into one
+   `key=value; key=value` sentence -- readable to a human, but every Splunk query against it
+   needs a field extraction to get at any one of them. This module does not copy that shape.
+   It is the reason the rule is written down.
+2. **Booleans are JSON booleans.** Not `"Yes"`, not `"true"`, not `"(set)"`.
+3. **Enumerated fields draw from a closed list, stated below.** Never a free-text sentence, and
+   never an operator- or upstream-supplied string. A value not on the list is a bug.
+4. **Every field appears on every event of its action, with an explicit `null` where it does not
+   apply** -- an absent field and a null field look different to a search, and "missing" is not
+   an answer anyone can act on. S6 confirms the JSON writer emits nulls rather than dropping
+   them; if it drops them, the sentinel is the string `"n/a"` and this plan is amended to say so.
+5. **Names are frozen once shipped.** Changing one is a breaking change to somebody's dashboard
+   and needs the same care as a schema migration.
+6. **No password, and nothing derived from one.** Not its length, not its entropy, not its word
+   count, not a hash. AC7 already says this; it is repeated here because a field table is
+   exactly where such a thing gets added by a well-meaning later edit.
+
+**The fields.** Top-level keys (`ts`, `user`, `ip`, `action`, `category`, `result`, `target`,
+`ticket`, `error`, `eventType`, `operationId`) come from `LogModuleAction` unchanged;
+`category` is always `CloudPasswordReset` and `target` is always the cloud account's UPN.
+These ride in `extra`:
+
+| Field | Type | Values |
+|---|---|---|
+| `targetObjectId` | string | The Entra object id (GUID). Stable across renames, unlike the UPN. |
+| `targetCloudOnly` | bool | Always `true` on a successful reset; `false` on a synced-account refusal. |
+| `targetDirectoryRoles` | array of string | Directory role display names held by the target; `[]` when none, never null and never omitted. This is the field that answers "who reset a Global Admin, and when". |
+| `ownerResolution` | string | `Resolved` \| `Unresolved` \| `Ambiguous` \| `Unavailable` |
+| `ownerSam` | string or null | The resolved owner's `sAMAccountName`; null unless `ownerResolution` is `Resolved`. |
+| `ownerMail` | string or null | The address the password was sent to; null unless it was sent. Derived, never operator-supplied. |
+| `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
+| `passwordDelivery` | string | `Sent` \| `SendFailed` \| `Revealed` \| `NotAttempted` |
+| `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
+| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `OwnerUnresolved`, `OwnerAmbiguous`, `DirectoryUnavailable`, `NoOwnerMailbox`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
+| `protectedPrincipalServiced` | string or null | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
+
+Refusal events carry the **same** field set as successes, so one search over
+`category=CloudPasswordReset` returns uniform records and a missing field always means a bug
+rather than a branch that did not bother.
+
+**Beyond this module.** Existing modules were not written against these rules and some pack
+strings the way IntuneDevices does. Bringing them into line is a separate stream with its own
+plan; nothing here changes them, and this section does not license a drive-by sweep.
 
 ## Owner decisions
 
@@ -785,6 +846,13 @@ time:
   audit records which, and the owner email's wording follows it -- a change is promised only
   when the box was ticked. A test covers both values end to end, including the default when
   the operator touches nothing.
+
+- AC18 Every `CloudPasswordReset` audit event carries the full field set in **Audit fields, and
+  Splunk** -- successes and refusals alike, with explicit nulls rather than omissions. Booleans
+  are JSON booleans, enumerated fields hold only their listed values, and no field packs two
+  facts into one string. A test asserts the emitted key set is identical across a success, a
+  refusal, a reveal and a delivery failure, and that every enumerated value a code path can
+  produce is on the list.
 
 ## Known Failure Classes checked
 
