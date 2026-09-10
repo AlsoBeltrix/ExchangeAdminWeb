@@ -5,6 +5,34 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-10 - Cloud Password Reset: a failed send fails closed, and downstream delivery is out of scope
+
+Status: Active. Two owner rulings in one sentence, given in response to codex finding cpr-2
+over `c493b2a..7c47c3c`, verbatim: *"if the password gets sent but the email fails.. how will
+the app know the email fails if it fails downstream? it won't. that's outside the scope. if
+the send itself fails, then fail closed."*
+
+**Fail closed on a failed send.** The draft plan displayed the password to the operator when
+the Graph PATCH succeeded but the SMTP send then failed - on any tier, bypassing the
+`CloudPasswordResetReveal` gate. That is removed. The password is discarded, the page reports
+"changed but not delivered", and the event audits as `CloudPasswordReset_DeliveryFailed`. The
+account is briefly in a state nobody knows the password for; that is recoverable by running
+the reset again, and it needs no escape hatch on the page. Displaying it instead would hand
+every operator a way to see a password by provoking a send failure, which inverts the whole
+model for a condition that fixes itself on retry.
+
+**Downstream delivery is out of scope.** The app knows only whether the SMTP handoff
+succeeded. A message accepted and then bounced, junked, or refused by a full mailbox is
+invisible to it, and this module does not attempt to track that. "Delivered" means "accepted
+by the mail server", wherever it appears in `docs/CloudPasswordReset-Plan.md`.
+
+Related: codex finding cpr-1 (an operator who is the derived owner of the target) was
+**declined** the same day - `.agents/review/cpr-1.contested.md`. No escalation exists when
+the operator already holds the account.
+
+Detail in `docs/CloudPasswordReset-Plan.md` (Delivery; Review log). No code is authorized;
+the plan is still Draft and S0 still gates it.
+
 ### 2026-09-09 - Service Health: no gradients
 
 Owner ruling on the deployed 1.3.0 board, in full: "no gradients."

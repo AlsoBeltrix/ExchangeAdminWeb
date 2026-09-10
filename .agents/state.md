@@ -38,10 +38,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   normal path and the design wrong - the plan is replaced, not amended. No slice after S0
   starts until the owner sees the number.
   **This stream DOES bump the base app version** (unlike a plain new module): `EmailService`
-  gains a public `SendCloudPasswordResetAsync`, and `ADSearchResult` may gain an optional
-  `Enabled` member - both shared infrastructure.
+  gains a public `SendCloudPasswordResetAsync`, and `ADSearchResult` gains optional
+  `GivenName`, `Surname` and `Enabled` members - both shared infrastructure.
   **Self-reset needs no guard and the plan says so:** operators authenticate against on-prem
-  AD, every target is cloud-only, so the two populations cannot intersect.
+  AD, every target is cloud-only, so the two populations cannot intersect. The adjacent
+  case - the operator being the *derived owner* - is also not a guard (declined finding
+  cpr-1, below).
   **Open owner decisions: D1** (who chooses the password - recommendation: app-generated),
   **D2** (risk acceptance: an app-only `User-PasswordProfile.ReadWrite.All` grant carries no
   role, so this registration can reset *any* password in the tenant, Global Administrators
@@ -51,24 +53,30 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   (`User.Read.All`, `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`)
   and its own Delinea secret. Do not reuse another module's Graph registration.
   **openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
-  `c493b2a..7c47c3c`, 2026-09-10: `Acceptable with changes`, THREE material changes, none yet
-  admitted or folded in (they need owner rulings first):**
-  (1) **Self-owned cloud account gap - the strongest of the three, and it holes my own
-  "self-reset is structurally impossible" claim.** The claim is true of the *login*, but the
-  plan then derives an on-prem owner and mails the password there. An L2 operator whose own
-  on-prem account is the derived owner of a cloud account receives that password under the
-  MAIN permission. The repo already treats this class as real: mailbox/calendar flows call
-  `PermissionValidator.ValidateSelfGrantAsync` (`Services/PermissionValidator.cs:280`). The
-  plan needs a self-owner refusal, and the "needs no guard" paragraph is wrong as written.
-  (2) **The post-write delivery-failure reveal is ungated** and contradicts the plan's own
-  AC7/"exactly two places" claim. Needs an explicit owner risk ruling or a different recovery
-  path for a password that was set but never delivered.
-  (3) **Corroboration has no data plumbing.** The plan corroborates on the AD user's given
-  name and surname, but `ValidationProperties` for a User returns only DisplayName / DN /
-  SamAccountName / UPN / mail (`Services/ADDirectorySearchService.cs:407-414`) and
-  `ADSearchResult` (`:829`) carries no such fields. Same class as the `Enabled` gap the plan
-  did name: three fields are missing, not one.
-  **NEXT: owner rulings on codex (1)-(3) and on D1/D2, then a plan revision. No
+  `c493b2a..7c47c3c`, 2026-09-10: `Acceptable with changes`, THREE material changes, all now
+  dispositioned and folded into the plan:**
+  (1) **Self-owned cloud account gap - DECLINED** on the owner's challenge
+  (`.agents/review/cpr-1.contested.md`). If the derivation resolves to the operator, the
+  operator already holds that cloud account, so there is no escalation to stop. The cited
+  `ValidateSelfGrantAsync` precedent (`Services/PermissionValidator.cs:280`) blocks taking
+  rights over *someone else's* mailbox, a different shape. The real residual - a derivation
+  that resolves to the wrong person - is the existing corroboration/ambiguity problem and
+  misfires identically whoever clicks.
+  (2) **Ungated delivery-failure reveal - UPHELD, fixed.** Owner ruling 2026-09-10: *"if the
+  send itself fails, then fail closed."* On a send failure after a successful PATCH the
+  password is discarded, not displayed, to **any** tier; the page says changed-but-not-
+  delivered and the event audits as `CloudPasswordReset_DeliveryFailed`; retrying generates a
+  new password. **Downstream delivery is out of scope** by the same ruling - the app knows
+  only whether the SMTP handoff succeeded, so "delivered" means "accepted by the mail server"
+  everywhere in the plan.
+  (3) **Corroboration has no data plumbing - UPHELD, fixed.** `ValidationProperties` for a
+  User returns only DisplayName / DN / SamAccountName / UPN / mail
+  (`Services/ADDirectorySearchService.cs:407-414`) and `ADSearchResult` (`:829`) carries no
+  such fields. Three fields are missing, not one: `GivenName`, `Surname`, `Enabled`. S1 adds
+  all three as optional members with null defaults plus a test asserting the query requests
+  them.
+  **NEXT: owner rulings on D1 (who chooses the password - recommendation: app-generated) and
+  D2 (the tenant-wide reset risk acceptance); D3 is unanswerable before S0. Then S0. No
   implementation is authorized.**
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**

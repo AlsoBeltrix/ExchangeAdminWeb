@@ -4,12 +4,15 @@ Status: **Draft -- awaiting owner go.** S0 (the owner-resolution survey) is a ha
 the rest: its hit rate decides whether this design is viable at all. D1 and D2 are open.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
-method to `Services/EmailService.cs` and an optional member to `ADSearchResult`, both shared
-infrastructure (Constitution, Deployment And Versioning). The "adding a module does not bump
-the base version" exception does not apply, because this is not only a module.
+method to `Services/EmailService.cs` and three optional members to `ADSearchResult`, both
+shared infrastructure (Constitution, Deployment And Versioning). The "adding a module does not
+bump the base version" exception does not apply, because this is not only a module.
 
-Revision 2026-09-10 (third). Two earlier premises were overturned by the owner in sequence,
-and both reversals are load-bearing:
+Revision 2026-09-10 (fourth) folds in the codex review of `c493b2a..7c47c3c` and the two owner
+rulings it produced: a post-write send failure fails closed with no reveal, downstream mail
+delivery is out of scope, and the AD lookup is short three fields the corroboration and leaver
+rules need. See the Review log at the end. The third revision's two overturned premises still
+govern and are kept below because both reversals are load-bearing:
 
 1. The first draft gated on "target holds an admin role". The owner corrected the premise --
    *almost no non-admin accounts are in scope* -- so that tier fenced nothing and was removed,
@@ -116,6 +119,17 @@ corroboration failure downgrades to **unresolved**, never to a send.
 The exact tolerance is a tuning question that S0 answers with real data, not a guess made
 here.
 
+**Three AD fields the lookup does not currently return.** `ValidationProperties`
+(`Services/ADDirectorySearchService.cs:407-414`) asks LDAP for `DisplayName`,
+`DistinguishedName`, `SamAccountName`, `UserPrincipalName` and `mail` for a User, and
+`ADSearchResult` (`:829-838`) carries exactly those. Corroboration needs `GivenName` and
+`Surname`, and the leaver rule needs `Enabled`. All three must be added to the User branch of
+`ValidationProperties` and to `ADSearchResult` as optional members with null defaults -- the
+pattern `ObjectSid` and `DnsDomain` already use (`:819-821`) -- so no existing construction
+site changes. This lands in S1. Stated here because a plan that corroborates on data the
+query never requested would compile, pass its tests against a mock, and silently corroborate
+nothing against a real directory.
+
 ### What happens to each outcome
 
 - **Owner resolved** -- the reset proceeds and the password is emailed to that mailbox. The
@@ -160,6 +174,17 @@ any operator-supplied destination address; any stored owner mapping.
 against on-premises AD; every target here is cloud-only by definition. The two populations
 cannot intersect, so an operator cannot be their own target. Recorded explicitly because a
 reviewer reading only the Graph surface will otherwise raise it (it was raised once already).
+
+**The related case -- an operator resetting a cloud account whose derived owner is
+themselves -- is also not a guard.** Codex raised it over `7c47c3c` (finding cpr-1,
+`.agents/review/cpr-1.contested.md`); it is declined. If the derivation resolves to the
+operator, the operator already holds that cloud account, so mailing them its new password
+grants them nothing they did not have. The `ValidateSelfGrantAsync` precedent
+(`Services/PermissionValidator.cs:280`) blocks giving yourself rights over **someone else's**
+mailbox, which is an escalation; this is not. The only real hazard in the neighbourhood is a
+derivation that resolves to the wrong person, and that hazard is identical whoever clicks the
+button -- it is handled by corroboration and by the refuse-on-ambiguity rule above, not by a
+self-check.
 
 ## The Graph surface, and why the obvious API is the wrong one
 
@@ -343,13 +368,22 @@ password nobody knows.
    before the write, naming the switch.
 3. A non-blank destination address on the resolved AD user.
 
-**Post-write failure -- the recorded exception.** If the PATCH succeeds and the send then
-fails, the page displays the password **regardless of permission tier**, because the
-alternative is an account nobody can get into. That event is audited distinctly
-(`CloudPasswordReset_DeliveryFailed`) and states on screen that it happened. This is a
-deliberate, narrow exception to "the operator never sees it", chosen because a locked-out
-admin account is the worse outcome. It is not a fallback the operator can provoke: it fires
-only after a real send failure.
+**Post-write send failure -- fail closed, no reveal.** Owner ruling 2026-09-10: *"if the send
+itself fails, then fail closed."* If the PATCH succeeds and the SMTP send then fails, the
+password is **discarded, not displayed**, to any tier. The page says the password was changed
+but could not be delivered, and the event is audited as
+`CloudPasswordReset_DeliveryFailed`.
+
+The account is momentarily in a state where nobody knows its password. That is recoverable
+and does not need an escape hatch on this page: running the reset again generates a new
+password and attempts a new send. Showing the password instead would hand every operator a
+way to see one by provoking a send failure, which is the whole model inverted for a condition
+that fixes itself on retry.
+
+**Downstream delivery is out of scope, by owner ruling the same day.** The app knows only
+whether the SMTP handoff succeeded. A message that is accepted and then bounces, lands in
+junk, or hits a full mailbox is invisible to it, and this module does not attempt to track
+that. "Delivered" in this plan means "accepted by the mail server", everywhere it appears.
 
 **The email itself.** `EmailService` has no way to send arbitrary text -- every public method
 is purpose-built with a hardcoded subject and body (`SendUserNotificationAsync` `:169`,
@@ -375,9 +409,10 @@ password must be changed at next sign-in. It does **not** name the operator.
   `["error"] = success ? null : errorDetail`, so a detail passed as `errorDetail` on a success
   is silently discarded -- the failure that lost an authorised-servicer record once already
   (`AuditService.cs:22-37`). Pass `ProtectedPrincipalServicing.Extra(note)`.
-- **Every reveal is its own audited event**, carrying why the reveal was permitted
-  (unresolved owner, or post-write delivery failure). A reveal is the one path where an
-  operator learns a credential; it is never folded into the ordinary success record.
+- **Every reveal is its own audited event.** There is exactly one condition that permits a
+  reveal -- an unresolved owner plus the reveal permission -- and it is recorded as such. A
+  reveal is the one path where an operator learns a credential; it is never folded into the
+  ordinary success record.
 - Every gate refusal is its own audited event carrying its reason.
 - **Administrator email** on every real attempt via `Email.SendAdminNotificationAsync`
   (`Services/EmailService.cs:39`, `virtual` and test-seamable), armed only after the ticket
@@ -490,9 +525,13 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   status-bearing result distinguishing Resolved / Unresolved / Ambiguous / Unavailable. Pure
   logic over a seamable `ADDirectorySearchService`; tests for every row of that table,
   including the two-candidates-one-user case and the `Unavailable`-is-not-absence case.
-  If `ADSearchResult` needs an `Enabled` member to reject leavers, it is added here as an
-  optional parameter with a null default so existing construction sites are unaffected (the
-  pattern `ObjectSid` already uses, `ADDirectorySearchService.cs:819-821`).
+  **The three missing AD fields land here.** `GivenName` and `Surname` (corroboration) and
+  `Enabled` (the leaver rule) are added to the User branch of `ValidationProperties`
+  (`ADDirectorySearchService.cs:407-414`) and to `ADSearchResult` as optional parameters with
+  null defaults, so existing construction sites are unaffected (the pattern `ObjectSid`
+  already uses, `:819-821`). A test must assert the User branch actually requests all three:
+  without it, corroboration passes against a mock and silently corroborates nothing against a
+  real directory.
 - **S2 -- service, DI.** `Services/CloudPasswordResetService.cs`: Delinea/Graph bootstrap and
   `IsAvailable` (the `MfaResetService.cs:20-46` shape), target resolve, the synced and guest
   refusals, the display-only role read, the `ITicketValidator` gate, the generated password,
@@ -552,7 +591,10 @@ time:
    no success is reported.
 10. The audit events and the administrator email contain **no password**; the owner email
     contains it and goes to exactly one address.
-11. With `ValidateTickets` on, a bad ticket refuses before any Graph call; with ServiceNow
+11. With SMTP unreachable, a reset that passed its pre-write gates reports "changed but not
+    delivered", shows no password to either tier, and audits
+    `CloudPasswordReset_DeliveryFailed`. Running it again then succeeds.
+12. With `ValidateTickets` on, a bad ticket refuses before any Graph call; with ServiceNow
     dormant, the switch refuses rather than passing everything through.
 
 ## Acceptance criteria
@@ -564,8 +606,8 @@ time:
   refuse for every tier; two candidates resolving to one user count as one match.
 - AC4 The destination address is never accepted, suggested, or displayed as editable anywhere
   in the module; the preflight panel shows the owner by display name only.
-- AC5 An operator without `CloudPasswordResetReveal` never sees the password, except on the
-  audited post-write delivery-failure path.
+- AC5 An operator without `CloudPasswordResetReveal` never sees the password, on any path. A
+  post-write send failure discards it rather than displaying it.
 - AC6 `UserNotificationsEnabled` false refuses an email-path reset **before** the PATCH.
 - AC7 The password appears in no audit event, administrator email, log or trace -- enforced by
   a source-text test, not by inspection.
@@ -582,9 +624,9 @@ time:
 ## Known Failure Classes checked
 
 1. **Side-effect ordering** -- the success audit and the emails sit on the post-write path and
-   are unreachable when the PATCH throws; refusal audits sit on refusal paths only. The
-   delivery-failure reveal is the one deliberate post-write branch and is audited on its own
-   event.
+   are unreachable when the PATCH throws; refusal audits sit on refusal paths only. A send
+   failure after a successful PATCH is its own audited outcome and must never be reported as
+   either a plain success or a plain failure: the password did change.
 2. **Success aggregation** -- not applicable: one target per operation, by design. If bulk is
    ever added this becomes the dominant risk, and the delivery model makes it worse, not
    better.
@@ -595,4 +637,13 @@ time:
 
 ## Review log
 
-(none yet)
+`openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, fallback) over
+c493b2a..7c47c3c: Acceptable with changes` -- 2026-09-10, three material changes.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | **Self-Owned Cloud Account Gap** -- an operator whose own on-prem account is the derived owner receives the password under the main permission. | **Declined**, owner challenge 2026-09-10. No escalation: the operator already holds that account. Record: `.agents/review/cpr-1.contested.md`. The self-reset section now carries the reasoning. |
+| 2 | **Ungated Delivery-Failure Reveal** -- displaying the password on a post-write send failure contradicts the no-visibility model and AC7. | **Upheld and fixed.** Owner ruling 2026-09-10: *"if the send itself fails, then fail closed."* The password is discarded, not shown, to any tier; `CloudPasswordReset_DeliveryFailed` is audited; downstream (post-handoff) delivery is out of scope. |
+| 3 | **Owner Corroboration Lacks Data Plumbing** -- `GivenName`/`Surname` are not in `ValidationProperties` or `ADSearchResult`. | **Upheld and fixed.** Verified true. Three fields, not two: `Enabled` was already named. Both the derivation section and S1 now require them. |
+
+Two owner rulings the same day are folded in above and recorded in `.agents/decisions.md`.
