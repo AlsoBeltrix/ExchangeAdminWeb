@@ -242,16 +242,33 @@ Consequences of the PATCH path, all load-bearing:
 3. **A rejected password returns `400`.** Tenant banned-password and complexity policy are
    evaluated server-side. The page must surface a policy rejection as such, never as success.
 
-   **`forceChangePasswordNextSignIn` is `false`, hard-coded** -- owner ruling 2026-09-10:
-   *"that disallows signin in too many instances."* Forcing a change at next sign-in requires
-   a sign-in path that can service the change-password interrupt, and too many of these
-   accounts do not have one; the reset would hand back an account that still cannot sign in,
-   which defeats the module. So the generated password **is** the account's password until
-   somebody deliberately changes it. That is the reason the generator is not negotiable: an
-   18-32 character, 60-bit-floor passphrase is a credential that can stand on its own, where
-   a human-chosen stopgap leaning on a forced change could not. Not a config field and not a
-   per-reset checkbox -- a constant, with a test pinning it, so it cannot drift back to `true`
-   in a later edit.
+   **`forceChangePasswordNextSignIn` is an operator choice per reset, defaulting to off.**
+   Owner ruling 2026-09-10, in two parts: forcing it always is wrong -- *"that disallows
+   signin in too many instances"* -- and hard-coding it off is equally wrong, because *"the
+   point to this whole app is to provide L2 with access to a subset of admin tools in an
+   audited and secure interface without giving them actual elevated credentials. change on
+   login is an OPTION."* The Entra portal offers this checkbox to an admin; withholding it
+   here would make the app less capable than the console it replaces, which is the opposite
+   of the app's reason to exist.
+
+   So: a single checkbox on the reset panel, **unchecked by default**. Default-off because the
+   owner's stated failure mode is real -- many accounts in this population sign in through
+   paths that cannot service a change-password interrupt, and a reset that quietly returns an
+   unusable account is the worse error. The operator ticks it when they know the account can
+   handle it.
+
+   Three things follow and are requirements, not commentary:
+
+   - **The choice is audited.** The `CloudPasswordReset_Execute` event records which way the
+     flag went, in `extra`. It changes what the account does afterwards, so it belongs in the
+     record.
+   - **The owner email matches the choice.** Checked: the mail says a change will be required
+     at next sign-in. Unchecked: it says the password works as-is and to change it when
+     convenient. It never promises a prompt that will not appear.
+   - **The generated password has to stand alone regardless.** With the box unchecked -- the
+     default, so the common case -- the generated password *is* the account's password until
+     someone changes it. That is what makes the generator's 18-32 characters and 60-bit floor
+     load-bearing rather than decorative.
 4. **The grant reaches every account in the tenant, and that is the requirement.** The role
    restrictions Microsoft documents under "Who can reset passwords" bound *delegated* callers
    through the signed-in admin's own role; an application permission carries no role. This
@@ -505,11 +522,13 @@ is purpose-built with a hardcoded subject and body (`SendUserNotificationAsync` 
 recorded rather than assumed (`:446-450` documents exactly this reasoning). Adding it is the
 shared-infrastructure change that bumps the base app version.
 
-The body names the account that was reset, the ticket, and the password. It does **not** name
-the operator, and it does **not** claim a change will be required at next sign-in -- none is,
-and telling the owner otherwise would leave them expecting a prompt that never comes. It
-advises changing the password when convenient and says the account will keep working until
-they do.
+The body names the account that was reset, the ticket, and the password, and does **not** name
+the operator. Its closing line is **conditional on the change-at-next-sign-in checkbox**: when
+the operator ticked it, the mail says a change will be required at next sign-in; when they did
+not -- the default -- it says the password works as-is and to change it when convenient. The
+method therefore takes the flag as a parameter. It must never promise a prompt that will not
+appear: an owner expecting one and not getting it raises a ticket, and an owner not expecting
+one and hitting it on a client that cannot service the change is locked out.
 
 ## Audit and notification
 
@@ -637,27 +656,37 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 - **S3 -- service, DI.** `Services/CloudPasswordResetService.cs`: Delinea/Graph bootstrap and
   `IsAvailable` (the `MfaResetService.cs:20-46` shape), target resolve, the synced and guest
   refusals, the display-only role read, the `ITicketValidator` gate, the generated password
-  from S2, and the PATCH returning a status-bearing result. No descriptor, no page. Tests for
+  from S2, the change-at-next-sign-in flag taken as a parameter (defaulting to `false`, never
+  read from config), and the PATCH returning a status-bearing result. No descriptor, no page.
+  Tests assert the flag reaches the request body unaltered in both states. Tests for
   every refusal path and for Known Failure Class 3: a failed Graph read must never read as
   "not synced" or "no roles". **The Entra allowed-character check lands here**: confirm
   `!@#$%&*?+=` and `-` against Microsoft's published password policy before the first live
   call, and record what was found.
 - **S4 -- the email helper.** `EmailService.SendCloudPasswordResetAsync`, `virtual`, returning
-  whether it sent. Base app version bump lands here. Tests including the
-  `UserNotificationsEnabled`-off case returning false.
+  whether it sent, and taking the change-at-next-sign-in flag so the closing line matches what
+  was actually done. Base app version bump lands here. Tests including the
+  `UserNotificationsEnabled`-off case returning false, and one per flag state asserting the
+  body promises a change prompt only when the flag is set.
 - **S5 -- descriptor and read-only page.** Catalog entry with both permissions, and
   `Components/Pages/CloudPasswordReset.razor` with search plus a preflight panel: resolved
   identity, cloud-only yes/no, roles held, protection status, and **who the password would go
   to -- display name and resolved address, rendered read-only, with no input control and no
-  alternative to pick from**. No write path. Catalog tests, plus a test that the panel emits
-  no editable field bound to the destination.
+  alternative to pick from**. The one operator input on the panel is the **change at next
+  sign-in** checkbox, unchecked by default, with a line of help text saying an account that
+  cannot service a change prompt will be unable to sign in. No write path. Catalog tests, plus
+  a test that the panel emits no editable field bound to the destination and that the checkbox
+  renders unchecked on first load.
 - **S6 -- the write.** The server-side authorization re-checks (both permissions), the full
   protection flow including the unresolved branch with a real `EntraObjectId`, the ticket
   gate, the pre-write delivery gates, the PATCH, `400` surfaced as a policy rejection, the
   send, the fail-closed handling of a send failure (password discarded, nothing displayed,
   `CloudPasswordReset_DeliveryFailed` audited), `LogModuleAction` for each outcome with the
-  serviced note in `extra`, the administrator email, and the `ModuleConfig.razor` servicer
-  opt-in entry **in this same commit**.
+  serviced note **and the change-at-next-sign-in choice** in `extra`, the administrator email
+  (which also states the choice), and the `ModuleConfig.razor` servicer opt-in entry **in this
+  same commit**. The checkbox is carried from the page through the service to the PATCH body
+  and to both emails; a test follows one value the whole way rather than checking each hop in
+  isolation.
 - **S7 -- records.** README section, plan status and traceability, `.agents/state.md`,
   `.agents/token-log.md`.
 
@@ -681,9 +710,11 @@ time:
 
 1. A cloud-only account whose owner resolves resets; the owner receives the password; the
    operator's screen shows the destination address read-only and no password.
-2. Sign-in with the new password succeeds and is **not** interrupted by a change-password
-   prompt -- including a sign-in path that cannot service one (a legacy or non-interactive
-   client). The password stays as issued until somebody deliberately changes it.
+2. Both settings of the change-at-next-sign-in checkbox, on real accounts. Left unchecked
+   (the default): sign-in succeeds with **no** change prompt, including on a path that could
+   not service one, and the password stays as issued. Ticked: sign-in does prompt for a
+   change and the new password takes. In each case the owner email's closing line matches
+   what actually happened, and the success audit records which way the flag went.
 3. A **synced** account is refused at preflight, naming the on-premises path, with no Graph
    write attempted.
 4. A guest account is refused.
@@ -749,9 +780,11 @@ time:
   in the generator's source -- enforced by a source-text test. The word list is an embedded
   resource, and the parameters (length range, word count, separators, entropy floor, attempt
   cap) are constants, not configuration.
-- AC17 The PATCH body sends `forceChangePasswordNextSignIn: false` as a constant, pinned by a
-  test. It is not configurable, not a per-reset option, and the owner email does not tell the
-  recipient a change will be required.
+- AC17 `forceChangePasswordNextSignIn` carries the operator's per-reset checkbox, which
+  defaults to **unchecked**. The PATCH body sends whichever value was chosen, the success
+  audit records which, and the owner email's wording follows it -- a change is promised only
+  when the box was ticked. A test covers both values end to end, including the default when
+  the operator touches nothing.
 
 ## Known Failure Classes checked
 

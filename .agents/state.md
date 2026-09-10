@@ -44,11 +44,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   AD, every target is cloud-only, so the two populations cannot intersect. The adjacent
   case - the operator being the *derived owner* - is also not a guard (declined finding
   cpr-1, below).
-  **No forced change at next sign-in** (owner, 2026-09-10: *"NO. that disallows signin in too
-  many instances."*). `forceChangePasswordNextSignIn` is a hard-coded `false` with a pinning
-  test, so the generated password is the account's real password until someone changes it -
-  which is what makes the generator's strength load-bearing. The owner email must not promise
-  a change prompt.
+  **Change at next sign-in is an operator checkbox, default unchecked** - `forceChangePassword
+  NextSignIn` is neither always-on (*"that disallows signin in too many instances"*) nor
+  hard-coded off (*"change on login is an OPTION"*). **The general rule behind it, worth
+  applying to the whole app:** this app gives L2 the admin console's capabilities inside an
+  audited, credential-free interface, so where the portal offers an admin a choice, removing
+  that choice makes this a worse tool than the thing it replaces. Withhold credentials and
+  enforce audit; do not withhold controls. Default off because a reset that silently returns
+  an account that can no longer sign in is the worse error. The choice rides the success
+  audit's `extra`, and the owner email's closing line follows it. Since off is the default,
+  the generated password is usually the durable one - which is what makes the generator's
+  strength load-bearing.
   **The resolved destination address IS shown to the operator, read-only** (owner challenged
   the earlier display-name-only rule and it could not be justified). The address is not a
   secret and showing it is the only human check on a mis-resolved owner. The real control is

@@ -5,18 +5,32 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
-### 2026-09-10 - Cloud Password Reset: no forced change at next sign-in, and the destination address is shown
+### 2026-09-10 - Cloud Password Reset: change-at-next-sign-in is an operator option, and the destination address is shown
 
 Status: Active. Two owner corrections to the plan's exec summary, same day.
 
-**`forceChangePasswordNextSignIn` is `false`.** Owner, verbatim: *"NO. that disallows signin in
-too many instances."* The draft set it `true`. Forcing a change requires a sign-in path that
-can service the change-password interrupt, and too many accounts in this population do not
-have one - the reset would return an account that still cannot sign in. It is a hard-coded
-constant with a test pinning it, not a config field and not a per-reset checkbox. Consequence:
-the generated password is the account's real password until someone deliberately changes it,
-which is why the generator's strength (18-32 chars, 60-bit floor) is load-bearing rather than
-a nicety. The owner email must not promise a prompt that will not appear.
+**`forceChangePasswordNextSignIn` is an operator checkbox, defaulting to unchecked.** Two
+corrections in sequence, both from the owner the same day. The draft hard-coded it `true`:
+*"NO. that disallows signin in too many instances."* I then hard-coded it `false`, which was
+also wrong: *"no. 2 should be an option just like it is in the MS portal. the point to this
+whole app is to provide L2 with access to a subset of admin tools in an audited and secure
+interface without giving them actual elevated credentials. change on login is an OPTION."*
+
+The general rule that decides this class of question: **this app exists to give L2 the admin
+console's capabilities inside an audited, credential-free interface.** Where the portal offers
+an admin a choice, removing that choice makes the app a worse tool than the thing it replaces.
+Withhold credentials and enforce audit - do not withhold controls.
+
+Default unchecked, because the owner's first objection is a real failure mode: many accounts
+in this population sign in through paths that cannot service a change-password interrupt, and
+a reset that silently returns an unusable account is the worse of the two errors. The operator
+ticks the box when they know the account can take it.
+
+Three consequences are requirements: the choice is recorded in the success audit's `extra`;
+the owner email's closing line follows the choice and never promises a prompt that will not
+appear; and because unchecked is the default, the generated password is usually the account's
+durable password - which is what makes the generator's 18-32 characters and 60-bit floor
+load-bearing rather than a nicety.
 
 **The resolved destination address is displayed, read-only.** Owner challenge: *"why name
 only? is that a precaution of some kind? the tech knows who opened the fucking ticket. you
