@@ -5,6 +5,32 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-10 - Cloud Password Reset: no forced change at next sign-in, and the destination address is shown
+
+Status: Active. Two owner corrections to the plan's exec summary, same day.
+
+**`forceChangePasswordNextSignIn` is `false`.** Owner, verbatim: *"NO. that disallows signin in
+too many instances."* The draft set it `true`. Forcing a change requires a sign-in path that
+can service the change-password interrupt, and too many accounts in this population do not
+have one - the reset would return an account that still cannot sign in. It is a hard-coded
+constant with a test pinning it, not a config field and not a per-reset checkbox. Consequence:
+the generated password is the account's real password until someone deliberately changes it,
+which is why the generator's strength (18-32 chars, 60-bit floor) is load-bearing rather than
+a nicety. The owner email must not promise a prompt that will not appear.
+
+**The resolved destination address is displayed, read-only.** Owner challenge: *"why name
+only? is that a precaution of some kind? the tech knows who opened the fucking ticket. you
+need to justify this."* It could not be justified and is reversed. The address is not a
+secret, the tech generally knows the requester, and the same mailbox is visible in the app's
+own AD search. Hiding it removed the only human check on the module's real residual risk - a
+derivation resolving to the wrong person - which a tech reading the address catches at a
+glance. The control that matters is untouched and is a different one: the address is
+**derived, read-only, never editable, never chosen from a list**. Seeing the destination is
+not selecting it.
+
+Detail in `docs/CloudPasswordReset-Plan.md` (Graph surface consequence 3; owner-resolution
+outcomes; AC4, AC17). No code is authorized.
+
 ### 2026-09-10 - Cloud Password Reset: the app generates the password, using pwgen's algorithm as the model
 
 Status: Active. Owner ruling, verbatim: *"d1 app chooses. there's a password generator in

@@ -134,8 +134,20 @@ nothing against a real directory.
 ### What happens to each outcome
 
 - **Owner resolved** -- the reset proceeds and the password is emailed to that mailbox. The
-  operator is told only *that* it was sent and to whom by display name, never the address and
-  never the password.
+  operator is shown the owner's display name **and the resolved address**, read-only, before
+  and after the send, and never the password.
+
+  **Why the address is shown.** An earlier revision hid it and showed the display name alone.
+  That was a precaution against nothing: the address is not a secret, the tech usually knows
+  who the ticket is for, and the same mailbox is visible in the app's own AD search and in
+  every other tool they hold. What hiding it actually cost is the one defence that matters
+  here -- a human check on the derivation. The real residual risk in this module is a lookup
+  that resolves to the *wrong* person, and a tech who can read "this is going to
+  john.smith@analog.com" can catch that in a second, where a display name they half-recognise
+  gives them nothing to catch it with. The control that counts is unchanged and is a different
+  control: the address is **derived, read-only and never editable**. The operator cannot type
+  one, pick one from a list, or steer the send anywhere. Seeing where it is going is not the
+  same as choosing where it goes.
 - **Unresolved** -- refused for an operator holding only the main permission, with a message
   naming why (no match / no mailbox / name mismatch). Available to the reveal tier below.
 - **Ambiguous or Unavailable** -- refused for everyone, including the reveal tier. An
@@ -215,7 +227,7 @@ User-PasswordProfile.ReadWrite.All is the least privileged permission."*
 |---|---|---|---|
 | Resolve target | `GET /users/{upn}?$select=id,displayName,userPrincipalName,accountEnabled,onPremisesSyncEnabled,userType` | `User.Read.All` | 200 |
 | Read active roles | `GET /users/{id}/transitiveMemberOf/microsoft.graph.directoryRole?$select=id,displayName,roleTemplateId` | `RoleManagement.Read.Directory` (ASSUMPTION -- confirm at consent; `Directory.Read.All` is the wider fallback) | 200 |
-| Reset password | `PATCH /users/{id}` body `{"passwordProfile":{"password":"...","forceChangePasswordNextSignIn":true}}` | `User-PasswordProfile.ReadWrite.All` | 204 |
+| Reset password | `PATCH /users/{id}` body `{"passwordProfile":{"password":"...","forceChangePasswordNextSignIn":false}}` | `User-PasswordProfile.ReadWrite.All` | 204 |
 
 All v1.0; `GraphTokenClient` hardcodes that base (`GraphTokenClient.cs:16`).
 `Services/GraphTokenClient.cs:134` already exposes `PatchWithStatusAsync`, so no new Graph
@@ -229,6 +241,17 @@ Consequences of the PATCH path, all load-bearing:
    polling); PATCH returns `204` and is done. No polling loop to get wrong.
 3. **A rejected password returns `400`.** Tenant banned-password and complexity policy are
    evaluated server-side. The page must surface a policy rejection as such, never as success.
+
+   **`forceChangePasswordNextSignIn` is `false`, hard-coded** -- owner ruling 2026-09-10:
+   *"that disallows signin in too many instances."* Forcing a change at next sign-in requires
+   a sign-in path that can service the change-password interrupt, and too many of these
+   accounts do not have one; the reset would hand back an account that still cannot sign in,
+   which defeats the module. So the generated password **is** the account's password until
+   somebody deliberately changes it. That is the reason the generator is not negotiable: an
+   18-32 character, 60-bit-floor passphrase is a credential that can stand on its own, where
+   a human-chosen stopgap leaning on a forced change could not. Not a config field and not a
+   per-reset checkbox -- a constant, with a test pinning it, so it cannot drift back to `true`
+   in a later edit.
 4. **The grant reaches every account in the tenant, and that is the requirement.** The role
    restrictions Microsoft documents under "Who can reset passwords" bound *delegated* callers
    through the signed-in admin's own role; an application permission carries no role. This
@@ -482,8 +505,11 @@ is purpose-built with a hardcoded subject and body (`SendUserNotificationAsync` 
 recorded rather than assumed (`:446-450` documents exactly this reasoning). Adding it is the
 shared-infrastructure change that bumps the base app version.
 
-The body names the account that was reset, the ticket, and the password, and says the
-password must be changed at next sign-in. It does **not** name the operator.
+The body names the account that was reset, the ticket, and the password. It does **not** name
+the operator, and it does **not** claim a change will be required at next sign-in -- none is,
+and telling the owner otherwise would leave them expecting a prompt that never comes. It
+advises changing the password when convenient and says the account will keep working until
+they do.
 
 ## Audit and notification
 
@@ -622,7 +648,9 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 - **S5 -- descriptor and read-only page.** Catalog entry with both permissions, and
   `Components/Pages/CloudPasswordReset.razor` with search plus a preflight panel: resolved
   identity, cloud-only yes/no, roles held, protection status, and **who the password would go
-  to, by display name only**. No write path. Catalog tests.
+  to -- display name and resolved address, rendered read-only, with no input control and no
+  alternative to pick from**. No write path. Catalog tests, plus a test that the panel emits
+  no editable field bound to the destination.
 - **S6 -- the write.** The server-side authorization re-checks (both permissions), the full
   protection flow including the unresolved branch with a real `EntraObjectId`, the ticket
   gate, the pre-write delivery gates, the PATCH, `400` surfaced as a policy rejection, the
@@ -652,8 +680,10 @@ Manual, needing a deployed instance and the app registration -- none run at impl
 time:
 
 1. A cloud-only account whose owner resolves resets; the owner receives the password; the
-   operator's screen shows no password and no address.
-2. Sign-in with the new password prompts a change.
+   operator's screen shows the destination address read-only and no password.
+2. Sign-in with the new password succeeds and is **not** interrupted by a change-password
+   prompt -- including a sign-in path that cannot service one (a legacy or non-interactive
+   client). The password stays as issued until somebody deliberately changes it.
 3. A **synced** account is refused at preflight, naming the on-premises path, with no Graph
    write attempted.
 4. A guest account is refused.
@@ -690,8 +720,9 @@ time:
 - AC2 The reset uses `PATCH /users/{id}` `passwordProfile`; `resetPassword` is never called.
 - AC3 Owner resolution uses `ValidateExists`, never `Search`; `Unavailable` and `Ambiguous`
   refuse for every tier; two candidates resolving to one user count as one match.
-- AC4 The destination address is never accepted, suggested, or displayed as editable anywhere
-  in the module; the preflight panel shows the owner by display name only.
+- AC4 The destination address is always **derived** and never accepted, suggested, chosen from
+  a list, or rendered editable anywhere in the module. It is displayed read-only alongside the
+  owner's display name so the operator can sanity-check the derivation.
 - AC5 An operator without `CloudPasswordResetReveal` never sees the password, on any path. A
   post-write send failure discards it rather than displaying it.
 - AC6 `UserNotificationsEnabled` false refuses an email-path reset **before** the PATCH.
@@ -718,6 +749,9 @@ time:
   in the generator's source -- enforced by a source-text test. The word list is an embedded
   resource, and the parameters (length range, word count, separators, entropy floor, attempt
   cap) are constants, not configuration.
+- AC17 The PATCH body sends `forceChangePasswordNextSignIn: false` as a constant, pinned by a
+  test. It is not configurable, not a per-reset option, and the owner email does not tell the
+  recipient a change will be required.
 
 ## Known Failure Classes checked
 

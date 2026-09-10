@@ -44,6 +44,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   AD, every target is cloud-only, so the two populations cannot intersect. The adjacent
   case - the operator being the *derived owner* - is also not a guard (declined finding
   cpr-1, below).
+  **No forced change at next sign-in** (owner, 2026-09-10: *"NO. that disallows signin in too
+  many instances."*). `forceChangePasswordNextSignIn` is a hard-coded `false` with a pinning
+  test, so the generated password is the account's real password until someone changes it -
+  which is what makes the generator's strength load-bearing. The owner email must not promise
+  a change prompt.
+  **The resolved destination address IS shown to the operator, read-only** (owner challenged
+  the earlier display-name-only rule and it could not be justified). The address is not a
+  secret and showing it is the only human check on a mis-resolved owner. The real control is
+  unchanged: derived, read-only, never editable, never picked from a list.
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as
