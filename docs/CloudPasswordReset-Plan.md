@@ -1,7 +1,8 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
 Status: **Draft -- awaiting owner go.** S0 (the owner-resolution survey) is a hard gate on
-the rest: its hit rate decides whether this design is viable at all. D1 and D2 are open.
+the rest: its hit rate decides whether this design is viable at all. D1 is settled (the app
+generates the password); D3 is answerable only after S0.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs` and three optional members to `ADSearchResult`, both
@@ -223,11 +224,24 @@ plumbing is needed.
 Consequences of the PATCH path, all load-bearing:
 
 1. **No system-generated password option.** That is a `resetPassword` feature only. The caller
-   supplies the password -- see D1.
+   supplies the password, so the module generates its own (see **The generated password**).
 2. **The write is synchronous.** `resetPassword` is long-running (`202` + `Location`
    polling); PATCH returns `204` and is done. No polling loop to get wrong.
 3. **A rejected password returns `400`.** Tenant banned-password and complexity policy are
    evaluated server-side. The page must surface a policy rejection as such, never as success.
+4. **The grant reaches every account in the tenant, and that is the requirement.** The role
+   restrictions Microsoft documents under "Who can reset passwords" bound *delegated* callers
+   through the signed-in admin's own role; an application permission carries no role. This
+   module must be able to reset Global Administrator passwords -- nearly every target is an
+   admin account, so that is its normal operating mode, not a corner of it. Not an open
+   question and not a risk to re-litigate: settled with the population, 2026-09-10. The
+   controls that do apply are the delivery model, the scarcity of the reveal permission, and
+   the Delinea secret.
+
+   One thing here is a **test, not a decision**: Learn states the permission with no app-only
+   role carve-out, and this repo verifies doc claims rather than trusting them. The first live
+   call must confirm the PATCH actually succeeds against an admin-role target, using a
+   disposable account.
 
 ## The synced-account rule
 
@@ -351,6 +365,79 @@ on a non-boolean switch value (finding btv-1).
 This adopts the newer seam rather than `MfaReset.razor:241`'s direct
 `ServiceNow.ValidateTicketAsync`.
 
+## The generated password
+
+Owner ruling 2026-09-10, settling D1: **the app chooses the password**, and the algorithm is
+the one in `D:\source\pwgen` -- *"use the algorithm it's using, not the code."* The model is
+Rust; this is a C# reimplementation of its method, not a port of its source, and not a
+dependency on that binary.
+
+It is a diceware-style passphrase generator: words from a fixed list, mixed capitalisation,
+symbol separators, and digit-and-symbol padding to hit an exact target length, with a measured
+entropy floor and a retry loop that refuses rather than degrades.
+
+**Fixed parameters. None of these is a config field** -- an operator who can widen them can
+weaken every password the module issues.
+
+| Parameter | Value |
+|---|---|
+| Word list | 7,771 English words, 3-9 characters, lowercase (four contain a hyphen: `drop-down`, `felt-tip`, `t-shirt`, `yo-yo`) |
+| Length | 18-32 characters, target chosen uniformly per password |
+| Word count | 2-6 |
+| Separators | `!@#$%&*?+=` |
+| Entropy floor | 60 bits |
+| Attempts | 100, then **refuse** |
+
+**The method, step by step.**
+
+1. **Target length.** Pick uniformly from 18-32. Everything downstream fits this exactly.
+2. **Word count.** The lower bound is the smallest count whose conservative entropy estimate
+   clears 60 bits (assuming a pessimistic ~500-word pool per position, so the estimate never
+   over-counts); the upper bound is what physically fits, `(target - 1) / 4` -- each word needs
+   at least 3 characters plus a separator, and at least one padding digit must survive --
+   clamped to 2-6. Choose uniformly between them.
+3. **Word selection, fitted to a character budget.** The words must total between
+   `3 * wordCount` and `target - separators - 1` characters. Try ten fully random draws first.
+   If none fits, fall back to guided selection: decide each word's length first, working the
+   remaining budget down, then **shuffle the chosen lengths** before assigning words to them.
+   The shuffle is load-bearing -- without it the guided path emits long-word-first passwords
+   and leaks structure. Words are drawn without replacement.
+4. **Capitalisation.** Three styles: ALLCAPS, lowercase, Title. The multiset is balanced for
+   the word count (2-3 words: one of each, truncated; 4: one style repeats; 5: two styles
+   repeat once each; 6: exact pairs), then shuffled, re-shuffling up to 20 times to avoid two
+   adjacent words sharing a style.
+5. **Assembly.** Words joined by a separator drawn per gap. Padding fills the gap between the
+   assembled length and the target: always at least one digit, and a separator symbol too
+   whenever two or more padding characters are available, the rest ~85% digits / ~15% symbols,
+   then shuffled. Padding is **distributed across every slot** -- before the first word,
+   between words, after the last -- seeding each slot once before scattering the remainder, so
+   passwords do not all end in a numeric tail.
+6. **Entropy check.** Score the result: word entropy from the *effective* pool (the geometric
+   mean of how many list words share each selected word's length -- not the full 7,771, because
+   the length-fitting step narrows the choice), plus separator choices, plus padding, plus the
+   count of legal style arrangements. If it clears 60 bits and the length is in range, keep it;
+   otherwise retry.
+7. **Refuse, never degrade.** If 100 attempts fail, the reset **fails**. It does not fall back
+   to a shorter password, a lower floor, or a different generator.
+
+**What changes for this app.**
+
+- **CSPRNG, not `System.Random`.** Every draw -- word, style, separator, digit, slot, shuffle
+  -- uses `System.Security.Cryptography.RandomNumberGenerator` (`GetInt32`, which rejection-
+  samples, and a Fisher-Yates shuffle built on it). `System.Random` anywhere in this file is a
+  defect, and a test asserts the type is not referenced.
+- **The word list is embedded**, as an embedded resource compiled into the assembly, not a file
+  beside it that a host could edit. Its provenance and licence are recorded when it lands.
+- **The password never leaves the generator except to the PATCH body and the owner's email.**
+  No candidate, no rejected attempt, no length or entropy figure tied to a specific reset
+  reaches a log line, the audit event, or the operation trace.
+- **Entra policy compliance is asserted, not assumed.** Output is 18-32 characters (Entra
+  allows 8-256) and always carries digits, symbols and at least two of upper/lower case, so the
+  three-of-four character-class rule is met by construction. The separator set `!@#$%&*?+=` and
+  the hyphen in those four words must be confirmed against Microsoft's allowed-character list
+  in S3 before the first live call -- this repo checks doc claims rather than trusting them.
+  A test asserts every generated password satisfies the policy as written.
+
 ## Delivery, and the ordering trap that comes with it
 
 The password must exist before it can be sent, and it cannot be un-set once PATCHed. So the
@@ -427,39 +514,12 @@ password must be changed at next sign-in. It does **not** name the operator.
 
 ## Owner decisions
 
-### D1 -- OPEN: who chooses the new password?
+### D1 -- SETTLED 2026-09-10: the app chooses the password
 
-The app-only path has no system-generated option, so the password must come from somewhere.
-
-- **(a) App-generated.** The module generates a strong random password and PATCHes it. Every
-  reset is compliant by construction, no operator invents one, and -- decisive here -- the
-  operator need never handle it, which is what makes the delivery model possible at all.
-- **(b) Operator-typed.** A password field on the page. Incompatible with this design: the
-  operator would know the password by definition, and the reveal permission would be
-  meaningless.
-
-Recommendation: **(a)**, and (b) is arguably no longer a live option given the delivery
-ruling. Recorded as a decision rather than assumed.
-
-### D2 -- OPEN, a risk acceptance rather than a design fork
-
-**An app-only grant of `User-PasswordProfile.ReadWrite.All` is not role-limited.** The role
-restrictions Microsoft documents under "Who can reset passwords" bound *delegated* callers
-through the signed-in admin's own role. An application permission has no role, so this app
-registration can reset **any** password in the tenant, Global Administrators included. Given
-that nearly every target is an admin account, that is the module's normal operating mode
-rather than a corner of it.
-
-Inside the app the controls are the delivery model and the scarcity of the reveal permission;
-the protected-principal list is **not** an effective control for this population (see
-Protection). Outside the app the control is the Delinea secret. None of them fences Graph:
-whoever obtains that client secret owns every password in the tenant. This is the widest
-grant this application would hold.
-
-ASSUMPTION requiring live confirmation: that app-only `User-PasswordProfile.ReadWrite.All`
-does in fact succeed against a Global Administrator target. Learn states the permission with
-no role carve-out for app-only, but this repo verifies rather than trusts a doc statement. The
-first live test must be against a **disposable** admin-role account.
+Owner ruling: app-generated, using the algorithm in `D:\source\pwgen` -- *"use the algorithm
+it's using, not the code."* An operator-typed password was never compatible with this design:
+the operator would know it by definition and the reveal permission would mean nothing. Spec in
+**The generated password**, above.
 
 ### D3 -- OPEN, after S0: the corroboration tolerance
 
@@ -472,7 +532,7 @@ it is small, it stays strict. Deliberately not guessed before the data exists.
 Outside the codebase; neither blocks the build, both block the first live call.
 
 1. **A dedicated Entra app registration**, admin-consented, application permissions
-   `User.Read.All`, `User-PasswordProfile.ReadWrite.All` (see D2) and
+   `User.Read.All`, `User-PasswordProfile.ReadWrite.All` and
    `RoleManagement.Read.Directory` (record which was actually granted if the wider
    `Directory.Read.All` fallback is needed). Do not reuse the `MfaReset`, `RiskyUsers`,
    `IntuneDevices` or `M365GroupManagement` registration -- each carries an unrelated blast
@@ -532,29 +592,48 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   already uses, `:819-821`). A test must assert the User branch actually requests all three:
   without it, corroboration passes against a mock and silently corroborates nothing against a
   real directory.
-- **S2 -- service, DI.** `Services/CloudPasswordResetService.cs`: Delinea/Graph bootstrap and
+- **S2 -- the password generator.** `Services/PasswordGenerator.cs` plus the embedded word
+  list: the algorithm in **The generated password**, implemented in C# from the method, not
+  ported from the Rust. Standalone and pure apart from the CSPRNG, so it is testable on its
+  own and reusable if another module ever needs one. Tests: length always in 18-32; word count
+  always 2-6; every output carries a digit, a separator symbol and mixed case; measured entropy
+  always at least 60 bits; no two adjacent words share a capitalisation style; padding lands
+  outside the tail often enough to prove it is distributed; 100 failed attempts refuse rather
+  than emit anything; the same seed is *not* required to reproduce (there is no seeding path);
+  and a source-text assertion that `System.Random` appears nowhere in the file. Statistical
+  smoke test over a few thousand draws: no duplicates, and every character class present.
+  **The word list carries its provenance in the same commit**: where the 7,771 words came
+  from, under what licence, and a recorded count and length histogram, so a later edit that
+  changes the pool is visible as a diff to a stated number rather than a silent entropy cut.
+  The list is copied from `D:\source\pwgen\wordlist.txt`; that repo's licence must be checked
+  and named before the copy lands, and if it does not permit redistribution the list is
+  regenerated from a public source (EFF long list or similar) and the histogram re-measured.
+- **S3 -- service, DI.** `Services/CloudPasswordResetService.cs`: Delinea/Graph bootstrap and
   `IsAvailable` (the `MfaResetService.cs:20-46` shape), target resolve, the synced and guest
-  refusals, the display-only role read, the `ITicketValidator` gate, the generated password,
-  and the PATCH returning a status-bearing result. No descriptor, no page. Tests for every
-  refusal path and for Known Failure Class 3: a failed Graph read must never read as "not
-  synced" or "no roles".
-- **S3 -- the email helper.** `EmailService.SendCloudPasswordResetAsync`, `virtual`, returning
+  refusals, the display-only role read, the `ITicketValidator` gate, the generated password
+  from S2, and the PATCH returning a status-bearing result. No descriptor, no page. Tests for
+  every refusal path and for Known Failure Class 3: a failed Graph read must never read as
+  "not synced" or "no roles". **The Entra allowed-character check lands here**: confirm
+  `!@#$%&*?+=` and `-` against Microsoft's published password policy before the first live
+  call, and record what was found.
+- **S4 -- the email helper.** `EmailService.SendCloudPasswordResetAsync`, `virtual`, returning
   whether it sent. Base app version bump lands here. Tests including the
   `UserNotificationsEnabled`-off case returning false.
-- **S4 -- descriptor and read-only page.** Catalog entry with both permissions, and
+- **S5 -- descriptor and read-only page.** Catalog entry with both permissions, and
   `Components/Pages/CloudPasswordReset.razor` with search plus a preflight panel: resolved
   identity, cloud-only yes/no, roles held, protection status, and **who the password would go
   to, by display name only**. No write path. Catalog tests.
-- **S5 -- the write.** The server-side authorization re-checks (both permissions), the full
+- **S6 -- the write.** The server-side authorization re-checks (both permissions), the full
   protection flow including the unresolved branch with a real `EntraObjectId`, the ticket
   gate, the pre-write delivery gates, the PATCH, `400` surfaced as a policy rejection, the
-  send, the post-write delivery-failure reveal, `LogModuleAction` for each outcome with the
+  send, the fail-closed handling of a send failure (password discarded, nothing displayed,
+  `CloudPasswordReset_DeliveryFailed` audited), `LogModuleAction` for each outcome with the
   serviced note in `extra`, the administrator email, and the `ModuleConfig.razor` servicer
   opt-in entry **in this same commit**.
-- **S6 -- records.** README section, plan status and traceability, `.agents/state.md`,
+- **S7 -- records.** README section, plan status and traceability, `.agents/state.md`,
   `.agents/token-log.md`.
 
-Module version stays `1.0.0` across all slices; the base app version bumps once, in S3.
+Module version stays `1.0.0` across all slices; the base app version bumps once, in S4.
 
 ## Verification
 
@@ -596,6 +675,13 @@ time:
     `CloudPasswordReset_DeliveryFailed`. Running it again then succeeds.
 12. With `ValidateTickets` on, a bad ticket refuses before any Graph call; with ServiceNow
     dormant, the switch refuses rather than passing everything through.
+13. A run of generated passwords is accepted by the live Entra policy -- specifically that
+    every character in `!@#$%&*?+=` and the hyphen survives a real PATCH. Any character the
+    tenant rejects is dropped from the separator set and the entropy figures recomputed, in
+    S3, before the module goes anywhere near production.
+14. The tenant-wide reach is confirmed against a disposable account holding an admin role: the
+    PATCH succeeds. Learn documents no app-only carve-out for
+    `User-PasswordProfile.ReadWrite.All`, and this repo verifies rather than trusts.
 
 ## Acceptance criteria
 
@@ -620,6 +706,18 @@ time:
 - AC11 A `400` from the PATCH is reported as a password-policy rejection and never as success.
 - AC12 Every gate refusal, every reveal and every delivery failure is audited; a serviced
   success carries its note in `extra`, not `errorDetail`.
+- AC13 The password is generated by the app. No operator-supplied password is accepted at any
+  layer -- there is no field for one in the page, the service signature, or the request model.
+- AC14 Every generated password is 18-32 characters, built from 2-6 word-list words, and
+  carries at least one digit, one separator symbol and both letter cases. No two adjacent words
+  share a capitalisation style.
+- AC15 Every generated password measures at least 60 bits of entropy under the effective-pool
+  calculation. When 100 attempts fail to reach it, the generator **refuses**; it never returns
+  a weaker password and never widens its own parameters to succeed.
+- AC16 The generator draws only from `RandomNumberGenerator`. `System.Random` appears nowhere
+  in the generator's source -- enforced by a source-text test. The word list is an embedded
+  resource, and the parameters (length range, word count, separators, entropy floor, attempt
+  cap) are constants, not configuration.
 
 ## Known Failure Classes checked
 

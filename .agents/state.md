@@ -44,11 +44,23 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   AD, every target is cloud-only, so the two populations cannot intersect. The adjacent
   case - the operator being the *derived owner* - is also not a guard (declined finding
   cpr-1, below).
-  **Open owner decisions: D1** (who chooses the password - recommendation: app-generated),
-  **D2** (risk acceptance: an app-only `User-PasswordProfile.ReadWrite.All` grant carries no
-  role, so this registration can reset *any* password in the tenant, Global Administrators
-  included - the widest grant this app would hold), **D3** (the name-corroboration tolerance,
-  answerable only after S0).
+  **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
+  `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
+  to: nearly every target is an admin account. Settled with the population; never raise it as
+  a decision, a fork, or a newly-closed item. The one open item there is a **test**, not a
+  question - the first live call must confirm the PATCH really succeeds against an admin-role
+  target, using a disposable account.
+  **D1 SETTLED 2026-09-10 - the app generates the password** (`.agents/decisions.md`). Owner:
+  *"d1 app chooses. there's a password generator in D:\source\pwgen that will serve as the
+  model. use the algorithm it's using, not the code."* The plan now carries a full C# spec of
+  pwgen's *method* (diceware, 2-6 words from a 7,771 word list, balanced capitalisation with
+  no adjacent duplicate styles, separators from `!@#$%&*?+=`, padding distributed across every
+  slot, 18-32 chars, 60-bit floor on the effective pool, refuse after 100 attempts). Not a
+  port of its Rust and not a call to its binary. Two mandatory adaptations: `RandomNumberGenerator`
+  only (source-text test bars `System.Random`), and the word list as an embedded resource with
+  recorded provenance. This adds a slice - the generator is S2, and everything after it shifts
+  by one (service S3, email helper S4 with the base bump, page S5, write S6, records S7).
+  **Open owner decision: D3** only (the name-corroboration tolerance, answerable after S0).
   **External prerequisites, owner-side:** a dedicated Entra app registration
   (`User.Read.All`, `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`)
   and its own Delinea secret. Do not reuse another module's Graph registration.
@@ -75,9 +87,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   such fields. Three fields are missing, not one: `GivenName`, `Surname`, `Enabled`. S1 adds
   all three as optional members with null defaults plus a test asserting the query requests
   them.
-  **NEXT: owner rulings on D1 (who chooses the password - recommendation: app-generated) and
-  D2 (the tenant-wide reset risk acceptance); D3 is unanswerable before S0. Then S0. No
-  implementation is authorized.**
+  **NEXT: owner go on the plan, then S0 - the survey is the gate and D3 is unanswerable before
+  it. No implementation is authorized.**
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only

@@ -5,6 +5,32 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-10 - Cloud Password Reset: the app generates the password, using pwgen's algorithm as the model
+
+Status: Active. Owner ruling, verbatim: *"d1 app chooses. there's a password generator in
+D:\source\pwgen that will serve as the model. use the algorithm it's using, not the code."*
+
+**The app generates the password.** No operator-supplied password is accepted at any layer of
+the module - there is no field for one in the page, the service signature, or the request
+model. This closes plan decision D1.
+
+**pwgen is the model, not a dependency.** `D:\source\pwgen` is a Rust CLI. The module
+reimplements its *method* in C#: a diceware-style passphrase of 2-6 words drawn from a 7,771
+word list, balanced capitalisation with no adjacent duplicate styles, per-gap separators from
+`!@#$%&*?+=`, digit and symbol padding distributed across every slot rather than appended,
+18-32 characters, and an entropy floor of 60 bits computed against the *effective* pool
+(geometric mean of same-length candidates). 100 failed attempts refuse rather than emit a
+weaker password. Its Rust source is not ported and its binary is not invoked - the app must
+not shell out to anything to make a password.
+
+**Two adaptations are mandatory in the C# version.** All randomness comes from
+`RandomNumberGenerator`; `System.Random` is barred, enforced by a source-text test. The word
+list is an embedded resource with recorded provenance and licence, not a host-editable file,
+so a deployment cannot silently shrink the pool.
+
+Detail in `docs/CloudPasswordReset-Plan.md` ("The generated password", S2, AC13-AC16). No code
+is authorized; the plan is still Draft and S0 still gates it.
+
 ### 2026-09-10 - Cloud Password Reset: a failed send fails closed, and downstream delivery is out of scope
 
 Status: Active. Two owner rulings in one sentence, given in response to codex finding cpr-2
