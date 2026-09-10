@@ -6,6 +6,71 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
+- **CLOUD PASSWORD RESET: PLAN DRAFTED 2026-09-10 (`7c47c3c`), NO CODE, NO OWNER GO.**
+  `docs/CloudPasswordReset-Plan.md`, Status Draft. New module `CloudPasswordReset` so L2 can
+  reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
+  therefore unreachable from existing AD tooling. Owner request 2026-09-10; then *"plan it,
+  review the plan with codex, then tell me where it stands"*.
+  **The design, after four owner rulings that each killed a previous premise:** the password
+  is generated server-side, emailed to the account **owner** at their `@analog.com` mailbox,
+  and **never shown to the operator** - owner ruling: *"we need reliable email notification
+  for users and admins and no visibility of the password for the tech making the change
+  unless we gate that with another permission level."* Two fail-closed permissions:
+  `CloudPasswordReset` (reset an account whose owner resolves) and `CloudPasswordResetReveal`
+  (proceed when the owner does not resolve, and see the password once on screen).
+  **Killed premises, do not reintroduce:** (a) a "target is an admin" permission tier -
+  decorative, because *"there are almost no non-admin accounts in-scope for this"*; (b) an
+  invented `BlockedDirectoryRoles` config field, which I fabricated and the owner never asked
+  for; (c) a **stored** owner-mapping table - owner: *"cannot store it. we're not going to
+  create an instantly stale map."*; (d) Protected Principals as the fence - owner: *"this is
+  out of scope for protected principals"*, and independently blocked in code
+  (`ProtectedPrincipalEntryValidator.cs:85` refuses cloud-only entries, so no cloud-only
+  account can be listed at all - a real gap the plan states rather than papers over).
+  **The hard part is owner resolution.** Entra naming drifted over the years
+  (`<sam>-CLD@`, `first.last@`, `sam@`, `first.last_CLD@`), so ownership is **recomputed
+  fresh at each reset** from the UPN local part via `ADDirectorySearchService.ValidateExists`
+  (exact match, not the wildcard `Search`), with name corroboration against the cloud
+  account's display name. Exactly one enabled AD user with a mailbox = send; zero/ambiguous/
+  lookup-unavailable = refuse. Nothing is stored, so nothing goes stale.
+  **S0 is a hard gate on the whole plan:** a read-only survey
+  (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation across all several-hundred
+  cloud-only accounts and reports the real hit rate. A low rate makes the reveal tier the
+  normal path and the design wrong - the plan is replaced, not amended. No slice after S0
+  starts until the owner sees the number.
+  **This stream DOES bump the base app version** (unlike a plain new module): `EmailService`
+  gains a public `SendCloudPasswordResetAsync`, and `ADSearchResult` may gain an optional
+  `Enabled` member - both shared infrastructure.
+  **Self-reset needs no guard and the plan says so:** operators authenticate against on-prem
+  AD, every target is cloud-only, so the two populations cannot intersect.
+  **Open owner decisions: D1** (who chooses the password - recommendation: app-generated),
+  **D2** (risk acceptance: an app-only `User-PasswordProfile.ReadWrite.All` grant carries no
+  role, so this registration can reset *any* password in the tenant, Global Administrators
+  included - the widest grant this app would hold), **D3** (the name-corroboration tolerance,
+  answerable only after S0).
+  **External prerequisites, owner-side:** a dedicated Entra app registration
+  (`User.Read.All`, `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`)
+  and its own Delinea secret. Do not reuse another module's Graph registration.
+  **openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
+  `c493b2a..7c47c3c`, 2026-09-10: `Acceptable with changes`, THREE material changes, none yet
+  admitted or folded in (they need owner rulings first):**
+  (1) **Self-owned cloud account gap - the strongest of the three, and it holes my own
+  "self-reset is structurally impossible" claim.** The claim is true of the *login*, but the
+  plan then derives an on-prem owner and mails the password there. An L2 operator whose own
+  on-prem account is the derived owner of a cloud account receives that password under the
+  MAIN permission. The repo already treats this class as real: mailbox/calendar flows call
+  `PermissionValidator.ValidateSelfGrantAsync` (`Services/PermissionValidator.cs:280`). The
+  plan needs a self-owner refusal, and the "needs no guard" paragraph is wrong as written.
+  (2) **The post-write delivery-failure reveal is ungated** and contradicts the plan's own
+  AC7/"exactly two places" claim. Needs an explicit owner risk ruling or a different recovery
+  path for a password that was set but never delivered.
+  (3) **Corroboration has no data plumbing.** The plan corroborates on the AD user's given
+  name and surname, but `ValidationProperties` for a User returns only DisplayName / DN /
+  SamAccountName / UPN / mail (`Services/ADDirectorySearchService.cs:407-414`) and
+  `ADSearchResult` (`:829`) carries no such fields. Same class as the `Enabled` gap the plan
+  did name: three fields are missing, not one.
+  **NEXT: owner rulings on codex (1)-(3) and on D1/D2, then a plan revision. No
+  implementation is authorized.**
+
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
   port of the standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365
