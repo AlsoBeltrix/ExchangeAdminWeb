@@ -116,6 +116,37 @@ meaning, and no reader of a single record can tell which convention it follows. 
 whose meaning is unknowable per record cannot be evidence. It is struck from the derivation and
 from the pre-run read.
 
+#### The employee id lives in three on-premises attributes
+
+Owner 2026-09-11: an employee identifier is carried in **three** on-premises attributes --
+`employeeID`, `employeeNumber` and `extensionAttribute1`.
+
+**Search all three, OR'd.** Comparing only `employeeID` silently misses whichever population
+carries the value in one of the other two. Which attribute is authoritative is an environment
+fact this plan may not assume (Invariant 7), so it does not choose: it compares against all
+three and requires the match to be unique across them. The same person found through two of
+the three attributes is one match, not two -- distinctness is by `distinguishedName`, as
+everywhere else in this derivation.
+
+**`employeeType` is not one of them and is not a match key.** It carries a worker-class code
+(contingent versus employee), which describes a category of people rather than a person. It is
+recorded here only so that a later reader does not mistake it for a fourth id attribute and
+add an arm that matches every member of a class at once.
+
+**A non-unique id value is not an id: discard the arm, do not refuse the reset.** If an id
+attribute holds a placeholder, a default or a repeated value, searching it returns many people.
+Under the agreement rule that would come back `Ambiguous` and refuse -- including for accounts
+where display name had a perfectly good answer. So: *an identifier arm that matches more than
+one directory user has proved the value is not an identifier*, and the arm is discarded as
+**non-evidence** while the remaining sources decide. The search result is the test, so no
+sentinel list and no environment fact is needed.
+
+This is deliberately **not** how a multiple match is treated elsewhere. Two people sharing a
+display name are two real candidate people, and picking either is the exact error this design
+exists to prevent, so that stays `Ambiguous` and refuses. The distinction is between an
+**identifier arm** (source 1's id) and a **person arm** (display name, UPN): a conflict between
+candidate people refuses, a value that was never evidence about a person is dropped.
+
 **Every source that can answer, answers -- and they must agree.** The outcome is the single
 distinct directory user the answering sources converge on. Two sources naming two different
 people is `Ambiguous` and refuses. This is strictly stronger than the superseded rule, which
@@ -186,10 +217,11 @@ pattern `ObjectSid` and `DnsDomain` already use (`:819-821`) -- so no existing c
 site changes. This lands in S1.
 
 The three-source derivation adds one more requirement to the same branch: **the User filter
-must be able to match `displayName`, `proxyAddresses` and `employeeID`.** `DisplayName` is
+must be able to match `displayName`, `proxyAddresses`, and the three id attributes
+`employeeID` / `employeeNumber` / `extensionAttribute1`.** `DisplayName` is
 already in `ValidationProperties` as a returned property, but `BuildExactMatchFilter` (`:432`)
-does not compare against it, and neither `proxyAddresses` nor `employeeID` is requested or
-compared. Source 1's `employeeId` arm, source 2, and
+does not compare against it, and none of `proxyAddresses` or the three id attributes is
+requested or compared. Source 1's `employeeId` arm, source 2, and
 source 3's alias arm are all inert without that change, and inert in the quiet way: the
 lookup runs, returns nothing, and reports a clean `NotFound`. Stated here because a plan that corroborates on data the
 query never requested would compile, pass its tests against a mock, and silently corroborate
@@ -894,12 +926,15 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   already uses, `:819-821`). A test must assert the User branch actually requests all three:
   without it, corroboration passes against a mock and silently corroborates nothing against a
   real directory.
-  **So do the three missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
+  **So do the missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
   compare a candidate against `displayName`, against `userPrincipalName`/`proxyAddresses`
-  by local part (`<key>@*`), and against `employeeID` for source 1; `proxyAddresses` and
-  `employeeID` must be added to the requested properties.
+  by local part (`<key>@*`), and against all three id attributes (`employeeID`,
+  `employeeNumber`, `extensionAttribute1`) for source 1; those four plus `proxyAddresses`
+  must be added to the requested properties.
   Same test requirement and same failure mode: without them the affected sources return a clean
-  `NotFound` and the resolver looks like it works.
+  `NotFound` and the resolver looks like it works. A test must also cover the id arm matching
+  more than one user: it is discarded as non-evidence, NOT escalated to `Ambiguous`, or a
+  placeholder value in one field takes out every account that carries it.
   **`manager` is not among them.** It resolves the owner's manager, not the owner, and in an
   agreement-based design a wrong arm is worse than a missing one - it manufactures
   corroboration. Owner ruling 2026-09-11. Do not reintroduce it.
