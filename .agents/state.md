@@ -193,13 +193,27 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   rebuilt survey reports per source, so it answers that on its way past. A second read would
   have been a second approval for a number the approved run already returns. Recorded so the
   next reader does not re-propose it.
-  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) the survey
-  script and `tools/CloudAccountOwnerDerivation.psm1` are rewritten for the three-source
-  agreement design - both still implement the SUPERSEDED single-source UPN derivation; (3)
-  check what roles the survey app registration actually holds (free, reads no directory data)
-  so the admin-scoping query is known to be runnable; (4) owner approves the S0 re-run. One
-  approval is one run. D3 stays unanswerable until the re-run reports. No implementation is
-  authorized.**
+  **The three-source rewrite LANDED (owner go "go", scope: the two tool files and their tests).**
+  `tools/CloudAccountOwnerDerivation.psm1` and `tools/Get-CloudAccountOwnerCoverage.ps1` now
+  implement it; `tests/ps/CloudAccountOwnerDerivation.Tests.ps1` was rebuilt to 74 tests, suite
+  214/0. Source 1 `Id` = the cloud account's `employeeId` OR'd against on-prem `employeeID` /
+  `employeeNumber` / `extensionAttribute1`. Source 2 `DisplayName` = the display name with a
+  trailing `-CLD`/`_CLD` stripped, exact. Source 3 `UpnKey` = the UPN **local part** compared to a
+  local part (`userPrincipalName=<key>@*`, `proxyAddresses=smtp:<key>@*`, `sAMAccountName=<key>`) -
+  this is the defect that voided the first run, and it now has a named regression test.
+  **The asymmetry that carries the safety property:** an IDENTIFIER arm matching more than one
+  user is DISCARDED as non-evidence (a value many people share was never an identifier; the other
+  sources still decide); a PERSON arm matching more than one user REFUSES as
+  `AmbiguousWithinSource` (two people sharing a display name are two real candidate people).
+  Both directions are mutation-proved. Cost drops from `2 x domains` queries per candidate key to
+  ONE OR'd query per domain, with agreement computed in memory.
+  **`employeeType` is NOT a fourth id attribute** - it holds a worker-class code (`CWK` =
+  contingent worker), a category not a person. `manager` and `otherMails` were struck as sources
+  and must not be reintroduced.
+  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) check what
+  roles the survey app registration actually holds (free, reads no directory data) so the
+  admin-scoping query is known to be runnable; (3) owner approves the S0 re-run. One approval is
+  one run. D3 stays unanswerable until the re-run reports. No implementation is authorized.**
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
