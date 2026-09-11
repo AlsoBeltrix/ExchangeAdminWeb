@@ -2,13 +2,21 @@
 
 Status: **In progress -- owner go given 2026-09-11.** S0 (the owner-resolution survey) is a
 hard gate on the rest: its hit rate decides whether this design is viable at all, and no slice
-after it starts until the owner has seen the number. S0's tooling has landed; the survey has
-not been run. D1 is settled (the app generates the password); D3 is answerable only after S0.
+after it starts until the owner has seen the number. S0's tooling has landed and has been run
+once; that run's number is void and the reasons are in **First run, and what it found**. The
+derivation is rebuilt and the survey is rescoped; the re-run is gated on the owner. D1 is
+settled (the app generates the password); D3 is answerable only after S0.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs` and three optional members to `ADSearchResult`, both
 shared infrastructure (Constitution, Deployment And Versioning). The "adding a module does not
 bump the base version" exception does not apply, because this is not only a module.
+
+Revision 2026-09-11 (fifth) rebuilds the derivation after the first authorised survey run
+returned 9.6%. That number was not a finding about the tenant: it measured the wrong
+population against the wrong comparison. Both are fixed below, in **The derivation** and
+**First run, and what it found**. No re-run happens until the owner has read that section --
+owner ruling 2026-09-11: *"no re-run until you have a better plan."*
 
 Revision 2026-09-10 (fourth) folds in the codex review of `c493b2a..7c47c3c` and the two owner
 rulings it produced: a post-write send failure fails closed with no reveal, downstream mail
@@ -84,11 +92,47 @@ refuses when the answer stopped being knowable.
 Nothing is persisted. The answer is recomputed at each attempt, so a leaver whose AD account
 is gone stops resolving on the next attempt rather than continuing to receive mail.
 
-From the cloud account's UPN local part (`jsmith-CLD` in
-`jsmith-CLD@analog.onmicrosoft.com`), build candidate on-premises keys:
+**Superseded 2026-09-11.** The first three revisions derived the owner from the UPN local part
+alone. That is the one piece of evidence the owner already warned was unreliable -- *"the
+naming convention changed over the years"* -- and the survey confirmed it: a UPN-only
+derivation measures which era an account was created in, not who owns it. It is kept as the
+third and weakest of three sources below, no longer as the design.
 
-1. The local part with a trailing `-CLD` or `_CLD` removed, case-insensitive (`jsmith`).
-2. The local part unchanged -- covers the older `first.last@` and `samaccountname@` shapes.
+#### Three sources, strongest evidence first
+
+| # | Source | Why it beats the UPN |
+|---|---|---|
+| 1 | **Attributes on the cloud account itself** -- `otherMails`, `manager`, `employeeId` | Not a derivation at all. A corporate address in `otherMails` is somebody having *stated* the owner; a set `manager` is a relationship the tenant already holds. Zero inference, so nothing to get wrong. |
+| 2 | **Display name** -- strip a trailing `-CLD`/`_CLD`, match the remainder exactly against on-premises `displayName` | A display name describes the person; the UPN describes the provisioning convention in force the day the account was made. Only one of those two survives a convention change. |
+| 3 | **UPN local part**, compared correctly (below) | Era-dependent by construction, so it goes last. |
+
+**Every source that can answer, answers -- and they must agree.** The outcome is the single
+distinct directory user the answering sources converge on. Two sources naming two different
+people is `Ambiguous` and refuses. This is strictly stronger than the superseded rule, which
+accepted one source's answer and then name-checked it after the fact: corroboration stops
+being a filter bolted on afterwards and becomes the mechanism itself. A source that returns
+nothing is silent, not a veto; a source whose lookup *fails* is `Unavailable` and poisons the
+whole answer, exactly as today.
+
+**Source 3's comparison is currently wrong, and that alone explains most of the misses.** The
+filter asks `(|(userPrincipalName=<key>)(mail=<key>)(sAMAccountName=<key>))`, comparing a UPN
+*local part* against *whole* UPN and mail values. That can only ever match when the local part
+happens to equal the sAMAccountName -- so an account named `first.last@` cannot match a person
+whose on-premises UPN is `first.last@<corp domain>`, even though the two agree perfectly on
+the only part being compared. Two additions fix it:
+
+- `(userPrincipalName=<key>@*)` -- local part against local part.
+- `(proxyAddresses=smtp:<key>@*)` -- against the addressing alias, which is where a
+  `first.last` identity actually lives when the sAMAccountName is an abbreviation.
+
+Both are exact to the left of the `@` and wildcard only across the domain, so they do not
+reintroduce the substring hazard that rules out `Search` (`jdoe` must never match `jdoe2`).
+More than one hit across the wildcard is `Ambiguous` and refuses, unchanged.
+
+Candidate keys for sources 2 and 3 are still built by stripping a trailing `-CLD`/`_CLD`
+case-insensitively and also trying the unstripped form, de-duplicated. The suffix strip is a
+string operation on a value the tenant supplies; it is not the *evidence*, and the plan no
+longer rests on it being a reliable convention.
 
 Look each candidate up with `ADDirectorySearchService.ValidateExists(candidate, "User")`
 (`Services/ADDirectorySearchService.cs:242`). That method is the right instrument and not the
@@ -110,16 +154,17 @@ Resolution rules, fail-closed throughout:
 
 Two distinct candidates resolving to the *same* AD user is one match, not two.
 
-**Name corroboration.** A sAM collision across the forest's two domains
-(`ad.analog.com`, `winroot.analog.com` -- `ADDirectorySearchService.cs:518`) could resolve to
-the wrong person with a plausible-looking result. So a resolved owner is accepted only if the
-AD user's given name and surname both appear, case-insensitively and in any order, within the
-cloud account's Graph `displayName`. That tolerates `Smith, John` against
-`John Smith (Cloud Admin)` and rejects an unrelated `jsmith` in the other domain. A
+**Name corroboration.** A sAMAccountName can collide across the searched domains, so an
+exact-match lookup can return a plausible-looking wrong person. A resolved owner is therefore
+accepted only if the AD user's given name and surname both appear, case-insensitively and in
+any order, within the cloud account's Graph `displayName`. That tolerates `Smith, John`
+against `John Smith (Cloud Admin)` and rejects an unrelated `jsmith` in another domain. A
 corroboration failure downgrades to **unresolved**, never to a send.
 
-The exact tolerance is a tuning question that S0 answers with real data, not a guess made
-here.
+This check still runs, but it is now the *floor* rather than the mechanism: a match found by
+source 1 or source 2 has already been corroborated by construction, and the check only has
+real work to do on a source-3-only answer. The exact tolerance is a tuning question that S0
+answers with real data, not a guess made here.
 
 **Three AD fields the lookup does not currently return.** `ValidationProperties`
 (`Services/ADDirectorySearchService.cs:407-414`) asks LDAP for `DisplayName`,
@@ -128,7 +173,14 @@ here.
 `Surname`, and the leaver rule needs `Enabled`. All three must be added to the User branch of
 `ValidationProperties` and to `ADSearchResult` as optional members with null defaults -- the
 pattern `ObjectSid` and `DnsDomain` already use (`:819-821`) -- so no existing construction
-site changes. This lands in S1. Stated here because a plan that corroborates on data the
+site changes. This lands in S1.
+
+The three-source derivation adds one more requirement to the same branch: **the User filter
+must be able to match `displayName` and `proxyAddresses`.** `DisplayName` is already in
+`ValidationProperties` as a returned property, but `BuildExactMatchFilter` (`:432`) does not
+compare against it, and `proxyAddresses` is neither requested nor compared. Source 2 and
+source 3's alias arm are both inert without that change, and inert in the quiet way: the
+lookup runs, returns nothing, and reports a clean `NotFound`. Stated here because a plan that corroborates on data the
 query never requested would compile, pass its tests against a mock, and silently corroborate
 nothing against a real directory.
 
@@ -221,6 +273,86 @@ The design:
 Consequence for S0: the survey takes the domains to search as a parameter, enumerated the same
 way, and reports its outcome per that set. Until it does, its numbers describe code that will
 not ship.
+
+### First run, and what it found
+
+One authorised run, 2026-09-11, `-SearchDomain` set to the two domains the owner named as
+holding users and admin objects. 60,174 users in the tenant; 1,233 cloud-only non-guest
+accounts; **118 resolved (9.6%)**, 1,100 no-match, 8 name-mismatch, 6 owner-disabled, 1
+no-mailbox, 0 ambiguous, 0 unavailable.
+
+**That 9.6% is not a measurement of the tenant.** It is the product of two defects, one in the
+denominator and one in the comparison. Both are named here so the next number cannot be read
+the same way.
+
+**Defect 1 -- the denominator counted the wrong population.** All 1,233 cloud-only accounts
+were surveyed. Sampling the no-match class shows most of them are not people and were never in
+scope: site-and-room objects, lab equipment, Teams call queues, availability/booking pages,
+and `package_<guid>` service objects. Owner ruling 2026-09-11: *"the only things in-scope here
+are CLD admin accounts that need to be reset. customer accounts, conf rooms, etc., are not
+in-scope for this."* Coverage over furniture answers a question nobody asked.
+
+**Defect 2 -- the comparison could only match one naming era.** Detailed under **The
+derivation** above. A cloud account whose local part is `first.last` cannot match the person
+whose on-premises UPN local part is the same `first.last`, because the filter compares that
+key against the *whole* on-premises UPN. Every account from that era was structurally
+unmatchable, which is the bulk of the 1,100.
+
+Two script defects were also found and are fixed (`2426620`, `8feb993`): a strict-mode throw on
+any account whose lookups all succeeded, and an array-nesting bug that collapsed N candidate
+keys into one space-joined key matching nobody. The latter produced an earlier 0.0% run that
+was reported as a defect rather than a finding, which is the only reason 9.6% was believed
+enough to dig into.
+
+**A re-slice of the same CSV is available and is deliberately not quoted as a result.** Cutting
+the 1,233 down to display-name-shaped-like-a-person puts coverage near 48%. That figure is
+produced by exactly the string-matching this revision rejects, so it is an indication that the
+population is smaller and the rate much higher -- not a number to design against.
+
+### What S0 measures on the next run
+
+1. **Scope by directory role, not by name.** The in-scope population is cloud-only accounts
+   that hold a directory role, are PIM-eligible for one, or belong to a role-assignable group.
+   Rooms, queues, booking pages and customer accounts hold none of these. The property is
+   asserted by the tenant, discoverable from Graph, and independent of both naming and this
+   environment.
+
+   This is a **survey** change and not a runtime gate. The module still resets whatever account
+   the operator names; a "the target is an admin" permission tier was rejected in the first
+   draft as decoration and stays rejected. What the scope fixes is the denominator, and the
+   denominator is the whole point of S0.
+
+   **Stated rather than assumed:** `transitiveMemberOf/microsoft.graph.directoryRole` returns
+   *active* assignments only (see **The PIM trap**), so an account that is only PIM-eligible
+   reads as holding nothing and would be scoped out. Reading eligibility needs
+   `RoleEligibilitySchedule.Read.Directory` and Entra ID P2. If the grant allows it the survey
+   reads both and reports them separately; if it does not, the survey reports the active-only
+   figure and says on its face that eligible-only accounts are undercounted. It never presents
+   the smaller population as though it were the whole one.
+
+2. **Report per source, not as one percentage.** For each in-scope account: which of the three
+   sources answered, what each one answered, and whether they agreed. A single rate cannot
+   distinguish "this tenant cannot support the design" from "this script compares the wrong
+   strings", and that ambiguity is what cost the first run.
+
+3. **Report the unresolved classes with samples**, as before, plus a new class for
+   source disagreement.
+
+The threshold stays the owner's to set, against the in-scope population and with the
+per-source breakdown in hand.
+
+### The one read this needs before the re-run
+
+Source 1 is first in the ordering because a stated owner beats a derived one. Whether it is
+first in *practice* depends on whether those attributes are populated on these accounts, and
+that cannot be answered from the CSV already on disk -- the survey never asked for them.
+
+**The read:** one Graph pass over the in-scope accounts returning population *counts* only for
+`otherMails`, `manager`, `employeeId` and `mailNickname`. No AD queries, no CSV, no per-account
+output. If they are empty across the board, source 1 is struck from the plan and the display
+name becomes primary; the rest of the design is unchanged either way.
+
+Gated on the owner's go, per the standing one-approval-one-run rule.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 
@@ -737,11 +869,13 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 - **S0 -- the survey. Gates everything after it.**
   `tools/Get-CloudAccountOwnerCoverage.ps1` plus Pester coverage of the candidate-derivation
   function in `tests/ps/`. Read-only. Owner reviews the hit rate and rules before S1 starts.
-- **S1 -- owner resolution in C#.** `Services/CloudAccountOwnerResolver.cs`: candidate
-  derivation, `ValidateExists` calls, the aggregation table above, name corroboration, and a
-  status-bearing result distinguishing Resolved / Unresolved / Ambiguous / Unavailable. Pure
-  logic over a seamable `ADDirectorySearchService`; tests for every row of that table,
-  including the two-candidates-one-user case and the `Unavailable`-is-not-absence case.
+- **S1 -- owner resolution in C#.** `Services/CloudAccountOwnerResolver.cs`: the three sources
+  in **The derivation**, run independently and required to agree; `ValidateExists` calls; the
+  aggregation table above; name corroboration; and a status-bearing result distinguishing
+  Resolved / Unresolved / Ambiguous / Unavailable. Pure logic over a seamable
+  `ADDirectorySearchService`; tests for every row of that table, including the
+  two-candidates-one-user case, the two-sources-disagree case, and the
+  `Unavailable`-is-not-absence case.
   **The three missing AD fields land here.** `GivenName` and `Surname` (corroboration) and
   `Enabled` (the leaver rule) are added to the User branch of `ValidationProperties`
   (`ADDirectorySearchService.cs:407-414`) and to `ADSearchResult` as optional parameters with
@@ -749,6 +883,11 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   already uses, `:819-821`). A test must assert the User branch actually requests all three:
   without it, corroboration passes against a mock and silently corroborates nothing against a
   real directory.
+  **So do the two missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
+  compare a candidate against `displayName` and against `userPrincipalName`/`proxyAddresses`
+  by local part (`<key>@*`), and `proxyAddresses` must be added to the requested properties.
+  Same test requirement and same failure mode: without it sources 2 and 3 return a clean
+  `NotFound` and the resolver looks like it works.
 - **S2 -- the password generator.** `Services/PasswordGenerator.cs` plus the embedded word
   list: the algorithm in **The generated password**, implemented in C# from the method, not
   ported from the Rust. Standalone and pure apart from the CSPRNG, so it is testable on its
