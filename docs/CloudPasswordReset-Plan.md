@@ -1,8 +1,9 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **Draft -- awaiting owner go.** S0 (the owner-resolution survey) is a hard gate on
-the rest: its hit rate decides whether this design is viable at all. D1 is settled (the app
-generates the password); D3 is answerable only after S0.
+Status: **In progress -- owner go given 2026-09-11.** S0 (the owner-resolution survey) is a
+hard gate on the rest: its hit rate decides whether this design is viable at all, and no slice
+after it starts until the owner has seen the number. S0's tooling has landed; the survey has
+not been run. D1 is settled (the app generates the password); D3 is answerable only after S0.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs` and three optional members to `ADSearchResult`, both
@@ -170,6 +171,34 @@ The owner sets the threshold after seeing the numbers. As a marker, not a rule: 
 makes the reveal tier a rare exception and this design sound; a low rate makes the exception
 path the normal path, the reveal tier meaningless, and the design wrong -- at which point
 this plan is replaced, not amended.
+
+### What landed, and two things it measures beyond the list above
+
+`tools/CloudAccountOwnerDerivation.psm1` holds the three pure functions the survey and
+`Services/CloudAccountOwnerResolver.cs` (S1) both implement: candidate derivation, name
+corroboration, and the fail-closed collapse of per-candidate results into one outcome. It is
+the model for the C#; where the two ever differ the C# is authoritative and the module is
+corrected, because a divergence makes the survey's numbers a lie.
+`tests/ps/CloudAccountOwnerDerivation.Tests.ps1` covers it, 40 tests, no directory required.
+
+**`UnresolvedOwnerDisabled` is reported as its own class.** The plan names `Enabled` as needed
+for the leaver rule but never states the rule's shape. Rather than guess, the survey measures
+the class separately so the owner rules on it with a number in hand. A leaver's mailbox may
+still accept mail, which is exactly why a disabled owner must not quietly pass as resolved.
+
+**Finding, for the owner, not decided here: the module's user lookup is local-domain only.**
+`ADDirectorySearchService.ValidateExists` issues its USER query without a `-Server`, so it
+binds the local domain. The `-Server` DN routing at `ADDirectorySearchService.cs:355` is
+scoped to `objectKind == "Group"`, and `ResolveGlobalCatalog` is called only from the `Search`
+path at `:660`. The corroboration rule exists to catch a `sAMAccountName` collision across
+`ad.analog.com` and `winroot.analog.com` -- but a local-domain query cannot SEE the other
+domain's user, so it will never report `Ambiguous` for one. Corroboration is therefore the
+only thing between such a collision and a password mailed to the wrong person. The survey's
+primary outcome column reproduces the module's local-domain behaviour exactly; a second
+column, `ForestMatchCount`, probes the global catalog read-only to count how many users the
+forest really holds for each key. Blank means not measured; 0 means measured and none. If it
+is above 1 anywhere, this is a real and currently invisible risk and needs an owner ruling
+before S1.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 

@@ -5,6 +5,52 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-11 - Cloud Password Reset: owner go, and S0 is the gate
+
+Status: Active. Scope: `docs/CloudPasswordReset-Plan.md`. Owner said *"go"* on the plan on
+2026-09-11. The plan's Status header moves from Draft to In progress.
+
+The go is a go on the plan **as the plan is written**, and the plan makes S0 a hard gate on
+everything after it. So the go authorizes S0 and nothing beyond it: no C# implementation, no
+module registration, no version bump. S0 is a read-only survey that measures what fraction of
+the several hundred cloud-only accounts can have an on-premises owner derived reliably enough
+to mail a password to. **No slice after S0 starts until the owner has seen that number and
+said go again.** A low rate does not shrink the design, it replaces it, which is precisely why
+the number comes before the code.
+
+What landed under this go:
+
+- `tools/CloudAccountOwnerDerivation.psm1` - the three pure derivation functions (candidate
+  keys, name corroboration, fail-closed outcome collapse). No AD, Graph, network or
+  filesystem access. It is the model for `Services/CloudAccountOwnerResolver.cs` in S1; where
+  the two ever differ, the C# is authoritative and the module is corrected, because a
+  divergence makes the survey's numbers a lie.
+- `tools/Get-CloudAccountOwnerCoverage.ps1` - the survey. `-PlanOnly`-shaped (Architectural
+  Invariant 4), reads Graph and AD, writes one CSV, never calls PATCH.
+- `tests/ps/CloudAccountOwnerDerivation.Tests.ps1` - 40 tests, no directory required.
+
+Two judgement calls made inside the plan's scope rather than referred up, both recorded in the
+plan's S0 section:
+
+1. **`UnresolvedOwnerDisabled` is measured as its own outcome class.** The plan names `Enabled`
+   as needed for the leaver rule but never states the rule's shape. Measuring the class
+   separately lets the owner rule on it with a number in hand instead of having the shape
+   guessed for them.
+2. **A `ForestMatchCount` column that the module itself cannot produce**, because of the
+   finding below.
+
+**Finding, open, needs an owner ruling before S1: the module's user lookup binds the local
+domain only.** `ADDirectorySearchService.ValidateExists` issues its USER query with no
+`-Server`. The `-Server` DN routing at `ADDirectorySearchService.cs:355` is scoped to
+`objectKind == "Group"`, and `ResolveGlobalCatalog` is called only from the `Search` path at
+`:660`. The plan's name-corroboration rule exists to catch a `sAMAccountName` collision across
+`ad.analog.com` and `winroot.analog.com` - but a local-domain query cannot see the other
+domain's user, so the module would never report `Ambiguous` for one. Corroboration is
+therefore the only thing between such a collision and a password mailed to the wrong person.
+The survey's primary outcome column reproduces the module's local-domain behaviour exactly and
+reports the true forest count alongside it, rather than silently changing the design to hide
+the gap.
+
 ### 2026-09-10 - Audit events go to Splunk, so their fields are an interface
 
 Status: Active. Scope: stated for `CloudPasswordReset`, but the fact is app-wide. Owner,

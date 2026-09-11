@@ -6,8 +6,12 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **CLOUD PASSWORD RESET: PLAN DRAFTED 2026-09-10 (`7c47c3c`), NO CODE, NO OWNER GO.**
-  `docs/CloudPasswordReset-Plan.md`, Status Draft. New module `CloudPasswordReset` so L2 can
+- **CLOUD PASSWORD RESET: OWNER GO GIVEN 2026-09-11. S0 TOOLING LANDED, SURVEY NOT YET RUN.**
+  `docs/CloudPasswordReset-Plan.md`, Status In progress. S0 is a hard gate: `tools/Get-CloudAccountOwnerCoverage.ps1`
+  plus `tools/CloudAccountOwnerDerivation.psm1` and its 40 Pester tests are committed and read-only,
+  but nobody has run the survey against the tenant yet, so the hit rate the gate turns on is still
+  unknown. **No slice after S0 starts until the owner has seen that number.**
+  New module `CloudPasswordReset` so L2 can
   reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
   therefore unreachable from existing AD tooling. Owner request 2026-09-10; then *"plan it,
   review the plan with codex, then tell me where it stands"*.
@@ -72,6 +76,15 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   event and `MergeExtra` passes nulls through, so no transport change is needed. Other modules
   were not written to these rules; aligning them is a separate stream and is not authorized
   here.
+  **OPEN FINDING for the owner (S0 report): the module's user lookup is local-domain only.**
+  `ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
+  the local domain; the `-Server` DN routing at `ADDirectorySearchService.cs:355` is scoped to
+  `objectKind == "Group"` and `ResolveGlobalCatalog` is only called from the `Search` path at
+  `:660`. So a `sAMAccountName` collision across `ad.analog.com` and `winroot.analog.com` is
+  invisible to the module and will never be reported as `Ambiguous`. Name corroboration is the
+  only thing between such a collision and a password mailed to the wrong person. The survey
+  measures the real forest count in a separate `ForestMatchCount` column (blank = not measured,
+  0 = measured and none) so the owner rules on it with a number. Needs a ruling before S1.
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as
