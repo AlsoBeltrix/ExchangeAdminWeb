@@ -333,7 +333,13 @@ Invoke-PlanOrAction "Derive candidates and resolve an owner for each cloud-only 
             Write-Progress -Activity 'Resolving owners' -Status "$i / $total" -PercentComplete ([int](100 * $i / $total))
         }
 
-        $candidates = @(Get-CloudAccountOwnerCandidate -UserPrincipalName $acct.UserPrincipalName)
+        # Get-CloudAccountOwnerCandidate returns ,$array so a one-element result survives
+        # assignment as an array instead of decaying to a string. That same wrapper makes
+        # @(...) yield a one-element array CONTAINING the array - which then stringifies into a
+        # single space-joined LDAP key that can never match. Unwrap by assignment first, then
+        # normalise the empty case by hand.
+        $candidateSet = Get-CloudAccountOwnerCandidate -UserPrincipalName $acct.UserPrincipalName
+        $candidates = if ($null -eq $candidateSet) { @() } else { @($candidateSet) }
         $results = @(foreach ($c in $candidates) { Get-AdCandidateResult -Candidate $c -Domain $script:Domains })
 
         $outcome = Resolve-CloudAccountOwnerOutcome -CandidateResult $results -CloudDisplayName $acct.DisplayName

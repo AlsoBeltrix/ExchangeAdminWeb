@@ -293,6 +293,14 @@ Describe 'Get-CloudAccountOwnerCoverage.ps1 plan mode' {
         $out | Should -Match 'nothing was queried and no file was written'
     }
 
+    It 'never wraps Get-CloudAccountOwnerCandidate in @(), which nests the array' {
+        # The function returns ,$array. @(that) is a one-element array CONTAINING the array,
+        # which stringifies into one space-joined LDAP key that matches nobody - a silent 0%
+        # coverage result that looks like a finding rather than a bug. Unwrap by assignment.
+        $text = Get-Content -LiteralPath $script:ScriptPath -Raw
+        $text | Should -Not -Match '@\(\s*Get-CloudAccountOwnerCandidate'
+    }
+
     It 'writes no CSV in plan mode' {
         $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("cpr_cov_" + [guid]::NewGuid().ToString('N') + ".csv")
         & $script:ScriptPath -PlanOnly -CsvPath $tmp 6>&1 | Out-Null
