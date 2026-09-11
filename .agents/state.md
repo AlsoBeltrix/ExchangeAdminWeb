@@ -76,23 +76,21 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   event and `MergeExtra` passes nulls through, so no transport change is needed. Other modules
   were not written to these rules; aligning them is a separate stream and is not authorized
   here.
-  **REQUIREMENT for S1, not an open owner question: owner resolution must be forest-wide and
-  topology-neutral.** `ADDirectorySearchService.ValidateExists` issues its USER query with no
-  `-Server`, so it binds whatever domain the app host is joined to
-  (`ADDirectorySearchService.cs:355` scopes the `-Server` routing to `objectKind == "Group"`;
-  `ResolveGlobalCatalog` is only called from `Search` at `:660`). A `sAMAccountName` collision
-  in another domain of the same forest is invisible and can never be reported as `Ambiguous`.
-  This was raised as a question and an attempt was made to close it with ADI's forest shape;
-  the owner rejected that - *"you cannot hard-code any ADI-specific ANYTHING into ANYWHERE in
-  this app"* - and the rejection is the rule (`.agents/decisions.md` 2026-09-11, environment
-  neutrality). Binding on S1: resolve against the **global catalog**, discovered at runtime
-  from the host's own forest membership with no domain ever named; two or more matches anywhere
-  in the forest is `Ambiguous` and `Ambiguous` refuses; no rule may depend on a domain being
-  mailbox-free or on the host's domain membership. Reuse `ResolveGlobalCatalog` (`:660`).
-  Open implementation fork: add the forest-wide user path to `ADDirectorySearchService` (shared)
-  or build it into `Services/CloudAccountOwnerResolver.cs` (contained). **Consequence for S0:
-  the survey's primary outcome column must become the forest-wide result; until it does, its
-  numbers describe code that will not ship. This is the pending step before the survey runs.**
+  **REQUIREMENT for S1: the searched domains are an operator setting, discovered at runtime.**
+  `ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
+  whichever domain the app host happens to be joined to (`:355` scopes the `-Server` routing to
+  `objectKind == "Group"`; `ResolveGlobalCatalog` is only called from `Search` at `:660`) - an
+  accident of deployment, not a design. Raised as a cross-domain collision question; I tried to
+  close it on ADI's forest shape and the owner rejected that (`.agents/decisions.md` 2026-09-11,
+  environment neutrality), then rejected a forest-wide replacement too: the estate has several
+  domains and trusts and most are irrelevant to Entra. Ruling: *"search the domain checked. only
+  check domains that sync to Azure or that you want to check. stop wrapping the admins in
+  bubble-wrap."* Design: module config gains **Search Domains**, a checkbox list enumerated at
+  runtime from the forest and its trusts (no name hard-coded or typed); the lookup searches
+  exactly the checked domains; two or more matches across that set is `Ambiguous` and refuses;
+  an in-app note states how to choose; nothing checked or setting unreadable refuses, per the
+  app's standing fail-closed rule. **Consequence for S0: the survey takes the domain set as a
+  parameter and reports per that set. This is the pending step before the survey runs.**
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as

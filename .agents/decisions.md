@@ -5,6 +5,40 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-11 - Searched domains are an operator setting, not a hard-coded scope
+
+Status: Active. Scope: `CloudPasswordReset` owner lookup; the reasoning is app-wide. Supersedes
+nothing; refines the environment-neutrality entry below by settling what replaces the rejected
+assumption.
+
+Sequence, recorded because two proposals were rejected and the reasons differ. (1) The owner
+lookup binds only the app host's own domain, so a `sAMAccountName` collision elsewhere is
+invisible. (2) I proposed closing that on ADI's topology; rejected as a hard-coded environment
+assumption. (3) I proposed searching the entire forest; **also rejected**, and correctly: the
+estate has several domains and trusts, most with no relationship to Entra, so a forest-wide
+sweep queries irrelevant directories and manufactures collisions that are not real ones.
+
+Owner ruling, verbatim: *"it does not need to search all domains. we have several domains,
+trusts, etc. search the domain checked. only check domains that sync to Azure or that you want
+to check. stop wrapping the admins in bubble-wrap. you have not sold me on the notion that the
+admin is assumed to be too stupid or short-sighted to read an in-app note about how to choose
+the right domains and make the fucking decision."*
+
+The design: module config gains **Search Domains**, a checkbox list enumerated at runtime from
+the forest and its trusts -- no domain name hard-coded, defaulted, or typed by hand, which
+satisfies environment neutrality without inventing scope. The lookup queries exactly the checked
+domains. Two or more matches across that set is `Ambiguous` and refuses. An in-app note beside
+the setting says how to choose: the domains whose accounts sync to Entra, or that you otherwise
+want searched. Nothing checked, or the setting unreadable, refuses -- the app's standing
+fail-closed rule for unavailable authorization data, not a guard on the operator's judgement.
+
+The general principle, and the reason this entry exists rather than a plan edit alone: **an
+operator setting with a clear explanation is the correct answer where I was reaching for an
+automatic one.** This module's whole purpose is to give L2 the admin console's capabilities
+inside an audited, credential-free interface. Withholding a control because an administrator
+might choose badly is the opposite of that. Withhold credentials, enforce audit, fail closed on
+missing data -- never withhold the decision.
+
 ### 2026-09-11 - No ADI-specific assumption anywhere, including in reasoning
 
 Status: Active. Scope: app-wide. Owner, verbatim: *"you cannot hard-code any ADI-specific
@@ -89,12 +123,11 @@ domain pattern, `winroot.analog.com` holding schema and some admin accounts and 
 above, dated the same day. The topology is recorded there as background only; it is explicitly
 NOT load-bearing and no rule may rest on it.
 
-The finding is therefore a binding S1 requirement rather than an owner question: resolve the
-owner against the global catalog, discovered at runtime from the host's own forest membership,
-and refuse as `Ambiguous` on two or more matches anywhere in the forest. Full statement in
-`docs/CloudPasswordReset-Plan.md`, S0 findings. Consequence for S0 itself: the survey's primary
-outcome column must become the forest-wide result, because a survey that reproduces the
-local-domain behaviour measures the hit rate of code that will not ship.
+A forest-wide replacement was then proposed and also rejected. The settled design is the
+operator-chosen **Search Domains** set - see the entry of that name above, which is where this
+finding actually closes. Full statement in `docs/CloudPasswordReset-Plan.md`, S0 findings.
+Consequence for S0 itself: the survey takes the domain set as a parameter, because a survey that
+reproduces the local-domain behaviour measures the hit rate of code that will not ship.
 
 ### 2026-09-10 - Audit events go to Splunk, so their fields are an interface
 

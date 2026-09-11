@@ -186,43 +186,41 @@ for the leaver rule but never states the rule's shape. Rather than guess, the su
 the class separately so the owner rules on it with a number in hand. A leaver's mailbox may
 still accept mail, which is exactly why a disabled owner must not quietly pass as resolved.
 
-**REQUIREMENT, not an open question: owner resolution must be forest-wide, and must not assume
-any deployment's topology.** `ADDirectorySearchService.ValidateExists` issues its USER query
-with no `-Server`, so it binds whatever domain the app host is joined to. The `-Server` DN
-routing at `ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
-`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. A `sAMAccountName`
-collision in another domain of the same forest is therefore invisible to a user lookup, and can
-never be reported as `Ambiguous`.
+**REQUIREMENT for S1: the searched domains are an operator setting, discovered at runtime.**
+`ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
+whichever single domain the app host happens to be joined to (the `-Server` DN routing at
+`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`; `ResolveGlobalCatalog`
+is called only from the `Search` path at `:660`). That is an accident of deployment, not a
+design.
 
-This was raised on 2026-09-11 as a question for the owner, and an attempt was made to close it
-with ADI's forest topology (forest root `winroot.analog.com` holds no mailboxes; all users and
-mailboxes live in `ad.analog.com`; the app host is joined to `ad.analog.com`). **The owner
-rejected that closure, and the rejection is the durable rule:** *"you cannot hard-code any
-ADI-specific ANYTHING into ANYWHERE in this app."* An argument that the code is safe **because
-of how this particular forest happens to be shaped, and which domain this particular server
-happens to be joined to**, is a hard-coded environment assumption even when no domain name
-appears in the source. It is unenforced, unchecked, and silently false the moment either fact
-changes. It is not a fix. See `.agents/decisions.md` 2026-09-11 (environment neutrality).
+I first raised this as a cross-domain collision question, then tried to close it on ADI's forest
+shape. The owner rejected the closure -- *"you cannot hard-code any ADI-specific ANYTHING into
+ANYWHERE in this app"* (`.agents/decisions.md` 2026-09-11, environment neutrality) -- and then
+rejected the forest-wide replacement too, because it is equally wrong in the other direction:
+the estate has several domains and trusts, and most of them have nothing to do with Entra.
+Owner ruling, verbatim: *"it does not need to search all domains... search the domain checked.
+only check domains that sync to Azure or that you want to check. stop wrapping the admins in
+bubble-wrap."*
 
-The fix, binding on S1:
+The design:
 
-- The owner lookup resolves against the **global catalog**, which indexes every domain in the
-  forest. The forest and its GC are discovered at runtime from the host's own membership -- no
-  domain name is ever named, defaulted, or configured.
-- **Two or more matches anywhere in the forest is `Ambiguous`, and `Ambiguous` refuses.** This
-  is the collision guard, and it must hold on any topology, including one where several domains
-  hold mailbox-enabled users. Name corroboration is a second check, never the only one.
-- No rule may depend on a domain being mailbox-free, on the host's domain membership, or on the
-  forest having any particular number or arrangement of domains.
-- The existing `ResolveGlobalCatalog` (`ADDirectorySearchService.cs:660`) is the mechanism to
-  reuse. Whether the forest-wide user path is added to `ADDirectorySearchService` (shared, helps
-  every module) or built into `Services/CloudAccountOwnerResolver.cs` (contained to this module)
-  is an open implementation fork for S1 -- not a change to the requirement above.
+- **Module config gains a Search Domains setting**: a checkbox list of the domains actually
+  available to the host, enumerated at runtime from the forest and its trusts. No domain name is
+  hard-coded, defaulted, or typed by hand -- the operator picks from what the directory reports.
+- **The owner lookup searches exactly the checked domains, and only those.** Nothing else is
+  queried; unchecked domains cost nothing.
+- **Two or more matches across the checked set is `Ambiguous`, and `Ambiguous` refuses.** The
+  collision guard operates over the operator's chosen scope, which is the scope that matters.
+- **An in-app note next to the setting states how to choose**: check the domains whose accounts
+  sync to Entra, or that you otherwise want searched. The operator is an administrator making an
+  administrative decision with the information in front of them.
+- **Fail closed on absence, as everywhere else**: no domains checked, or the setting unreadable,
+  refuses the reset. This is the app's standing rule for unavailable authorization data, not a
+  guard rail on the operator's judgement.
 
-Consequence for S0: the survey's **primary** outcome column must be the forest-wide result,
-because that is what the shipped resolver will do. Local-domain-only resolution is retained as a
-secondary comparison column only, to show how much a local-domain lookup would have missed.
-Until the survey is updated to that shape, its numbers describe code that will not ship.
+Consequence for S0: the survey takes the domains to search as a parameter, enumerated the same
+way, and reports its outcome per that set. Until it does, its numbers describe code that will
+not ship.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 
