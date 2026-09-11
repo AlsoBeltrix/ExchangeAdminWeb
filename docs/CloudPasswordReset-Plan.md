@@ -186,35 +186,43 @@ for the leaver rule but never states the rule's shape. Rather than guess, the su
 the class separately so the owner rules on it with a number in hand. A leaver's mailbox may
 still accept mail, which is exactly why a disabled owner must not quietly pass as resolved.
 
-**The module's user lookup is local-domain only. Settled 2026-09-11: benign here, because of
-the forest's shape.** `ADDirectorySearchService.ValidateExists` issues its USER query with no
-`-Server`, so it binds the local domain; the `-Server` DN routing at
-`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
-`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. I raised this as a
-cross-domain collision risk. The owner settled it with the topology:
+**REQUIREMENT, not an open question: owner resolution must be forest-wide, and must not assume
+any deployment's topology.** `ADDirectorySearchService.ValidateExists` issues its USER query
+with no `-Server`, so it binds whatever domain the app host is joined to. The `-Server` DN
+routing at `ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
+`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. A `sAMAccountName`
+collision in another domain of the same forest is therefore invisible to a user lookup, and can
+never be reported as `Ambiguous`.
 
-> "there are no users with mailboxes in the winroot domain. our domain was built in the 90s on
-> NT4 and the old best practice was forest root and user domain. users live in ad.analog.com,
-> schema and some admin accounts exist in winroot."
+This was raised on 2026-09-11 as a question for the owner, and an attempt was made to close it
+with ADI's forest topology (forest root `winroot.analog.com` holds no mailboxes; all users and
+mailboxes live in `ad.analog.com`; the app host is joined to `ad.analog.com`). **The owner
+rejected that closure, and the rejection is the durable rule:** *"you cannot hard-code any
+ADI-specific ANYTHING into ANYWHERE in this app."* An argument that the code is safe **because
+of how this particular forest happens to be shaped, and which domain this particular server
+happens to be joined to**, is a hard-coded environment assumption even when no domain name
+appears in the source. It is unenforced, unchecked, and silently false the moment either fact
+changes. It is not a fix. See `.agents/decisions.md` 2026-09-11 (environment neutrality).
 
-That closes it, in two steps. The app host is joined to `ad.analog.com` (verified on
-`ASHBIAMWEB1`), so the un-`-Server`ed query binds the **user** domain -- the one place every
-user actually lives. And a `winroot.analog.com` account can never become a resolved owner
-regardless, because the resolution rule requires a non-blank `mail` attribute and winroot holds
-no mailboxes. So the unseen half of the forest cannot supply a wrong destination; the worst a
-winroot-only key can do is fail to resolve, which is the fail-closed outcome and the correct
-one. A collision **within** `ad.analog.com` is a different thing and is still caught: the query
-uses `ResultSetSize 2`, sees both, and reports `Ambiguous`.
+The fix, binding on S1:
 
-One dependency, recorded because it is load-bearing and invisible in the code: this holds only
-while the app host stays joined to `ad.analog.com`. Joined to winroot instead, the same query
-would bind a domain with almost no users and nearly everything would fail to resolve. That
-fails loudly and closed rather than mailing to the wrong person, so it is a dependency to know
-about, not a trap.
+- The owner lookup resolves against the **global catalog**, which indexes every domain in the
+  forest. The forest and its GC are discovered at runtime from the host's own membership -- no
+  domain name is ever named, defaulted, or configured.
+- **Two or more matches anywhere in the forest is `Ambiguous`, and `Ambiguous` refuses.** This
+  is the collision guard, and it must hold on any topology, including one where several domains
+  hold mailbox-enabled users. Name corroboration is a second check, never the only one.
+- No rule may depend on a domain being mailbox-free, on the host's domain membership, or on the
+  forest having any particular number or arrangement of domains.
+- The existing `ResolveGlobalCatalog` (`ADDirectorySearchService.cs:660`) is the mechanism to
+  reuse. Whether the forest-wide user path is added to `ADDirectorySearchService` (shared, helps
+  every module) or built into `Services/CloudAccountOwnerResolver.cs` (contained to this module)
+  is an open implementation fork for S1 -- not a change to the requirement above.
 
-`ForestMatchCount` stays in the survey, downgraded from a risk probe to a confirmation column:
-it costs one extra read-only global-catalog query per key and empirically checks the topology
-above rather than taking it on trust. `-SkipForestCheck` turns it off.
+Consequence for S0: the survey's **primary** outcome column must be the forest-wide result,
+because that is what the shipped resolver will do. Local-domain-only resolution is retained as a
+secondary comparison column only, to show how much a local-domain lookup would have missed.
+Until the survey is updated to that shape, its numbers describe code that will not ship.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 

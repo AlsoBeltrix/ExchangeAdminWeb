@@ -5,6 +5,41 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-11 - No ADI-specific assumption anywhere, including in reasoning
+
+Status: Active. Scope: app-wide. Owner, verbatim: *"you cannot hard-code any ADI-specific
+ANYTHING into ANYWHERE in this app."*
+
+Said in response to an argument, not to a line of code, and that is the point of the entry. The
+Cloud Password Reset owner lookup binds only the domain the app host is joined to. I proposed
+closing that finding on the grounds that ADI's forest is safe for it: the forest root holds no
+mailboxes, all users and mailboxes live in the user domain, and the app host is joined to the
+user domain. No domain name appeared in any source file; the assumption lived entirely in the
+justification.
+
+**That is still a hard-coded ADI dependency and it is rejected.** An unenforced environment
+assumption is worse than a named constant, because a named constant is greppable and a silent
+assumption is not. The code does not check it, no test can fail on it, and it becomes false the
+moment a server is re-joined or a domain grows mailboxes -- with no signal.
+
+The rule, stated so it is testable:
+
+1. No source file names an ADI domain, host, OU, group or address as behaviour. Test fixtures
+   and explanatory comments are exempt; anything that steers a decision is not.
+2. **A safety argument may not depend on this environment's shape.** If the answer to "why is
+   this safe?" contains a fact about ADI's forest, its host membership, or its naming, the fix
+   is not done. Correctness must follow from what the code enforces, on any tenant or forest.
+3. Directory scope is discovered at runtime from the host's own forest membership, never named,
+   defaulted or configured.
+4. Where an environment fact cannot be avoided, the code must **verify it and fail closed**, not
+   assume it.
+
+Consequence recorded the same day: the Cloud Password Reset owner lookup becomes a global-catalog
+(forest-wide) lookup, with two-or-more matches anywhere in the forest refusing as `Ambiguous`.
+See `docs/CloudPasswordReset-Plan.md` (S0 findings) for the binding S1 requirement. Related but
+narrower existing rules: Architectural Invariant 1 (the installer is environment-neutral) and
+Invariant 3's runtime-config separation. This entry generalises the principle to the whole app.
+
 ### 2026-09-11 - Cloud Password Reset: owner go, and S0 is the gate
 
 Status: Active. Scope: `docs/CloudPasswordReset-Plan.md`. Owner said *"go"* on the plan on
@@ -39,36 +74,27 @@ plan's S0 section:
 2. **A `ForestMatchCount` column that the module itself cannot produce**, because of the
    finding below.
 
-**Finding raised, and settled the same day: the module's user lookup binds the local domain
-only - benign, because of the forest's shape.** `ADDirectorySearchService.ValidateExists`
-issues its USER query with no `-Server`. The `-Server` DN routing at
-`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
-`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. I raised this as a
-cross-domain collision risk the module could never report as `Ambiguous`. The owner settled it
-with the topology, verbatim:
+**Finding raised, and NOT closed: the module's user lookup binds the local domain only.**
+`ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`. The `-Server`
+DN routing at `ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
+`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. A `sAMAccountName`
+collision in another domain of the same forest is therefore invisible and can never be reported
+as `Ambiguous`, leaving name corroboration as the only thing between a collision and a password
+mailed to the wrong person.
 
-> "there are no users with mailboxes in the winroot domain. our domain was built in the 90s on
-> NT4 and the old best practice was forest root and user domain. users live in ad.analog.com,
-> schema and some admin accounts exist in winroot."
+I attempted to close this on ADI's forest topology (owner-supplied: NT4-era forest-root/user-
+domain pattern, `winroot.analog.com` holding schema and some admin accounts and no mailboxes,
+`ad.analog.com` holding all users and mailboxes, app host `ASHBIAMWEB1` joined to
+`ad.analog.com`). **The owner rejected the closure** -- see the environment-neutrality entry
+above, dated the same day. The topology is recorded there as background only; it is explicitly
+NOT load-bearing and no rule may rest on it.
 
-**Durable fact, recorded here because it is load-bearing and invisible in the code:** the forest
-is the NT4-era forest-root/user-domain pattern. `winroot.analog.com` is the forest root - schema
-and some admin accounts, **no mailboxes**. `ad.analog.com` is the user domain - all users, all
-mailboxes. The app host `ASHBIAMWEB1` is joined to `ad.analog.com` (verified 2026-09-11).
-
-That closes the finding twice over. The un-`-Server`ed query binds the user domain, the one
-place every user actually lives. And a winroot account can never become a resolved owner
-regardless, because the resolution rule requires a non-blank `mail`. So the unseen half of the
-forest cannot supply a wrong destination; the worst a winroot-only key can do is fail to
-resolve, which is the fail-closed outcome and the correct one. A collision *within*
-`ad.analog.com` is a different thing and is still caught: `ResultSetSize 2` sees both and
-reports `Ambiguous`.
-
-One dependency: this holds only while the app host stays joined to `ad.analog.com`. Joined to
-winroot instead, the same query would bind a domain with almost no users and nearly everything
-would fail to resolve - loudly and closed, not silently wrong. `ForestMatchCount` stays in the
-survey, downgraded from a risk probe to a confirmation column that checks the topology
-empirically rather than taking it on trust; `-SkipForestCheck` turns it off.
+The finding is therefore a binding S1 requirement rather than an owner question: resolve the
+owner against the global catalog, discovered at runtime from the host's own forest membership,
+and refuse as `Ambiguous` on two or more matches anywhere in the forest. Full statement in
+`docs/CloudPasswordReset-Plan.md`, S0 findings. Consequence for S0 itself: the survey's primary
+outcome column must become the forest-wide result, because a survey that reproduces the
+local-domain behaviour measures the hit rate of code that will not ship.
 
 ### 2026-09-10 - Audit events go to Splunk, so their fields are an interface
 

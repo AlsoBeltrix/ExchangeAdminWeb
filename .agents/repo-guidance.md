@@ -141,6 +141,13 @@ only the new module's own version is set (Constitution "Deployment And Versionin
    module it imports) must be pure ASCII unless saved with a BOM: 5.1 reads BOM-less
    files as ANSI and mangles non-ASCII characters into parse errors. PS7 is unaffected,
    so such bugs stay latent until a 5.1 run.
+7. **Environment neutrality, including in reasoning.** No source file names an ADI domain,
+   host, OU, group or address as behaviour (test fixtures and explanatory comments are exempt).
+   Directory scope is discovered at runtime from the host's own forest membership, never named,
+   defaulted or configured. And a safety argument may not rest on this environment's shape: if
+   the answer to "why is this safe?" contains a fact about ADI's forest, host membership or
+   naming, the fix is not done. Where an environment fact is unavoidable, verify it and fail
+   closed rather than assume it. Owner ruling 2026-09-11, `.agents/decisions.md`.
 
 ## Known Failure Classes — check every diff against these
 
