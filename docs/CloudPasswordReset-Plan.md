@@ -102,7 +102,7 @@ third and weakest of three sources below, no longer as the design.
 
 | # | Source | Why it beats the UPN |
 |---|---|---|
-| 1 | **Attributes on the cloud account itself** -- `otherMails`, `employeeId` | Not a derivation at all. A corporate address in `otherMails` is somebody having *stated* the owner; an `employeeId` is the owner's payroll identity carried on the account. Zero inference, so nothing to get wrong. |
+| 1 | **`employeeId` on the cloud account itself** | Not a derivation at all -- it is the owner's payroll identity carried on the account. Zero inference, so nothing to get wrong. Runs LAST in practice despite being listed first, because it is the source least likely to be populated (below). |
 | 2 | **Display name** -- strip a trailing `-CLD`/`_CLD`, match the remainder exactly against on-premises `displayName` | A display name describes the person; the UPN describes the provisioning convention in force the day the account was made. Only one of those two survives a convention change. |
 | 3 | **UPN local part**, compared correctly (below) | Era-dependent by construction, so it goes last. |
 
@@ -115,6 +115,26 @@ provisioned these accounts used the field to mean "responsible party" rather tha
 meaning, and no reader of a single record can tell which convention it follows. An attribute
 whose meaning is unknowable per record cannot be evidence. It is struck from the derivation and
 from the pre-run read.
+
+**`otherMails` is not a source either, and this was the same error twice.** The first draft of
+source 1 read a corporate address out of `otherMails` and called it "somebody having *stated*
+the owner". `otherMails` is Entra's **alternate/recovery** address, the one SSPR uses. It is
+not the mailbox SMTP -- that is `mail` and `proxyAddresses`, and a cloud-only admin account
+generally has neither, because it has no mailbox. The reasoning was that if SSPR recovery had
+ever been configured on these accounts the recovery address would be the owner's real mailbox.
+Owner 2026-09-11: *"wtf is otherMails? are you looking for the mailbox smtp in there? it's not
+there."* It is empty in this tenant, so it is not evidence, and it is struck rather than kept
+on the hope that it might be populated somewhere.
+
+**Consequence, stated plainly: source 1 is now one attribute and is not expected to carry the
+result.** What recovers the misses is **the source 3 comparison fix below** -- local part
+against local part, plus `proxyAddresses`. That is the change that would have resolved the
+owner's own account. Source 1 was a bonus, and the bonus is mostly empty.
+
+**Consequence for the pre-run read: it is cancelled.** Its only remaining question was whether
+`employeeId` is populated, and the rebuilt survey answers that on its way past by reporting per
+source. Asking for a separate approval to learn something the next run reports anyway spends an
+owner approval for nothing, against the standing one-approval-one-run rule.
 
 #### The employee id lives in three on-premises attributes
 
@@ -182,6 +202,42 @@ autocomplete `Search`: it is an **exact-match** LDAP query
 never ran" (`:225-228`), and it reports multi-match separately through
 `DirectoryValidationResult.Ambiguous` (`:805-808`). `Search` is a substring query built for
 autocomplete -- `jdoe` also matches `jdoe2` (`:230-232`) -- and must never be used here.
+
+#### Cost: ONE query per checked domain, not one per source
+
+Owner 2026-09-11: *"how will that translate to run-time password changes? it's already too
+slow."* A correct concern with a design answer rather than an excuse.
+
+**Every source's arms go into a single filter per domain.** All of them are exact terms OR'd
+together, so one query returns every candidate row across every source at once:
+
+```
+(&(objectClass=user)(|
+    (displayName=<name>)                (: source 2 :)
+    (userPrincipalName=<key>@*)         (: source 3 :)
+    (proxyAddresses=smtp:<key>@*)       (: source 3 :)
+    (sAMAccountName=<key>)              (: source 3 :)
+    (employeeID=<id>)(employeeNumber=<id>)(extensionAttribute1=<id>)  (: source 1 :)
+))
+```
+
+**Which source answered is then computed from the returned attributes, in memory.** The row
+already carries `displayName`, `userPrincipalName`, `proxyAddresses`, `sAMAccountName` and the
+three id attributes -- they are requested for corroboration anyway -- so agreement is
+arithmetic over rows already in hand, not extra round trips. **The agreement rule costs zero
+query time.**
+
+**So the rebuilt derivation is cheaper than the one it replaces.** Today's design issues one
+`ValidateExists` **per candidate key** per domain, and it derives up to two keys, so a reset
+costs up to `2 x domains` queries. The rebuilt one costs `1 x domains` -- roughly half --
+because the keys are OR'd into the filter rather than iterated. Domains are queried in
+parallel, so wall-clock is one round trip regardless of how many are checked.
+
+**The consequence for S1 is a signature change, and it is better to know now.**
+`ValidateExists(candidate, "User")` takes one key and returns one verdict, which forces the
+per-key loop. The resolver needs a method that takes the whole term set and returns the matched
+rows, with `BuildExactMatchFilter` extended accordingly. Keeping the existing signature and
+looping is the version that is slower than today.
 
 Resolution rules, fail-closed throughout:
 
@@ -384,18 +440,19 @@ population is smaller and the rate much higher -- not a number to design against
 The threshold stays the owner's to set, against the in-scope population and with the
 per-source breakdown in hand.
 
-### The one read this needs before the re-run
+### The pre-run read: proposed, then cancelled
 
-Source 1 is first in the ordering because a stated owner beats a derived one. Whether it is
-first in *practice* depends on whether those attributes are populated on these accounts, and
-that cannot be answered from the CSV already on disk -- the survey never asked for them.
+A separate bounded Graph pass was proposed here to count how many in-scope accounts populate
+`otherMails`, `employeeId` and `mailNickname`, on the reasoning that this decides whether
+source 1 is worth building.
 
-**The read:** one Graph pass over the in-scope accounts returning population *counts* only for
-`otherMails`, `employeeId` and `mailNickname`. No AD queries, no CSV, no per-account
-output. If they are empty across the board, source 1 is struck from the plan and the display
-name becomes primary; the rest of the design is unchanged either way.
+**Cancelled 2026-09-11, before it ran.** The owner answered the `otherMails` half directly (it
+is empty; see **The derivation**), which struck that arm. The remaining half -- is `employeeId`
+populated -- is reported by the rebuilt survey itself, which reports per source. Spending an
+owner approval to learn something the next authorised run reports anyway is exactly the waste
+the one-approval-one-run rule exists to prevent.
 
-Gated on the owner's go, per the standing one-approval-one-run rule.
+Recorded rather than deleted so the reasoning is not re-proposed by the next reader.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 
@@ -913,7 +970,8 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   `tools/Get-CloudAccountOwnerCoverage.ps1` plus Pester coverage of the candidate-derivation
   function in `tests/ps/`. Read-only. Owner reviews the hit rate and rules before S1 starts.
 - **S1 -- owner resolution in C#.** `Services/CloudAccountOwnerResolver.cs`: the three sources
-  in **The derivation**, run independently and required to agree; `ValidateExists` calls; the
+  in **The derivation**, run independently and required to agree; ONE exact-match query per
+  checked domain carrying every source's terms OR'd (see **Cost**), not one call per key; the
   aggregation table above; name corroboration; and a status-bearing result distinguishing
   Resolved / Unresolved / Ambiguous / Unavailable. Pure logic over a seamable
   `ADDirectorySearchService`; tests for every row of that table, including the
@@ -935,9 +993,14 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   `NotFound` and the resolver looks like it works. A test must also cover the id arm matching
   more than one user: it is discarded as non-evidence, NOT escalated to `Ambiguous`, or a
   placeholder value in one field takes out every account that carries it.
-  **`manager` is not among them.** It resolves the owner's manager, not the owner, and in an
-  agreement-based design a wrong arm is worse than a missing one - it manufactures
-  corroboration. Owner ruling 2026-09-11. Do not reintroduce it.
+  **`manager` and `otherMails` are not among them.** `manager` resolves the owner's manager, not
+  the owner, and in an agreement-based design a wrong arm is worse than a missing one - it
+  manufactures corroboration. `otherMails` is Entra's recovery address, not the mailbox SMTP,
+  and is empty in this tenant. Both owner rulings 2026-09-11. Do not reintroduce either.
+  **`ValidateExists`'s signature does not survive this slice.** It takes one key and returns one
+  verdict, which forces a per-key loop and makes the resolver SLOWER than the design it
+  replaces. S1 adds a term-set overload returning the matched rows; the per-key loop is the
+  wrong shape, not merely a slower one. Owner 2026-09-11: *"it's already too slow."*
 - **S2 -- the password generator.** `Services/PasswordGenerator.cs` plus the embedded word
   list: the algorithm in **The generated password**, implemented in C# from the method, not
   ported from the Rust. Standalone and pure apart from the CSPRNG, so it is testable on its
