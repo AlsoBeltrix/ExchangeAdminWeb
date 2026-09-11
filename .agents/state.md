@@ -52,9 +52,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   `proxyAddresses=smtp:<key>@*`, exact left of the `@`, wildcard only across the domain). Every
   answering source runs; one distinct user across them = send; two sources naming two people is
   `Ambiguous` and refuses; zero / lookup-unavailable refuses. Corroboration stops being a filter
-  bolted on afterwards and becomes the mechanism. **S1 consequence:** `BuildExactMatchFilter`
+  bolted on afterwards and becomes the mechanism. **The id is three on-prem attributes** (owner
+  2026-09-11): `employeeID`, `employeeNumber` and `extensionAttribute1`, searched OR'd because
+  which one is authoritative is an environment fact the plan may not assume. **`employeeType` is
+  NOT a fourth** - it holds a worker-class code describing a category, and an arm on it would
+  match everyone in that class. **And an id arm matching more than one user is DISCARDED as
+  non-evidence, never escalated to `Ambiguous`**: a placeholder in an id field would otherwise
+  refuse every account carrying it, including ones display name could have resolved. A person
+  arm (display name, UPN) matching two people still refuses.
+  **S1 consequence:** `BuildExactMatchFilter`
   (`Services/ADDirectorySearchService.cs:432`) compares against none of `displayName`,
-  `proxyAddresses` or `employeeID`, so source 1's employeeId arm, source 2 and source 3's alias
+  `proxyAddresses` or the three id attributes, so source 1, source 2 and source 3's alias
   arm are all inert - and inert quietly, returning a clean `NotFound`.
   **S0 is a hard gate on the whole plan:** a read-only survey
   (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation and reports the real hit rate.
