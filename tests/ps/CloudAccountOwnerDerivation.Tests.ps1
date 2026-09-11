@@ -286,8 +286,9 @@ Describe 'Get-CloudAccountOwnerCoverage.ps1 plan mode' {
     It 'describes every step and queries nothing' {
         $out = & $script:ScriptPath -PlanOnly 6>&1 | Out-String
         $out | Should -Match 'PLAN'
-        $out | Should -Match 'Connect to Microsoft Graph'
+        $out | Should -Match 'Microsoft Graph'
         $out | Should -Match 'Enumerate every cloud-only user'
+        $out | Should -Match 'verify every requested search domain'
         $out | Should -Match 'Derive candidates'
         $out | Should -Match 'nothing was queried and no file was written'
     }

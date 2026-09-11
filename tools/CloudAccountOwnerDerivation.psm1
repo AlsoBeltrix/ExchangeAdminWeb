@@ -81,8 +81,8 @@ function Get-CloudAccountOwnerCandidate {
     Does this AD user's name corroborate the cloud account's display name?
 
 .DESCRIPTION
-    A sAMAccountName can collide across the forest's two domains (ad.analog.com and
-    winroot.analog.com), so an exact-match lookup can return a plausible-looking WRONG person.
+    A sAMAccountName can collide across the searched domains, so an exact-match lookup can
+    return a plausible-looking WRONG person.
     Corroboration is the check: the AD user's given name and surname must BOTH appear in the
     cloud account's Graph displayName, case-insensitively and in any order. That tolerates
     "Smith, John" against "John Smith (Cloud Admin)" and rejects an unrelated jsmith.

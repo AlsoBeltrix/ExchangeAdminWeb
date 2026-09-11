@@ -7,7 +7,7 @@
 .DESCRIPTION
     S0 of docs/CloudPasswordReset-Plan.md, and a hard gate on the rest of it. The Cloud Password
     Reset module never shows the operator the password; it mails it to the account's owner at
-    their @analog.com mailbox, and the owner is DERIVED from the cloud UPN at each reset because
+    their on-premises mailbox, and the owner is DERIVED from the cloud UPN at each reset because
     the owner rejected a stored mapping ("cannot store it... we're not going to create an
     instantly stale map"). The whole design therefore stands or falls on one number nobody has
     measured: what fraction of the real population actually resolves.
@@ -39,21 +39,30 @@
     How many example accounts to print per failure class. Default 5. Only the cloud UPN is
     printed; owner mail addresses stay in the CSV.
 
-.PARAMETER SkipForestCheck
-    Skip the global-catalog cross-domain probe described below.
+.PARAMETER SearchDomain
+    The domains to search for owners, by DNS name. Required for a real run. These stand in for the
+    module's operator-chosen Search Domains setting, so the survey measures the scope that will
+    actually ship. Pass only domains whose accounts sync to Entra, or that you otherwise want
+    searched - not every domain a trust makes reachable.
+
+.PARAMETER ListDomains
+    List the domains available to this host (forest domains plus trusted domains) and exit. Use
+    this to decide what to pass to -SearchDomain. Queries the directory; writes nothing.
 
 .NOTES
-    Fidelity to the module, and one thing this survey deliberately measures that the module does
-    not do: ADDirectorySearchService.ValidateExists issues its USER query WITHOUT a -Server, so it
-    binds the LOCAL domain only (the -Server routing at ADDirectorySearchService.cs:355 is scoped
-    to the Group kind). The plan's corroboration rule exists to catch a sAMAccountName collision
-    across ad.analog.com and winroot.analog.com, but a local-domain query cannot SEE the other
-    domain's user, so it would not report Ambiguous for one. The primary outcome column below
-    reproduces the module's local-domain behaviour exactly. A second column, ForestMatchCount,
-    additionally probes the global catalog (port 3268, read-only) to count how many users the
-    forest really holds for that key. If that column is above 1 anywhere, the collision risk is
-    real and unseen by the module, and it is a finding for the owner, not something this script
-    decides. Use -SkipForestCheck to turn the probe off.
+    Scope is chosen, not assumed. ADDirectorySearchService.ValidateExists issues its USER query
+    WITHOUT a -Server, so today it binds whichever single domain the app host happens to be joined
+    to (the -Server routing at ADDirectorySearchService.cs:355 is scoped to the Group kind). That
+    is an accident of deployment. A forest-wide sweep is not the answer either: the estate has
+    domains and trusts with no relationship to Entra, so searching everything queries irrelevant
+    directories and manufactures collisions that are not real ones. The settled design, and what
+    this survey reproduces, is an operator-chosen set of domains - see .agents/decisions.md
+    2026-09-11 "Searched domains are an operator setting".
+
+    Every checked domain is searched for every candidate key, and matches are pooled across the
+    set: two or more distinct users anywhere in that set is Ambiguous and resolves to nothing. If
+    ANY checked domain cannot be reached, the key is Unavailable rather than NotFound - an
+    unreachable domain could be holding the second match, so absence cannot be concluded from it.
 
     Output: the CSV, plus a console summary answering the gate question directly.
 #>
@@ -65,7 +74,8 @@ param(
     [string] $CsvPath,
     [ValidateRange(0, 100)]
     [int] $SamplesPerClass = 5,
-    [switch] $SkipForestCheck
+    [string[]] $SearchDomain,
+    [switch] $ListDomains
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,6 +101,55 @@ function Invoke-PlanOrAction {
     & $Action
 }
 
+function Get-AvailableDomain {
+    <#
+        Every domain this host could search: the forest's own domains plus every trusted domain.
+        Discovered from the directory at run time - no name is hard-coded, defaulted or typed. This
+        is the same enumeration the module's Search Domains setting will offer as checkboxes.
+    #>
+    Import-Module ActiveDirectory -ErrorAction Stop
+
+    $names = [System.Collections.Generic.List[string]]::new()
+
+    try {
+        $forest = Get-ADForest -ErrorAction Stop
+        foreach ($d in $forest.Domains) { $names.Add([string]$d) }
+    }
+    catch {
+        Write-Warn "Could not enumerate forest domains: $($_.Exception.Message)"
+    }
+
+    try {
+        foreach ($t in (Get-ADTrust -Filter * -ErrorAction Stop)) {
+            if ($t.Name) { $names.Add([string]$t.Name) }
+        }
+    }
+    catch {
+        Write-Warn "Could not enumerate trusts: $($_.Exception.Message)"
+    }
+
+    return , @($names | Sort-Object -Unique)
+}
+
+if ($ListDomains) {
+    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+        Write-Fail "The ActiveDirectory module is not installed. Add RSAT-AD-PowerShell, or run this from a host that has it."
+    }
+    $available = Get-AvailableDomain
+    Write-Host ""
+    Write-Host "Domains available to this host:" -ForegroundColor White
+    foreach ($d in $available) { Write-Host "  $d" }
+    Write-Host ""
+    Write-Host "Pass the ones whose accounts sync to Entra, or that you otherwise want searched:"
+    Write-Host "  -SearchDomain " -NoNewline
+    Write-Host (($available | Select-Object -First 2) -join ',') -ForegroundColor DarkGray
+    return
+}
+
+if (-not $PlanOnly -and (-not $SearchDomain -or $SearchDomain.Count -eq 0)) {
+    Write-Fail "-SearchDomain is required. Run with -ListDomains to see what this host can search, then pass the domains you want. Nothing is assumed."
+}
+
 if (-not $CsvPath) {
     $CsvPath = Join-Path (Get-Location).Path ("CloudAccountOwnerCoverage-{0}.csv" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 }
@@ -110,21 +169,30 @@ $OutcomeClasses = @(
 
 $script:CloudAccounts = @()
 $script:Rows = @()
-$script:GlobalCatalog = $null
+$script:Domains = @()
 
 # ---------------------------------------------------------------------------------------------
 # Step 1 - Graph, read-only.
 # ---------------------------------------------------------------------------------------------
 
-Invoke-PlanOrAction "Connect to Microsoft Graph as the signed-in admin (delegated User.Read.All, read-only)" {
+Invoke-PlanOrAction "Use the existing Microsoft Graph connection, or sign in read-only (User.Read.All)" {
     if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Users)) {
         Write-Fail "The Microsoft.Graph.Users module is not installed. Install-Module Microsoft.Graph -Scope CurrentUser"
     }
     Import-Module Microsoft.Graph.Users
-    Connect-MgGraph -Scopes 'User.Read.All' -NoWelcome
+
+    # An existing session is reused rather than replaced: the estate connects app-only through its
+    # own tooling, and re-running Connect-MgGraph here would tear that down for a delegated sign-in
+    # this survey does not need. Read scopes are all it uses either way.
     $ctx = Get-MgContext
-    if (-not $ctx) { Write-Fail "Connect-MgGraph returned no context." }
-    Write-Ok "Graph tenant $($ctx.TenantId) as $($ctx.Account)"
+    if (-not $ctx) {
+        Connect-MgGraph -Scopes 'User.Read.All' -NoWelcome
+        $ctx = Get-MgContext
+    }
+    if (-not $ctx) { Write-Fail "No Microsoft Graph context, and Connect-MgGraph returned none." }
+
+    $who = if ($ctx.Account) { $ctx.Account } else { "app $($ctx.ClientId) ($($ctx.AuthType))" }
+    Write-Ok "Graph tenant $($ctx.TenantId) as $who"
 }
 
 Invoke-PlanOrAction "Enumerate every cloud-only user in the tenant (onPremisesSyncEnabled not true, userType Member)" {
@@ -153,73 +221,93 @@ Invoke-PlanOrAction "Enumerate every cloud-only user in the tenant (onPremisesSy
 # Step 2 - Active Directory, read-only, one lookup per candidate key.
 # ---------------------------------------------------------------------------------------------
 
-Invoke-PlanOrAction "Load the ActiveDirectory module and resolve the forest global catalog" {
+Invoke-PlanOrAction "Load the ActiveDirectory module and verify every requested search domain answers" {
     if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
         Write-Fail "The ActiveDirectory module is not installed. Add RSAT-AD-PowerShell, or run this from a host that has it."
     }
     Import-Module ActiveDirectory
 
-    if ($SkipForestCheck) {
-        Write-Warn "Forest cross-domain probe skipped by request; ForestMatchCount will be blank."
-    }
-    else {
-        # Fail-soft, exactly as ADDirectorySearchService.ResolveGlobalCatalog does: a forest that
-        # cannot be reached degrades the extra column, it does not fail the survey.
+    # Checked up front rather than per-account: a domain that cannot be reached would turn every
+    # single key Unavailable, and finding that out after several hundred lookups wastes the run.
+    $ok = [System.Collections.Generic.List[string]]::new()
+    foreach ($d in $SearchDomain) {
         try {
-            $forest = Get-ADForest
-            $script:GlobalCatalog = "$($forest.Name):3268"
-            Write-Ok "Global catalog $($script:GlobalCatalog), domains: $($forest.Domains -join ', ')"
+            $info = Get-ADDomain -Server $d -ErrorAction Stop
+            $ok.Add([string]$info.DNSRoot)
+            Write-Ok "$($info.DNSRoot) reachable"
         }
         catch {
-            Write-Warn "Could not resolve the forest global catalog ($($_.Exception.Message)). ForestMatchCount will be blank."
-            $script:GlobalCatalog = $null
+            Write-Fail "Search domain '$d' did not answer: $($_.Exception.Message). Fix it or drop it from -SearchDomain; the survey will not silently skip a domain."
         }
     }
+
+    $script:Domains = @($ok | Sort-Object -Unique)
+    Write-Ok "Searching $($script:Domains.Count) domain(s): $($script:Domains -join ', ')"
 }
 
 function Get-AdCandidateResult {
     <#
-        One candidate key, looked up the way ValidateExists does it: exact-match LDAP filter over
+        One candidate key, looked up the way the module will: exact-match LDAP filter over
         userPrincipalName / mail / sAMAccountName (ADDirectorySearchService.BuildExactMatchFilter,
-        :432), ResultSetSize 2 so "more than one" is decisive, local domain only.
+        :432), ResultSetSize 2 per domain so "more than one" is decisive, across EVERY checked
+        domain with matches pooled.
+
+        Two rules do the safety work here:
 
         A thrown lookup is Unavailable, never NotFound. An exception means the question never
         reached the directory, which is not evidence the user is absent - the single most
         important distinction in this whole survey, and the one a naive try/catch gets wrong.
+
+        And one unreachable domain poisons the whole key, not just its own result. Concluding
+        "only one match" while a checked domain stayed silent is exactly the wrong answer: the
+        silent domain is where the second match would have been.
     #>
-    param([string] $Candidate)
+    param([string] $Candidate, [string[]] $Domain)
 
     $escaped = $Candidate -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29' -replace "`0", '\00'
     $filter = "(|(userPrincipalName=$escaped)(mail=$escaped)(sAMAccountName=$escaped))"
+    $props = @('DisplayName', 'DistinguishedName', 'SamAccountName', 'UserPrincipalName', 'mail', 'GivenName', 'Surname', 'Enabled')
 
-    try {
-        $found = @(Get-ADUser -LDAPFilter $filter -ResultSetSize 2 -Properties DisplayName, DistinguishedName, SamAccountName, UserPrincipalName, mail, GivenName, Surname, Enabled -ErrorAction Stop)
-    }
-    catch {
-        return [pscustomobject]@{
-            Candidate = $Candidate; Status = 'Unavailable'; DistinguishedName = $null
-            SamAccountName = $null; Email = $null; Enabled = $null; GivenName = $null; Surname = $null
-            Error = $_.Exception.Message
+    $hits = [System.Collections.Generic.List[object]]::new()
+    $matchedIn = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($d in $Domain) {
+        try {
+            $found = @(Get-ADUser -Server $d -LDAPFilter $filter -ResultSetSize 2 -Properties $props -ErrorAction Stop)
         }
+        catch {
+            return [pscustomobject]@{
+                Candidate = $Candidate; Status = 'Unavailable'; DistinguishedName = $null
+                SamAccountName = $null; Email = $null; Enabled = $null; GivenName = $null; Surname = $null
+                MatchedDomains = $null; Error = "$d : $($_.Exception.Message)"
+            }
+        }
+
+        foreach ($u in $found) { $hits.Add($u) }
+        if ($found.Count -gt 0) { $matchedIn.Add($d) }
     }
 
-    if ($found.Count -eq 0) {
+    # Distinctness by DN, so the same user seen twice through a trust is one user, not a collision.
+    $distinct = @($hits | Sort-Object -Property DistinguishedName -Unique)
+    $domains = ($matchedIn | Sort-Object -Unique) -join ' | '
+
+    if ($distinct.Count -eq 0) {
         return [pscustomobject]@{
             Candidate = $Candidate; Status = 'NotFound'; DistinguishedName = $null
             SamAccountName = $null; Email = $null; Enabled = $null; GivenName = $null; Surname = $null
-            Error = $null
+            MatchedDomains = $null; Error = $null
         }
     }
 
-    if ($found.Count -gt 1) {
+    if ($distinct.Count -gt 1) {
         return [pscustomobject]@{
             Candidate = $Candidate; Status = 'Ambiguous'; DistinguishedName = $null
             SamAccountName = $null; Email = $null; Enabled = $null; GivenName = $null; Surname = $null
-            Error = $null
+            MatchedDomains = $domains; Error = $null
         }
     }
 
-    $u = $found[0]
+    $u = $distinct[0]
     return [pscustomobject]@{
         Candidate         = $Candidate
         Status            = 'Found'
@@ -229,34 +317,9 @@ function Get-AdCandidateResult {
         Enabled           = $u.Enabled
         GivenName         = $u.GivenName
         Surname           = $u.Surname
+        MatchedDomains    = $domains
         Error             = $null
     }
-}
-
-function Get-ForestMatchCount {
-    <#
-        How many users the WHOLE forest holds for this key, via the global catalog. Reported, never
-        acted on: the module cannot see this, and the point of the column is to show the owner
-        whether the collision the corroboration rule guards against actually exists here.
-        Returns $null when the probe is off or failed, which the CSV renders as blank - blank means
-        "not measured", 0 means "measured, none".
-    #>
-    param([string[]] $Candidate)
-
-    if (-not $script:GlobalCatalog) { return $null }
-
-    $total = 0
-    foreach ($c in $Candidate) {
-        $escaped = $c -replace '\\', '\5c' -replace '\*', '\2a' -replace '\(', '\28' -replace '\)', '\29'
-        try {
-            $hits = @(Get-ADUser -Server $script:GlobalCatalog -LDAPFilter "(|(userPrincipalName=$escaped)(mail=$escaped)(sAMAccountName=$escaped))" -ResultSetSize 10 -ErrorAction Stop)
-            $total += $hits.Count
-        }
-        catch {
-            return $null
-        }
-    }
-    return $total
 }
 
 Invoke-PlanOrAction "Derive candidates and resolve an owner for each cloud-only account (read-only AD lookups)" {
@@ -271,14 +334,11 @@ Invoke-PlanOrAction "Derive candidates and resolve an owner for each cloud-only 
         }
 
         $candidates = @(Get-CloudAccountOwnerCandidate -UserPrincipalName $acct.UserPrincipalName)
-        $results = @(foreach ($c in $candidates) { Get-AdCandidateResult -Candidate $c })
+        $results = @(foreach ($c in $candidates) { Get-AdCandidateResult -Candidate $c -Domain $script:Domains })
 
         $outcome = Resolve-CloudAccountOwnerOutcome -CandidateResult $results -CloudDisplayName $acct.DisplayName
 
-        $forestCount = $null
-        if (-not $SkipForestCheck -and $candidates.Count -gt 0) {
-            $forestCount = Get-ForestMatchCount -Candidate $candidates
-        }
+        $matchedDomains = (($results | Where-Object { $_.MatchedDomains } | ForEach-Object { $_.MatchedDomains -split ' \| ' }) | Sort-Object -Unique) -join ' | '
 
         $lookupError = ($results | Where-Object { $_.Error } | Select-Object -First 1).Error
 
@@ -295,7 +355,8 @@ Invoke-PlanOrAction "Derive candidates and resolve an owner for each cloud-only 
             OwnerEmail             = $outcome.OwnerEmail
             OwnerEnabled           = $outcome.OwnerEnabled
             OwnerDistinguishedName = $outcome.OwnerDistinguishedName
-            ForestMatchCount       = $forestCount
+            SearchedDomains        = ($script:Domains -join ' | ')
+            MatchedDomains         = $matchedDomains
             LookupError            = $lookupError
         })
     }
@@ -355,18 +416,23 @@ Invoke-PlanOrAction "Print the coverage summary that answers the S0 gate" {
         }
     }
 
-    $collisions = @($script:Rows | Where-Object { $null -ne $_.ForestMatchCount -and $_.ForestMatchCount -gt 1 })
     Write-Host ""
-    if ($SkipForestCheck -or -not $script:GlobalCatalog) {
-        Write-Warn "Forest cross-domain collisions: NOT MEASURED. Blank is not zero."
-    }
-    elseif ($collisions.Count -eq 0) {
-        Write-Ok "Forest cross-domain collisions: none. No candidate key matches more than one forest user."
+    Write-Host "Searched domains: $($script:Domains -join ', ')" -ForegroundColor White
+    Write-Host "Every number above describes THIS set. A domain you did not check was never asked." -ForegroundColor DarkGray
+
+    $ambiguous = @($script:Rows | Where-Object { $_.CandidateStatuses -like '*=Ambiguous*' })
+    $multi = @($script:Rows | Where-Object { $_.MatchedDomains -and $_.MatchedDomains -match '\|' })
+
+    Write-Host ""
+    if ($ambiguous.Count -eq 0) {
+        Write-Ok "Collisions across the searched set: none. No candidate key matched two distinct users."
     }
     else {
-        Write-Warn "Forest cross-domain collisions: $($collisions.Count) accounts whose candidate key matches more than one user forest-wide."
-        Write-Warn "The module's USER lookup binds the local domain only, so it cannot see these and will NOT report them as ambiguous."
-        Write-Warn "Corroboration is the only thing standing between those and a password mailed to the wrong person. Raise with the owner."
+        Write-Warn "Collisions across the searched set: $($ambiguous.Count) accounts whose candidate key matched two distinct users. Those resolve to nothing and refuse."
+    }
+
+    if ($multi.Count -gt 0) {
+        Write-Warn "$($multi.Count) accounts matched in more than one domain (see MatchedDomains). Check whether those are the same person seen twice or a real name clash."
     }
 
     Write-Host ""
