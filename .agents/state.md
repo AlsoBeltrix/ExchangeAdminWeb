@@ -76,15 +76,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   event and `MergeExtra` passes nulls through, so no transport change is needed. Other modules
   were not written to these rules; aligning them is a separate stream and is not authorized
   here.
-  **OPEN FINDING for the owner (S0 report): the module's user lookup is local-domain only.**
+  **The module's user lookup is local-domain only - settled 2026-09-11, benign here.**
   `ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
-  the local domain; the `-Server` DN routing at `ADDirectorySearchService.cs:355` is scoped to
-  `objectKind == "Group"` and `ResolveGlobalCatalog` is only called from the `Search` path at
-  `:660`. So a `sAMAccountName` collision across `ad.analog.com` and `winroot.analog.com` is
-  invisible to the module and will never be reported as `Ambiguous`. Name corroboration is the
-  only thing between such a collision and a password mailed to the wrong person. The survey
-  measures the real forest count in a separate `ForestMatchCount` column (blank = not measured,
-  0 = measured and none) so the owner rules on it with a number. Needs a ruling before S1.
+  the local domain (`ADDirectorySearchService.cs:355` scopes the `-Server` routing to
+  `objectKind == "Group"`; `ResolveGlobalCatalog` is only called from `Search` at `:660`). I
+  raised it as a cross-domain collision risk; the owner closed it with the forest topology
+  (`.agents/decisions.md` 2026-09-11) - all users and all mailboxes are in `ad.analog.com`, and
+  the app host `ASHBIAMWEB1` is joined to that domain (verified), so the query binds the domain
+  every user is in. A `winroot.analog.com` account cannot become a resolved owner regardless,
+  because resolution requires a non-blank `mail` and winroot holds no mailboxes; worst case is
+  fail-to-resolve, which is fail-closed. Collisions *within* `ad.analog.com` are still caught by
+  `ResultSetSize 2` reporting `Ambiguous`. Dependency: true only while the host stays joined to
+  `ad.analog.com`. `ForestMatchCount` stays in the survey as a confirmation column.
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as

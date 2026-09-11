@@ -39,17 +39,36 @@ plan's S0 section:
 2. **A `ForestMatchCount` column that the module itself cannot produce**, because of the
    finding below.
 
-**Finding, open, needs an owner ruling before S1: the module's user lookup binds the local
-domain only.** `ADDirectorySearchService.ValidateExists` issues its USER query with no
-`-Server`. The `-Server` DN routing at `ADDirectorySearchService.cs:355` is scoped to
-`objectKind == "Group"`, and `ResolveGlobalCatalog` is called only from the `Search` path at
-`:660`. The plan's name-corroboration rule exists to catch a `sAMAccountName` collision across
-`ad.analog.com` and `winroot.analog.com` - but a local-domain query cannot see the other
-domain's user, so the module would never report `Ambiguous` for one. Corroboration is
-therefore the only thing between such a collision and a password mailed to the wrong person.
-The survey's primary outcome column reproduces the module's local-domain behaviour exactly and
-reports the true forest count alongside it, rather than silently changing the design to hide
-the gap.
+**Finding raised, and settled the same day: the module's user lookup binds the local domain
+only - benign, because of the forest's shape.** `ADDirectorySearchService.ValidateExists`
+issues its USER query with no `-Server`. The `-Server` DN routing at
+`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
+`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. I raised this as a
+cross-domain collision risk the module could never report as `Ambiguous`. The owner settled it
+with the topology, verbatim:
+
+> "there are no users with mailboxes in the winroot domain. our domain was built in the 90s on
+> NT4 and the old best practice was forest root and user domain. users live in ad.analog.com,
+> schema and some admin accounts exist in winroot."
+
+**Durable fact, recorded here because it is load-bearing and invisible in the code:** the forest
+is the NT4-era forest-root/user-domain pattern. `winroot.analog.com` is the forest root - schema
+and some admin accounts, **no mailboxes**. `ad.analog.com` is the user domain - all users, all
+mailboxes. The app host `ASHBIAMWEB1` is joined to `ad.analog.com` (verified 2026-09-11).
+
+That closes the finding twice over. The un-`-Server`ed query binds the user domain, the one
+place every user actually lives. And a winroot account can never become a resolved owner
+regardless, because the resolution rule requires a non-blank `mail`. So the unseen half of the
+forest cannot supply a wrong destination; the worst a winroot-only key can do is fail to
+resolve, which is the fail-closed outcome and the correct one. A collision *within*
+`ad.analog.com` is a different thing and is still caught: `ResultSetSize 2` sees both and
+reports `Ambiguous`.
+
+One dependency: this holds only while the app host stays joined to `ad.analog.com`. Joined to
+winroot instead, the same query would bind a domain with almost no users and nearly everything
+would fail to resolve - loudly and closed, not silently wrong. `ForestMatchCount` stays in the
+survey, downgraded from a risk probe to a confirmation column that checks the topology
+empirically rather than taking it on trust; `-SkipForestCheck` turns it off.
 
 ### 2026-09-10 - Audit events go to Splunk, so their fields are an interface
 

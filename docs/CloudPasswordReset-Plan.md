@@ -186,19 +186,35 @@ for the leaver rule but never states the rule's shape. Rather than guess, the su
 the class separately so the owner rules on it with a number in hand. A leaver's mailbox may
 still accept mail, which is exactly why a disabled owner must not quietly pass as resolved.
 
-**Finding, for the owner, not decided here: the module's user lookup is local-domain only.**
-`ADDirectorySearchService.ValidateExists` issues its USER query without a `-Server`, so it
-binds the local domain. The `-Server` DN routing at `ADDirectorySearchService.cs:355` is
-scoped to `objectKind == "Group"`, and `ResolveGlobalCatalog` is called only from the `Search`
-path at `:660`. The corroboration rule exists to catch a `sAMAccountName` collision across
-`ad.analog.com` and `winroot.analog.com` -- but a local-domain query cannot SEE the other
-domain's user, so it will never report `Ambiguous` for one. Corroboration is therefore the
-only thing between such a collision and a password mailed to the wrong person. The survey's
-primary outcome column reproduces the module's local-domain behaviour exactly; a second
-column, `ForestMatchCount`, probes the global catalog read-only to count how many users the
-forest really holds for each key. Blank means not measured; 0 means measured and none. If it
-is above 1 anywhere, this is a real and currently invisible risk and needs an owner ruling
-before S1.
+**The module's user lookup is local-domain only. Settled 2026-09-11: benign here, because of
+the forest's shape.** `ADDirectorySearchService.ValidateExists` issues its USER query with no
+`-Server`, so it binds the local domain; the `-Server` DN routing at
+`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`, and
+`ResolveGlobalCatalog` is called only from the `Search` path at `:660`. I raised this as a
+cross-domain collision risk. The owner settled it with the topology:
+
+> "there are no users with mailboxes in the winroot domain. our domain was built in the 90s on
+> NT4 and the old best practice was forest root and user domain. users live in ad.analog.com,
+> schema and some admin accounts exist in winroot."
+
+That closes it, in two steps. The app host is joined to `ad.analog.com` (verified on
+`ASHBIAMWEB1`), so the un-`-Server`ed query binds the **user** domain -- the one place every
+user actually lives. And a `winroot.analog.com` account can never become a resolved owner
+regardless, because the resolution rule requires a non-blank `mail` attribute and winroot holds
+no mailboxes. So the unseen half of the forest cannot supply a wrong destination; the worst a
+winroot-only key can do is fail to resolve, which is the fail-closed outcome and the correct
+one. A collision **within** `ad.analog.com` is a different thing and is still caught: the query
+uses `ResultSetSize 2`, sees both, and reports `Ambiguous`.
+
+One dependency, recorded because it is load-bearing and invisible in the code: this holds only
+while the app host stays joined to `ad.analog.com`. Joined to winroot instead, the same query
+would bind a domain with almost no users and nearly everything would fail to resolve. That
+fails loudly and closed rather than mailing to the wrong person, so it is a dependency to know
+about, not a trap.
+
+`ForestMatchCount` stays in the survey, downgraded from a risk probe to a confirmation column:
+it costs one extra read-only global-catalog query per key and empirically checks the topology
+above rather than taking it on trust. `-SkipForestCheck` turns it off.
 
 **No slice after S0 starts until the owner has seen the result and said go.**
 
