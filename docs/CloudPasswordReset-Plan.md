@@ -196,7 +196,7 @@ nothing against a real directory.
   every other tool they hold. What hiding it actually cost is the one defence that matters
   here -- a human check on the derivation. The real residual risk in this module is a lookup
   that resolves to the *wrong* person, and a tech who can read "this is going to
-  john.smith@analog.com" can catch that in a second, where a display name they half-recognise
+  john.smith@example.com" can catch that in a second, where a display name they half-recognise
   gives them nothing to catch it with. The control that counts is unchanged and is a different
   control: the address is **derived, read-only and never editable**. The operator cannot type
   one, pick one from a list, or steer the send anywhere. Seeing where it is going is not the
