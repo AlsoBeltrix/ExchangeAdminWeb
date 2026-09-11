@@ -102,9 +102,19 @@ third and weakest of three sources below, no longer as the design.
 
 | # | Source | Why it beats the UPN |
 |---|---|---|
-| 1 | **Attributes on the cloud account itself** -- `otherMails`, `manager`, `employeeId` | Not a derivation at all. A corporate address in `otherMails` is somebody having *stated* the owner; a set `manager` is a relationship the tenant already holds. Zero inference, so nothing to get wrong. |
+| 1 | **Attributes on the cloud account itself** -- `otherMails`, `employeeId` | Not a derivation at all. A corporate address in `otherMails` is somebody having *stated* the owner; an `employeeId` is the owner's payroll identity carried on the account. Zero inference, so nothing to get wrong. |
 | 2 | **Display name** -- strip a trailing `-CLD`/`_CLD`, match the remainder exactly against on-premises `displayName` | A display name describes the person; the UPN describes the provisioning convention in force the day the account was made. Only one of those two survives a convention change. |
 | 3 | **UPN local part**, compared correctly (below) | Era-dependent by construction, so it goes last. |
+
+**`manager` is NOT a source, and the first draft of this table was wrong to list it.** Owner
+challenge 2026-09-11: *"how is manager going to help"*. It does not. The attribute names the
+owner's **manager**, not the owner, so resolving it sends the password to the wrong person --
+and because this design treats convergence as proof, a `manager` arm would supply false
+*agreement* and make a wrong answer look corroborated. The attribute is only useful if whoever
+provisioned these accounts used the field to mean "responsible party" rather than its actual
+meaning, and no reader of a single record can tell which convention it follows. An attribute
+whose meaning is unknowable per record cannot be evidence. It is struck from the derivation and
+from the pre-run read.
 
 **Every source that can answer, answers -- and they must agree.** The outcome is the single
 distinct directory user the answering sources converge on. Two sources naming two different
@@ -176,10 +186,11 @@ pattern `ObjectSid` and `DnsDomain` already use (`:819-821`) -- so no existing c
 site changes. This lands in S1.
 
 The three-source derivation adds one more requirement to the same branch: **the User filter
-must be able to match `displayName` and `proxyAddresses`.** `DisplayName` is already in
-`ValidationProperties` as a returned property, but `BuildExactMatchFilter` (`:432`) does not
-compare against it, and `proxyAddresses` is neither requested nor compared. Source 2 and
-source 3's alias arm are both inert without that change, and inert in the quiet way: the
+must be able to match `displayName`, `proxyAddresses` and `employeeID`.** `DisplayName` is
+already in `ValidationProperties` as a returned property, but `BuildExactMatchFilter` (`:432`)
+does not compare against it, and neither `proxyAddresses` nor `employeeID` is requested or
+compared. Source 1's `employeeId` arm, source 2, and
+source 3's alias arm are all inert without that change, and inert in the quiet way: the
 lookup runs, returns nothing, and reports a clean `NotFound`. Stated here because a plan that corroborates on data the
 query never requested would compile, pass its tests against a mock, and silently corroborate
 nothing against a real directory.
@@ -348,7 +359,7 @@ first in *practice* depends on whether those attributes are populated on these a
 that cannot be answered from the CSV already on disk -- the survey never asked for them.
 
 **The read:** one Graph pass over the in-scope accounts returning population *counts* only for
-`otherMails`, `manager`, `employeeId` and `mailNickname`. No AD queries, no CSV, no per-account
+`otherMails`, `employeeId` and `mailNickname`. No AD queries, no CSV, no per-account
 output. If they are empty across the board, source 1 is struck from the plan and the display
 name becomes primary; the rest of the design is unchanged either way.
 
@@ -883,11 +894,15 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   already uses, `:819-821`). A test must assert the User branch actually requests all three:
   without it, corroboration passes against a mock and silently corroborates nothing against a
   real directory.
-  **So do the two missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
-  compare a candidate against `displayName` and against `userPrincipalName`/`proxyAddresses`
-  by local part (`<key>@*`), and `proxyAddresses` must be added to the requested properties.
-  Same test requirement and same failure mode: without it sources 2 and 3 return a clean
+  **So do the three missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
+  compare a candidate against `displayName`, against `userPrincipalName`/`proxyAddresses`
+  by local part (`<key>@*`), and against `employeeID` for source 1; `proxyAddresses` and
+  `employeeID` must be added to the requested properties.
+  Same test requirement and same failure mode: without them the affected sources return a clean
   `NotFound` and the resolver looks like it works.
+  **`manager` is not among them.** It resolves the owner's manager, not the owner, and in an
+  agreement-based design a wrong arm is worse than a missing one - it manufactures
+  corroboration. Owner ruling 2026-09-11. Do not reintroduce it.
 - **S2 -- the password generator.** `Services/PasswordGenerator.cs` plus the embedded word
   list: the algorithm in **The generated password**, implemented in C# from the method, not
   ported from the Rust. Standalone and pure apart from the CSPRNG, so it is testable on its
