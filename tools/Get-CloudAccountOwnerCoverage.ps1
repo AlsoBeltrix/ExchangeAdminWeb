@@ -340,7 +340,10 @@ Invoke-PlanOrAction "Derive candidates and resolve an owner for each cloud-only 
 
         $matchedDomains = (($results | Where-Object { $_.MatchedDomains } | ForEach-Object { $_.MatchedDomains -split ' \| ' }) | Sort-Object -Unique) -join ' | '
 
-        $lookupError = ($results | Where-Object { $_.Error } | Select-Object -First 1).Error
+        # Set-StrictMode makes a property read on an empty pipeline result throw, so hold the
+        # object first and only reach into it when there actually is one.
+        $errored = @($results | Where-Object { $_.Error })
+        $lookupError = if ($errored.Count -gt 0) { $errored[0].Error } else { $null }
 
         $rows.Add([pscustomobject]@{
             CloudUserPrincipalName = $acct.UserPrincipalName
