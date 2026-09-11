@@ -42,9 +42,11 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   and `mail` values, so it could only match when the local part happened to equal the
   `sAMAccountName` - every `first.last`-era account was structurally unmatchable, which is most
   of the 9.6%. **The replacement is three ordered evidence sources, required to AGREE**, not a
-  first-hit chain: (1) cloud-account attributes (`otherMails` / `employeeId`; **`manager` was
-  struck on the owner's challenge 2026-09-11 - it names the owner's manager, not the owner, and
-  in an agreement-based design a wrong arm manufactures corroboration. Do not reintroduce**) -
+  first-hit chain: (1) `employeeId` on the cloud account (**`manager` and `otherMails` were both
+  struck on owner challenges 2026-09-11 - `manager` names the owner's MANAGER, and in an
+  agreement-based design a wrong arm manufactures corroboration; `otherMails` is Entra's
+  recovery address, not the mailbox SMTP, and is empty in this tenant. Do not reintroduce
+  either. Source 1 is now one attribute and is NOT expected to carry the result**) -
   somebody having *stated* the owner; (2) display name with a trailing `-CLD`/`_CLD` stripped,
   exact against on-prem `displayName` - a display name describes the person, a UPN describes the
   provisioning convention in force the day the account was made; (3) UPN local part, last,
@@ -64,6 +66,17 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   (`Services/ADDirectorySearchService.cs:432`) compares against none of `displayName`,
   `proxyAddresses` or the three id attributes, so source 1, source 2 and source 3's alias
   arm are all inert - and inert quietly, returning a clean `NotFound`.
+  **Cost, on the owner's challenge 2026-09-11 (*"how will that translate to run-time password
+  changes? it's already too slow"*): ONE query per checked domain, not one per source.** All
+  arms go into a single OR'd exact-match filter per domain (`displayName`,
+  `userPrincipalName=<key>@*`, `proxyAddresses=smtp:<key>@*`, `sAMAccountName`, plus the three
+  id attributes); which source answered is then computed in memory from the returned
+  attributes, so agreement costs zero query time. That is CHEAPER than today's design, which
+  issues one `ValidateExists` per candidate key (up to `2 x domains`); domains are queried in
+  parallel, so wall-clock is one round trip. **Consequence: `ValidateExists`'s signature does
+  not survive S1.** It takes one key and returns one verdict, which forces a per-key loop and
+  makes the rebuilt resolver SLOWER than what it replaces. S1 must add a term-set overload
+  returning the matched rows, with `BuildExactMatchFilter` extended to match.
   **S0 is a hard gate on the whole plan:** a read-only survey
   (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation and reports the real hit rate.
   A low rate makes the reveal tier the normal path and the design wrong - the plan is replaced,
@@ -175,11 +188,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   into a single space-joined LDAP key matching nobody - a silent 0% that looked like a finding;
   a mutation-proved source-text tripwire now bars that shape). `bc079fe` gitignores the survey's
   CSV output, which names every cloud-only account in the tenant.
-  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) owner
-  approves ONE bounded Graph read - counts only, no CSV, no per-account output - of how many
-  in-scope accounts populate `otherMails`, `employeeId`, `mailNickname`, which decides
-  whether source 1 survives; (3) owner approves the S0 re-run. One approval is one run. D3 stays
-  unanswerable until the re-run reports. No implementation is authorized.**
+  **A separate pre-run Graph read was proposed and CANCELLED 2026-09-11.** With `otherMails`
+  struck, the only thing it would have measured is whether `employeeId` is populated - and the
+  rebuilt survey reports per source, so it answers that on its way past. A second read would
+  have been a second approval for a number the approved run already returns. Recorded so the
+  next reader does not re-propose it.
+  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) the survey
+  script and `tools/CloudAccountOwnerDerivation.psm1` are rewritten for the three-source
+  agreement design - both still implement the SUPERSEDED single-source UPN derivation; (3)
+  check what roles the survey app registration actually holds (free, reads no directory data)
+  so the admin-scoping query is known to be runnable; (4) owner approves the S0 re-run. One
+  approval is one run. D3 stays unanswerable until the re-run reports. No implementation is
+  authorized.**
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
