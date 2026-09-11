@@ -100,3 +100,7 @@ testResults.xml
 # directory, so a redirected run log at the repo root was showing up as untracked.
 TestResults-*.txt
 .claude/.headroom_wrap_settings.lock
+
+# S0 owner-coverage survey output - contains live account names, mail addresses and
+# object ids for every cloud-only account in the tenant. Never commit.
+CloudAccountOwnerCoverage-*.csv
