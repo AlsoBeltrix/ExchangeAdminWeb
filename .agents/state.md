@@ -6,11 +6,16 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **CLOUD PASSWORD RESET: OWNER GO GIVEN 2026-09-11. S0 TOOLING LANDED, SURVEY NOT YET RUN.**
-  `docs/CloudPasswordReset-Plan.md`, Status In progress. S0 is a hard gate: `tools/Get-CloudAccountOwnerCoverage.ps1`
-  plus `tools/CloudAccountOwnerDerivation.psm1` and its 40 Pester tests are committed and read-only,
-  but nobody has run the survey against the tenant yet, so the hit rate the gate turns on is still
-  unknown. **No slice after S0 starts until the owner has seen that number.**
+- **CLOUD PASSWORD RESET: S0 RUN ONCE 2026-09-11, RESULT VOID, DERIVATION REBUILT, RE-RUN GATED.**
+  `docs/CloudPasswordReset-Plan.md`, Status In progress. S0 is a hard gate. The survey ran once
+  under one owner approval and returned **9.6%** owner coverage (118 of 1,233). That number is
+  **not a measurement of the tenant** and must never be quoted as one: it counted the wrong
+  population (rooms, booking pages, call queues and service objects, not CLD admin accounts) and
+  used a comparison that could only match one naming era. Both defects, and two real script bugs
+  found alongside them, are written up in the plan's **First run, and what it found**. Owner
+  ruling 2026-09-11: *"no re-run until you have a better plan."* The plan revision that answers
+  that is committed (`1903c51`). **No re-run, and no slice after S0, until the owner has seen an
+  acceptable number.**
   New module `CloudPasswordReset` so L2 can
   reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
   therefore unreachable from existing AD tooling. Owner request 2026-09-10; then *"plan it,
@@ -30,17 +35,36 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   out of scope for protected principals"*, and independently blocked in code
   (`ProtectedPrincipalEntryValidator.cs:85` refuses cloud-only entries, so no cloud-only
   account can be listed at all - a real gap the plan states rather than papers over).
-  **The hard part is owner resolution.** Entra naming drifted over the years
-  (`<sam>-CLD@`, `first.last@`, `sam@`, `first.last_CLD@`), so ownership is **recomputed
-  fresh at each reset** from the UPN local part via `ADDirectorySearchService.ValidateExists`
-  (exact match, not the wildcard `Search`), with name corroboration against the cloud
-  account's display name. Exactly one enabled AD user with a mailbox = send; zero/ambiguous/
-  lookup-unavailable = refuse. Nothing is stored, so nothing goes stale.
+  **The hard part is owner resolution, and the first design of it was wrong.** Entra naming
+  drifted over the years (`<sam>-CLD@`, `first.last@`, `sam@`, `first.last_CLD@`), so ownership
+  is **recomputed fresh at each reset** and never stored. **Superseded 2026-09-11:** deriving it
+  from the UPN local part alone. That key was compared exactly against whole `userPrincipalName`
+  and `mail` values, so it could only match when the local part happened to equal the
+  `sAMAccountName` - every `first.last`-era account was structurally unmatchable, which is most
+  of the 9.6%. **The replacement is three ordered evidence sources, required to AGREE**, not a
+  first-hit chain: (1) cloud-account attributes (`otherMails` / `manager` / `employeeId`) -
+  somebody having *stated* the owner; (2) display name with a trailing `-CLD`/`_CLD` stripped,
+  exact against on-prem `displayName` - a display name describes the person, a UPN describes the
+  provisioning convention in force the day the account was made; (3) UPN local part, last,
+  because it is era-dependent, and compared correctly this time (`userPrincipalName=<key>@*` and
+  `proxyAddresses=smtp:<key>@*`, exact left of the `@`, wildcard only across the domain). Every
+  answering source runs; one distinct user across them = send; two sources naming two people is
+  `Ambiguous` and refuses; zero / lookup-unavailable refuses. Corroboration stops being a filter
+  bolted on afterwards and becomes the mechanism. **S1 consequence:** `BuildExactMatchFilter`
+  (`Services/ADDirectorySearchService.cs:432`) compares against neither `displayName` nor
+  `proxyAddresses`, so sources 2 and 3's alias arm are inert - and inert quietly, returning a
+  clean `NotFound`.
   **S0 is a hard gate on the whole plan:** a read-only survey
-  (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation across all several-hundred
-  cloud-only accounts and reports the real hit rate. A low rate makes the reveal tier the
-  normal path and the design wrong - the plan is replaced, not amended. No slice after S0
-  starts until the owner sees the number.
+  (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation and reports the real hit rate.
+  A low rate makes the reveal tier the normal path and the design wrong - the plan is replaced,
+  not amended. **The next run's scope is CLD admin accounts only**, selected by directory-role
+  possession / PIM eligibility / role-assignable group membership - a tenant-asserted property,
+  environment-neutral and naming-independent. That is a **survey** change only; the killed
+  "target is an admin" permission tier stays killed. It reports per source rather than as one
+  percentage, and names its unresolved classes with samples. If PIM eligibility is unreadable
+  (needs `RoleEligibilitySchedule.Read.Directory` + Entra P2) the survey reports active
+  assignments only and says so on its face. No slice after S0 starts until the owner sees the
+  number.
   **This stream DOES bump the base app version** (unlike a plain new module): `EmailService`
   gains a public `SendCloudPasswordResetAsync`, and `ADSearchResult` gains optional
   `GivenName`, `Surname` and `Enabled` members - both shared infrastructure.
@@ -89,8 +113,8 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   runtime from the forest and its trusts (no name hard-coded or typed); the lookup searches
   exactly the checked domains; two or more matches across that set is `Ambiguous` and refuses;
   an in-app note states how to choose; nothing checked or setting unreadable refuses, per the
-  app's standing fail-closed rule. **Consequence for S0: the survey takes the domain set as a
-  parameter and reports per that set. This is the pending step before the survey runs.**
+  app's standing fail-closed rule. **Consequence for S0, landed `b84061a`: the survey takes the
+  domain set as a parameter and reports per that set.**
   **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
   `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
   to: nearly every target is an admin account. Settled with the population; never raise it as
@@ -134,8 +158,18 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   such fields. Three fields are missing, not one: `GivenName`, `Surname`, `Enabled`. S1 adds
   all three as optional members with null defaults plus a test asserting the query requests
   them.
-  **NEXT: owner go on the plan, then S0 - the survey is the gate and D3 is unanswerable before
-  it. No implementation is authorized.**
+  **Two survey bugs found by disbelieving the 9.6% and probing AD directly, both fixed and
+  committed:** `2426620` (a property read on an empty pipeline result threw under
+  `Set-StrictMode`) and `8feb993` (`@(Get-CloudAccountOwnerCandidate ...)` wrapped the
+  function's `,$array` return into a ONE-element array containing the array, which stringified
+  into a single space-joined LDAP key matching nobody - a silent 0% that looked like a finding;
+  a mutation-proved source-text tripwire now bars that shape). `bc079fe` gitignores the survey's
+  CSV output, which names every cloud-only account in the tenant.
+  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) owner
+  approves ONE bounded Graph read - counts only, no CSV, no per-account output - of how many
+  in-scope accounts populate `otherMails`, `manager`, `employeeId`, `mailNickname`, which decides
+  whether source 1 survives; (3) owner approves the S0 re-run. One approval is one run. D3 stays
+  unanswerable until the re-run reports. No implementation is authorized.**
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
