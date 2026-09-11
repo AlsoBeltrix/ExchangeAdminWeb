@@ -42,7 +42,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   and `mail` values, so it could only match when the local part happened to equal the
   `sAMAccountName` - every `first.last`-era account was structurally unmatchable, which is most
   of the 9.6%. **The replacement is three ordered evidence sources, required to AGREE**, not a
-  first-hit chain: (1) cloud-account attributes (`otherMails` / `manager` / `employeeId`) -
+  first-hit chain: (1) cloud-account attributes (`otherMails` / `employeeId`; **`manager` was
+  struck on the owner's challenge 2026-09-11 - it names the owner's manager, not the owner, and
+  in an agreement-based design a wrong arm manufactures corroboration. Do not reintroduce**) -
   somebody having *stated* the owner; (2) display name with a trailing `-CLD`/`_CLD` stripped,
   exact against on-prem `displayName` - a display name describes the person, a UPN describes the
   provisioning convention in force the day the account was made; (3) UPN local part, last,
@@ -51,9 +53,9 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   answering source runs; one distinct user across them = send; two sources naming two people is
   `Ambiguous` and refuses; zero / lookup-unavailable refuses. Corroboration stops being a filter
   bolted on afterwards and becomes the mechanism. **S1 consequence:** `BuildExactMatchFilter`
-  (`Services/ADDirectorySearchService.cs:432`) compares against neither `displayName` nor
-  `proxyAddresses`, so sources 2 and 3's alias arm are inert - and inert quietly, returning a
-  clean `NotFound`.
+  (`Services/ADDirectorySearchService.cs:432`) compares against none of `displayName`,
+  `proxyAddresses` or `employeeID`, so source 1's employeeId arm, source 2 and source 3's alias
+  arm are all inert - and inert quietly, returning a clean `NotFound`.
   **S0 is a hard gate on the whole plan:** a read-only survey
   (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation and reports the real hit rate.
   A low rate makes the reveal tier the normal path and the design wrong - the plan is replaced,
@@ -167,7 +169,7 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
   CSV output, which names every cloud-only account in the tenant.
   **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) owner
   approves ONE bounded Graph read - counts only, no CSV, no per-account output - of how many
-  in-scope accounts populate `otherMails`, `manager`, `employeeId`, `mailNickname`, which decides
+  in-scope accounts populate `otherMails`, `employeeId`, `mailNickname`, which decides
   whether source 1 survives; (3) owner approves the S0 re-run. One approval is one run. D3 stays
   unanswerable until the re-run reports. No implementation is authorized.**
 
