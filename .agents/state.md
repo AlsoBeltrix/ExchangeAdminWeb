@@ -1,1143 +1,159 @@
 # Agent State
 
-First place to read for current repo state. Keep it short; update it when important repo facts
-change. Resolved work lives in the plan/decision/incident docs, not here — this file records only
-what is live: current versions, in-flight work, what to do next, blockers, and open gaps.
+Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
+`.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
+`.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
+Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archived 2026-09-14).
 
 ## Now
 
-- **CLOUD PASSWORD RESET: ON HOLD 2026-09-14 BY OWNER RULING. DO NOT RESUME WITHOUT A NEW GO.**
-  *"stop this module's development and put it on hold."* No reason given; none inferred. The
-  plan (`docs/CloudPasswordReset-Plan.md`, Status **On hold**) holds the full design and the
-  reasoning; this entry exists so nobody restarts the stream by accident.
-  **Nothing shipped and nothing is half-built.** No `CloudPasswordReset` descriptor in
-  `Modules/ModuleCatalog.cs`, no service, page, permission, config field or version bump. The
-  only code the stream ever produced was PowerShell survey tooling, deleted in `a56f41f`.
-  Resuming starts at S2 and costs nothing to undo.
-  **Do not re-propose any owner derivation, owner map, coverage survey or `employeeId`
-  remediation** if this is ever picked up. The survey ran under its one approval and returned
-  46.5% (80 of 172 in-scope privileged cloud-only accounts); all 84 misses returned zero
-  directory rows; `employeeId` is populated on 0 of 172 and the owner refused to populate it.
-  Owner: *"if we cannot get a 100% working match, then matching is off the table."* Full record
-  in `.agents/decisions.md` 2026-09-11.
-  **D4 was put and not answered** - whether the reveal permission still fences anything now that
-  an operator can address the mail to themselves. The answer was *"no. neither."* followed by the
-  hold, so it lapsed rather than settled. It must be put again before S5 on any resumption.
-  **Open owner item that survives the hold:** the three survey CSVs are untracked, gitignored and
-  still on disk. They name every in-scope account, UPN, display name, object id and the owner
-  sAMAccountNames/emails/DNs the derivation matched. With the module stopped they have no
-  remaining purpose. **Awaiting an owner decision to shred them.**
-  **Also unresolved, not module work:** the survey app registration
-  `16866221-3e2b-4ea5-8aae-157b043b6d7c` holds write grants it never needed
-  (`Directory.ReadWrite.All`, `User.ReadWrite.All`, `Group.ReadWrite.All`,
-  `UserAuthenticationMethod.ReadWrite.All`). Worth revoking whether or not the module resumes.
+- **CloudPasswordReset is ON HOLD by owner ruling 2026-09-14. Do not resume without a new go.**
+  Owner: *"stop this module's development and put it on hold."* No reason was given; none
+  inferred. `docs/CloudPasswordReset-Plan.md` is On hold. No descriptor, service, page,
+  permission, config field or version bump shipped; survey tooling was deleted in `a56f41f`.
+  Resumption begins at S2. Do not re-propose owner derivation, an owner map, another coverage
+  survey, or `employeeId` remediation; the abandoned design and survey results are owned by
+  `.agents/decisions.md` 2026-09-11. The consumed survey approval authorizes no further AD/Graph
+  queries for this module. D4 lapsed without an answer; re-put it before S5 on any resumption.
+  Survey CSV disposition and unnecessary survey-registration grants remain open outside module
+  development; see Blockers and the local inventory in `.agents/machines.md`.
 
-- **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
-  Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
-  port of the standalone Flask dashboard at `D:\source\servicehealthmonitor`: Microsoft 365
-  service status plus open incidents/advisories with Microsoft's own update timeline, read
-  from Graph `admin/serviceAnnouncement`. Base app version deliberately NOT bumped (new
-  module; Constitution "Deployment And Versioning", `.agents/decisions.md` 2026-07-21).
-  Behaviour has been right since 1.1.0; 1.2.0, 1.3.0 and 1.3.1 are presentation. **1.3.0 is the
-  owner's closing design ruling ("just make it look like the fucking original"): the page is
-  now a fidelity port of the original dashboard's appearance - new scoped stylesheet
-  `Components/Pages/ServiceHealth.razor.css` (the first one under `Components/Pages/`)
-  reproducing the original's geometry with every colour mapped onto a `--ui-*` theme token,
-  a flat brand header band (owner ruling 2026-09-09: no gradients), four summary cards, the
-  original filter row plus the retained sort dropdown, a compact service-card grid, and the
-  "Current Issues" section below whose cards the grid filters. Do not redesign this page
-  and do not add charts - five rounds of design proposals were rejected, and the earlier
-  praise for a donut chart was explicitly retracted.** Two earlier decisions were reversed by that ruling and are recorded in the
-  plan's round 4: the separate incident section is back (filtered by the clicked service),
-  and the wildcard text filter is replaced by the original's service dropdown, so
-  `FilterServices` now matches the service id exactly. "Active Issues" counts issues with no
-  `endDateTime`, the original's definition, which closes the old 17-vs-15 discrepancy in
-  favour of 15. Incident HTML renders formatted, never stripped (owner ruling 2026-09-08:
-  L1/L2 forward it to executives); the trust boundary is `HtmlSanitizer` 9.2.1039 in
-  `ServiceHealthService`, and `MarkupString` on the page may only ever touch a field that
-  came through it - a source-text test enforces that. `docs/ServiceHealth-Plan.md` Status
-  Implemented. **TWO OPERATIONAL PREREQUISITES, BOTH OWNER-RUN, BEFORE THE PAGE CAN WORK:
-  (1) create the Delinea record for the EXISTING app registration
-  `e4fa5e51-d226-4a02-9a8b-d8de27133cdb` (tenant `eaa689b4-8f87-40e0-9c6f-7228de4d754a`,
-  already consented for `ServiceHealth.Read.All`; the secret lives in a DPAPI file on
-  ASHBEXUTIL1 today) with Tenant ID / Application ID / Client Secret fields, and set its id
-  in Module Config as `Graph App Delinea Secret ID`; (2) enable the module and grant the
-  `ServiceHealth` section access group.** Until (1) the page shows a not-configured banner
-  rather than an empty board. NEXT: owner deploys dev to pick up 1.3.1 and accepts or
-  rejects the look, then does the two steps above and runs the plan's manual checks. A
-  `/codereview codex` pass on the module is still outstanding.
-- **SHARED CONFIG DATABASE: IMPLEMENTED 2026-09-04, NOT DEPLOYED, NOT CUT OVER.**
-  `docs/SharedConfigDb-Plan.md` Status Implemented; slices S1 `be507f0` (ConfigStore:Path
-  key, must-exist open, tolerant migrator with table+column check, additive-only tripwire,
-  base app `2.18.0` -> `2.19.0`), S2 `5a9c832` (ConfigChangeWatcher in the four caching
-  readers, token recorded as of each load), S3 `5776965` (backup from the resolved path,
-  deploy/promote Write-Fail on an absent configured file, promote loses the copy /
-  `-SkipConfigFragments` / `-Refresh` / DB rollback, pipeline wording), S4 `8657b57`
-  (`tools/Move-ConfigDbToShared.ps1` cutover, installer `-ConfigStorePath`), S5 = the
-  docs commit that set the plan Implemented (Constitution, repo-guidance invariants 2-3,
-  README, machines.md, this entry). A test-only commit `129d091` ahead of S1 fixed a
-  pre-existing format-gate failure. Final: .NET 2320/0/3, Pester 125/0, ScriptAnalyzer 0
-  errors, 45 mutation probes all biting. Owner rulings and the decision: `.agents/decisions.md`
-  2026-09-04 (supersedes the 2026-06-18 dev-wins rule). Two FLAGS for the owner, recorded
-  in plan section 9: the decision entry's "`data_version`" wording vs the implemented
-  change token (read at most once per 2 s per reader); the additive-only migration rule is
-  in the decision, repo-guidance and a tripwire test but not in the Constitution.
-  **CUTOVER IS OWNER-RUN, ELEVATED, IN THIS EXACT ORDER: (1) `deploy-pipeline.ps1 -Dev`
-  (dev gets 2.19.0); (2) `deploy-pipeline.ps1 -Prod` - the LAST two-database promotion,
-  prod must be on 2.19.0 before the file is shared or the first dev-only migration stops
-  prod; (3) `tools\Move-ConfigDbToShared.ps1 -PlanOnly` (eight steps printed, nothing
-  changed; it refuses if either DLL is below 2.19.0); (4) `-Apply`; then the plan's
-  section 8 manual checks (both logs show "Config store schema ready" once; a setting saved
-  on dev shows on prod within seconds).** Until step 4 both instances keep their own
-  `config\exchangeadmin.db` and behave exactly as before (no key = today's path). Jobs and
-  usage databases stay per instance. **NEXT: owner deploys dev, then decides when to cut
-  over; UsageTelemetry-Plan is now implemented at `2.20.0` (entry below).**
-  Codereview (codex, 2026-09-04) over the implementation closed three findings, all
-  fixed and probed: scdi-1 `3f8bd0e` (EXO pool now drains itself when the shared
-  ExchangeOnline config changed in the other process; base app `2.19.1`), scdi-2
-  `b481d2e` (drive-relative `D:x.db` refused), scdi-3 `a1103cc` (cutover script verifies
-  the shared file before "nothing to do"); plan section 10 has the log. The current build
-  is `2.19.1` (>= the cutover script's 2.19.0 floor).
+- **Deployment/configuration basis corrected 2026-09-14, as of `a16c316`.**
+  `.agents/machines.md` (ASHBIAMWEB1 / Deploy) owns the verified deployed base versions, shared
+  database path and configuration observations. Old deployment and initial Graph-configuration
+  blockers are falsified. Assembly metadata and database rows do not prove live authentication,
+  page appearance or manual acceptance. Exact deployed module versions were not checked.
 
-- **USAGE TELEMETRY: IMPLEMENTED 2026-09-04, NOT DEPLOYED.**
-  `docs/UsageTelemetry-Plan.md` (drafted `4af217e`, review fold
-  `55064d7`). Owner request 2026-09-04: anonymous, lightweight telemetry - "theme, modules
-  opened and not used"; ruling on the offered fork: **event rows** (`.agents/decisions.md`
-  2026-09-04); the Home page Important Notice must state telemetry is active (owner, same
-  day; AC13, conditional on the kill switch so it is never false). Codex openreview over
-  `2938db7..4af217e`: `acceptable_with_changes`, three findings + one material change, all
-  folded in (`.agents/review/findings/ute-{1,2,3}.md`). **Two were mine to have caught:**
-  ute-1 put the table in the config DB that `promote-dev-to-prod.ps1` replaces wholesale
-  with dev's (now its own `config/exchangeadmin-usage.db`, never promoted or backed up, no <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
-  migrator step); ute-2 hooked `LogModuleAction` only, while MailboxPermissions,
-  ConferenceRooms, Migration and MfaReset audit through their own methods (now the common
-  `WriteAuditEvent`). ute-3: action rows now carry the throwaway session id through a
-  `CircuitHandler.CreateInboundActivityHandler` + `AsyncLocal` ambient. Six slices; base
-  app bump in S1 (the plan text says `2.19.0`, but SharedConfigDb landed first and took it -
-  the bump is now `2.19.0` -> `2.20.0`), `AdminEventLog` `1.1.0` -> `1.2.0` in S5.
-  S1 landed: `config/exchangeadmin-usage.db` with its own factory and <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
-  `UsageEventRepository` (idempotent table, no migrator step), base app `2.20.0`.
-  S2 landed: `UsageSession` + `UsageSessionCircuitHandler` (ambient per-circuit id),
-  `UsageTelemetryService` (kill switch defaulting on, fail-closed on an unreadable
-  config, `ModuleOf` legacy-category map, swallow-everything `Enqueue`), the
-  `AuditService.WriteAuditEvent` telemetry hook as its last statement, and DI.
-  S3 landed: invisible `Components/Layout/UsageTracker.razor` inside `<Authorized>` in
-  `MainLayout` (session + open + theme, all after the FIRST interactive render so a
-  prerender pass cannot double-count), `ThemePicker` records the theme after `setTheme`.
-  S4 landed: startup prune of rows older than `UsageTelemetryService.RetentionDays` (90)
-  in its own try/catch beside the export-retention pass, the `UsageTelemetryEnabled`
-  Boolean config field on `AdminEventLog` (default on), and the Home notice bullet gated
-  on the same `Enabled()` read the recorder uses.
-  S5 landed: an Events/Usage toggle on the Event Log page - Usage hides the events table,
-  the undo panel and every filter but the date range, and shows three anonymous aggregates
-  (per-module opens/actions/failed/sessions/actions-per-open with EVERY catalog module
-  listed, zeros included, plus any audited category that maps to no module under its own
-  name; per-theme sessions; a one-line visit summary), all behind the same `EventLog`
-  policy and with no new permission; `AdminEventLog` `1.1.0` -> `1.2.0`.
-  S6 landed: README "Usage telemetry" under the Admin Event Log page (what is and is not
-  recorded, the 90-day retention, where the kill switch lives), repo-guidance invariant 3
-  naming both `exchangeadmin-jobs.db` and `exchangeadmin-usage.db` as per-instance files <!-- lint: allow (owner ruled leave-it, 2026-09-08: runtime usage DB is intentionally created outside source control) -->
-  deliberately neither backed up nor promoted, and the plan set to Implemented with its
-  traceability table, seven recorded deviations and an implementation-log entry.
-  Final: 2373/0/3, format clean, `git diff --check` clean, 33 mutation probes across the
-  six slices; no `.ps1`/`.psm1` touched, so ScriptAnalyzer/Pester were not in this
-  stream gate. The build is now `2.20.0`, still above the cutover script minimum 2.19.0.
-  That codereview has since run: codex over `e33b201~1..dea899b` returned four MEDIUM
-  findings, all admitted and all closed, one commit each with a mutation-proved guard -
-  utei-2 (a malformed kill-switch value read as ON in the service while the config page
-  showed OFF), utei-3 (the kill-switch config read sat on the caller's path, so a locked
-  shared config DB could delay an audited operation - now cached behind a
-  `ConfigChangeWatcher` + 30s TTL), utei-1 (the bulk job pump inherited the enqueueing
-  circuit's `UsageSession` through `Task.Run`, cross-attributing other operators' rows -
-  the pump now starts with execution-context flow suppressed) and utei-4 (a date-range
-  edit made in the Usage view left the events table, its count and its CSV on the old
-  range - `ShowEventsView` now reloads when the range moved). Records in
-  `.agents/review/findings/utei-{1,2,3,4}.md`; the batch carries base `2.20.0` -> `2.20.1`
-  and `AdminEventLog` `1.2.0` -> `1.2.1`. Final: 2385/0/3, format clean, `git diff --check`
-  clean.
-  **NEXT: nothing is queued in this stream. The owner-run dev deploy picks up `2.20.2`
-  (usage rows only start being written then).**
+- **Service Health is implemented; design acceptance and manual checks remain.**
+  `docs/ServiceHealth-Plan.md` owns the design and checklist. The original dashboard appearance
+  is binding: no redesign, charts or gradients; incident HTML must pass through the sanitizer.
+  Enablement, Graph secret ID and section access are now set; secret validity and live Graph
+  authentication were not checked. Implementation codereview remains outstanding and needs a go.
 
-- **SAVE-THEN-PROMPT BUG 2026-09-08 (owner-reported, fixed, base `2.20.1` -> `2.20.2`):**
-  saving a module enablement change wrote the change, then asked twice whether to abandon
-  unsaved changes that no longer existed - an in-app "1 unsaved change" confirm and the
-  browser's "Leave site?" - and only then showed the saved state. Nothing was ever at risk:
-  the write had already committed. Cause: `UnsavedChangesGuard` takes the dirty flag as a
-  PARAMETER and arms the browser's `beforeunload` from it, so a cleared flag only reaches
-  the browser on a render; Blazor renders an event handler at its first await and again when
-  it completes, and these handlers navigate instead of completing, so the browser was still
-  holding the pre-save flag when the forced reload arrived. Fix: one explicit
-  `StateHasChanged()` between the clear and the navigate, at all four sites that force a
-  reload - `ModuleConfig.razor` `ReloadAsync` (Discard) and `SaveModuleEnablementAsync`,
-  `AdminSettings.razor` `DiscardChanges` and `SaveEnablement`. Both pages can enable a
-  module and both carried the identical defect, so both were fixed. Guard:
-  `AdminPageDirtyStateTests.ClearingDirtyStateIsRenderedBeforeAForcedReload`, a 4-case
-  source-text theory anchored inside each method body via `AuditCategoryFilingTests.MethodBody`
-  (relocated there from `UsageTrackerWiringTests` so both suites share one copy). Mutation
-  probe: renders removed -> exactly those 4 cases fail, 27 pass. Final: 2389/0/3, format
-  clean, `git diff --check` clean. No module version bump - `module-config/{ModuleId}` and
-  `admin-settings` are app-wide admin infrastructure, not catalog module routes.
-  **NEXT: nothing code-side. Confirm on the next dev deploy that saving a module enablement
-  change no longer prompts.**
+- **Shared config cutover is reflected in both deployed appsettings files.**
+  `docs/SharedConfigDb-Plan.md` is Implemented and its implementation codereview is closed.
+  Do not repeat the one-time cutover based on the old state. Section 8 manual checks (startup
+  logs and cross-instance refresh) remain unrecorded. Section 9's decision-wording and
+  Constitution flags remain open. Jobs and usage stores stay per instance.
 
-- **DEV VALIDATION FIXES 2026-09-02: three owner findings from the first look at dev
-  `2.15.0`, all IMPLEMENTED the same day, NOT DEPLOYED (ride the next dev deploy).**
-  (1) The admin save bar counted dirty SECTIONS and called them "changes" - it now counts
-  actual pending edits by diffing each section against what was loaded (`ad73573`, base
-  `2.16.0`; `AdminPageDirtyState` per-section counts), plus the pre-existing gap that a
-  protected-principal PATTERN add or directory-read secret-id edit never marked the
-  section dirty (`31c720a`). (2) Intune notify/Entra-removal defaults left Module Config
-  for act-time-only choice (`50f466d`, module `1.1.0`; see the Intune entry's D2 note).
-  (3) Module permissions carried no explanation, so the Access tab showed bare aliases -
-  `ModulePermission` now requires a `Description`, all 42 permissions across 27 modules
-  have one, the Access tab renders it under each heading, a catalog tripwire enforces
-  non-blank (`f42fdf0`, base `2.17.0`; spec and dev guide updated). Two permissions were
-  found to grant nothing and now say so on screen: `ExchangeOnline` (no page or code
-  consumes it) and `AdminSettings` (built from `Security:AdminGroups`, not section access)
-  - recorded, not changed; owner's call whether to remove them.
-  **Second round, same day, after the owner tested `2.17.0` on dev (both Graph app
-  registrations PROVEN live: Risky Users search returned rows, a blank Intune search
-  returned 50 devices):** (4) Self-Service Groups could not remove the cross-domain
-  nested `Organization Management` (WINROOT) from `ExchangeWebAdmins` - the remove path
-  resolved the member by GUID with no -Server (the listing was fixed for this 2026-08-28,
-  the remove was not); fixed by threading the row's DN and routing the resolve, the
-  membership pre-check (which asked the MEMBER for a back-link it cannot have and would
-  have no-op'd silently) and the write to the owning domains, in BOTH group modules
-  (`8d0710a`, SelfServiceGroups `1.7.0`, GroupManagement `2.7.0`). (5) Risky Users
-  actions "Dismiss | Safe | Compromised" were ambiguous for L2 - now "Close as handled /
-  This was the real user / Account was breached" with a one-line consequence in the
-  confirm bar (`cf4c691`, RiskyUsers `1.1.0`). (6) Intune search was exact-match `eq`
-  and found nothing for a real UPN - now `startswith` on deviceName and UPN, `eq` on
-  serial, plus a plain-language "What do these actions do?" panel, button tooltips and
-  a consequence line per confirm bar for Delete/Retire/Wipe/Entra/email (`f17ecfd`,
-  IntuneDevices `1.2.0`). **The `startswith` filter form is UNCONFIRMED against the live
-  tenant** - if a dev search reports a failed search naming a 400, the filter needs a
-  per-field split. Also found: `GraphTokenClient.GetWithStatusAsync` discards the error
-  body on non-success, so a rejected filter cannot quote Graph's reason without a base
-  bump - recorded, not changed.
-  **Third round, 2026-09-03, after the owner tested the second on dev:** (7) the
-  `startswith` form ALSO returned 200/empty - even an exact device name copied from the
-  blank list found nothing. Root cause is the SHAPE: three properties joined with `or` in
-  one `$filter` evaluates to nothing on this tenant (both `eq` and `startswith`). Now ONE
-  Graph request per field (deviceName startswith, UPN startswith, serial eq), merged by
-  id, only the typed value percent-encoded, and any returned row that does not actually
-  match is hidden and counted on screen (`acfabe9`, IntuneDevices `1.3.0`). **VERIFIED on
-  dev 2026-09-03: "intune is searching correctly."** Also the search button/hint
-  alignment (`dc4e9fc`). (8) The cross-domain remove got past the resolve and then failed
-  at the WRITE: `Remove-ADGroupMember -Members <dn> -Server <group DC>` resolves the
-  MEMBER on the group's DC, where a WINROOT DN does not exist. Both group modules now
-  write the group's `member` attribute directly (`Set-ADGroup -Add/-Remove @{member=dn}`,
-  `1a4b342`, SelfServiceGroups `1.8.0`, GroupManagement `2.8.0`); read-back still decides
-  success. **NOT YET VERIFIED on dev: `ExchangeWebAdmins` is now a Protected Group Target
-  on dev (owner: nobody with group-module access may make themselves a portal admin), so
-  the original repro is refused by design. Test with a THROWAWAY ANALOG group holding a
-  WINROOT member instead.** Suite 2220/0/3 as of `1a4b342`.
-  **NEXT: owner: dev deploy is at `2.17.0` written 2026-09-03 12:25 (assembly) - if
-  that build predates `1a4b342`, redeploy, then the throwaway-group remove/re-add check.
-  The bulk actions below (`2.18.0`) will ride the same deploy.**
+- **Usage telemetry and the save-then-prompt fix are landed.**
+  `docs/UsageTelemetry-Plan.md` owns the telemetry implementation and acceptance checklist;
+  `.agents/review/findings/utei-{1,2,3,4}.md` own the closed findings. The forced-reload fix is
+  guarded by `AdminPageDirtyStateTests.ClearingDirtyStateIsRenderedBeforeAForcedReload`.
+  Nothing is queued code-side. Run telemetry's manual checks and confirm saving module
+  enablement no longer asks to discard already-saved changes.
 
-- **GROUP BULK ACTIONS: IMPLEMENTED 2026-09-03 (owner goal-directive the same day:
-  "continue with the plan and codereview with codex (default) then implement upon
-  consensus"). NOT DEPLOYED.** `docs/GroupBulkActions-Plan.md` (drafted `2e89f7a`,
-  codex openreview `acceptable_with_changes` with gba-1..3 all folded in at `9652842`
-  BEFORE any code - `.agents/review/findings/gba-{1,2,3}.md`), then all six slices in one
-  session: S1 `568f80b` (pure `Services/BulkIdentityList.cs` + `BulkOutcomeSummary`, base
-  app `2.17.0` -> `2.18.0` per gba-2), S2 `edf50e4` (GroupManagement bulk remove, `2.9.0`),
-  S3 `e2bfc29` (GroupManagement paste-list bulk add, forest-wide resolution, `2.10.0`), S4
-  `3923229` (SelfServiceGroups bulk remove with the nested-group warning in the
-  confirmation, `1.9.0`), S5 `14e16f6` (SelfServiceGroups paste-list bulk add, users-only
-  home-domain resolution with the group-scope reason, `1.10.0`), S6 README + plan status +
-  this entry. Suite 2284/0/3 after S5, every slice mutation-probed.
-  **The load-bearing shape, worth knowing before touching either page again:** each page
-  now has ONE per-member handler (`RemoveOneAsync` / `AddOneAsync` on the admin page,
-  `RemoveOneAsync` / `ChangeOneAsync` on self-service) that the single button AND the bulk
-  loop both call; the module authorization re-check lives INSIDE it so it runs immediately
-  before every row's write (gba-1 - the drafted plan had hoisted it to once per batch, and
-  codex caught it); the service write paths are untouched. A batch's summary audit
-  (`<Module>_Bulk{Remove,Add}Members`) reports `success` only when every row is Done
-  (Known Failure Class 2) and carries `requested/done/notDone/members` in `extra`.
-  **D1 implemented on its drafted default - owner may overrule:** a batch sends ONE
-  administrator email listing every row's outcome instead of one per member (per-member
-  AUDIT events unchanged; affected-user emails in self-service stay per member). Reverting
-  to per-member emails is a one-line change per page (`sendAdminEmail: false` -> `true` in
-  each bulk loop, drop the summary email).
-  **Recorded lesson (S2):** a non-vacuity probe restore must copy from a scratchpad backup,
-  never `git checkout` - the first S2 probe wiped the uncommitted slice and it was re-applied.
-  **NEXT: the plan's seven manual checks (section 8) on dev against a THROWAWAY ANALOG
-  group (`ExchangeWebAdmins` is a Protected Group Target on dev); check 7 records whether a
-  WINROOT user by UPN previews Not found in self-service (expected - home-domain binding,
-  same as the single Add). A codex defect-hunt (`codereview`) over `568f80b..HEAD` is the
-  obvious review step and needs an owner go.**
-  Owner: *"we need checkboxes and bulk actions for group management
-  modules. removing a single entry at a time is slow and cumbersome."* Both on-prem group
-  modules (`GroupManagement`, `SelfServiceGroups`); `M365GroupManagement` stays OUT (owner
-  ruling 2026-08-11). Agreed shape, written to stand without the chat:
-  (1) **Bulk remove:** checkbox per member row plus select-all; "Remove selected" -> one
-  confirmation listing the names, one ticket where the module already requires one; each
-  member then runs the EXISTING per-member path unchanged (protection check, servicer
-  override, attribute write, read-back), sequentially, so one refusal never hides another;
-  a per-row outcome table (removed / refused with reason / failed with reason); one audit
-  event per member as today PLUS one batch summary event. Known Failure Class 2 is the
-  whole risk here: never a blanket success.
-  (2) **Bulk add via paste list:** a textarea taking usernames, emails or UPNs (one per
-  line or comma-separated); one click resolves ALL lines against AD as a batch (queries
-  run together, not one spinner each); a resolution table shows each line as resolved
-  (with the AD name), not found, or ambiguous; only resolved rows are committable and the
-  rest stay listed with their reason; one commit runs the per-member add path for the
-  resolved set with the same per-row outcome table. Self-service adds USERS only (its
-  standing rule); the existing typeahead stays for one-off adds. **Rejected by the owner:
-  a "staged picker" (typeahead feeding a pending list) - it still types one at a time and
-  waits on AD per entry; the paste list with batch resolution is the answer to "we'd lose
-  the AD validation on the input control", not a replacement for it.**
-  Constitution: a written plan is required (new write surface over the protection gates) -
-  written, reviewed and implemented as recorded at the top of this entry.
+- **Group bulk actions and cross-domain fixes are landed; live writes remain unverified.**
+  `docs/GroupBulkActions-Plan.md` owns the checklist. Validate remove/re-add and bulk operations
+  on a throwaway group: the original admin group is protected and cannot serve as the repro.
+  Self-service's home-domain users-only add scope remains intentional. D1 used its drafted
+  default (one batch administrator email, per-member audit and affected-user notices);
+  the owner may overrule it. Implementation codereview remains outstanding and needs a go.
 
-- **CSV EXPORT FOR FIVE MODULES: IMPLEMENTED 2026-09-01 (owner go the same day).
-  NOT DEPLOYED.** `docs/ModuleCsvExport-Plan.md`; all seven slices landed: S1
-  `45f14e5` (shared `CsvExport.Write` helper + AC1b formula neutralization, base
-  app `2.12.0` -> `2.13.0`), S2 `33ba4ea` (DhcpAuthorization export, module
-  `1.3.0`), S3 `6b96d5c` (NamedLocations export, module `1.1.0`), S4 `71d25b0`
-  (BlockedSenders export, module `1.4.0`), S5 `8061610` (BitLockerRecovery keys
-  export with ticket, AC4b `ExportRecoveryKeysCsv` bulk-disclosure audit, module
-  `1.2.0`), S6 `134c90c` (Migration status export, module `1.8.0`), S7 `b84cfb5`
-  (README export bullets; BlockedSenders had no existing README section, so a
-  minimal one was added). Every slice mutation-probed by design at
-  implementation. Full suite after S6: 1881 passed / 0 failed / 3 skipped.
-  **D1 honored:** the BitLocker export contains the recovery keys (owner
-  ruling, plan section 1); the download is itself an audited bulk-disclosure
-  event (`ExportRecoveryKeysCsv`, ticket + row count) and the key material
-  never enters the audit log.
-  **NEXT: nothing code-side - the plan's four manual checks (section 8) need a
-  deployed instance and ride the next dev deploy.**
+- **Intune Devices and Risky Users are implemented; remaining manual checks stay live.**
+  `docs/IntuneDeviceManagement-Plan.md` and `docs/RiskyUsersModule-Plan.md` own scope and checks.
+  Both registrations were proven live in owner validation recorded 2026-09-02; shared-store
+  configuration remains present in the dated machine receipt. The owner confirmed Intune
+  search on dev 2026-09-03 after `acfabe9`, superseding the earlier combined-filter uncertainty.
+  Intune notification/Entra removal are act-time choices, not Module Config defaults.
+  Risky Users reads audit without alert emails. Its direct ServiceNow validation, instead of
+  the newer per-module seam, remains an unscheduled judgment call, not an admitted defect.
 
-- **PROTECTED TARGETS ANSWER AT FIRST QUERY: IMPLEMENTED 2026-08-31 (owner go after
-  testing on dev: refusal "should happen as soon as the group is queried; preferably
-  protected groups won't show members either"). NOT DEPLOYED.** GroupManagement only:
-  `CheckTargetProtectionAsync` runs at group selection - a non-servicer gets the
-  refusal immediately and the panel (Load Members, add box, member table) never
-  renders; the member read itself gates server-side as the fail-closed backstop; a
-  servicer sees a Protected badge and works normally. Write-path gates unchanged
-  (defense in depth). Self-service untouched per the same day's AC4 ruling.
-  `GroupManagement 2.6.0`, no base bump. 7 new tests (behavioral via the seamed
-  harness + tripwires), probe: both gates neutered, 5 tests failed, restored.
-  **NEXT: rides the next dev deploy; then select a protected group as a non-servicer
-  and confirm the immediate refusal with no member list.**
-  **Two adjacent PRE-EXISTING gaps found while reading - BOTH CLOSED as of `8d0710a`
-  (2026-09-02): the DN paths were already routed by fsr-1, and the name-only fallback of
-  `ResolveGroupForWrite` now resolves through the forest global catalog and re-reads the
-  single match in its own domain. See the DEV VALIDATION FIXES entry.**
+- **The remaining implemented queue awaits manual acceptance only. Do not restart it.**
+  Checklists: `docs/BooleanConfigControls-Plan.md`, `docs/BitLockerMandatoryTicket-Plan.md`,
+  `docs/ModuleCsvExport-Plan.md`, and `docs/EventLogCsvTicket-Plan.md`. The sidebar Home link
+  removal (`2128610`) also needs a visual check; the brand link stays. BitLocker CSV includes
+  keys under the owner's ruling, with ticketed disclosure audit and no keys in audit logs.
 
-- **EVENT LOG CSV TICKET: IMPLEMENTED 2026-08-27 (owner go the same day). ON DEV since
-  2026-08-31 (the `2.10.0` deploy); NOT on prod.**
-  `docs/EventLogCsvTicket-Plan.md` (S1 `d54b33f`, S2 the plan-closing commit). Stored
-  audit/trace `ticket` field appended as the ninth CSV column, named `Ticket`; no
-  ServiceNow lookup, no on-screen column, no filter. Module `AdminEventLog`
-  `1.0.3` -> `1.1.0`, no base app bump. Six new tests, mutation-proven; full suite
-  1707/0/3.
-  **NEXT: run the plan's four manual checks (section 8) on dev - unblocked 2026-08-31.**
-
-- **INTUNE DEVICES MODULE: IMPLEMENTED 2026-09-01 (owner go the same day). NOT DEPLOYED.**
-  `docs/IntuneDeviceManagement-Plan.md` (Status now `Implemented 2026-09-01`). All seven
-  slices landed: S0 `aa31d49` (status-returning Graph mutation helpers; base app version
-  bumped to `2.14.0`), S1 `d26906e` (models and read-only service), S2 `5d0d308` (catalog
-  entry + read-only UI; module `IntuneDevices 1.0.0`), S3 `c339e83` (Delete), S4 `723d7c0`
-  (Retire and Wipe), S5 `931294c` (Entra ID device object removal), S6 `080273a`
-  (affected-user notification with suppression visibility). Versions: base app `2.14.0`
-  (bumped in S0), module `IntuneDevices 1.0.0` (all seven slices landed before any deploy,
-  so it ships once). Full suite 2162/0/3.
-  Owner request 2026-08-14: *"we need to plan a module for managing intune devices, pulling
-  device details, and deleting"*, then *"review the plan with codex"*. New module,
-  Microsoft Graph v1.0 Intune device management, independent of the plans around it -- no
-  shared code, no ordering constraint.
-  **D1 (owner, 2026-08-14): all three destructive actions, at two permission tiers.**
-  *"options for all of the above with different permission levels for 1 and 2+3. Two
-  permission levels."* Delete the Intune record sits behind `IntuneDevicesDelete`; Retire
-  and Wipe share `IntuneDevicesPrivileged`; read sits behind the main `IntuneDevices`
-  permission. All three fail closed. **The distinction the question existed to surface, and
-  it is the operator-facing one:** Intune "Delete" removes the management record only.
-  Company data stays on the device until it next checks in, and if it never checks in,
-  forever. The Entra ID device object survives all three actions - Microsoft's own guidance
-  is to remove it as a separate step. Implemented in S3+S4.
-  **D2 (owner, 2026-08-14), a standing design rule for this module, not just an answer:**
-  *"anything that can be an option should be an option. do not build in restraints. make
-  email the user an option."* **Config half SUPERSEDED 2026-09-02 (owner, during dev
-  validation: "the email options should not live in global module settings"): the four
-  Boolean config fields are gone (`50f466d`, module `1.1.0`, `.agents/decisions.md`
-  2026-09-02); the per-action checkbox stays, starting off for Delete, on for Retire and
-  Wipe, and the Entra-removal checkbox starts off.** The operator decides at the moment of
-  acting; the audit event records what actually happened. `EmailService`'s app-wide `_notifyUsers` switch outranks anything the
-  module sets - a ticked box on a deployment with user notifications off states so on
-  screen and in the audit, rather than reading as decorative. Implemented in S6.
-  **D3 (owner, 2026-08-14): removing the Entra ID device object is in, as an option.**
-  *"yes, add it as an option."* Its own granular permission `IntuneDevicesEntraDelete`
-  (never riding `IntuneDevicesPrivileged`), because `Device.ReadWrite.All` is a DIRECTORY
-  scope covering every device object in the tenant - the widest grant in the module, and
-  not an Intune scope at all. Implemented in S5.
-  **The azureADDeviceId-vs-object-id trap, verified against Learn before S5 was written and
-  worth remembering if this area is touched again:** `managedDevice.azureADDeviceId` is the
-  Entra **`deviceId`**, not the directory **object id** - Learn's own `device: get` example
-  shows both GUIDs on one device. `DELETE /devices/{id}` wants the object id; passing the
-  `deviceId` to it 404s against a device that is present and fine. S5 addresses the object
-  by its alternate key, `DELETE /devices(deviceId='...')`, the only form that takes what
-  the module has. `azureADDeviceId` is captured before the Intune action runs, since a
-  deleted Intune record cannot be read for it afterward; the Intune and Entra outcomes are
-  reported and audited independently, so a half-finished result is never a plain success.
-  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback), two passes, both
-  `acceptable_with_changes`, five findings total, all admitted and folded in** -
-  `.agents/review/findings/idm-{1,2,3}.md` over `b868e5c..6aef9e3` (idm-1 HIGH forced S0
-  onto the plan and with it the base version bump; idm-2 HIGH withdrew an unverified claim
-  that wipe's default body was a full factory reset; idm-3 MEDIUM was the third
-  `ppsvc-1`/`pgwt-1`-shaped unreachable-capability finding, fixed by adding `IntuneDevices`
-  to `ModuleConfig.razor`'s servicer opt-in set in S3), and `idm-{4,5}.md` over
-  `6aef9e3..236b91b` (both durable-record hygiene, neither touching the plan's substance).
-  No part of this plan is unreviewed.
-  **NEXT: owner-side app registration + Delinea secret**
-  (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All`,
-  and `Device.ReadWrite.All`, admin-consented, kept as four distinct scopes on purpose -
-  blocks the first live Graph call, not any code), **then the plan's manual checks ride the
-  next dev deploy.**
-
-- **RISKY USERS MODULE: IMPLEMENTED 2026-09-01 (owner go the same day). NOT DEPLOYED.**
-  `docs/RiskyUsersModule-Plan.md` (plan revision `42d736f`; status now `Implemented`).
-  All seven slices landed: plan revision `42d736f` (re-sequencing S2 ahead of S1+S3),
-  S2 `e003af9`, S1+S3 `c68c7b6`, S4 `962cf38`, S5 `dee1add`, S6 `930d762`, S7 `3602859`
-  (README + token-log). Module `RiskyUsers` stays `1.0.0` - all seven slices landed
-  before any deploy, so it ships once (the plan's own versioning rule). Full suite
-  1951/0/3.
-  Owner request 2026-08-12: *"explore adding a module to this app that can managed Risky
-  Users in Azure"*, then *"plan it, review the plan with codex, and add it to the list of
-  things to implement."* New module, Entra ID Protection via Graph v1.0, independent of
-  every other stream.
-  **D1 RULED (owner, 2026-08-12): remediation IS in scope** - *"yes, manage means
-  manage, not read-only view."* The full module shipped: read (list/history) plus
-  Dismiss/Confirm Safe/Confirm Compromised behind `RiskyUsersRemediate`, one Graph call
-  per user (the three action endpoints take `userIds` as an array and return one bare
-  `204` for the whole batch, so a per-user call is the only way to get a per-user
-  outcome - Known Failure Class 2 written into the API itself).
-  **D2 RULED 2026-08-31 (owner: "it should be logged, but not alert emailed"): reads
-  audit, never alert-email.** Recorded in `.agents/decisions.md` 2026-08-31; AC17
-  asserts the audit-only shape and it is implemented that way - `EmailService` is not
-  reachable from the read path.
-  **The identity-model constraint that shaped the write phase: risky users are CLOUD
-  identities.** The repo's group, OU and SamAccountName protection rules all evaluate
-  from an on-prem DN and structurally cannot match a cloud-only principal (Constitution,
-  Protected Principals, final bullet). S6 uses the `MfaReset.razor:262-364` two-branch
-  protected-principal shape and improves on it: `riskyUser.id` IS the Entra object id,
-  populated into `EntraObjectId` on the unresolved branch. Verified during S6 that
-  `ProtectedPrincipalService.CheckAsync` -> `MatchesIdentity`
-  (`Services/ProtectedPrincipalService.cs:684-720`) actually consults `EntraObjectId`, so
-  object-id protection genuinely bites here, not just in principle. The servicer override
-  (`ProtectedServicer:RiskyUsers`) is honoured on both branches; no such row exists in
-  either config store on first deploy - scope, not oversight.
-  **S6 judgment call, recorded rather than silently diverging: RiskyUsers validates its
-  ticket through `ServiceNowService.ValidateTicketAsync` directly**
-  (`Components/Pages/RiskyUsers.razor:577`), not through the `ITicketValidator` /
-  `TicketValidationService` seam and per-module `ValidateTickets` Boolean switch that
-  `docs/BitLockerMandatoryTicket-Plan.md` S1 introduced the same day. Both are valid
-  shapes and they were not reconciled with each other. The owner may want the newer seam
-  adopted here later; unscheduled, not a defect.
-  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `d877294..a2c4c77`:
-  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
-  `.agents/review/findings/ru-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`. ru-1
-  (HIGH): the plan argued this module meets the alerting clause, then listed D2 as
-  "blocks nothing" - fixed by making D2 an explicit pre-ship gate, now satisfied. ru-2
-  (MEDIUM): a slice boundary drawn on conceptual grouping instead of compile order -
-  fixed by the `42d736f` re-sequencing (S2 before S1+S3). ru-3 (MEDIUM): the test plan
-  pointed at a `private sealed` test helper and missed that the descriptor breaks the
-  hardcoded catalog/alias counts - both fixed in the S1+S3 commit.
-  **External prerequisite, still outstanding: the dedicated Entra app registration**
-  (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented) plus its own
-  Delinea secret. Blocks the first live Graph call, not any code - all seven slices were
-  built and tested entirely against the seamed test harness.
-  **NEXT: owner-side app registration + Delinea secret** (blocks the first live Graph
-  call), **then the plan's manual checks ride the next dev deploy.**
-
-- **NESTED GROUP MEMBERSHIP: IMPLEMENTED 2026-08-27 (owner goal-directive the same day). ON
-  DEV since 2026-08-31 (the `2.10.0` deploy); NOT on prod.** S1 `386e8d2`, S2 `695e73f`, S3 `4fc9d3d`, S4 `3f2ab21`, S5a `ba3b6c8`,
-  S5b `8c4042c`, S5c `a014068`; S6 is the commit that set this status. Versions: app `2.9.0`,
-  `SelfServiceGroups 1.4.0`, `GroupManagement 2.3.0`. Range reviews (codex gpt-5.6-sol@xhigh,
-  per-major-item): S1+S2 clean; S3+S4 raised gmn-4/gmn-5 (both MEDIUM, fixed and verified);
-  S5a-S6 raised gmn-6..gmn-9 (two HIGH - including a real resolved-USER protection bypass in
-  the new write paths - and two MEDIUM; all four fixed one commit each, `0b4b72e` `b8379dc`
-  `dc503e1` `1c47d64`, all verified by codex with independent guard proofs). Every review
-  loop on this stream is CLOSED. The plan's manual checks are NOT run - they need a deployed
-  instance.
-  `docs/GroupMemberNesting-Plan.md` (`074bfdb`, revised through `c7897d1`).
-  Owner report 2026-08-11: *"group self-management module needs to handle nested groups.
-  when trying to add a group to a group, nothing resolves."*
-  **Not a defect - `SelfServiceGroups` is user-only in four places by construction**
-  (typeahead `ObjectKind="User"`; `AdOwnershipFilter.cs:97` `objectCategory=person`;
-  `IsMemberOfGroup` on `Get-ADUser`; `GroupMemberClassifier` removable=user-only). The
-  operator saw *"did not match exactly one user"*, which reads as a typo rather than a
-  scope limit.
-  **Owner rulings D1-D5, all in the plan (canonical there):** self-service NEVER adds a
-  group (ITSD ticket instead) and says so up front; it MAY remove one behind a warning
-  that re-adding needs a ticket; `GroupManagement`, being admin-audienced, gets full
-  group add/remove; the shared protection blind spot is closed rather than worked around;
-  the servicer override for `GroupManagement` needs no code.
-  **The find that made this more than a UX change: `ProtectedPrincipalService.cs:747`
-  runs `Get-ADUser` to ask whether a target sits inside a protected group.** Hand it a
-  group DN and AD returns zero rows with no error, which `:761` records as "no match" -
-  a silent ALLOW, not a fail-closed refusal. Harmless today because nothing can target a
-  group; live the moment the admin module can. **This is the repo's fail-closed rule
-  inverted in a shared file, and it was found by reading the call, not by any test.**
-  **D5 corrects a premise in the owner's own request.** The servicer override for
-  `GroupManagement` already exists - `GroupManagementService.cs:16,84` and
-  `ModuleConfig.razor:655`. What is missing is a granted group, which is a Module Config
-  action, not code. No module has a `ProtectedServicer:GroupManagement` row today.
-  **openreview `codex` (`gpt-5.5-dzs` @ xhigh, grade fallback) over `618235e..074bfdb`:
-  `acceptable_with_changes`, THREE findings, all admitted, all folded in** -
-  `.agents/review/findings/gmn-{1,2,3}.md`, all `[x]` in `.agents/review/index.md`.
-  **All three were the same shape and it is worth naming: a correct goal wired to a
-  mechanism that cannot reach it.** gmn-1 (HIGH): S1 made the protection check
-  group-aware, but `GroupManagementService.CheckProtectedAsync` filters the group out one
-  call earlier via a user-only resolver, so the fix landed below the layer that drops the
-  target - AC13 would have failed with every S1 test green. gmn-2 (HIGH): the cycle
-  guard's LDAP filter asked the MIRROR of its own stated question, so it would refuse
-  legitimate adds and allow real cycles, and it sat in the page while the write is in the
-  service - the exact page-only shape `GroupManagementService.cs:36-38` records this
-  module already shipping and being bypassed. gmn-3 (MEDIUM): the picker returned a bare
-  sAMAccountName while group search is deliberately forest-wide, so a chosen WINROOT group
-  could resolve to its ANALOG namesake.
-  **None of the three would have been caught by implementing the plan faithfully - a
-  faithful implementation is what produces them.** Reviewing the plan before writing code
-  is what made them cheap.
-  **D6 closed the last open question and the plan is APPROVED.** Owner: *"same as for
-  users"* - a group member notifies on the existing `NotifyAffectedUser` predicate with no
-  class check added; the group's `mail` is the address, and no `mail` means no
-  notification, exactly as for a user. **I had raised this as a fork with a recommendation;
-  the owner's response was that it was ceremonial and did not need their focus.** The
-  reusable rule: where an existing predicate already answers the question, applying it is
-  the work - a fork is only warranted when the options genuinely diverge.
-  **2026-08-28 validation finding, FIXED - on dev since 2026-08-31, not on prod: both member
-  listings faulted on a cross-domain nested member.** `Get-ADGroupMember` makes ADWS resolve every member
-  server-side and faults the whole read when a member sits in another forest domain the module
-  credential cannot chase - `Organization Management` (WINROOT), nested in `ExchangeWebAdmins`
-  since 2026-05-12, broke the self-service member list on dev (ADWS `GetADGroupMemberFault`;
-  the same read succeeds under an operator identity, so it is credential/chase-dependent).
-  **NOT a 2.9.0 regression: the failing code is byte-identical in 2.8.1** - the nesting
-  validation simply pointed the list at a nested-group case for the first time. Both group
-  modules now read the group's `member` attribute (the Comms10k pattern, which also lifts the
-  cmdlet's 5000-object cap) and resolve each member routed to its own domain; an unresolvable
-  member degrades to a DN-named read-only row rather than failing the list.
-  `GroupManagement 2.3.1`, `SelfServiceGroups 1.4.1`, no base bump.
-  **Review loops CLOSED 2026-08-28.** lst-1..3 and pgwt-4..9 all fixed and verified -
-  the seven substantive fixes ACCEPTED guard-confirmed in an OWNER-RUN interactive codex
-  round (`.agents/review/manual-verify.*`) after the headless workspace-write sandbox
-  fault (still recorded in `.agents/machines.md` - probe before the next headless
-  verification dispatch). pgwt-3 remains declined at intake
-  (`.agents/review/pgwt-3.contested.md`), owner-overrulable any time.
-  **Listing fix VERIFIED on dev 2026-08-31** (browser-driven, owner-attended):
-  ExchangeWebAdmins lists 13/13 members including the WINROOT `Organization Management`
-  nested group, in BOTH group modules. **NEXT: the remaining nesting manual checks** (real
-  nested add/remove on a throwaway group - owner's, it writes AD - and the cross-domain
-  picker case). All review loops closed - gmn-4 through gmn-9 fixed and verified.
-
-- **PROTECTED ON-PREM GROUPS AS WRITE TARGETS: IMPLEMENTED 2026-08-28 (owner go the same
-  day: "continue with the next task"). ON DEV since 2026-08-31 (the `2.10.0` deploy); NOT
-  on prod.** S1 `2984df0`, S2 `1217e14`, S3
-  `1f8f863`, S4 `645bd37`; versions app `2.10.0`, `GroupManagement 2.4.0`,
-  `SelfServiceGroups 1.5.0`; suite 1829/0/3, every slice non-vacuity-probed, M365
-  verified untouched over the range. Canonical detail (slices, the target-gate rule set,
-  the AC6/AC8 reconciliation recorded before code) lives in the plan's Status and
-  Revision 2026-08-28 sections.
-  **AC4 REVERSED 2026-08-31 (owner ruling during dev validation, `.agents/decisions.md`):
-  self-service is never gated by Protected Group Targets - owners always edit owned
-  groups there. S3's gate and its test file removed, `SelfServiceGroups 1.6.0`, ON DEV
-  since 2026-08-31 (second same-day deploy, verified from the live page: app 2.10.0,
-  SelfServiceGroups 1.6.0). The GroupManagement admin gate stands - it guards the app's
-  privileged credential, the real boundary. The owner then populated Protected Group
-  Targets on dev with real groups that STAY (2026-08-31) - the feature is live in
-  anger on dev; prod still has none of this.**
-  **NEXT: dev manual checks - browser-driven 2026-08-31 (owner-attended): listing fix
-  verified in BOTH modules (13/13 incl. the cross-domain group); admin refusal checks
-  interrupted by the owner mid-run and superseded by the AC4 ruling; Event Log CSV
-  checks not run. The `ADEXNLQ_Users` test row was removed from Protected Group
-  Targets by the owner the same day - dev settings are back to the pre-test state.**
-  `docs/ProtectedGroupWriteTarget-Plan.md` (`503c1a8`, revised `7c5f8a6`,
-  scope narrowed after).
-  **Found by the owner reading the nesting plan, and it is the larger hole of the two.**
-  **The group modules protection-check the MEMBER being added or removed and never the
-  GROUP being written into.** Protection stops you touching a protected person and does
-  nothing to stop you granting an ordinary person protected access. **An operator with
-  `GroupManagementOnPrem` can add any unprotected account to `Domain Admins`** with
-  `Domain Admins` listed as protected and no gate firing
-  (`GroupManagementService.cs:253,304`; the page delegates and pre-checks nothing by
-  design, `GroupManagement.razor:271-276`). Self-service has the same shape, gated on DACL
-  ownership only.
-  **SCOPE IS ON-PREM ONLY. Owner, 2026-08-11: *"we're not touching the cloud groups
-  module."*** An earlier draft covered `M365GroupManagement`; **that was scope I added
-  unasked** while surveying which modules shared the defect, and the owner removed it -
-  *"who's talking about o365 groups and why? that wasn't part of my prompt."* **The rule
-  it earns: a survey that finds more instances of a defect is not authorization to fix
-  them.** Report them and let the owner choose. It cost a third of a review pass and a
-  plan section that had to be cut.
-  **UNSCHEDULED, NOT IN ANY PLAN, recorded so it is not lost: a protected M365 group can
-  be renamed or DELETED outright.** `M365GroupManagementService.UpdateGroupAsync:125` and
-  `DeleteGroupAsync:143` have no protection gate of any kind; the page gates on a ticket
-  number only (`M365GroupManagement.razor:286`). Adding an OWNER to a protected M365 group
-  is ungated too (`:255,276`). **And it cannot be fixed by config alone: an M365 group
-  cannot be marked protected at all** - both admin pickers are AD-only
-  (`AdminSettings.razor:144,172`) and `AddValidatedAsync:660` refuses anything
-  `ADSearch.ValidateExists` cannot resolve. Nobody is working this.
-  **Hard dependency on the nesting plan's S1.** Without the group-aware check and the DN
-  self-match, every gate this plan adds returns "not protected" for a group and the whole
-  change is inert while appearing to work. AC6 pins it: reverting S1 must make a test here
-  fail.
-  **openreview `codex` over `2eedaa9..503c1a8`: `acceptable_with_changes`, two findings,
-  both admitted** - `.agents/review/findings/pgwt-{1,2}.md`. pgwt-1 (HIGH) was entirely
-  about M365 and is **mooted by the scope cut**; its record is kept because the gap is real
-  and unowned, and the criterion it earned survives as AC7. pgwt-2 (MEDIUM) applies
-  unchanged: the plan reused a DN-only resolver, and `CheckPatternMatches:612-613` returns
-  at its first line when `SamAccountName` is empty - so a group protected by `adm-*` would
-  read as unprotected with every `Groups`-list test green.
-  **The review's recommendation mattered more than its findings: settle the target identity
-  model BEFORE implementation.** **T0: a separate Protected Targets list that reinterprets
-  nothing already stored.** Re-reading the existing `Groups` list as target protection would
-  make every broadly-listed group unmanageable the moment the build deploys - the `sidf-1`
-  shape. AC8 is the anti-lockout criterion.
-  **NEXT: owner go.** No open question in the plan.
+- **Nesting and protected group targets are implemented; remaining checks stay live.**
+  `docs/GroupMemberNesting-Plan.md` and `docs/ProtectedGroupWriteTarget-Plan.md` own the lists.
+  Cross-domain member listing was confirmed in both group modules on dev 2026-08-31;
+  nested add/remove, cross-domain picker behavior and admin refusal still need applicable
+  checks. Self-service is exempt from Protected Group Targets by the 2026-08-31 ruling;
+  member protection stays. Review loops are closed; pgwt-3 remains declined at intake
+  (`.agents/review/pgwt-3.contested.md`).
 
 ## Next
 
-**THE PAUSE IS LIFTED. Owner, 2026-08-27: the token budget was reset early, so the
-2026-09-01 restart date no longer applies. The queued plans below start on a normal
-per-plan owner go, as ever.** (History: work was paused 2026-08-12 because the August
-AI budget was ~90% spent. Two owner-directed exceptions were taken during the pause:
-the Migration size-check fix, 2026-08-13, and the Event Log CSV Ticket implementation,
-2026-08-27, both in `## Now`.)
-
-**What "ready to go" means here, and all of it is FREE of AI budget** - four items, all
-owner-side, none of them needing an agent:
-
-1. ~~A go on `docs/ProtectedGroupWriteTarget-Plan.md`~~ - **DONE: implemented 2026-08-28**
-   (see `## Now`); nothing owner-side remains on it except the deploy-time manual checks.
-2. ~~A D2 ruling on `docs/RiskyUsersModule-Plan.md`~~ - **DONE: D2 ruled 2026-08-31**
-   (reads are audited, never alert-emailed; `.agents/decisions.md` 2026-08-31). The
-   module is now implemented (see `## Now`); nothing owner-side remains on it except
-   the app registration below and the deploy-time manual checks.
-3. **The Risky Users Entra app registration** plus its Delinea secret
-   (`IdentityRiskyUser.Read.All` and `.ReadWrite.All`, admin-consented). Blocks the
-   first live Graph call. S1-S4 can be built and tested without it.
-4. **The Intune Devices Entra app registration** plus its Delinea secret
-   (`DeviceManagementManagedDevices.Read.All`, `.ReadWrite.All`, `.PrivilegedOperations.All`
-   and `Device.ReadWrite.All`, admin-consented). Blocks the first live Graph call, not the
-   build. Keep the four scopes distinct. The fourth is a directory scope, wider than the other
-   three, and is the one to weigh before consenting.
-
-With those done, the remaining plans are cold-startable at any time with no
-conversation needed: `docs/RiskyUsersModule-Plan.md` at its S1 and
-`docs/IntuneDeviceManagement-Plan.md` at its S0 - independent of everything else and of
-each other.
-
-**QUEUE PRIORITY, owner-ordered 2026-08-31 ("priority: 5, 4, 2, 1, 3"), P1 INSERTED
-by owner ruling 2026-09-01 (items below shift down one):**
-
-0. **P1 (owner, 2026-09-01): Boolean config fields render as checkboxes - IMPLEMENTED
-   the same day (owner go), single slice.** `docs/BooleanConfigControls-Plan.md`;
-   ruling in `.agents/decisions.md` 2026-09-01 ("no compromise").
-   `ConfigFieldType.Boolean` + checkbox rendering on Module Config;
-   `PreventSelfGrant` converted; tripwire test blocks any future boolean-defaulted
-   text field. Base app `2.11.0` -> `2.12.0`, no module bumps. Suite 1854/0/3,
-   probe-proven. NOT DEPLOYED - manual checks (plan section 8) ride the next dev
-   deploy. **BitLocker S2 is now unblocked** (`ValidateTickets` declares Boolean).
-1. BitLocker mandatory Ticket field - PLAN DRAFTED 2026-08-31, REVISED same day for the
-   owner's ServiceNow ruling (`docs/BitLockerMandatoryTicket-Plan.md`, no open owner
-   decision), CODEX-REVIEWED same day (openreview over `a9b0ebc..533c1fe`,
-   `acceptable_with_changes`; btv-1 folded in - see the plan's Review log). **S1
-   IMPLEMENTED 2026-09-01 (owner go the same day), commit `280311f`:**
-   `ITicketValidator`/`TicketValidationService` over the dormant ServiceNow client,
-   `ServiceNowService.Enabled`, DI, 10 tests mutation-proven in 3 batches, base app
-   `2.10.0` -> `2.11.0` (bump moved into S1 per the csv-2 rule, plan revised
-   `5b48b39`). Suite 1852/0/3, format clean. **S2 IMPLEMENTED 2026-09-01 (owner go
-   the same day), commit `fd7cb1f`:** ticket gate first-statement in both search
-   methods (Rejected AND Unavailable refuse before the archive opens), page ticket
-   input with button/Enter gating, `searchTicket` captured at search time so the
-   reveal audit carries the ticket that authorized the visible results,
-   `ValidateTickets` Boolean config field (default false). 5 new tests (2
-   behavioral + 3 source guards), mutation-proven in 2 batches; suite 1859/0/3,
-   format clean. No version bump in S2 by design - base bumped in S1, module bump
-   is S3. **S3 IMPLEMENTED 2026-09-01 (owner go the same day, same session),
-   commit `e6534f1`: module `1.1.0`, docs, plan status Implemented with the
-   section 9 traceability completed. ALL SLICES LANDED; NOT DEPLOYED.**
-   **NEXT: nothing code-side - the plan's four manual checks (section 8) need a
-   deployed instance and ride the next dev deploy.** This also unblocks the CSV
-   export plan's S5 (item 6/queue item 2, which depends on this stream landing
-   first). (Item 7 in the older list below)
-2. CSV export for five modules - **IMPLEMENTED 2026-09-01** (owner go the same
-   day); see `## Now`. All seven slices landed (S1-S6 code, S7 README);
-   `docs/ModuleCsvExport-Plan.md` status is `Implemented`, section 9
-   traceability completed. Manual checks ride the next dev deploy. Do not
-   restart.
-3. Risky Users module - **IMPLEMENTED 2026-09-01** (owner go the same day); see
-   `## Now`. All seven slices landed; `docs/RiskyUsersModule-Plan.md` status is
-   `Implemented`. NOT DEPLOYED - the app registration and Delinea secret still block
-   the first live Graph call; manual checks ride the next dev deploy. Do not restart.
-4. Intune Devices module - **IMPLEMENTED 2026-09-01**; see `## Now`. NOT DEPLOYED - the
-   app registration and Delinea secret still block the first live Graph call; manual
-   checks ride the next dev deploy. Do not restart.
-5. Sidebar Home link removal - IMPLEMENTED 2026-09-01 (`2128610`, base `2.15.0`; see
-   item 5 in `## Next up`). NOT DEPLOYED.
-Queue complete 2026-09-01: every item above is implemented. The owner
-ruled the same day that one session may run all slices (fresh-session-per-slice
-protocol withdrawn), with Sonnet/Opus subagents doing the coding.
-
-**The older "Queue status (corrected 2026-08-28, pgwt-9)" numbered list that used to sit
-here is superseded by the QUEUE PRIORITY list above and is archived verbatim**
-(`docs/history/state-archive.md`, Archived 2026-09-02) - it had drifted (item 5 still read
-`docs/TokenBudget-Plan.md` as "Draft, awaiting a go" after that stream was already DONE).
-
-(`git ls-remote origin master` against `git rev-parse HEAD`) - `.agents/playbooks/drift.md`,
-2026-07-11 ruling. Successive revisions of this paragraph recorded a count, then a sha, each
-stale within hours; the rule is that the fact does not belong in a state file at all.
-
-**Migration batch selection is DONE, accepted, and deployed to both** (app `2.8.0` / Migration
-`1.7.0` at the time; the full record is archived in `docs/history/state-archive.md`, Archived
-2026-08-14). Nothing outstanding on it.
-
-**Dev and prod are level** -- the version is owned by the `Deployed:` entry under `## Blockers`.
-Everything below is the protected-principal stream, which is code-complete, deployed, and now
-configured; only its manual checks remain on it.
-
-**The servicer group is `ANALOG\ExchangeWebAdminsExecSupport`** (SID
-`S-1-5-21-8915387-325452579-1788637320-710891`), read from the live `section_access` table in both
-`config/exchangeadmin.db` files on 2026-08-11. It holds three `ProtectedServicer:` grants - <!-- lint: allow (owner ruled leave-it, 2026-08-11: untracked environment database file) -->
-`MailboxPermissions`, `CalendarPermissions`, `OutOfOffice` - and, after the owner closed the gap
-below on 2026-08-11, the matching module grants for all three plus `CalendarPermissionsOnPrem` and
-`MailboxPermissionsOnPrem`. Re-read from both live stores after the change: every servicer grant
-now has its module grant behind it, identically on dev and prod. The other nine servicer-capable
-module ids
-(`ADAttributeEditor`, `EmergencyDisable`, `MfaReset`, `Comms10k`, `GroupManagement`,
-`M365GroupManagement`, `LicensingUpdates`, `Migration`, `SelfServiceGroups`) have no
-`ProtectedServicer:` row anywhere; recorded as scope, not oversight.
-
-1. **Owner: the group has the CalendarPermissions servicer grant but no CalendarPermissions module
-   grant.** A member who is not also in `ExchangeWebAdmins` or `ExchangeWebPerms` cannot open that
-   page, so that servicer grant is unreachable. Either add the module grant or drop the servicer
-   row - as configured it is a grant that nobody can use. Group membership was not checkable from
-   the app host (no AD cmdlets), so whether any member is affected is unverified.
-   **The owner ruled 2026-08-11 that the gap itself is a UI problem, not a config one: a servicer
-   grant conveying no module access must be visible where the grant is made.** Done in `46c8257`
-   (app `2.8.1`, deployed to both 2026-08-11) - Module Config now states it in the standing warning,
-   flags each affected row with a "no module access" badge, and raises a callout when any row is
-   flagged. The
-   check compares stored SIDs and does not expand nested membership, so it can flag a group that
-   reaches the module through another; the wording is conditional for that reason, and every
-   genuinely stranded grant is still flagged.
-   **The config gap that prompted it is CLOSED** (owner, 2026-08-11): Exec Support now holds
-   `CalendarPermissions`, and the on-prem pair as well. Nothing should be badged today - which also
-   means the badge has never been seen firing on a real row, so its rendering is unproven.
-2. **DEFERRED to real prod use by the owner, 2026-08-11 - not a task anyone is waiting on. The
-   load-bearing manual check: a member of the servicer group acts on a protected principal, the
-   action SUCCEEDS, and the audit record names the group that permitted it.** Nothing automated
-   proves the capability works end to end - every guard is either a source-level tripwire or a
-   decision tested in isolation. Worth doing on a module with a page gate (AD Attribute Editor,
-   where the operator should also see the override banner) AND a batch module (Migration or
-   Licensing), since those took different implementation shapes.
-   **What deferring costs, so a later reader can weigh it:** the first real exercise of this
-   capability will be someone doing actual work under time pressure, and if the chain is broken they
-   meet a refusal then, not in a test. That is the owner's accepted trade, not an oversight.
-3. The inverse, and just as important: **an operator NOT in the group is still refused** on the
-   same target, and the refusal is audited.
-4. Also unverified on a real run: the per-target notes in a batch. A Migration batch mixing a
-   protected-and-serviced target with an ordinary one should produce one note NAMING that target,
-   not a batch-level "something was serviced".
-
-**A caution that survived this whole work stream and still applies:** a green suite in this repo
-says nothing about what an operator sees. There is no bUnit harness, so no test renders a page -
-and every one of the three review findings lived in a page or a call site, in code whose commit
-message claimed it worked.
-
-The owner decision that WAS outstanding - which group gets the servicer grant - is settled:
-`ANALOG\ExchangeWebAdminsExecSupport`, on three modules, live in both config databases, each with
-its module grant behind it. What is still unknown is **who is in it**, which is an AD question this
-host cannot answer, and whether the capability works for a real member - check 2, deferred to prod
-use.
-
-**With that, nothing on this work stream is waiting on anyone.** Checks 2-4 are deferred by owner
-decision, not queued. Treat the stream as closed unless a real prod run turns something up.
+- **Manual validation is outstanding operational work.** Start with
+  `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
+  reported MailboxPermissions friction are high-consequence unverified behavior. It owns older
+  streams' checks; newer plans above own their own. Both instances address live production
+  AD/Exchange, so manual writes still need authority for their named scope.
+- **Coverage follow-up:** the 2026-08-14 ruling supersedes the standalone "one of three files
+  done" task. `ProtectedPrincipalService` work was folded into the now-landed queued plans;
+  re-measure on green CI and ratchet per `.agents/review/coverage-floor.txt`.
+  `PermissionValidator` still needs its own approved plan for the credential-carrying I/O seam.
+  Old percentages are dropped; the floor file owns the measured baseline.
+- **Owner-deferred validation stays deferred:** Bulk Job Runner live UI and writes,
+  ConferenceRooms protection, GM-3 self-service groups, and servicer override end-to-end proof,
+  inverse denial and per-target batch notes. Sources: `docs/BulkJobRunner-Plan.md`,
+  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`,
+  `docs/SelfServiceGroupManagement-Plan.md`, and the archived 2026-08-11 servicer record.
+  The owner accepted waiting for real production servicer use; do not re-queue it as urgent.
+- **Module packaging/import stays deferred** (owner 2026-07-22, `.agents/decisions.md`).
+  **AccountLockoutRemediation and its notification question stay parked** with the disabled
+  module; disablement is re-verified in `.agents/machines.md`. No resumption authorized.
 
 ## Blockers
 
-None live. The queued plans are waiting on an owner go, which is a gate, not a blocker -- see
-`## Next`.
-
-**Deployed versions are owned by the single `Deployed:` entry below.** The older per-work-stream
-entries that used to sit here recorded where each stream stood *when it landed*; they are
-history, not current state, and were never maintained. They are archived verbatim in
-`docs/history/state-archive.md` (Archived 2026-08-14). Their unrun manual checks are owned by
-their own `docs/*-Plan.md` files and consolidated for the older streams in
-`docs/DevValidation-2.3.34.md`; two of them -- `docs/OperatorEmailResolution-Plan.md` and
-`docs/ProtectedPrincipalResolution-Plan.md` -- also record that no independent implementation
-review was ever obtained.
-
-- **IN FLIGHT: make the remaining uncovered lines testable. ONE OF THREE FILES DONE.**
-  Owner ruling 2026-08-05, verbatim: *"I don't care what's left. I do not want to have to deal with
-  this in the future. make it work."* That is a standing instruction to finish the job, not to
-  report on it again.
-  **`SectionAccessGroupDirectory` DONE 2026-08-05 (`6642587`): 0% -> 98%**, security-critical
-  coverage **66.0% -> 72.9%** locally (943/1294). Not yet confirmed on CI, and the floor is
-  deliberately NOT raised until a green CI run reports a real figure.
-  **Remaining uncovered, measured at `6642587`:**
-
-  | lines | % | file |
-  |---|---|---|
-  | 171 | 63% | `Services/ProtectedPrincipalService.cs` |
-  | 148 | 46% | `Services/PermissionValidator.cs` |
-  | 31 | -- | four files at 80-98%, small remainders |
-
-  **Nearly all of it is one shape: code that calls PowerShell to reach AD or EXO.** Biggest single
-  blocks: `PermissionValidator.TryExpandGroupAsync` (70), `EnsureInitializedAsync` (27),
-  `ValidateSelfGrantAsync` (21); `ProtectedPrincipalService.CheckTransitiveGroupMembership` (53),
-  `ResolveViaActiveDirectory` (35), `ResolveProtectedGroupDn` (29). Tests cannot reach any of it
-  without a domain-joined host with RSAT.
-  **The fix is a seam over the PowerShell calls**, then tests against a fake. Same move already
-  used three times here (`MailboxPermissionOutcome`, `CalendarFolderIdentity`,
-  `SectionAccessDirectoryReading`) -- but those extracted PURE logic beside the I/O, which is
-  cheap. This is the harder version: abstracting the I/O itself.
-  **`ISectionAccessDirectoryCommands` (`6642587`) is the worked example to copy for the other two.**
-  Its load-bearing shape: the command result carries rows and error as INDEPENDENT values, because
-  a cmdlet that emits rows AND reports an error proved nothing about how many objects exist --
-  collapsing them lets a partial failure read as a confident single answer. Rows stay nullable so
-  the null-pipeline-row guard remains reachable. The service keeps its public constructor (DI
-  unchanged) and takes a FACTORY on an internal one, preserving the session-per-lookup lifetime.
-  **The remaining two are harder than this one was:** both sit on live request paths and both need
-  a `PSCredential` (the Delinea directory-read secret) rather than the app-pool identity, so the
-  seam has to carry credentials without widening who can see them.
-  **RISK, and why this is not routine test work:** these are the live authorization paths that
-  decide who may modify protected mailboxes. They reached PROD on 2026-08-04 and their manual
-  checks have never been run. `sidf-1` was exactly this failure mode -- a change near this code
-  locked every admin out of the page needed to repair it, caught only by review.
-  **Constraints agreed before stopping:** pure extraction with no behaviour change; the existing
-  authorization suites must pass UNMODIFIED as the proof (editing them signals a behaviour change
-  and is a stop); one commit per piece so any single step is revertible; nothing considered done
-  until CI is green.
-
-- **MessageTrace null-pipeline-row NRE — FIXED in repo 2026-07-29 and now on BOTH instances.**
-  **Basis corrected 2026-08-14:** this entry read "on dev in `2.3.31`, NOT on prod (prod is
-  `2.3.30`, still carrying the defect)", which is falsified -- both hosts run `2.8.1`
-  (`Deployed:` entry above), so the promotion this entry was waiting on happened.
-  Plan `docs/MessageTraceNullRow-Plan.md` Status: Implemented. Live prod symptom: an EXO
-  summary search failed with `Object reference not set to an instance of an object.` (banner
-  doubled because `:348` and `:423` both format the same string). Root cause at
-  `Services/MessageTraceService.cs:386`: the `Get-MessageTraceV2` pipeline returned a
-  collection containing a **null element** and the loop dereferenced it; the `?.` chain guarded
-  the property and its value but not `msg` itself. Latent since `b70b59d` (2026-06-04), NOT an
-  MT-detail regression; data-dependent (the detail export emailed successfully the same day).
-  Same defect class fixed in all four mapping loops (`:277`, `:314`, `:384`, `:501`) — every
-  `GetProperty*` helper takes a non-nullable `PSObject` and dereferences `.Properties`.
-  MessageTrace module `1.2.0 -> 1.2.1`, no base app bump. 830 tests green; non-vacuity proven
-  per guard against the exact production exception.
-  **OPEN:** live re-run of the failing search, now possible on either instance. The "then promote
-  to prod" half of this item is done. **OPEN (OQ-1, non-blocking):** why EXO emits a null row at
-  all is undiagnosed; the guard is correct regardless.
-
-- **App version:** owned by `<VersionPrefix>` in `ExchangeAdminWeb.csproj` -- read the number
-  there, never from here. The per-release history of that number is archived verbatim in
-  `docs/history/state-archive.md` (Archived 2026-08-14).
-- **Deployed: dev `2.17.0` (DLL written 2026-09-03 12:25; which module versions that build
-  carries is unverified - read Module Config on dev; if the group modules show below
-  `1.8.0`/`2.8.0`, `1a4b342` is not on dev yet), prod `2.8.1` (unchanged, see below).**
-  Superseded record follows.
-- **Deployed (superseded 2026-09-03): dev `2.15.0` (DLL written 2026-09-02 09:13), prod `2.8.1` (unchanged,
-  2026-08-13 16:52:57)** -- dev re-verified from the assembly 2026-09-02 after the owner's
-  deploy. **The 2026-09-02 deploy was DEV ONLY.** Dev `2.15.0` carries over `2.10.0`:
-  boolean config checkboxes (2.12.0), BitLocker mandatory ticket (2.11.0 + module 1.1.0),
-  CSV export for five modules (2.13.0 + five module bumps), the Risky Users module (1.0.0),
-  the Intune Devices module (1.0.0, Graph status helpers 2.14.0), and the sidebar Home link
-  removal (2.15.0). Their manual checks are now runnable; none has been run yet. The two new
-  Graph modules also need `GraphDelineaSecretId` set in Module Config (owner, in progress
-  2026-09-02 - both app registrations exist, Delinea secrets being created). Dev `2.10.0`
-  carried over prod: nesting (app 2.9.0 work), the Event Log CSV ticket column, the
-  cross-domain member-listing fix with the lst-1..3 review fixes, and the protected
-  write-target feature with the pgwt-4..9 review fixes. Prod promotion is the owner's call
-  after the dev manual checks.
-  **That timestamp is the 2026-08-13 Migration size-check deploy, and it is on BOTH hosts** --
-  the question `## Now` records the owner as never having answered. This is assembly-timestamp
-  evidence only; the Migration module version was not read off either host, and the app version
-  is unchanged from the 2026-08-11 `2.8.1` build, so nothing in the sidebar distinguishes them.
-  **`2.8.1` carries, over `2.8.0`:** the Module Config servicer-grant warning (`46c8257`) -- the
-  editor states that a servicer grant conveys no module access, badges any servicer group with no
-  direct grant on the module's main permission, and raises a callout when a row is flagged. No
-  authorization decision changed.
-  **Verifying a Razor page change from the deployed DLL needs care, and a naive string probe lies
-  three ways:** assembly literals are UTF-16 (a UTF-8 read finds nothing), `-match` is
-  case-sensitive against the wrong encoding, and Razor splits literal markup at every `@expression`
-  -- so a sentence interpolating `@module.DisplayName` is never one contiguous string. Probe short
-  fragments that sit between expressions (`badge bg-danger`), and compare the deployed DLL against
-  a LOCAL build of the same commit rather than against expectations. Method names are compiled away
-  entirely and prove nothing either way.
-  **Superseded deployed-version records (`2.8.0` and earlier) are archived verbatim** in
-  `docs/history/state-archive.md` (Archived 2026-08-14).
-- **2026-07-21 landed slices** (ff443ca, c2e2f6f, 502dd0e, 8c6f83f, 9dd39cd, b978362, 71d1daa)
-  archived verbatim: `docs/history/state-archive.md` (Archived 2026-07-29).
-- **AccountLockoutRemediation: TURNED OFF by owner** (2026-07-21). Does not work in this environment:
-  WinRM reaches only ~5 of 38 domain controllers (HTTP 400 / Access denied / unreachable); permanent
-  (owner: "won't be changed"). Discovery hides unreachable DCs (looks like "no lockouts found"); sweep
-  silently drops the ~33 it can't reach. Owner disabled the module (runtime enablement, no code change).
-- **Toolkit bug filed:** roethlar/AgentGovernanceBootstrap#7 -- completing a tracked item should
-  auto-update the state record, not gate it behind an owner ask.
-
-## Next up (prioritized)
-
-Live backlog only. Items need an approved plan before code unless noted.
-
-**-1. Make the remaining uncovered lines testable** (owner: *"make it work"*, 2026-08-05).
-   **NO LONGER "the next code task" - resolved by the owner 2026-08-14 into two halves with
-   different fates.** The item predated the four-plan queue and the pause and was never
-   re-prioritised against them; the `drift` sweep flagged the contradiction.
-   `SectionAccessGroupDirectory` is DONE (`6642587`, via `docs/CoverageRatchetRepair-Plan.md`).
-   The remaining two files split cleanly, and the split is the ruling:
-
-   **(a) `ProtectedPrincipalService` (63%) - ROLLED INTO THE QUEUED PLANS. Not separate work.**
-   All four queued plans modify and test it (verified 2026-08-14 by reading each plan), and
-   `docs/GroupMemberNesting-Plan.md` S1 changes this exact file at `:747`. Doing a standalone
-   coverage refactor first would collide with S1 rather than help it. Coverage rises as a
-   by-product; **after those plans land, re-measure on a GREEN CI run and raise the ratchet** -
-   a one-line diff, per the instructions inside `.agents/review/coverage-floor.txt`.
-
-   **(b) `PermissionValidator` (46%) - the real remaining gap, and nothing in the queue closes
-   it.** No queued plan touches the file, and it is one of the paths the coverage floor gates
-   (`tools/Test-CoverageFloor.ps1:72`). It is credential-carrying and on a live request path, so
-   the work is the `ISectionAccessDirectoryCommands` seam extraction again.
-   **Not small, and it needs its own plan** - `docs/ProjectConstitution.md` requires a written
-   plan for authorization changes, and this is the authorization core. Queued **behind** the four
-   plans; it is not "next" and must not be re-labelled as such without an owner ruling.
-   Not startable on the August remainder: the comparable `SectionAccessGroupDirectory` work
-   landed on 2026-08-05, a $395 day.
-
-**-0.9. Eyeball a disabled submit button on dev** (accent, not blue). No plan needed -- it is the
-   verification step for work already landed. **The deploy half is done:** both instances are
-   deployed (version owned by the `Deployed:` entry under `## Blockers`), so only the look is
-   outstanding.
-
-**-0.4. PROD carries months of unvalidated work** -- through the current deployed build (version
-   owned by the `Deployed:` entry under `## Blockers`), and its manual checks have never been
-   run. Highest-consequence single check:
-   `ANALOG\ExchangeWebAdmins` can still open Admin Settings (the `sidf-1` lockout scenario,
-   hardest to recover from). See item 0 below for the consolidated list.
-
-0. **Work through `docs/DevValidation-2.3.34.md` on dev (owner, Monday 2026-08-03).** The
-   single consolidated checklist for everything that reached dev unvalidated -- four work
-   streams' manual checks, ordered by consequence rather than by plan. Sections A-B are the
-   protection controls and the reported L1/L2 friction; A1 (alias-addressed protected user
-   is denied) is the GAP 4 regression test and must be re-run on prod after promotion.
-   Nothing in it has been run. It copies no reasoning: each item cites its source plan.
-1. **Live-validate the Bulk Job Runner (owner-deferred, 2026-07-20).** Runs from the dev instance
-   against real PROD AD/Exchange (the only tenant there is; both instances on this server point at
-   it). The runner *logic* is already covered by xUnit without a live run -- lifecycle (FIFO queue,
-   cancel, recycle->Interrupted via `Initialize_FlipsOrphanedNonTerminalJobsToInterrupted`), per-row
-   failure aggregation, completion notification (all variants), and the protected-principal block on
-   **both** Finder and Type paths (`ConferenceRoomBulkProcessorTests`, closes GAP 3). What stays
-   unvalidated until a live run: the Blazor UI (submit/progress/reconnect) and an actual EXO/AD room
-   write. Do not close out until performed.
-2. **Live-validate the ConferenceRooms PP gate + GM-3 self-service groups** — both landed and
-   codex-reviewed; the only outstanding work on each is live/UI validation from the dev instance
-   against PROD (`docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md`,
-   `docs/SelfServiceGroupManagement-Plan.md`). Foldable into the same live session as item 1.
-3. **Module packaging/import — DEFERRED (owner, 2026-07-22)** as low-value/high-cost. Not to be
-   worked on or raised as next; no plan. End-state direction retained only as history in
-   `.agents/decisions.md` (2026-07-22 deferral, refining 2026-06-29 & 06-18).
-4. **AccountLockout user-notification — PARKED with the module (owner, 2026-07-22).** The whole
-   `AccountLockoutRemediation` module is disabled/deferred (unusable in this environment); the
-   user-notification question is parked with it and will be decided only if the module is picked
-   back up. Not to be worked on or raised as next.
-5. **Remove the redundant sidebar Home link - IMPLEMENTED 2026-09-01 (owner goal-directive
-   the same day), commit `2128610`, base `2.14.0` -> `2.15.0`, no module bump.** The `Home`
-   NavLink and both dead `.nav-home` CSS rules (`NavMenu.razor.css`, `app.css`) are gone; the
-   brand link stays. One source-guard test, probe-proven. Suite 2163/0/3. NOT DEPLOYED -
-   eyeball the sidebar on the next dev deploy (no bUnit harness). Original ruling follows.
-   (owner, 2026-08-27). `NavMenu.razor:14` (the brand
-   link, `Application:Name` falling back to "Admin Portal") and `NavMenu.razor:23` (the `Home`
-   `NavLink`) both target `href=""` -- two controls, one destination. Owner's call is to drop
-   `Home` and keep the brand link. Shared layout, so this is a base app version bump and no
-   module bump. UI-only; no plan required beyond an owner go, but note the repo has no bUnit
-   harness, so nothing automated will prove the sidebar still renders -- eyeball it on dev.
-   Also check `nav-home` CSS for a rule that becomes dead.
-6. **CSV export for five modules that have none** (owner, 2026-08-27): `DhcpAuthorization`
-   (`ModuleCatalog.cs:467`) exports the current authorized-server list; `NamedLocations` (`:430`),
-   `BlockedSenders` (`:265`), `BitLockerRecovery` (`:484`) and `Migration` status (`:174`) export
-   their result sets, with the export offered only when results are present. Needs a plan: five
-   modules is five module version bumps, and if the export goes through a shared helper it is a
-   base app bump as well. **PLAN DRAFTED 2026-08-31: `docs/ModuleCsvExport-Plan.md`.** Its
-   answers to the two questions this item posed: a new shared `CsvExport.Write` static helper
-   generalizing the Event Log formatter's WriteField quoting contract (base bump; the Event Log
-   formatter itself is untouched), and the BitLocker export's key question is D1 in that plan -
-   RULED 2026-09-01: keys ARE exported (the owner overruled the drafted no-keys default; the
-   export is a distinct audited bulk-disclosure event and keys never enter the audit itself).
-   Interacts with item
-   7 as planned: the BitLocker export carries the `searchTicket` the ticket plan adds, so its
-   S5 waits for item 7's implementation.
-7. **Mandatory Ticket field on BitLocker search** (owner, 2026-08-27). `BitLockerRecovery`
-   (`ModuleCatalog.cs:484`) must require a ticket number before the search runs and before any
-   result is displayed. **PLAN DRAFTED 2026-08-31, REVISED the same day:
-   `docs/BitLockerMandatoryTicket-Plan.md`, awaiting a go to implement.** The owner ruled
-   mid-planning that ServiceNow ticket validation IS coming app-wide, so the plan now also
-   builds the shared backend-agnostic `ITicketValidator` seam with a per-module
-   `ValidateTickets` Module Config switch (off = any non-blank text, the default; on =
-   validate through the EXISTING dormant `Services/ServiceNowService.cs` client - while
-   `ServiceNow:Enabled` is false, on refuses with a dormant-integration message: fail
-   closed, never decorative). A ServiceNow client already exists and eight pages already
-   call it; the per-module switch is the missing piece (`.agents/decisions.md`
-   2026-08-31, corrected entry). Rewiring the OTHER ticket fields through the validator
-   is future go-live work, which also must move `ServiceNow:Password` out of appsettings
-   into the PAM store (recorded pre-existing Constitution gap). The ticket reaches both the search and reveal
-   audit events through the `ticketNumber` parameters `AuditService` already has.
-   Versions: module `1.0.2` -> `1.1.0` AND a base app bump (shared service + DI).
-   Enforcement is in `BitLockerRecoveryService` (required parameter, fail-closed guard
-   first), not the page, because UI hiding is not security.
-
-Landed items 2, 5 and 6 of the previous numbering (single-room Finder PP gap, GM-3 task set, ASCII
-sweep + lint gate) are archived: `docs/history/state-archive.md` (Archived 2026-07-30).
-
-Ops track (not engineering): configure ConferenceRooms AD `DelineaSecretId` in the prod instance
-(gates CR-1 in prod); `deploy.ps1` native `-PlanOnly` (workaround: `deploy-pipeline -PlanOnly`).
-
-## Blockers / open gaps
-
-- **OPEN — AccountLockoutRemediation not yet exercised on dev** (owner deferred, 2026-06-29). Run
-  the package's own Manual Validation steps (live 4740 read, WinRM, quser/logoff parsing, real
-  dry-run+logoff, protected-block) when ready. Gates the rule-4 user-notify decision above.
-  Note the module is currently disabled by the owner as unusable in this environment (see
-  `## Blockers`).
-- **All known protected-principal *coverage* gaps CLOSED (in repo):** GAP 1 (`M365GroupManagementService`,
-  2026-06-29), GAP 2 (`MigrationService`, 2026-06-30), GAP 3 (ConferenceRooms Finder bulk,
-  2026-07-02), and the single-room Finder page path (2026-07-21, commit 2a97d09 — consolidated
-  into `ConferenceRoomProtectionGate`). Every mutating module routes through the gate. Governing
-  rule: `.agents/decisions.md` 2026-06-29 + Constitution §Protected Principals. This closes
-  *which callers are gated*; GAP 4 below is a defect in *what the gate resolves*.
-- **GAP 4 — FIXED IN REPO 2026-07-30 (`2.3.33`) and NOW DEPLOYED to both instances** (the
-  deployed version is owned by the `Deployed:` entry under `## Blockers`; the earlier "dev
-  `2.3.32`, prod `2.3.30`, still live on both" basis is falsified). **The fix is unproven in the field: its
-  regression check has never been run on either instance** -- see the bottom of this entry.
-  The defect: protected principals were reachable by
-  secondary SMTP alias (found 2026-07-30, verified against live AD).
-  `ProtectedPrincipalService.ResolveViaActiveDirectory`
-  (`Services/ProtectedPrincipalService.cs:290-291`) queries only
-  `(|(userPrincipalName=)(mail=)(sAMAccountName=))` — never `proxyAddresses` — and
-  `MatchesIdentity` (`:438-465`) does not carry aliases in its candidate set. All 4 protected
-  `user` rows in prod `protected_principal` carry 3 secondary aliases each; the CEO row
-  `vincent.roche@analog.com` also answers to `VRoche@O365.analog.com`,
-  `VRoche@analog.mail.onmicrosoft.com`, `Vincent.Roche@exchange.analog.com`. The app's exact
-  filter returns 0 matches for the alias; the same filter plus `(proxyAddresses=smtp:...)`
-  returns 1.
-  - **Masked in MailboxPermissions**, where 0 matches means `null` means blanket denial
-    (`Services/PermissionValidator.cs:124-131`) — the denial is currently the only control.
-  - **Live in ConferenceRooms and GroupManagement**, which treat `NotFound` as *not protected*
-    and allow (`Services/ConferenceRoomProtectionGate.cs:56-58`,
-    `Services/GroupManagementService.cs:44-50`).
-  - **Binding consequence:** relaxing `NotFound` to "allow" anywhere without simultaneously
-    broadening resolution converts the masked bypass into a live one. Recorded here because it
-    constrains any future work in this area, not only the fix below.
-  - **Fix landed** (`docs/ProtectedPrincipalResolution-Plan.md`, Implemented 2026-07-30, commits
-    `6faa92d`..`0eca01e`): resolution now falls back to Exchange, which returns the canonical
-    primary address, so the alias case stops resolving `NotFound`. The `NotFound`-allows rule in
-    ConferenceRooms and GroupManagement is deliberately unchanged -- the bypass closes because
-    the alias no longer reaches it. The AD filter was **not** broadened to `proxyAddresses` (plan
-    Non-Goals: two mechanisms for one job).
-  - **Regression check, not yet run:** an alias as target must be denied citing the CEO user
-    rule. Required on dev, then again on prod after promotion.
-- **MailboxPermissions denies cloud-only mailboxes and mail-enabled groups — FIXED IN REPO
-  2026-07-30 and DEPLOYED to both instances** as of 2026-08-04 (the deployed version is owned by
-  the `Deployed:` entry under `## Blockers`; the earlier "still live on prod (`2.3.30`)" basis is
-  falsified). **Unverified in the field --
-  the L1/L2 friction has not been re-tested since the deploy.** Reported by the owner
-  2026-07-30 as L1/L2 support friction. 16 prod denials 2026-06-30..2026-07-30 over 7 targets; 4
-  were permanent under the AD-only filter (`Jabil.support@analog.com`,
-  `sporting.tickets@analog.com` cloud-only; `adspstaff@analog.com`, `globalevents@analog.com`
-  mail-enabled groups), 2 were AD-sync timing and self-resolved, 1 was malformed input. Not a
-  regression from 2.3.32 — the code last changed functionally 2026-05-29. Fixed by the same work
-  as GAP 4; the malformed-input case now gets an accurate not-found message rather than the
-  outage-sounding one. **Open (plan OQ-2, non-blocking):** whether
-  `sporting.tickets@analog.com` and `Jabil.support@analog.com` should be administratively
-  reachable at all, or are artifacts of an unfinished decommission. Worth an answer before
-  treating the friction as fully closed.
+- **Falsified deployment/configuration blockers, checked 2026-09-14 as of `a16c316`:**
+  the old dev/prod versions, incomplete shared cutover and missing initial ServiceHealth,
+  RiskyUsers and IntuneDevices configuration disagree with the host. Evidence is canonical in
+  `.agents/machines.md`. Manual acceptance and exact deployed module versions remain unverified.
+- **SQLite upgrade is no longer blocked by package availability.** The 2026-06-26 decision's
+  "no patched package exists" basis is falsified, checked 2026-09-14 as of `a16c316`:
+  local restore still resolves `SQLitePCLRaw.lib.e_sqlite3/2.1.11`, while
+  [NuGet publishes newer builds](https://www.nuget.org/packages/SQLitePCLRaw.lib.e_sqlite3),
+  including 3.53.3 (the package version identifies its SQLite engine).
+  The [advisory](https://github.com/advisories/GHSA-2m69-gcr7-jv3q) still lists affected versions
+  through 2.1.11 and its patched-version field says None. Compatibility is not established.
+  Next action: plan and verify a supported update; do not suppress NU1903.
+- **CloudPasswordReset residuals:** owner disposition of remaining survey export(s); current
+  inventory differs from the old three-file claim (machine receipt). Survey registration
+  `16866221-3e2b-4ea5-8aae-157b043b6d7c` was recorded as holding unnecessary
+  `Directory.ReadWrite.All`, `User.ReadWrite.All`, `Group.ReadWrite.All` and
+  `UserAuthenticationMethod.ReadWrite.All` grants. Consent was not re-queried under the hold;
+  revocation needs separate authority.
+- **Unsettled guidance conflicts:** the 2026-09-01 owner ruling in the archived queue permits
+  one session for all slices with coding subagents; `.agents/repo-guidance.md` Token Budget
+  and the 2026-08-27 decision still require a fresh Fable session per slice. Also, the 2026-07-31
+  protected-principal input-validation rationale relies on this deployment's read visibility,
+  while the 2026-09-11 rule rejects environmental safety assumptions. No contested rule changed;
+  owner reconciliation is required.
+- **SharedConfigDb record flags:** the decision says SQLite `data_version` / next read;
+  implementation uses the store's change token with a throttle. The additive-only rule has
+  operative homes in the decision, guidance and test but is absent from the Constitution.
+  Evidence: `docs/SharedConfigDb-Plan.md` section 9. No ruling inferred.
+- **Plan-status drift remains:** `docs/BlockedSendersLoadTiming-Plan.md` and
+  `docs/Comms10kReplaceUx-Plan.md` still say Approved;
+  `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` says Approved / In progress as of `a16c316`.
+  Implementation was recorded but full completion is unverified. Do not silently relabel them.
+  `docs/AdminUIRedesign-Plan.md` remains In progress with manual checks.
+- **Unscheduled M365 protection gap:** group update/delete and owner adds were recorded as
+  ungated, and protection configuration cannot identify a cloud-only group. Update/delete
+  still lack a check in `Services/M365GroupManagementService.cs` as of `a16c316`.
+  The owner excluded this module from the on-prem target work; no work approved.
+- **Older questions:** `docs/MessageTraceNullRow-Plan.md` needs a live rerun; the upstream
+  null-row cause remains undiagnosed (OQ-1). `docs/ProtectedPrincipalResolution-Plan.md`
+  retains OQ-2 on whether the reported cloud-only mailbox targets should remain reachable.
+  Alias-protection and MailboxPermissions fixes are not field-validated by deployment alone.
+- **Ops gaps:** ConferenceRooms AD secret configuration on prod was previously outstanding
+  and was not checked here. `deploy.ps1` still lacks native `-PlanOnly`; the pipeline dry-run
+  is the recorded workaround. Reviewer sandbox capability was not re-probed; use dated
+  machine notes, not superseded CLI-version assumptions.
 
 ## Verification
 
-- Commands are owned by `.agents/repo-guidance.md` (Verification) — read them there, not here.
-  Deploy-host dependency for the ops scripts: `sqlite3.exe` on PATH.
-- **Non-vacuous rule:** a change shipping with a new test must be proven — revert the fix, see the
-  test fail, restore. Full policy: `AGENTS.md` (Verification) and `.agents/repo-guidance.md`.
-  Per-work-stream manual-check lists live in each `docs/*-Plan.md`, consolidated for the
-  outstanding ones in `docs/DevValidation-2.3.34.md`.
-
-## Findings (environment / CI — still live)
-
-- CI is real: it fails on real problems. Trust it. (`.github/workflows/ci.yml`, `windows-latest`.)
-  Note: `dotnet format --verify-no-changes` treats analyzer *warnings* as fatal, so a stray
-  warning (not just a failing test) reddens build-test. This bit master 2026-07-20..07-21: the
-  Bulk Job Runner (`971555f`) left an xUnit1051 warning that kept build-test red for ~13 commits
-  until fixed in `8c6f83f` (2026-07-21). Lesson: run the format check locally, not just the tests.
-- On local macOS, a missing Windows COM DLL can nondeterministically drop xUnit collections (totals
-  vary) — trust the failure *list*, not the total. `windows-latest` CI is unaffected. macOS builds
-  need `-p:EnableWindowsTargeting=true`; Pester needs `pwsh` +
-  `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec`.
-- Host-local tool facts (`sqlite3.exe` on PATH, Pester/PSScriptAnalyzer versions, which shell the
-  suites run under) live in `.agents/machines.md`, not here.
-- **RSAT IS installed on this dev box** (verified 2026-07-31: importing the `ActiveDirectory`
-  module in a bare runspace succeeds with no errors), so
-  `ADDirectorySearchService.IsAvailable` is **true** here and **false** on CI
-  (`windows-latest`). Any test written as `if (!svc.IsAvailable) { ...assert... }` therefore
-  **silently skips locally and only really runs on CI** -- it passes whether or not the code is
-  correct. `ADDirectorySearchServiceTests.cs:100`, `:111`, `:121` are written that way. Assert
-  AD-dependent logic through a pure function instead (see
-  `ADDirectorySearchService.ClassifyOutcome`); a slice-1 non-vacuity probe caught this pattern
-  passing with the fix reverted.
-  - Corollary: a test that skips when a fixture is missing must use `Assert.SkipWhen`, never a
-    bare early `return` -- a silent return is indistinguishable from a pass. Caught again in
-    slice 3, where a live OU test searched for the literal `"OU="` expecting to match every DN
-    (AD does not substring-match `distinguishedName`), got zero rows, and passed green with the
-    mapping code deliberately broken. `ExchangeAdminWeb.Tests/ADDirectoryLiveTests.cs` is the
-    pattern to copy: probe real name fragments to discover a fixture, skip loudly if none.
-  - **SWEPT 2026-07-31: no `IsAvailable`-gated silent skips remain.** All three in
-    `ADDirectorySearchServiceTests` (`:100`, `:111`, `:122`) now use `Assert.SkipWhen` and
-    report as skipped here rather than passing. Note the asymmetry that remains by design:
-    those three assert the fail-soft contract and so run on CI and skip on this box, while
-    `ADDirectoryLiveTests` does the reverse. **Neither file alone proves the service works** --
-    the pure-function tests are what hold on every host.
-  - What live tests are FOR: pure functions cannot prove a PowerShell property name is right.
-    `Properties["DisplayName"]` where the cmdlet returns `Name` compiles, passes every unit
-    test, and yields an empty string at runtime. That class of bug needs a real directory.
-- `deploy.ps1` still lacks a native `-PlanOnly` (deferred with owner visibility;
-  `deploy-pipeline -PlanOnly` covers the prod dry-run requirement).
+Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
+This records-only drift sweep requires `git diff --check`; build, tests, browser acceptance,
+AD/Graph queries and reviewer dispatches were not run. Current CI status/test counts do not
+belong here. Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources
 
-- `AGENTS.md` — process/behavioral contract (Prime Invariants first).
-- `docs/ProjectConstitution.md` — highest engineering authority.
-- `.agents/decisions.md` — durable decisions (most recent: 2026-07-31, protected-principal admin
-  input validated under the app-pool identity rather than the Delinea directory-read secret).
-- Active plans: `docs/BulkJobRunner-Plan.md` (Implemented, live validation pending);
-  `docs/ConferenceRoomsFinderProtectedPrincipalGate-Plan.md` (Implemented 2026-07-21,
-  live/UI validation pending); `docs/MessageTraceDownloadLink-Plan.md` (Implemented 2026-07-29,
-  all four slices landed; **on dev as `2.3.31`, 9 manual post-deploy checks not run**);
-  `docs/OperatorEmailResolution-Plan.md` (**Implemented 2026-07-29** -- app `2.3.32`; on both
-  instances since 2026-08-04; 8 manual post-deploy checks not run; implementation openreview not
-  obtained);
-  `docs/ProtectedPrincipalResolution-Plan.md` (**Implemented 2026-07-30** -- app `2.3.33`; on
-  both instances since 2026-08-04; 6 manual post-deploy checks not run; no independent review);
-  `docs/ProtectedPrincipalInputValidation-Plan.md` (**Implemented 2026-07-31**, all four slices
-  landed -- the plan file says so; the "Approved, not started" reading here was stale);
-  `docs/SectionAccessSidStorage-Plan.md` (**Implemented 2026-08-03**, all 4 slices landed -- the
-  plan file says so; the "slice 1 of 4" reading here was stale. No open owner gates);
-  `docs/CoverageRatchetRepair-Plan.md` (**Implemented 2026-08-05**, all three slices);
-  `docs/AdminUIRedesign-Plan.md` (**In progress** -- manual checks unrun).
-- **Plan-status drift, unresolved (flagged 2026-07-30, owner ruling needed):** three plans still
-  carry a pre-landing `Status:` although code evidence says they shipped —
-  `docs/BlockedSendersLoadTiming-Plan.md` (Approved; deferred load is live at
-  `Components/Pages/BlockedSenders.razor:169`, module `1.0.2`), `docs/Comms10kReplaceUx-Plan.md`
-  (Approved; module is at the plan's target `1.0.4`, commit `5e0c19e`), and
-  `docs/ConferenceRooms-OnPremRoomListAdd-Plan.md` (Approved -- In progress; implemented by
-  `430305a`, module now `2.3.0` vs the plan's `2.0.12`). Not corrected in this sweep: marking a
-  plan Implemented is a completion claim, and the ConferenceRooms one may be genuinely partial.
-- Review loop finding pp-finder-1: implemented and committed (`.agents/review/index.md`).
-- Review loop findings ppv-1..4 (2026-07-31): all four fixed and committed; see
-  `docs/history/state-archive.md` (Archived 2026-08-14) and `.agents/review/index.md`. Dispatch artifacts (prompt, schema, raw verdict) are tracked at
-  `.agents/review/ppvalidation.*` so the pass is reproducible.
-
-## Unrecorded repo memory
-
-- None known. Engineering rules → `docs/ProjectConstitution.md`; module contract →
-  `docs/AdminModuleSpec.md`; work-stream history → `docs/*-Plan.md` + git log.
-
+- `AGENTS.md`, `.agents/repo-guidance.md`, and `docs/ProjectConstitution.md` govern work.
+- `.agents/decisions.md` owns decisions; `.agents/machines.md` owns host facts.
+- Referenced plans own scope, status and acceptance checklists.
+- `Modules/ModuleCatalog.cs` owns module versions and enumeration;
+  `ExchangeAdminWeb.csproj` owns the current base app version.

@@ -32,22 +32,11 @@ _First recorded 2026-07-21._
   disposable-worktree capability the codereview playbook's self-permissioning contract
   expects - and check `git status` afterwards; both 2026-08-27 runs left the tree untouched.
   Generation (defect-hunt) passes stay `-s read-only`.
-- **codex `-s read-only` cannot spawn `pwsh.exe` at all (observed 2026-09-02, codex-cli
-  `0.152.0`):** every `command_execution` item exits `-1073741502` (0xC0000142, DLL init
-  failure), so a reviewer told to read a file from the workspace stalls indefinitely with
-  no output - the first dispatch ran 10 minutes on two failed commands. Workaround that
-  worked the same day: inline the file under review into the prompt (line-numbered) and
-  tell codex NOT to run commands; it answered in a few minutes with a valid envelope.
-  For git-range reviews this means inlining `git diff` output rather than asking codex to
-  run git. `codex --version` now reports `0.152.0` (cache said `0.150.1`); the cached
-  `exec` flags were re-probed and all still exist.
-- **codex `-s read-only` native exec WORKS AGAIN as of 2026-09-03 (codex-cli `0.152.1`):** a
-  smoke dispatch ran `pwsh.exe -NoProfile -Command 'git log --oneline -1'` as a native
-  `command_execution` item, exit 0, in under a minute. The 0xC0000142 entry above is
-  therefore version-bound to `0.152.0`; probe again if the version moves. The gba plan
-  openreview (2026-09-03) was dispatched on the normal repo-reading prompt, no inlining.
-- **codex** (`codex-cli 0.152.1` as of 2026-09-03; `0.152.0` re-probed 2026-09-02 - see the read-only/pwsh entry above;
-  was `0.147.0` as of 2026-08-14, `0.146.0` as of 2026-08-05,
+- **Reviewer sandbox history:** native read-only exec failed with codex-cli 0.152.0 on
+  2026-09-02 and worked again with 0.152.1 on 2026-09-03. Current sandbox capability
+  was not re-probed in the 2026-09-14 records sweep; neither observation certifies the
+  current CLI. The workspace-write failure record above still requires a fresh probe.
+- **codex** (codex-cli `0.154.0`, re-probed 2026-09-14 as of `a16c316`;
   `C:\Users\mcoelho\AppData\Roaming\npm\codex.ps1`) — Portkey
   gateway, API-key auth. Model slugs carry a provider-route prefix, e.g.
   `@azure-openai-eus2-global/gpt-5.5-dzs`; the **full prefixed slug must be passed to `--model`**
@@ -56,8 +45,8 @@ _First recorded 2026-07-21._
 - **codex-commercial** (same `codex-cli` engine via wrapper
   `C:\Users\mcoelho\.local\bin\codex-commercial.ps1`) — OpenAI direct, ChatGPT-subscription auth.
   `CODEX_HOME=C:\Users\mcoelho\.codex-commercial`; the wrapper strips `OPENAI_*`/`PORTKEY_*` env
-  vars so it uses subscription auth, and syncs the ptk MCP block. Default model `gpt-5.6-sol`,
-  effort `max` (in its `config.toml`). Plain slug, **no** provider prefix.
+  vars so it uses subscription auth, and syncs the ptk MCP block. Configured model `gpt-6-astra`,
+  effort `xhigh` (selected fields in `config.toml` re-read 2026-09-14 as of `a16c316`). Plain slug, **no** provider prefix.
 - **codex-commercial registered as a Claude Code MCP server** (user scope):
   `claude mcp add codex-commercial -s user -- pwsh -NoProfile -File C:/Users/mcoelho/.local/bin/codex-commercial.ps1 mcp-server`.
   Use **forward slashes** in the path — the `! `/bash-input layer strips backslashes (observed
@@ -80,12 +69,39 @@ _First recorded 2026-07-21._
   `D:\inetpub\ExchangeAdminWebShared\config\exchangeadmin.db` - the default `-SharedDbPath` of
   `tools/Move-ConfigDbToShared.ps1` and the value both instances' `appsettings.json` carry
   under `ConfigStore:Path` after the cutover. Prod app root: `D:\inetpub\ExchangeAdminWeb`.
-  NOT yet cut over as of 2026-09-04 (code implemented, not deployed): both instances still
-  use their own `config\exchangeadmin.db` until the owner runs the cutover.
+  **Cutover configuration verified 2026-09-14 as of `a16c316`: both deployed
+  appsettings files name this same existing path.** Startup-log and cross-instance
+  refresh acceptance checks were not run by this records sweep.
+
+### Deployment and configuration receipt (2026-09-14, as of `a16c316`)
+
+Read-only evidence: DLL FileVersion/LastWriteTime, the `ConfigStore:Path` field in
+both deployed appsettings files, and selected rows in the shared config database.
+No secret values or directory data were read. Both files report base version `2.20.2.0`
+and LastWriteTime `2026-09-09 08:24:15` (host local time):
+
+- Dev DLL: `D:\inetpub\ExchangeAdminWebDev\ExchangeAdminWeb.dll`.
+- Prod DLL: `D:\inetpub\ExchangeAdminWeb\ExchangeAdminWeb.dll`.
+
+ServiceHealth, RiskyUsers and IntuneDevices are enabled; each has a nonblank,
+nonzero `GraphDelineaSecretId` and at least one section-access row. These checks do
+not prove secret validity, Graph consent, live authentication or exact deployed
+module versions. AccountLockoutRemediation remains disabled in `module_enablement`.
+The old separate dev/prod and missing-initial-configuration records are superseded.
+
+### Cloud survey export inventory (2026-09-14, as of `a16c316`)
+
+A filename-only recursive search, including ignored files, found one matching
+`CloudAccountOwnerCoverage-20260911-*.csv` in this workspace:
+`CloudAccountOwnerCoverage-20260911-154815.csv`. It remains untracked and ignored.
+The older decision recorded three such exports; the other two were not located,
+so their disposition is unknown. No file was opened or deleted. Owner disposition
+of remaining export data is still pending; no further module survey is authorized.
 
 ### Test tooling
 
-_Re-probed 2026-08-14._ Pester `6.0.1` and PSScriptAnalyzer `1.25.0` are installed; the
+_Re-probed 2026-09-14 as of `a16c316`._ Pester `6.0.1`, PSScriptAnalyzer `1.25.0`,
+and ActiveDirectory `1.0.1.0` are installed; the
 PowerShell suites run under `pwsh` (`C:\Program Files\PowerShell\7\pwsh.exe`), not 5.1.
 
 ### Claude Code transcript root (`tools/Get-TokenUsage.ps1`)
@@ -98,3 +114,10 @@ local project. The script reads the first `transcript-root:` entry in this file;
 second machine is ever recorded here, pass `-TranscriptRoot` explicitly on it.
 - harness-cli: codex.ps1 (recorded 2026-07-27, refresh offer)
 - harness-cli: codex.cmd (recorded 2026-07-27, refresh offer)
+
+## macOS observations (historical, not re-probed 2026-09-14)
+
+Earlier state recorded nondeterministic xUnit collection loss from a missing Windows COM
+DLL, with CI unaffected. Windows-targeting builds require `-p:EnableWindowsTargeting=true`;
+Pester required `pwsh` and `DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec` on that machine.
+No current macOS host or tool state was checked in this sweep.
