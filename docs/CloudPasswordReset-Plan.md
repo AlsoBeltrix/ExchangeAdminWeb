@@ -1,10 +1,23 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **In progress.** The S0 gate is **gone**: the owner-resolution survey ran, returned
-46.5%, and the owner ended the approach rather than amending it. The module no longer derives
-anything -- the operator types the destination address. Nothing after this revision has been
-built. D1 is settled (the app generates the password); D3 is withdrawn; **D4 is open and
-blocks S5** (whether the separate reveal permission still means anything).
+Status: **ON HOLD.** Owner ruling 2026-09-14: *"stop this module's development and put it on
+hold."* No reason was given and none is inferred here. **Nothing in this plan is authorized --
+not S2, not a line of C#, not a further revision of the plan itself.** D4 was put to the owner
+and answered *"no. neither."*; it is neither settled nor open, because the question stopped
+mattering when the module stopped.
+
+Nothing was ever built. The stream shipped PowerShell survey tooling, which is deleted
+(`a56f41f`), and this plan. There is no `CloudPasswordReset` descriptor in
+`Modules/ModuleCatalog.cs`, no service, no page, no permission, no config field and no version
+bump anywhere. **Resuming costs nothing to undo; it starts at S2.**
+
+If this is picked up again, read the whole plan rather than this header, and re-put D4 before
+S5 -- it was never withdrawn on its merits.
+
+**State at the hold:** the S0 gate is gone (the owner-resolution survey ran, returned 46.5%, and
+the owner ended the approach rather than amending it); the module derives nothing and the
+operator types the destination address; D1 is settled (the app generates the password); D2 is
+settled (the operator names the destination); D3 is withdrawn.
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
 method to `Services/EmailService.cs`, which is shared infrastructure (Constitution, Deployment
@@ -623,7 +636,14 @@ The derivation is abandoned at 46.5% measured coverage. Full record in `.agents/
 Asked how tolerant the name-corroboration rule should be. There is no corroboration rule any
 more. Kept as a numbered heading so the D-numbers in git history still resolve.
 
-### D4 -- OPEN, blocks S5: does the reveal permission still fence anything?
+### D4 -- PUT, NOT ANSWERED 2026-09-14: does the reveal permission still fence anything?
+
+**Disposition.** Put to the owner with recommendation (b); the answer was *"no. neither."*,
+followed by the ruling that stopped the module. So neither option was chosen and the question
+is not settled -- it lapsed with the stream. **If this plan is resumed, D4 must be put again
+before S5.** Do not read the recommendation below as approved, and do not treat the reveal
+permission as decided in either direction. The question and its analysis are kept intact below
+because they are still correct; only their status changed.
 
 **Context.** `CloudPasswordResetReveal` was scarce because an operator holding only the main
 permission had no route to the password -- the destination was derived and they could not

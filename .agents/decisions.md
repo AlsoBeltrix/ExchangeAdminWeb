@@ -5,6 +5,39 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-14 - CloudPasswordReset is on hold
+
+Status: Active. Scope: `CloudPasswordReset`. Does not supersede the entry below -- that design
+record stands and is what a resumption would start from.
+
+Owner ruling, verbatim: *"stop this module's development and put it on hold."* It came
+immediately after D4 was put with a recommendation and answered *"no. neither."* **No reason for
+the hold was given, and none is recorded here, because inventing one would put a fabricated
+rationale into the durable record that a later reader would take as the owner's.**
+
+**Nothing is half-built.** The stream produced a plan and, briefly, PowerShell survey tooling
+that is deleted (`a56f41f`). There is no descriptor in `Modules/ModuleCatalog.cs`, no service,
+page, permission, config field or version bump. The hold leaves no partial state to unwind and
+no dead code in the app.
+
+**What is prohibited until a new owner go:** any implementation slice, any further revision of
+`docs/CloudPasswordReset-Plan.md` beyond recording this hold, and any Graph or AD query in
+service of the module. The earlier single-run survey approval was consumed on 2026-09-11 and
+does not carry.
+
+**D4 lapsed, it did not settle.** The question -- whether `CloudPasswordResetReveal` still
+fences anything once the operator types the destination and can therefore address any password
+to themselves -- received neither (a) nor (b). It must be put again before S5 if the module
+resumes. The recommendation recorded in the plan is a recommendation, not an approval, and the
+plan says so at the decision.
+
+**One item outlives the hold and is still open with the owner:** the three survey CSVs
+(`CloudAccountOwnerCoverage-20260911-*.csv`) are untracked, gitignored and still on disk. They
+name every in-scope cloud-only account, its UPN, display name and object id, plus the owner
+sAMAccountNames, emails and DNs the derivation matched. They were deliberately not shredded
+earlier because, unlike the tracked tooling, they are unrecoverable and only implicit
+confirmation had been given. With the module stopped they have no remaining purpose.
+
 ### 2026-09-11 - Owner derivation is abandoned; the operator names the destination
 
 Status: Active. Scope: `CloudPasswordReset`. **Supersedes** the "Searched domains are an

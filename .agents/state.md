@@ -6,70 +6,31 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **CLOUD PASSWORD RESET: DERIVATION ABANDONED 2026-09-11, PLAN REWRITTEN, ONE DECISION OPEN.**
-  `docs/CloudPasswordReset-Plan.md`, Status In progress. New module `CloudPasswordReset` so L2
-  can reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
-  therefore unreachable from existing AD tooling. It replaces a process where L2 escalates by
-  telephone to L3.
-  **The S0 gate is gone and so is everything it gated.** The owner-coverage survey ran under its
-  one approval and returned **46.5%** (80 of 172 in-scope privileged cloud-only accounts); all 84
-  misses returned zero directory rows. Owner ruling: *"if we cannot get a 100% working match, then
-  matching is off the table."* Full record, including the naming-era breakdown and the two
-  mechanical fixes that would have reached only ~84%, is in `.agents/decisions.md` 2026-09-11
-  ("Owner derivation is abandoned"). **Do not re-propose any owner derivation, owner map,
-  coverage survey or `employeeId` remediation.** `employeeId` is populated on 0 of 172 cloud
-  accounts and the owner refused to populate it.
-  **The design now:** the operator types the destination address; the app generates the password,
-  PATCHes it and mails it there. Format-validated only - the module never checks who owns the
-  account. Owner ruling 2026-09-11: *"destination email needs to be in the logs and in the admin
-  alert email"*, so `destinationAddress` is a required audit field and appears in the admin alert.
-  **The security property this trades away, stated so nobody reads it as a regression:** the old
-  design's claim was that a derived destination made resetting a Global Admin useless to the
-  operator. That is false now - an operator can mail themselves any password. What replaces
-  prevention is section access + audit record + administrator alert: **detection and
-  accountability, not prevention.** The owner made that trade knowingly; the replaced phone-call
-  process has neither property.
-  **Still standing, do not reintroduce:** the "target is an admin" permission tier (decorative);
-  an invented `BlockedDirectoryRoles` config field; a stored owner map; Protected Principals as
-  the fence (and `ProtectedPrincipalEntryValidator.cs:85` refuses cloud-only entries anyway - a
-  real gap the plan states rather than papers over).
-  **Resetting Global Administrator passwords is the requirement, not a risk.** Settled with the
-  population; never raise it as a fork. The one open item there is a **test** - the first live
-  call must confirm the PATCH succeeds against an admin-role target, using a disposable account.
-  **D1 SETTLED** (the app generates the password, on pwgen's algorithm - full C# spec of the
-  method in the plan, not a port of its Rust). **D2 SETTLED 2026-09-11** (the operator names the
-  destination). **D3 WITHDRAWN** with the derivation.
-  **D4 IS OPEN AND BLOCKS S5: does the reveal permission still fence anything?** It was justified
-  by the operator having no other route to the password, which is no longer true, so it is now the
-  `idm-3` decorative-control class. Recommendation in the plan: keep it as friction plus a
-  distinct audit signal, but stop describing it as a security boundary.
-  **This stream DOES bump the base app version**, now on one change only: `EmailService` gains a
-  public `SendCloudPasswordResetAsync`. The `ADSearchResult` / `ValidationProperties` additions
-  (`GivenName`, `Surname`, `Enabled`) are deleted with the derivation.
-  **Change at next sign-in is an operator checkbox, default unchecked** - neither always-on
-  (*"that disallows signin in too many instances"*) nor hard-coded off (*"change on login is an
-  OPTION"*). The general rule behind it: this app gives L2 the admin console's capabilities inside
-  an audited, credential-free interface, so withhold credentials and enforce audit; do not
-  withhold controls.
-  **Audit events go to Splunk, so the field names are a published interface** (*"these logs are
-  going to splunk, so they need to be explicit and clear."*). The plan's `Audit fields, and
-  Splunk` section fixes the exact `extra` field set and six rules: one fact per field, JSON
-  booleans, closed enumerations, every field on every event with explicit `null`, names frozen
-  once shipped, nothing derived from the password. Aligning other modules is a separate,
-  unauthorized stream.
-  **On a send failure after a successful PATCH, fail closed** (owner 2026-09-10): the password is
-  discarded, not displayed to any tier; audited as `CloudPasswordReset_DeliveryFailed`; retrying
-  generates a new one. "Delivered" means accepted by the mail server, everywhere in the plan.
-  **External prerequisites, owner-side:** a dedicated Entra app registration (`User.Read.All`,
-  `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`) and its own Delinea
-  secret. Do not reuse another module's Graph registration.
-  **NEXT, in order: (1) owner answers D4; (2) owner confirms whether to shred the three survey
-  CSVs, which are untracked, gitignored, not deleted, and name every in-scope account; (3) S2
-  starts. No implementation is authorized before D4.**
-  **Loose end to raise with the owner:** the survey app registration
+- **CLOUD PASSWORD RESET: ON HOLD 2026-09-14 BY OWNER RULING. DO NOT RESUME WITHOUT A NEW GO.**
+  *"stop this module's development and put it on hold."* No reason given; none inferred. The
+  plan (`docs/CloudPasswordReset-Plan.md`, Status **On hold**) holds the full design and the
+  reasoning; this entry exists so nobody restarts the stream by accident.
+  **Nothing shipped and nothing is half-built.** No `CloudPasswordReset` descriptor in
+  `Modules/ModuleCatalog.cs`, no service, page, permission, config field or version bump. The
+  only code the stream ever produced was PowerShell survey tooling, deleted in `a56f41f`.
+  Resuming starts at S2 and costs nothing to undo.
+  **Do not re-propose any owner derivation, owner map, coverage survey or `employeeId`
+  remediation** if this is ever picked up. The survey ran under its one approval and returned
+  46.5% (80 of 172 in-scope privileged cloud-only accounts); all 84 misses returned zero
+  directory rows; `employeeId` is populated on 0 of 172 and the owner refused to populate it.
+  Owner: *"if we cannot get a 100% working match, then matching is off the table."* Full record
+  in `.agents/decisions.md` 2026-09-11.
+  **D4 was put and not answered** - whether the reveal permission still fences anything now that
+  an operator can address the mail to themselves. The answer was *"no. neither."* followed by the
+  hold, so it lapsed rather than settled. It must be put again before S5 on any resumption.
+  **Open owner item that survives the hold:** the three survey CSVs are untracked, gitignored and
+  still on disk. They name every in-scope account, UPN, display name, object id and the owner
+  sAMAccountNames/emails/DNs the derivation matched. With the module stopped they have no
+  remaining purpose. **Awaiting an owner decision to shred them.**
+  **Also unresolved, not module work:** the survey app registration
   `16866221-3e2b-4ea5-8aae-157b043b6d7c` holds write grants it never needed
   (`Directory.ReadWrite.All`, `User.ReadWrite.All`, `Group.ReadWrite.All`,
-  `UserAuthenticationMethod.ReadWrite.All`).
+  `UserAuthenticationMethod.ReadWrite.All`). Worth revoking whether or not the module resumes.
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
