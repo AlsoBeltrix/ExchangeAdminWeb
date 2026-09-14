@@ -89,14 +89,31 @@ not prove secret validity, Graph consent, live authentication or exact deployed
 module versions. AccountLockoutRemediation remains disabled in `module_enablement`.
 The old separate dev/prod and missing-initial-configuration records are superseded.
 
-### Cloud survey export inventory (2026-09-14, as of `a16c316`)
+### Cloud owner diagnostic files (2026-09-14)
 
-A filename-only recursive search, including ignored files, found one matching
-`CloudAccountOwnerCoverage-20260911-*.csv` in this workspace:
-`CloudAccountOwnerCoverage-20260911-154815.csv`. It remains untracked and ignored.
-The older decision recorded three such exports; the other two were not located,
-so their disposition is unknown. No file was opened or deleted. Owner disposition
-of remaining export data is still pending; no further module survey is authorized.
+The original ignored `CloudAccountOwnerCoverage-20260911-154815.csv` remains in the
+workspace. The earlier record mentioned three original exports; the other two were
+not located. The owner-authorized runtime investigation read the surviving export
+and produced the ignored `CloudAccountOwnerCoverage-20260914-runtime-investigation.csv`.
+The latter is a diagnostic receipt, not application configuration or an authoritative
+owner map. It contains current candidate recipients and worker classifications for
+inspection. Its SHA-256 is
+`AD1E4475E9462EC8E8D9BD8E2EA20C9D61C91D7E409EBE54810E6589FB49F02E`.
+Findings and limits are canonical in `.agents/research/cloud-password-owner-runtime.md`.
+Disposition of the retained CSVs remains with the owner.
+
+### Graph connection for the owner investigation (2026-09-14)
+
+The owner directed use of `D:\source\scripts\Modules\M365Connections.psm1` through
+PTK. Import that module and call `GraphConnect`; it authenticates the existing app
+`16866221-3e2b-4ea5-8aae-157b043b6d7c` through its Delinea credential helper. Do not print
+credential values. The successful PTK session imported the installed Graph
+Authentication module by its absolute manifest path first because the worker did not
+autoload it; discover the installed path/version rather than copy a fixed version.
+Only `GraphConnect` was called. `Connect-AllM365Services` also invokes module updates
+and other service connections unless controlled, so it was not used for this Graph-only
+work. AD queries succeeded in the native PowerShell execution environment.
+The app-only Graph context was left available in PTK's default session.
 
 ### Test tooling
 

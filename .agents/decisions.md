@@ -5,6 +5,33 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-14 - Runtime owner investigation: employee CLD scope and L2-only workflow
+
+Status: Active requirements and investigation authority. Module implementation remains
+on hold pending an approved revised plan. This later instruction reopens runtime owner
+analysis; it does not revive the deleted survey code or approve implementation.
+
+The owner requires the changed password to be emailed only to the account owner, with
+the association determined at runtime. Only L2 uses this app. The ServiceNow request
+does not reach the app, and the employee neither visits the app nor completes an
+authentication/approval workflow through it. Advance user enrollment is ruled out.
+There is no existing cloud-admin-to-AD-user mapping. A maintained owner map and
+employeeId backfilling remain rejected approaches.
+
+When the mixed privileged-account population was identified, the owner selected
+**"Individually owned employee CLD accounts"**, rather than every account in the old
+target list. This is a scope definition, not permission to classify every unmatched
+identity as external or to exclude employee accounts merely because a resolver fails.
+
+The owner directed completion of the actual-directory investigation and explicitly
+instructed use of `D:\source\scripts\Modules\M365Connections.psm1` through PTK to
+establish Graph access. The connection receipt belongs in `.agents/machines.md`.
+Current findings and proposed rules belong in
+`.agents/research/cloud-password-owner-runtime.md`; they are not an approved plan or
+an independent attestation of every candidate's ownership. No directory writes,
+password resets, permission grants, deployment, or implementation were authorized in
+this investigation. D4 was not decided.
+
 ### 2026-09-14 - CloudPasswordReset is on hold
 
 Status: Active. Scope: `CloudPasswordReset`. Does not supersede the entry below -- that design

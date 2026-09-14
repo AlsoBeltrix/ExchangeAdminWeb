@@ -7,16 +7,20 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **CloudPasswordReset is ON HOLD by owner ruling 2026-09-14. Do not resume without a new go.**
-  Owner: *"stop this module's development and put it on hold."* No reason was given; none
-  inferred. `docs/CloudPasswordReset-Plan.md` is On hold. No descriptor, service, page,
-  permission, config field or version bump shipped; survey tooling was deleted in `a56f41f`.
-  Resumption begins at S2. Do not re-propose owner derivation, an owner map, another coverage
-  survey, or `employeeId` remediation; the abandoned design and survey results are owned by
-  `.agents/decisions.md` 2026-09-11. The consumed survey approval authorizes no further AD/Graph
-  queries for this module. D4 lapsed without an answer; re-put it before S5 on any resumption.
-  Survey CSV disposition and unnecessary survey-registration grants remain open outside module
-  development; see Blockers and the local inventory in `.agents/machines.md`.
+- **CloudPasswordReset: runtime owner investigation reopened; implementation remains on hold.**
+  The owner requested completion of the runtime-association investigation and authorized the
+  M365Connections/PTK connection. Scope is individually owned employee CLD accounts. L2 alone
+  uses the app; ServiceNow and the employee do not interact with it. No advance enrollment,
+  maintained owner map, or operator-supplied delivery address. Requirements are recorded in
+  `.agents/decisions.md` (2026-09-14); current evidence, proposed rules and remaining validation
+  are canonical in `.agents/research/cloud-password-owner-runtime.md`. Inspect the local
+  diagnostic receipt listed in `.agents/machines.md`, independently classify unresolved
+  employee candidates, then approve an updated plan before implementation. The old held
+  `docs/CloudPasswordReset-Plan.md` still describes operator-entered delivery and is not the
+  current proposed solution. No module code or new permissions have shipped. The abandoned
+  tooling remains deleted; its earlier survey approval is not standing query authority.
+  D4 remains unresolved. Survey-data disposition and unnecessary survey-registration grants
+  remain open outside module implementation; see Blockers and `.agents/machines.md`.
 
 - **Deployment/configuration basis corrected 2026-09-14, as of `a16c316`.**
   `.agents/machines.md` (ASHBIAMWEB1 / Deploy) owns the verified deployed base versions, shared
