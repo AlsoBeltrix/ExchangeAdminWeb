@@ -1,22 +1,29 @@
 # Cloud Password Reset Module (Entra ID cloud-only accounts)
 
-Status: **In progress -- owner go given 2026-09-11.** S0 (the owner-resolution survey) is a
-hard gate on the rest: its hit rate decides whether this design is viable at all, and no slice
-after it starts until the owner has seen the number. S0's tooling has landed and has been run
-once; that run's number is void and the reasons are in **First run, and what it found**. The
-derivation is rebuilt and the survey is rescoped; the re-run is gated on the owner. D1 is
-settled (the app generates the password); D3 is answerable only after S0.
+Status: **In progress.** The S0 gate is **gone**: the owner-resolution survey ran, returned
+46.5%, and the owner ended the approach rather than amending it. The module no longer derives
+anything -- the operator types the destination address. Nothing after this revision has been
+built. D1 is settled (the app generates the password); D3 is withdrawn; **D4 is open and
+blocks S5** (whether the separate reveal permission still means anything).
 
 New module `CloudPasswordReset`. **The base app version bumps** -- this stream adds a public
-method to `Services/EmailService.cs` and three optional members to `ADSearchResult`, both
-shared infrastructure (Constitution, Deployment And Versioning). The "adding a module does not
-bump the base version" exception does not apply, because this is not only a module.
+method to `Services/EmailService.cs`, which is shared infrastructure (Constitution, Deployment
+And Versioning). The "adding a module does not bump the base version" exception does not apply,
+because this is not only a module. The `ADSearchResult` additions the fifth revision also
+counted here are gone with the derivation; `EmailService` is now the whole of the shared
+change.
 
-Revision 2026-09-11 (fifth) rebuilds the derivation after the first authorised survey run
-returned 9.6%. That number was not a finding about the tenant: it measured the wrong
-population against the wrong comparison. Both are fixed below, in **The derivation** and
-**First run, and what it found**. No re-run happens until the owner has read that section --
-owner ruling 2026-09-11: *"no re-run until you have a better plan."*
+Revision 2026-09-14 (sixth) deletes the entire owner-derivation design. The rebuilt derivation
+was surveyed against the live tenant and resolved 46.5% of in-scope accounts; the owner's
+ruling was that a partial match is not a design, and that the destination is simply typed by
+the operator. Everything that existed to derive, corroborate, survey or gate on an owner is
+removed from this plan and from the repo. The security argument changes shape as a result and
+is restated honestly in **Where the password goes** -- it is now detection and accountability,
+not prevention. Superseded sections are not kept as commentary; git history holds them.
+
+Revision 2026-09-11 (fifth) rebuilt the derivation after the first authorised survey run
+returned 9.6%. Superseded by the sixth revision; retained only as the reason the survey was
+re-run at all.
 
 Revision 2026-09-10 (fourth) folds in the codex review of `c493b2a..7c47c3c` and the two owner
 rulings it produced: a post-write send failure fails closed with no reveal, downstream mail
@@ -28,11 +35,13 @@ govern and are kept below because both reversals are load-bearing:
    *almost no non-admin accounts are in scope* -- so that tier fenced nothing and was removed,
    along with an invented `BlockedDirectoryRoles` config field the owner never asked for.
 2. The second draft had the password displayed in the UI, then emailed, then displayed again.
-   The settled answer is **emailed to the account owner, invisible to the operator**, with an
-   on-screen reveal available only under a second permission and only where email cannot
-   reach. The owner's words: *"we need reliable email notification for users and admins and no
-   visibility of the password for the tech making the change unless we gate that with another
-   permission level."*
+   The answer then settled on **emailed, invisible to the operator**, with an on-screen reveal
+   under a second permission. The owner's words: *"we need reliable email notification for
+   users and admins and no visibility of the password for the tech making the change unless we
+   gate that with another permission level."* **Half of this survives the sixth revision:** the
+   password is still emailed and still not displayed, but "invisible to the operator" is no
+   longer achievable, because the operator chooses where it goes. The reveal permission's
+   status is D4.
 
 ## Purpose
 
@@ -51,410 +60,90 @@ several hundred of them. That is not an edge case to be gated; it is the module'
 
 1. **A privileged-target permission tier keyed on "the target is an admin" would be
    decoration.** Nearly every target trips it, so every operator must hold it to use the
-   module at all -- the `idm-3` decorative-control class. The second permission this plan does
-   carry is keyed on something else entirely: whether the operator may *see* the password.
+   module at all -- the `idm-3` decorative-control class. The second permission this plan
+   carries is keyed on whether the operator may *see* the password; D4 asks whether that
+   distinction still fences anything now that the operator names the destination.
 2. **Many targets have no mailbox of their own.** An Entra-only admin or automation identity
    commonly has no Exchange recipient. The password therefore cannot be sent to the account
    being reset; it must go to the human who owns that account, at their corporate mailbox.
-3. **The account does not know who owns it.** This is the central problem of the design and
-   the reason for S0. See below.
+3. **The account does not know who owns it, and cannot be made to.** Five revisions tried to
+   derive the owner and the best measured result was 46.5%. The operator supplies the
+   destination instead. See **Where the password goes**.
 
 ## Why delivery, not visibility
 
-If the operator sees the password, resetting a Global Administrator is an account takeover.
-If the operator never sees it, the same act is a nuisance: the owner is inconvenienced until
-they read their mail, and the whole thing is audited. The owner's ruling, verbatim: *"those
-passwords should be emailed to the owner of the cloud account's @analog.com email address,
-not displayed in the UI. therefore, it's irrelevant if someone changes someone else's PW
-since they never see it."*
-
-That reasoning holds only while the destination address is **derived, never chosen**. An
-operator who can influence where the mail goes can mail themselves the password, and the
-design inverts. Nothing on the page accepts, suggests, or displays an editable destination.
-
-## The owner-resolution problem
-
-There is no reliable link from a cloud-only account to its owner. The owner, verbatim:
-
-> *"nothing reliable. the naming convention changed over the years. current ones SHOULD be
-> `<samaccountname>-CLD@analog.onmicrosoft.com` for the entra account [...] older ones are
-> just `first.last@analog.onmicrosoft.com` or `samaccountname@analog.onmicrosoft.com` or
-> `first.last_CLD@analog.onmicrosoft.com`. that's not a reliable match."*
-
-A stored mapping table was proposed and **rejected** by the owner: *"cannot store it. we're
-not going to change several hundred cld accounts and we're not going to create an instantly
-stale map."* That rejection is correct and this plan does not revisit it. A map records who
-owned an account on the day someone typed it in; a derivation records who owns it now, and
-refuses when the answer stopped being knowable.
-
-### The derivation, computed fresh on every reset
-
-Nothing is persisted. The answer is recomputed at each attempt, so a leaver whose AD account
-is gone stops resolving on the next attempt rather than continuing to receive mail.
-
-**Superseded 2026-09-11.** The first three revisions derived the owner from the UPN local part
-alone. That is the one piece of evidence the owner already warned was unreliable -- *"the
-naming convention changed over the years"* -- and the survey confirmed it: a UPN-only
-derivation measures which era an account was created in, not who owns it. It is kept as the
-third and weakest of three sources below, no longer as the design.
-
-#### Three sources, strongest evidence first
-
-| # | Source | Why it beats the UPN |
-|---|---|---|
-| 1 | **`employeeId` on the cloud account itself** | Not a derivation at all -- it is the owner's payroll identity carried on the account. Zero inference, so nothing to get wrong. Runs LAST in practice despite being listed first, because it is the source least likely to be populated (below). |
-| 2 | **Display name** -- strip a trailing `-CLD`/`_CLD`, match the remainder exactly against on-premises `displayName` | A display name describes the person; the UPN describes the provisioning convention in force the day the account was made. Only one of those two survives a convention change. |
-| 3 | **UPN local part**, compared correctly (below) | Era-dependent by construction, so it goes last. |
-
-**`manager` is NOT a source, and the first draft of this table was wrong to list it.** Owner
-challenge 2026-09-11: *"how is manager going to help"*. It does not. The attribute names the
-owner's **manager**, not the owner, so resolving it sends the password to the wrong person --
-and because this design treats convergence as proof, a `manager` arm would supply false
-*agreement* and make a wrong answer look corroborated. The attribute is only useful if whoever
-provisioned these accounts used the field to mean "responsible party" rather than its actual
-meaning, and no reader of a single record can tell which convention it follows. An attribute
-whose meaning is unknowable per record cannot be evidence. It is struck from the derivation and
-from the pre-run read.
-
-**`otherMails` is not a source either, and this was the same error twice.** The first draft of
-source 1 read a corporate address out of `otherMails` and called it "somebody having *stated*
-the owner". `otherMails` is Entra's **alternate/recovery** address, the one SSPR uses. It is
-not the mailbox SMTP -- that is `mail` and `proxyAddresses`, and a cloud-only admin account
-generally has neither, because it has no mailbox. The reasoning was that if SSPR recovery had
-ever been configured on these accounts the recovery address would be the owner's real mailbox.
-Owner 2026-09-11: *"wtf is otherMails? are you looking for the mailbox smtp in there? it's not
-there."* It is empty in this tenant, so it is not evidence, and it is struck rather than kept
-on the hope that it might be populated somewhere.
-
-**Consequence, stated plainly: source 1 is now one attribute and is not expected to carry the
-result.** What recovers the misses is **the source 3 comparison fix below** -- local part
-against local part, plus `proxyAddresses`. That is the change that would have resolved the
-owner's own account. Source 1 was a bonus, and the bonus is mostly empty.
-
-**Consequence for the pre-run read: it is cancelled.** Its only remaining question was whether
-`employeeId` is populated, and the rebuilt survey answers that on its way past by reporting per
-source. Asking for a separate approval to learn something the next run reports anyway spends an
-owner approval for nothing, against the standing one-approval-one-run rule.
-
-#### The employee id lives in three on-premises attributes
-
-Owner 2026-09-11: an employee identifier is carried in **three** on-premises attributes --
-`employeeID`, `employeeNumber` and `extensionAttribute1`.
-
-**Search all three, OR'd.** Comparing only `employeeID` silently misses whichever population
-carries the value in one of the other two. Which attribute is authoritative is an environment
-fact this plan may not assume (Invariant 7), so it does not choose: it compares against all
-three and requires the match to be unique across them. The same person found through two of
-the three attributes is one match, not two -- distinctness is by `distinguishedName`, as
-everywhere else in this derivation.
-
-**`employeeType` is not one of them and is not a match key.** It carries a worker-class code
-(contingent versus employee), which describes a category of people rather than a person. It is
-recorded here only so that a later reader does not mistake it for a fourth id attribute and
-add an arm that matches every member of a class at once.
-
-**A non-unique id value is not an id: discard the arm, do not refuse the reset.** If an id
-attribute holds a placeholder, a default or a repeated value, searching it returns many people.
-Under the agreement rule that would come back `Ambiguous` and refuse -- including for accounts
-where display name had a perfectly good answer. So: *an identifier arm that matches more than
-one directory user has proved the value is not an identifier*, and the arm is discarded as
-**non-evidence** while the remaining sources decide. The search result is the test, so no
-sentinel list and no environment fact is needed.
-
-This is deliberately **not** how a multiple match is treated elsewhere. Two people sharing a
-display name are two real candidate people, and picking either is the exact error this design
-exists to prevent, so that stays `Ambiguous` and refuses. The distinction is between an
-**identifier arm** (source 1's id) and a **person arm** (display name, UPN): a conflict between
-candidate people refuses, a value that was never evidence about a person is dropped.
-
-**Every source that can answer, answers -- and they must agree.** The outcome is the single
-distinct directory user the answering sources converge on. Two sources naming two different
-people is `Ambiguous` and refuses. This is strictly stronger than the superseded rule, which
-accepted one source's answer and then name-checked it after the fact: corroboration stops
-being a filter bolted on afterwards and becomes the mechanism itself. A source that returns
-nothing is silent, not a veto; a source whose lookup *fails* is `Unavailable` and poisons the
-whole answer, exactly as today.
-
-**Source 3's comparison is currently wrong, and that alone explains most of the misses.** The
-filter asks `(|(userPrincipalName=<key>)(mail=<key>)(sAMAccountName=<key>))`, comparing a UPN
-*local part* against *whole* UPN and mail values. That can only ever match when the local part
-happens to equal the sAMAccountName -- so an account named `first.last@` cannot match a person
-whose on-premises UPN is `first.last@<corp domain>`, even though the two agree perfectly on
-the only part being compared. Two additions fix it:
-
-- `(userPrincipalName=<key>@*)` -- local part against local part.
-- `(proxyAddresses=smtp:<key>@*)` -- against the addressing alias, which is where a
-  `first.last` identity actually lives when the sAMAccountName is an abbreviation.
-
-Both are exact to the left of the `@` and wildcard only across the domain, so they do not
-reintroduce the substring hazard that rules out `Search` (`jdoe` must never match `jdoe2`).
-More than one hit across the wildcard is `Ambiguous` and refuses, unchanged.
-
-Candidate keys for sources 2 and 3 are still built by stripping a trailing `-CLD`/`_CLD`
-case-insensitively and also trying the unstripped form, de-duplicated. The suffix strip is a
-string operation on a value the tenant supplies; it is not the *evidence*, and the plan no
-longer rests on it being a reliable convention.
-
-Look each candidate up with `ADDirectorySearchService.ValidateExists(candidate, "User")`
-(`Services/ADDirectorySearchService.cs:242`). That method is the right instrument and not the
-autocomplete `Search`: it is an **exact-match** LDAP query
-(`BuildExactMatchFilter`, `:432`), it distinguishes "the directory says no" from "the lookup
-never ran" (`:225-228`), and it reports multi-match separately through
-`DirectoryValidationResult.Ambiguous` (`:805-808`). `Search` is a substring query built for
-autocomplete -- `jdoe` also matches `jdoe2` (`:230-232`) -- and must never be used here.
-
-#### Cost: ONE query per checked domain, not one per source
-
-Owner 2026-09-11: *"how will that translate to run-time password changes? it's already too
-slow."* A correct concern with a design answer rather than an excuse.
-
-**Every source's arms go into a single filter per domain.** All of them are exact terms OR'd
-together, so one query returns every candidate row across every source at once:
-
-```
-(&(objectClass=user)(|
-    (displayName=<name>)                (: source 2 :)
-    (userPrincipalName=<key>@*)         (: source 3 :)
-    (proxyAddresses=smtp:<key>@*)       (: source 3 :)
-    (sAMAccountName=<key>)              (: source 3 :)
-    (employeeID=<id>)(employeeNumber=<id>)(extensionAttribute1=<id>)  (: source 1 :)
-))
-```
-
-**Which source answered is then computed from the returned attributes, in memory.** The row
-already carries `displayName`, `userPrincipalName`, `proxyAddresses`, `sAMAccountName` and the
-three id attributes -- they are requested for corroboration anyway -- so agreement is
-arithmetic over rows already in hand, not extra round trips. **The agreement rule costs zero
-query time.**
-
-**So the rebuilt derivation is cheaper than the one it replaces.** Today's design issues one
-`ValidateExists` **per candidate key** per domain, and it derives up to two keys, so a reset
-costs up to `2 x domains` queries. The rebuilt one costs `1 x domains` -- roughly half --
-because the keys are OR'd into the filter rather than iterated. Domains are queried in
-parallel, so wall-clock is one round trip regardless of how many are checked.
-
-**The consequence for S1 is a signature change, and it is better to know now.**
-`ValidateExists(candidate, "User")` takes one key and returns one verdict, which forces the
-per-key loop. The resolver needs a method that takes the whole term set and returns the matched
-rows, with `BuildExactMatchFilter` extended accordingly. Keeping the existing signature and
-looping is the version that is slower than today.
-
-Resolution rules, fail-closed throughout:
-
-| Outcome across all candidates | Result |
-|---|---|
-| Any candidate returns `Unavailable` | **Refuse.** The lookup never ran; this is not an absence. |
-| Exactly one distinct AD user, `Ambiguous` false, non-blank `Email` | **Owner resolved.** |
-| Exactly one distinct AD user, blank `Email` | **Unresolved** -- no mailbox to send to. |
-| Zero found | **Unresolved.** |
-| Two or more distinct users, or any `Ambiguous` | **Refuse as ambiguous.** Never pick one. |
-
-Two distinct candidates resolving to the *same* AD user is one match, not two.
-
-**Name corroboration.** A sAMAccountName can collide across the searched domains, so an
-exact-match lookup can return a plausible-looking wrong person. A resolved owner is therefore
-accepted only if the AD user's given name and surname both appear, case-insensitively and in
-any order, within the cloud account's Graph `displayName`. That tolerates `Smith, John`
-against `John Smith (Cloud Admin)` and rejects an unrelated `jsmith` in another domain. A
-corroboration failure downgrades to **unresolved**, never to a send.
-
-This check still runs, but it is now the *floor* rather than the mechanism: a match found by
-source 1 or source 2 has already been corroborated by construction, and the check only has
-real work to do on a source-3-only answer. The exact tolerance is a tuning question that S0
-answers with real data, not a guess made here.
-
-**Three AD fields the lookup does not currently return.** `ValidationProperties`
-(`Services/ADDirectorySearchService.cs:407-414`) asks LDAP for `DisplayName`,
-`DistinguishedName`, `SamAccountName`, `UserPrincipalName` and `mail` for a User, and
-`ADSearchResult` (`:829-838`) carries exactly those. Corroboration needs `GivenName` and
-`Surname`, and the leaver rule needs `Enabled`. All three must be added to the User branch of
-`ValidationProperties` and to `ADSearchResult` as optional members with null defaults -- the
-pattern `ObjectSid` and `DnsDomain` already use (`:819-821`) -- so no existing construction
-site changes. This lands in S1.
-
-The three-source derivation adds one more requirement to the same branch: **the User filter
-must be able to match `displayName`, `proxyAddresses`, and the three id attributes
-`employeeID` / `employeeNumber` / `extensionAttribute1`.** `DisplayName` is
-already in `ValidationProperties` as a returned property, but `BuildExactMatchFilter` (`:432`)
-does not compare against it, and none of `proxyAddresses` or the three id attributes is
-requested or compared. Source 1's `employeeId` arm, source 2, and
-source 3's alias arm are all inert without that change, and inert in the quiet way: the
-lookup runs, returns nothing, and reports a clean `NotFound`. Stated here because a plan that corroborates on data the
-query never requested would compile, pass its tests against a mock, and silently corroborate
-nothing against a real directory.
-
-### What happens to each outcome
-
-- **Owner resolved** -- the reset proceeds and the password is emailed to that mailbox. The
-  operator is shown the owner's display name **and the resolved address**, read-only, before
-  and after the send, and never the password.
-
-  **Why the address is shown.** An earlier revision hid it and showed the display name alone.
-  That was a precaution against nothing: the address is not a secret, the tech usually knows
-  who the ticket is for, and the same mailbox is visible in the app's own AD search and in
-  every other tool they hold. What hiding it actually cost is the one defence that matters
-  here -- a human check on the derivation. The real residual risk in this module is a lookup
-  that resolves to the *wrong* person, and a tech who can read "this is going to
-  john.smith@example.com" can catch that in a second, where a display name they half-recognise
-  gives them nothing to catch it with. The control that counts is unchanged and is a different
-  control: the address is **derived, read-only and never editable**. The operator cannot type
-  one, pick one from a list, or steer the send anywhere. Seeing where it is going is not the
-  same as choosing where it goes.
-- **Unresolved** -- refused for an operator holding only the main permission, with a message
-  naming why (no match / no mailbox / name mismatch). Available to the reveal tier below.
-- **Ambiguous or Unavailable** -- refused for everyone, including the reveal tier. An
-  ambiguous derivation and a dead directory are not conditions a higher permission should
-  paper over.
-
-## S0 -- the survey that gates this plan
-
-The design lives or dies on how much of the population resolves. Before any code is written,
-a **read-only** survey runs the derivation across every cloud-only account and reports:
-resolved / unresolved-no-match / unresolved-no-mailbox / unresolved-name-mismatch /
-ambiguous, with a sample of each failure class.
-
-`tools/Get-CloudAccountOwnerCoverage.ps1`, `-PlanOnly`-shaped like every other ops script
-(`.agents/repo-guidance.md` Architectural Invariant 4), reading Graph and AD and writing
-nothing. Pester coverage in `tests/ps/` for the candidate-derivation function, which is pure
-string work and testable without a directory.
-
-The owner sets the threshold after seeing the numbers. As a marker, not a rule: a high rate
-makes the reveal tier a rare exception and this design sound; a low rate makes the exception
-path the normal path, the reveal tier meaningless, and the design wrong -- at which point
-this plan is replaced, not amended.
-
-### What landed, and two things it measures beyond the list above
-
-`tools/CloudAccountOwnerDerivation.psm1` holds the three pure functions the survey and
-`Services/CloudAccountOwnerResolver.cs` (S1) both implement: candidate derivation, name
-corroboration, and the fail-closed collapse of per-candidate results into one outcome. It is
-the model for the C#; where the two ever differ the C# is authoritative and the module is
-corrected, because a divergence makes the survey's numbers a lie.
-`tests/ps/CloudAccountOwnerDerivation.Tests.ps1` covers it, 40 tests, no directory required.
-
-**`UnresolvedOwnerDisabled` is reported as its own class.** The plan names `Enabled` as needed
-for the leaver rule but never states the rule's shape. Rather than guess, the survey measures
-the class separately so the owner rules on it with a number in hand. A leaver's mailbox may
-still accept mail, which is exactly why a disabled owner must not quietly pass as resolved.
-
-**REQUIREMENT for S1: the searched domains are an operator setting, discovered at runtime.**
-`ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
-whichever single domain the app host happens to be joined to (the `-Server` DN routing at
-`ADDirectorySearchService.cs:355` is scoped to `objectKind == "Group"`; `ResolveGlobalCatalog`
-is called only from the `Search` path at `:660`). That is an accident of deployment, not a
-design.
-
-I first raised this as a cross-domain collision question, then tried to close it on ADI's forest
-shape. The owner rejected the closure -- *"you cannot hard-code any ADI-specific ANYTHING into
-ANYWHERE in this app"* (`.agents/decisions.md` 2026-09-11, environment neutrality) -- and then
-rejected the forest-wide replacement too, because it is equally wrong in the other direction:
-the estate has several domains and trusts, and most of them have nothing to do with Entra.
-Owner ruling, verbatim: *"it does not need to search all domains... search the domain checked.
-only check domains that sync to Azure or that you want to check. stop wrapping the admins in
-bubble-wrap."*
-
-The design:
-
-- **Module config gains a Search Domains setting**: a checkbox list of the domains actually
-  available to the host, enumerated at runtime from the forest and its trusts. No domain name is
-  hard-coded, defaulted, or typed by hand -- the operator picks from what the directory reports.
-- **The owner lookup searches exactly the checked domains, and only those.** Nothing else is
-  queried; unchecked domains cost nothing.
-- **Two or more matches across the checked set is `Ambiguous`, and `Ambiguous` refuses.** The
-  collision guard operates over the operator's chosen scope, which is the scope that matters.
-- **An in-app note next to the setting states how to choose**: check the domains whose accounts
-  sync to Entra, or that you otherwise want searched. The operator is an administrator making an
-  administrative decision with the information in front of them.
-- **Fail closed on absence, as everywhere else**: no domains checked, or the setting unreadable,
-  refuses the reset. This is the app's standing rule for unavailable authorization data, not a
-  guard rail on the operator's judgement.
-
-Consequence for S0: the survey takes the domains to search as a parameter, enumerated the same
-way, and reports its outcome per that set. Until it does, its numbers describe code that will
-not ship.
-
-### First run, and what it found
-
-One authorised run, 2026-09-11, `-SearchDomain` set to the two domains the owner named as
-holding users and admin objects. 60,174 users in the tenant; 1,233 cloud-only non-guest
-accounts; **118 resolved (9.6%)**, 1,100 no-match, 8 name-mismatch, 6 owner-disabled, 1
-no-mailbox, 0 ambiguous, 0 unavailable.
-
-**That 9.6% is not a measurement of the tenant.** It is the product of two defects, one in the
-denominator and one in the comparison. Both are named here so the next number cannot be read
-the same way.
-
-**Defect 1 -- the denominator counted the wrong population.** All 1,233 cloud-only accounts
-were surveyed. Sampling the no-match class shows most of them are not people and were never in
-scope: site-and-room objects, lab equipment, Teams call queues, availability/booking pages,
-and `package_<guid>` service objects. Owner ruling 2026-09-11: *"the only things in-scope here
-are CLD admin accounts that need to be reset. customer accounts, conf rooms, etc., are not
-in-scope for this."* Coverage over furniture answers a question nobody asked.
-
-**Defect 2 -- the comparison could only match one naming era.** Detailed under **The
-derivation** above. A cloud account whose local part is `first.last` cannot match the person
-whose on-premises UPN local part is the same `first.last`, because the filter compares that
-key against the *whole* on-premises UPN. Every account from that era was structurally
-unmatchable, which is the bulk of the 1,100.
-
-Two script defects were also found and are fixed (`2426620`, `8feb993`): a strict-mode throw on
-any account whose lookups all succeeded, and an array-nesting bug that collapsed N candidate
-keys into one space-joined key matching nobody. The latter produced an earlier 0.0% run that
-was reported as a defect rather than a finding, which is the only reason 9.6% was believed
-enough to dig into.
-
-**A re-slice of the same CSV is available and is deliberately not quoted as a result.** Cutting
-the 1,233 down to display-name-shaped-like-a-person puts coverage near 48%. That figure is
-produced by exactly the string-matching this revision rejects, so it is an indication that the
-population is smaller and the rate much higher -- not a number to design against.
-
-### What S0 measures on the next run
-
-1. **Scope by directory role, not by name.** The in-scope population is cloud-only accounts
-   that hold a directory role, are PIM-eligible for one, or belong to a role-assignable group.
-   Rooms, queues, booking pages and customer accounts hold none of these. The property is
-   asserted by the tenant, discoverable from Graph, and independent of both naming and this
-   environment.
-
-   This is a **survey** change and not a runtime gate. The module still resets whatever account
-   the operator names; a "the target is an admin" permission tier was rejected in the first
-   draft as decoration and stays rejected. What the scope fixes is the denominator, and the
-   denominator is the whole point of S0.
-
-   **Stated rather than assumed:** `transitiveMemberOf/microsoft.graph.directoryRole` returns
-   *active* assignments only (see **The PIM trap**), so an account that is only PIM-eligible
-   reads as holding nothing and would be scoped out. Reading eligibility needs
-   `RoleEligibilitySchedule.Read.Directory` and Entra ID P2. If the grant allows it the survey
-   reads both and reports them separately; if it does not, the survey reports the active-only
-   figure and says on its face that eligible-only accounts are undercounted. It never presents
-   the smaller population as though it were the whole one.
-
-2. **Report per source, not as one percentage.** For each in-scope account: which of the three
-   sources answered, what each one answered, and whether they agreed. A single rate cannot
-   distinguish "this tenant cannot support the design" from "this script compares the wrong
-   strings", and that ambiguity is what cost the first run.
-
-3. **Report the unresolved classes with samples**, as before, plus a new class for
-   source disagreement.
-
-The threshold stays the owner's to set, against the in-scope population and with the
-per-source breakdown in hand.
-
-### The pre-run read: proposed, then cancelled
-
-A separate bounded Graph pass was proposed here to count how many in-scope accounts populate
-`otherMails`, `employeeId` and `mailNickname`, on the reasoning that this decides whether
-source 1 is worth building.
-
-**Cancelled 2026-09-11, before it ran.** The owner answered the `otherMails` half directly (it
-is empty; see **The derivation**), which struck that arm. The remaining half -- is `employeeId`
-populated -- is reported by the rebuilt survey itself, which reports per source. Spending an
-owner approval to learn something the next authorised run reports anyway is exactly the waste
-the one-approval-one-run rule exists to prevent.
-
-Recorded rather than deleted so the reasoning is not re-proposed by the next reader.
-
-**No slice after S0 starts until the owner has seen the result and said go.**
+The password is mailed rather than shown. Owner ruling 2026-09-10: *"those passwords should be
+emailed to the owner of the cloud account's @analog.com email address, not displayed in the
+UI."*
+
+The original justification was stronger than the one that survives. It was that an operator who
+never sees the password cannot take over the account they reset, which made the delivery model
+a genuine control. With the destination now typed by the operator (see **Where the password
+goes**), that is no longer true, and mailing rather than showing is worth keeping for three
+smaller reasons rather than one large one:
+
+1. The password reaches the owner without a second manual step, which is the point of the
+   module -- the current process is L2 relaying it by phone.
+2. It keeps the credential out of the operator's screen, session and shoulder-surfing range in
+   the ordinary case, where the destination is somebody else.
+3. It gives the audit record a concrete destination to carry, which an on-screen reveal does
+   not.
+
+None of those is a fence. The fences are in **Where the password goes**.
+
+## Where the password goes
+
+**The operator names the destination.** They type an address on the reset form; the generated
+password is mailed there and is not shown on screen on the ordinary path.
+
+This replaces a derivation. The first five revisions computed the account's on-premises owner
+fresh at each reset from three agreeing sources, and mailed the password to that person so the
+operator never learned it. The S0 survey measured that derivation against the live tenant: it
+resolved **80 of 172 in-scope accounts, 46.5%**. Owner ruling 2026-09-11, ending the approach:
+*"if we cannot get a 100% working match, then matching is off the table."* The numbers, the
+failure analysis and the two mechanical fixes that were on the table are recorded in
+`.agents/decisions.md` (2026-09-11, "Owner derivation is abandoned").
+
+### The security property this trades away
+
+The superseded design's argument was that mailing the password somewhere the operator does not
+control makes resetting a Global Administrator useless to them -- a nuisance to the owner
+rather than a takeover. **That argument no longer holds, and no sentence in this plan should be
+read as if it does.** An operator who types the destination can type their own address and
+obtain the credential of any account in the tenant.
+
+What bounds the risk instead:
+
+1. **Section access.** `CloudPasswordReset` is fail-closed and held by a named set of people.
+   It is the only preventive control left, so it carries weight it did not carry before.
+2. **The audit record.** The destination address is a required field on every event, so a
+   self-directed reset is a visible fact in Splunk rather than an inference.
+3. **The administrator alert.** Every attempt mails the administrators naming the target, the
+   operator, the ticket and the destination address, so the fact surfaces without anyone
+   running a query. Owner ruling 2026-09-11: *"destination email needs to be in the logs and in
+   the admin alert email."*
+
+These are detection and accountability, not prevention. The owner made that trade on the
+record, against a current process -- L2 telephoning L3 -- that has neither property and is
+slower. It is stated here because a reviewer who finds the old no-visibility sentences in git
+history would otherwise read this as a regression rather than a decision.
+
+### What is not built
+
+Nothing derives, stores, suggests or validates an owner. There is no owner map (rejected
+2026-09-10: *"cannot store it ... we're not going to create an instantly stale map"*), no
+derivation, no coverage survey, and no correctness check on the typed address beyond syntactic
+validity and a non-empty value. The module cannot know who owns a cloud-only account and no
+longer pretends to.
+
+`employeeId` is not consulted. It is the strongest identifier available and is populated
+on-premises, but on **0 of 172** cloud accounts, and the remedy -- stamping it onto several
+hundred CLD accounts -- was refused by the owner. Recorded so it is not rediscovered and
+proposed a third time.
+
+`tools/CloudAccountOwnerDerivation.psm1`, `tools/Get-CloudAccountOwnerCoverage.ps1` and
+`tests/ps/CloudAccountOwnerDerivation.Tests.ps1` were built for the abandoned design and are
+deleted; git history keeps them if the question is ever reopened.
 
 ## Scope
 
@@ -464,23 +153,21 @@ role-holding admin and tactical accounts. One target per operation.
 OUT: synced accounts (mastered on-premises -- L2 already resets those); guest / external
 (`userType` `Guest`); MFA methods (that is `MfaReset`); enabling, unblocking or unlocking an
 account; any `passwordProfile`-adjacent property other than the password itself; bulk reset;
-any operator-supplied destination address; any stored owner mapping.
+any stored owner mapping; any derivation, lookup or validation of who owns the target account.
 
 **Self-reset is structurally impossible and needs no guard.** The app authenticates operators
 against on-premises AD; every target here is cloud-only by definition. The two populations
 cannot intersect, so an operator cannot be their own target. Recorded explicitly because a
 reviewer reading only the Graph surface will otherwise raise it (it was raised once already).
 
-**The related case -- an operator resetting a cloud account whose derived owner is
-themselves -- is also not a guard.** Codex raised it over `7c47c3c` (finding cpr-1,
-`.agents/review/cpr-1.contested.md`); it is declined. If the derivation resolves to the
-operator, the operator already holds that cloud account, so mailing them its new password
-grants them nothing they did not have. The `ValidateSelfGrantAsync` precedent
-(`Services/PermissionValidator.cs:280`) blocks giving yourself rights over **someone else's**
-mailbox, which is an escalation; this is not. The only real hazard in the neighbourhood is a
-derivation that resolves to the wrong person, and that hazard is identical whoever clicks the
-button -- it is handled by corroboration and by the refuse-on-ambiguity rule above, not by a
-self-check.
+**The related case -- an operator directing the password to their own mailbox -- is now
+possible by construction, and is not guarded.** Codex raised its narrower ancestor over
+`7c47c3c` (finding cpr-1, `.agents/review/cpr-1.contested.md`) when the destination was
+derived; the derivation is gone and the question is no longer about derivation at all. There is
+no check that can distinguish "the operator is legitimately the recipient" from "the operator is
+helping themselves", because both are the operator typing an address they control. The answer is
+the audit record and the administrator alert, both of which carry the destination. See **Where
+the password goes**.
 
 ## The Graph surface, and why the obvious API is the wrong one
 
@@ -602,16 +289,17 @@ GranularPermissions = [
 `MailboxPermissionsOnPrem` / `MigrationCreate` granular entries
 (`Modules/ModuleCatalog.cs:154`, `:210`).
 
-- **`CloudPasswordReset`** -- reset an account whose owner resolves. The password is emailed
-  and never shown. This is the L2 permission.
-- **`CloudPasswordResetReveal`** -- additionally proceed when the owner does **not** resolve,
-  and see the password once on screen. This is the exception path for ownerless automation
-  identities and accounts whose naming defeats the derivation. It should be held by a handful
-  of people, not by L2 as a body.
+- **`CloudPasswordReset`** -- reset the account and mail the password to the address the
+  operator supplied. The password is not shown. This is the L2 permission.
+- **`CloudPasswordResetReveal`** -- additionally see the password once on screen instead of
+  mailing it, for targets where no mailbox can receive it.
 
-The reveal permission is not a "target is an admin" tier and does not repeat that mistake: it
-is keyed on the delivery path, which genuinely varies per target and is not tripped by nearly
-every operation.
+**D4 (open) questions whether the second permission survives.** Its former justification was
+that an operator holding only the main permission could not obtain the password by any route.
+That is no longer true: the destination is typed. A scarce permission guarding an outcome the
+main permission already reaches is the `idm-3` decorative-control class this plan names
+elsewhere. See **Owner decisions**. The descriptor below still carries it; if D4 rules it out,
+S5 drops the granular entry and the reveal path with it.
 
 The fences that bind, in evaluation order:
 
@@ -622,7 +310,7 @@ The fences that bind, in evaluation order:
    `"CloudPasswordResetReveal"` before any reveal, mirroring
    `Components/Pages/MfaReset.razor:250-258`. The `@attribute [Authorize(Policy = ...)]` on
    the page is navigation control, not the gate (Constitution: UI hiding is not security).
-3. **Delivery** -- an unresolved owner refuses unless the reveal permission is held.
+3. **A non-blank, syntactically valid destination address** -- or the reveal permission.
 4. **Protected principals** -- below.
 
 ## Protection, and the gap this population sits in
@@ -769,14 +457,21 @@ password nobody knows.
 
 **Pre-write gates -- all of these are checked before the PATCH:**
 
-1. The owner resolved, or the reveal permission is held.
+1. A destination address was supplied and is non-blank and syntactically valid, **or** the
+   reveal permission is held and the operator chose the reveal path.
 2. `EmailService.UserNotificationsEnabled` (`Services/EmailService.cs:438`) is **true** when
    the run depends on email. This is a deployment-wide switch that outranks anything the
    module wants, and its own remark warns that a caller which cannot say so on screen has
    built a decorative control (`:431-437`). Here it is worse than decorative: a silent
    suppression would lock the owner out of their account. If it is off, the reset is refused
    before the write, naming the switch.
-3. A non-blank destination address on the resolved AD user.
+
+**The destination is not validated beyond its syntax.** The module has no way to know whether
+the address belongs to the account's owner, and any check it invented would be the derivation
+this design just abandoned. Two consequences are accepted deliberately: a typo mails the
+password to a stranger, and a deliberate self-addressing succeeds. Both are visible in the audit
+event and the administrator alert, which is the whole of the control -- see **Where the password
+goes**. Validation is a format check only (`MailAddress` parse), never a directory lookup.
 
 **Post-write send failure -- fail closed, no reveal.** Owner ruling 2026-09-10: *"if the send
 itself fails, then fail closed."* If the PATCH succeeds and the SMTP send then fails, the
@@ -834,8 +529,11 @@ one and hitting it on a client that cannot service the change is locked out.
 - **Administrator email** on every real attempt via `Email.SendAdminNotificationAsync`
   (`Services/EmailService.cs:39`, `virtual` and test-seamable), armed only after the ticket
   and authorization pre-gates pass -- the `notifyAdmins` pattern at
-  `MfaReset.razor:234-260`. It names the target, the operator, the ticket and whether the
-  password was revealed. It never contains the password.
+  `MfaReset.razor:234-260`. It names the target, the operator, the ticket, **the destination
+  address the password was sent to**, and whether the password was revealed instead. It never
+  contains the password. The destination is a required element of this mail, not an optional
+  detail: owner ruling 2026-09-11, and it is one of the two places a misdirected reset becomes
+  visible without anyone running a query.
 - **The new password appears in exactly two places: the PATCH body and the owner's email.**
   Not the audit event, not `extra`, not the administrator email, not the operation trace, not
   a log line (Constitution, Credential Isolation: *"Never log secret values ... passwords
@@ -884,18 +582,23 @@ These ride in `extra`:
 | `targetObjectId` | string | The Entra object id (GUID). Stable across renames, unlike the UPN. |
 | `targetCloudOnly` | bool | Always `true` on a successful reset; `false` on a synced-account refusal. |
 | `targetDirectoryRoles` | array of string | Directory role display names held by the target; `[]` when none, never null and never omitted. This is the field that answers "who reset a Global Admin, and when". |
-| `ownerResolution` | string | `Resolved` \| `Unresolved` \| `Ambiguous` \| `Unavailable` |
-| `ownerSam` | string or null | The resolved owner's `sAMAccountName`; null unless `ownerResolution` is `Resolved`. |
-| `ownerMail` | string or null | The address the password was sent to; null unless it was sent. Derived, never operator-supplied. |
+| `destinationAddress` | string or null | The address the operator supplied, recorded lowercased, whether or not the send then succeeded; null only on the reveal path and on refusals that happened before the field was read. **This is the field that answers "where did the password actually go".** Owner ruling 2026-09-11: required, not optional. |
 | `forceChangePasswordNextSignIn` | bool | Exactly what went in the PATCH body, under the Graph property's own name so the audit and the API cannot drift apart. |
 | `passwordDelivery` | string | `Sent` \| `SendFailed` \| `Revealed` \| `NotAttempted` |
 | `revealUsed` | bool | True only on the reveal path. Redundant against `passwordDelivery` by design: an alert on a single boolean is harder to get wrong than one on a string. |
-| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `OwnerUnresolved`, `OwnerAmbiguous`, `DirectoryUnavailable`, `NoOwnerMailbox`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
+| `refusalReason` | string or null | Null on success. Otherwise one of: `SyncedAccount`, `GuestAccount`, `DestinationMissing`, `DestinationMalformed`, `NotificationsDisabled`, `TicketInvalid`, `TicketValidatorUnavailable`, `ProtectedPrincipal`, `ProtectionCheckFailed`, `PermissionDenied`, `GraphReadFailed`, `PasswordPolicyRejected`, `GeneratorFailed`. |
 | `protectedPrincipalServiced` | string or null | The shared helper's note (`ProtectedPrincipalServicing.Extra`), unchanged -- it is prose, and it is the one field that stays prose because the shared helper owns its shape. |
 
 Refusal events carry the **same** field set as successes, so one search over
 `category=CloudPasswordReset` returns uniform records and a missing field always means a bug
 rather than a branch that did not bother.
+
+**The "operator mailed it to themselves" alert is a Splunk query, not an app field.** `user` and
+`destinationAddress` are both on every event, and correlating an operator to their own mail
+address is an AD lookup Splunk already has. The module does not compute the comparison itself: it
+would need the operator's mail attribute, which the app does not read today, and a false result
+that actually meant "could not check" is the failure mode this field table exists to prevent.
+Stated so the absence reads as a decision rather than a gap.
 
 **Beyond this module.** Existing modules were not written against these rules and some pack
 strings the way IntuneDevices does. Bringing them into line is a separate stream with its own
@@ -910,11 +613,38 @@ it's using, not the code."* An operator-typed password was never compatible with
 the operator would know it by definition and the reveal permission would mean nothing. Spec in
 **The generated password**, above.
 
-### D3 -- OPEN, after S0: the corroboration tolerance
+### D2 -- SETTLED 2026-09-11: the operator names the destination
 
-S0 reports how many accounts fail on name corroboration specifically. If that class is large
-and its samples are benign (nicknames, maiden names, initials), the rule needs loosening; if
-it is small, it stays strict. Deliberately not guessed before the data exists.
+The derivation is abandoned at 46.5% measured coverage. Full record in `.agents/decisions.md`
+(2026-09-11) and in **Where the password goes**.
+
+### D3 -- WITHDRAWN 2026-09-11: the corroboration tolerance
+
+Asked how tolerant the name-corroboration rule should be. There is no corroboration rule any
+more. Kept as a numbered heading so the D-numbers in git history still resolve.
+
+### D4 -- OPEN, blocks S5: does the reveal permission still fence anything?
+
+**Context.** `CloudPasswordResetReveal` was scarce because an operator holding only the main
+permission had no route to the password -- the destination was derived and they could not
+influence it. Now they type it, so any operator can obtain any password by addressing it to
+themselves. The reveal permission currently guards an outcome the main permission already
+reaches.
+
+**Action.** Either (a) drop the granular permission and the on-screen reveal entirely, leaving
+one permission and one delivery path; or (b) keep it, accepting that it is friction and a
+distinct audit signal rather than a control, and say so in its description so nobody later
+mistakes it for a fence.
+
+**Consequence.** (a) is simpler, removes a code path, and removes the temptation to treat a
+decorative control as a real one -- the `idm-3` class this repo has hit three times. It costs
+the ability to reset an account that genuinely has nowhere to mail to; the operator would have
+to address the mail to themselves, which works and is audited, but reads worse. (b) keeps that
+path clean at the cost of a permission whose description has to admit it fences nothing.
+
+**Recommendation: (b), with an honest description.** The reveal path is the correct answer for a
+target with no human owner at all, and folding it into "address it to yourself" makes the audit
+record less truthful, not more. But it must stop being described as a security boundary.
 
 ## External prerequisites
 
@@ -936,7 +666,7 @@ Outside the codebase; neither blocks the build, both block the first live call.
 ```
 Id = "CloudPasswordReset"
 DisplayName = "Cloud Password Reset"
-Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to the account owner."
+Description = "Reset the password of an Entra ID cloud-only account that has no on-premises Active Directory object. The new password is emailed to an address the operator supplies and is recorded in the audit log."
 Route = "cloud-password-reset"
 IconCss = "bi bi-key-fill"
 Category = "Identity & Access"
@@ -966,41 +696,13 @@ Each slice compiles and passes `dotnet test` on its own commit. Service first:
 matching page, so a descriptor-only commit fails the suite -- a mistake this repo has already
 made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
 
-- **S0 -- the survey. Gates everything after it.**
-  `tools/Get-CloudAccountOwnerCoverage.ps1` plus Pester coverage of the candidate-derivation
-  function in `tests/ps/`. Read-only. Owner reviews the hit rate and rules before S1 starts.
-- **S1 -- owner resolution in C#.** `Services/CloudAccountOwnerResolver.cs`: the three sources
-  in **The derivation**, run independently and required to agree; ONE exact-match query per
-  checked domain carrying every source's terms OR'd (see **Cost**), not one call per key; the
-  aggregation table above; name corroboration; and a status-bearing result distinguishing
-  Resolved / Unresolved / Ambiguous / Unavailable. Pure logic over a seamable
-  `ADDirectorySearchService`; tests for every row of that table, including the
-  two-candidates-one-user case, the two-sources-disagree case, and the
-  `Unavailable`-is-not-absence case.
-  **The three missing AD fields land here.** `GivenName` and `Surname` (corroboration) and
-  `Enabled` (the leaver rule) are added to the User branch of `ValidationProperties`
-  (`ADDirectorySearchService.cs:407-414`) and to `ADSearchResult` as optional parameters with
-  null defaults, so existing construction sites are unaffected (the pattern `ObjectSid`
-  already uses, `:819-821`). A test must assert the User branch actually requests all three:
-  without it, corroboration passes against a mock and silently corroborates nothing against a
-  real directory.
-  **So do the missing filter arms.** `BuildExactMatchFilter` (`:432`) must be able to
-  compare a candidate against `displayName`, against `userPrincipalName`/`proxyAddresses`
-  by local part (`<key>@*`), and against all three id attributes (`employeeID`,
-  `employeeNumber`, `extensionAttribute1`) for source 1; those four plus `proxyAddresses`
-  must be added to the requested properties.
-  Same test requirement and same failure mode: without them the affected sources return a clean
-  `NotFound` and the resolver looks like it works. A test must also cover the id arm matching
-  more than one user: it is discarded as non-evidence, NOT escalated to `Ambiguous`, or a
-  placeholder value in one field takes out every account that carries it.
-  **`manager` and `otherMails` are not among them.** `manager` resolves the owner's manager, not
-  the owner, and in an agreement-based design a wrong arm is worse than a missing one - it
-  manufactures corroboration. `otherMails` is Entra's recovery address, not the mailbox SMTP,
-  and is empty in this tenant. Both owner rulings 2026-09-11. Do not reintroduce either.
-  **`ValidateExists`'s signature does not survive this slice.** It takes one key and returns one
-  verdict, which forces a per-key loop and makes the resolver SLOWER than the design it
-  replaces. S1 adds a term-set overload returning the matched rows; the per-key loop is the
-  wrong shape, not merely a slower one. Owner 2026-09-11: *"it's already too slow."*
+- **S0 and S1 are deleted.** S0 was the owner-coverage survey; S1 was the C# owner resolver.
+  Both existed to derive an owner and neither has a subject any more. The survey's tooling is
+  removed from the repo in the same commit as this revision. **The three `ADSearchResult` /
+  `ValidationProperties` field additions go with them** -- `GivenName`, `Surname` and `Enabled`
+  were needed for corroboration and the leaver rule, and nothing else in this module reads a
+  directory. That removes the shared-infrastructure change to `ADSearchResult`; the base app
+  version bump now rests solely on the `EmailService` method added in S4.
 - **S2 -- the password generator.** `Services/PasswordGenerator.cs` plus the embedded word
   list: the algorithm in **The generated password**, implemented in C# from the method, not
   ported from the Rust. Standalone and pure apart from the CSPRNG, so it is testable on its
@@ -1021,7 +723,9 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   `IsAvailable` (the `MfaResetService.cs:20-46` shape), target resolve, the synced and guest
   refusals, the display-only role read, the `ITicketValidator` gate, the generated password
   from S2, the change-at-next-sign-in flag taken as a parameter (defaulting to `false`, never
-  read from config), and the PATCH returning a status-bearing result. No descriptor, no page.
+  read from config), the destination address taken as a required parameter with no default and
+  format-validated here as well as in the page (server-side is the gate; the page is
+  convenience), and the PATCH returning a status-bearing result. No descriptor, no page.
   Tests assert the flag reaches the request body unaltered in both states. Tests for
   every refusal path and for Known Failure Class 3: a failed Graph read must never read as
   "not synced" or "no roles". **The Entra allowed-character check lands here**: confirm
@@ -1032,25 +736,30 @@ made twice (`docs/RiskyUsersModule-Plan.md`, Revision 2026-09-01).
   was actually done. Base app version bump lands here. Tests including the
   `UserNotificationsEnabled`-off case returning false, and one per flag state asserting the
   body promises a change prompt only when the flag is set.
-- **S5 -- descriptor and read-only page.** Catalog entry with both permissions, and
+- **S5 -- descriptor and read-only page. Blocked on D4.** Catalog entry, and
   `Components/Pages/CloudPasswordReset.razor` with search plus a preflight panel: resolved
-  identity, cloud-only yes/no, roles held, protection status, and **who the password would go
-  to -- display name and resolved address, rendered read-only, with no input control and no
-  alternative to pick from**. The one operator input on the panel is the **change at next
-  sign-in** checkbox, unchecked by default, with a line of help text saying an account that
-  cannot service a change prompt will be unable to sign in. No write path. Catalog tests, plus
-  a test that the panel emits no editable field bound to the destination and that the checkbox
-  renders unchecked on first load.
-- **S6 -- the write.** The server-side authorization re-checks (both permissions), the full
-  protection flow including the unresolved branch with a real `EntraObjectId`, the ticket
-  gate, the pre-write delivery gates, the PATCH, `400` surfaced as a policy rejection, the
-  send, the fail-closed handling of a send failure (password discarded, nothing displayed,
+  identity, cloud-only yes/no, roles held, protection status. Two operator inputs: the
+  **destination address**, a required text field with no default, no pre-fill, no suggestion
+  and no picker -- the module has nothing to suggest from and an autofilled address would be
+  read as a verified one; and the **change at next sign-in** checkbox, unchecked by default,
+  with help text saying an account that cannot service a change prompt will be unable to sign
+  in. The panel states, in plain words next to the address field, that the address is recorded
+  in the audit log and mailed to the administrators. No write path in this slice. Catalog
+  tests, plus tests that the address field starts empty, that submitting it blank or malformed
+  is refused client- and server-side, and that the checkbox renders unchecked on first load.
+  D4 decides whether the descriptor carries one permission or two.
+- **S6 -- the write.** The server-side authorization re-checks, the full protection flow
+  including the unresolved branch with a real `EntraObjectId`, the ticket gate, the pre-write
+  delivery gates, the PATCH, `400` surfaced as a policy rejection, the send, the fail-closed
+  handling of a send failure (password discarded, nothing displayed,
   `CloudPasswordReset_DeliveryFailed` audited), `LogModuleAction` for each outcome with the
-  serviced note **and the change-at-next-sign-in choice** in `extra`, the administrator email
-  (which also states the choice), and the `ModuleConfig.razor` servicer opt-in entry **in this
-  same commit**. The checkbox is carried from the page through the service to the PATCH body
-  and to both emails; a test follows one value the whole way rather than checking each hop in
-  isolation.
+  serviced note, **the destination address** and the change-at-next-sign-in choice in `extra`,
+  the administrator email (which states both the destination and the choice), and the
+  `ModuleConfig.razor` servicer opt-in entry **in this same commit**. Two values are each
+  traced end to end by a single test rather than hop by hop: the checkbox from page to PATCH
+  body to both emails, and the destination address from the page to the send, to the audit
+  `extra`, and to the administrator email. **A refusal must still carry the destination it was
+  given**, so a blocked attempt is as searchable as a completed one.
 - **S7 -- records.** README section, plan status and traceability, `.agents/state.md`,
   `.agents/token-log.md`.
 
@@ -1064,16 +773,19 @@ Automated, per `.agents/repo-guidance.md`:
 - `dotnet test ExchangeAdminWeb.slnx`
 - `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`
 - `git diff --check HEAD`
-- `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` -- S0 adds a `.ps1`,
-  so unlike earlier drafts this stream **is** in the PowerShell gate.
+- `Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps` -- the S0 tooling that
+  put this stream in the PowerShell gate is deleted, so from the sixth revision the stream
+  ships no `.ps1` and the gate is a no-op for it. Run it anyway; the deletion itself has to
+  leave the suite green.
 - Every new test mutation-probed: revert the guard, confirm the specific test fails, restore,
   touch the file so MSBuild rebuilds, confirm green.
 
 Manual, needing a deployed instance and the app registration -- none run at implementation
 time:
 
-1. A cloud-only account whose owner resolves resets; the owner receives the password; the
-   operator's screen shows the destination address read-only and no password.
+1. A cloud-only account resets; the address the operator typed receives the password; the
+   operator's screen shows no password. The audit event and the administrator email both carry
+   that address, spelled exactly as typed apart from case.
 2. Both settings of the change-at-next-sign-in checkbox, on real accounts. Left unchecked
    (the default): sign-in succeeds with **no** change prompt, including on a path that could
    not service one, and the password stays as issued. Ticked: sign-in does prompt for a
@@ -1082,10 +794,12 @@ time:
 3. A **synced** account is refused at preflight, naming the on-premises path, with no Graph
    write attempted.
 4. A guest account is refused.
-5. An account whose owner does not resolve is refused for a main-permission-only operator, and
-   proceeds with an on-screen reveal for a reveal-permission operator. Both audited, the
-   second distinctly.
-6. An ambiguous derivation is refused for **both** tiers.
+5. A blank destination is refused before any Graph write, and so is a malformed one
+   (`not-an-address`, `a@`, `a b@c.com`). The refusal is audited with `refusalReason`
+   `DestinationMissing` or `DestinationMalformed`, and the account's password is unchanged.
+6. Subject to D4: with the reveal permission held and the reveal path chosen, the password
+   shows once on screen, no mail is sent, and `CloudPasswordReset_Revealed` is audited
+   distinctly with a null `destinationAddress`.
 7. With `Email:NotifyUsersOnPermissionGrant` off, an email-path reset is refused before the
    write, naming the switch -- the account's password is unchanged afterwards.
 8. A protected principal with an Exchange recipient is refused and the refusal is audited; an
@@ -1113,13 +827,21 @@ time:
 - AC1 A target with `onPremisesSyncEnabled` true, or whose sync status could not be read, is
   refused.
 - AC2 The reset uses `PATCH /users/{id}` `passwordProfile`; `resetPassword` is never called.
-- AC3 Owner resolution uses `ValidateExists`, never `Search`; `Unavailable` and `Ambiguous`
-  refuse for every tier; two candidates resolving to one user count as one match.
-- AC4 The destination address is always **derived** and never accepted, suggested, chosen from
-  a list, or rendered editable anywhere in the module. It is displayed read-only alongside the
-  owner's display name so the operator can sanity-check the derivation.
+- AC3 The destination address is **operator-supplied and required** on the email path. The
+  module derives, looks up, suggests, pre-fills, defaults and autocompletes nothing: no owner
+  query runs, and a search of the module's source for an owner-resolution call returns
+  nothing. A blank or syntactically malformed address refuses **before** the PATCH, with
+  `refusalReason` `DestinationMissing` or `DestinationMalformed`. Validation is syntactic only
+  -- the module never asserts the address belongs to the target account's owner.
+- AC4 The destination address reaches **both** records. Every `CloudPasswordReset` audit event
+  on a path that read the field carries `destinationAddress` lowercased -- successes, delivery
+  failures and post-read refusals alike -- and the administrator alert email names the same
+  address in its body. A test asserts the two carry the same value for one reset, and that a
+  refusal after the field was read still carries it. Owner ruling 2026-09-11: this is required,
+  not optional.
 - AC5 An operator without `CloudPasswordResetReveal` never sees the password, on any path. A
-  post-write send failure discards it rather than displaying it.
+  post-write send failure discards it rather than displaying it. (Subject to D4: if the reveal
+  permission is dropped, the second sentence stands for every operator and the first is void.)
 - AC6 `UserNotificationsEnabled` false refuses an email-path reset **before** the PATCH.
 - AC7 The password appears in no audit event, administrator email, log or trace -- enforced by
   a source-text test, not by inspection.
@@ -1167,8 +889,10 @@ time:
    ever added this becomes the dominant risk, and the delivery model makes it worse, not
    better.
 3. **Fail-closed authorization** -- section access, both server-side re-checks, the ticket
-   gate, owner resolution and protection all deny on failure rather than defaulting
-   permissive. The role read is not in this list: it is display-only and gates nothing.
+   gate and protection all deny on failure rather than defaulting permissive. Owner resolution
+   was in this list and is gone with the derivation; the destination check that replaces it is
+   a format check, not an authorization gate, and must not be described as one. The role read
+   is not in this list either: it is display-only and gates nothing.
 4. **Stale references** -- every file and line cited in this plan was read on 2026-09-10.
 
 ## Review log
@@ -1178,8 +902,8 @@ c493b2a..7c47c3c: Acceptable with changes` -- 2026-09-10, three material changes
 
 | # | Finding | Disposition |
 |---|---|---|
-| 1 | **Self-Owned Cloud Account Gap** -- an operator whose own on-prem account is the derived owner receives the password under the main permission. | **Declined**, owner challenge 2026-09-10. No escalation: the operator already holds that account. Record: `.agents/review/cpr-1.contested.md`. The self-reset section now carries the reasoning. |
+| 1 | **Self-Owned Cloud Account Gap** -- an operator whose own on-prem account is the derived owner receives the password under the main permission. | **Declined**, owner challenge 2026-09-10. No escalation: the operator already holds that account. Record: `.agents/review/cpr-1.contested.md`. **Moot since 2026-09-11:** there is no derived owner, so the narrow case the finding describes no longer exists -- but the general case it pointed at (an operator directing the password somewhere they control) is now reachable for *any* target, not just their own. That is the trade recorded in **Where the password goes**, not a residue of this finding. |
 | 2 | **Ungated Delivery-Failure Reveal** -- displaying the password on a post-write send failure contradicts the no-visibility model and AC7. | **Upheld and fixed.** Owner ruling 2026-09-10: *"if the send itself fails, then fail closed."* The password is discarded, not shown, to any tier; `CloudPasswordReset_DeliveryFailed` is audited; downstream (post-handoff) delivery is out of scope. |
-| 3 | **Owner Corroboration Lacks Data Plumbing** -- `GivenName`/`Surname` are not in `ValidationProperties` or `ADSearchResult`. | **Upheld and fixed.** Verified true. Three fields, not two: `Enabled` was already named. Both the derivation section and S1 now require them. |
+| 3 | **Owner Corroboration Lacks Data Plumbing** -- `GivenName`/`Surname` are not in `ValidationProperties` or `ADSearchResult`. | **Upheld and fixed, then made moot 2026-09-11.** The finding was correct and the plumbing was specified. The derivation it served is abandoned, so S1 and the field additions are deleted and nothing in this stream now reads `GivenName`, `Surname` or `Enabled`. The finding is kept here so the git history of the plumbing has a reason attached. |
 
 Two owner rulings the same day are folded in above and recorded in `.agents/decisions.md`.

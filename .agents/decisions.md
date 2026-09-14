@@ -5,6 +5,48 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-11 - Owner derivation is abandoned; the operator names the destination
+
+Status: Active. Scope: `CloudPasswordReset`. **Supersedes** the "Searched domains are an
+operator setting" entry below (its subject no longer exists), the derived-destination rule in
+`docs/CloudPasswordReset-Plan.md`, plan decision D3, and the S0 survey gate.
+
+The plan derived the on-premises owner of a cloud-only account at each reset and mailed the
+password there, so the operator never learned it. The S0 survey measured how often that works:
+**80 of 172 in-scope accounts, 46.5%**. The misses are not wrong matches -- all 84 returned zero
+directory rows -- and they split along naming eras (`Last, First` resolves 86%, `First Last`
+18%, single-token 0%). Two mechanical fixes were identified (underscore-to-dot UPN separator,
+flipped display-name order) with a ceiling near 84%.
+
+Owner ruling, verbatim: *"the way this works now is L1 gets the call, L2 gets the escalation,
+and L2 reaches out directly to L3 to do the change. that's slow and bad process. this tool
+needs to make it fast and correct. everything is logged, users are notified, and security in
+the app controls access. we are overcomplicating this. if we cannot get a 100% working match,
+then matching is off the table."*
+
+`employeeId` was dropped as a source in the same ruling. It is the strongest available
+identifier and is populated on the on-premises side, but on **0 of 172** cloud accounts, and
+the remedy -- stamping it onto several hundred CLD accounts -- was already refused.
+
+**What replaces it.** The operator types the destination address on the reset form. The
+password is generated, PATCHed, and mailed there; the operator does not see it on the ordinary
+path. The destination address is a required field in the audit event and in the administrator
+alert email, so a wrong or self-directed address is visible after the fact rather than
+invisible. Owner, same day: *"destination email needs to be in the logs and in the admin alert
+email."*
+
+**The security property that was traded away, stated plainly so no later reader mistakes it
+for an oversight.** The old design's claim was that resetting even a Global Administrator gave
+the operator nothing, because the password went somewhere they did not control. That claim is
+gone: an operator who can type the destination can type their own address. What now bounds the
+risk is section access (who holds the permission at all), the audit record, and the
+administrator notification -- detection and accountability, not prevention. The owner made this
+trade knowingly and on the record; the process it replaces (L2 phoning L3) has neither
+property.
+
+Consequence left open in the plan as D4: the separate `CloudPasswordResetReveal` permission was
+justified by the operator being unable to obtain the password otherwise. It no longer is.
+
 ### 2026-09-11 - Searched domains are an operator setting, not a hard-coded scope
 
 Status: Active. Scope: `CloudPasswordReset` owner lookup; the reasoning is app-wide. Supersedes

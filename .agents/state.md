@@ -6,214 +6,70 @@ what is live: current versions, in-flight work, what to do next, blockers, and o
 
 ## Now
 
-- **CLOUD PASSWORD RESET: S0 RUN ONCE 2026-09-11, RESULT VOID, DERIVATION REBUILT, RE-RUN GATED.**
-  `docs/CloudPasswordReset-Plan.md`, Status In progress. S0 is a hard gate. The survey ran once
-  under one owner approval and returned **9.6%** owner coverage (118 of 1,233). That number is
-  **not a measurement of the tenant** and must never be quoted as one: it counted the wrong
-  population (rooms, booking pages, call queues and service objects, not CLD admin accounts) and
-  used a comparison that could only match one naming era. Both defects, and two real script bugs
-  found alongside them, are written up in the plan's **First run, and what it found**. Owner
-  ruling 2026-09-11: *"no re-run until you have a better plan."* The plan revision that answers
-  that is committed (`1903c51`). **No re-run, and no slice after S0, until the owner has seen an
-  acceptable number.**
-  New module `CloudPasswordReset` so L2 can
-  reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
-  therefore unreachable from existing AD tooling. Owner request 2026-09-10; then *"plan it,
-  review the plan with codex, then tell me where it stands"*.
-  **The design, after four owner rulings that each killed a previous premise:** the password
-  is generated server-side, emailed to the account **owner** at their `@analog.com` mailbox,
-  and **never shown to the operator** - owner ruling: *"we need reliable email notification
-  for users and admins and no visibility of the password for the tech making the change
-  unless we gate that with another permission level."* Two fail-closed permissions:
-  `CloudPasswordReset` (reset an account whose owner resolves) and `CloudPasswordResetReveal`
-  (proceed when the owner does not resolve, and see the password once on screen).
-  **Killed premises, do not reintroduce:** (a) a "target is an admin" permission tier -
-  decorative, because *"there are almost no non-admin accounts in-scope for this"*; (b) an
-  invented `BlockedDirectoryRoles` config field, which I fabricated and the owner never asked
-  for; (c) a **stored** owner-mapping table - owner: *"cannot store it. we're not going to
-  create an instantly stale map."*; (d) Protected Principals as the fence - owner: *"this is
-  out of scope for protected principals"*, and independently blocked in code
-  (`ProtectedPrincipalEntryValidator.cs:85` refuses cloud-only entries, so no cloud-only
-  account can be listed at all - a real gap the plan states rather than papers over).
-  **The hard part is owner resolution, and the first design of it was wrong.** Entra naming
-  drifted over the years (`<sam>-CLD@`, `first.last@`, `sam@`, `first.last_CLD@`), so ownership
-  is **recomputed fresh at each reset** and never stored. **Superseded 2026-09-11:** deriving it
-  from the UPN local part alone. That key was compared exactly against whole `userPrincipalName`
-  and `mail` values, so it could only match when the local part happened to equal the
-  `sAMAccountName` - every `first.last`-era account was structurally unmatchable, which is most
-  of the 9.6%. **The replacement is three ordered evidence sources, required to AGREE**, not a
-  first-hit chain: (1) `employeeId` on the cloud account (**`manager` and `otherMails` were both
-  struck on owner challenges 2026-09-11 - `manager` names the owner's MANAGER, and in an
-  agreement-based design a wrong arm manufactures corroboration; `otherMails` is Entra's
-  recovery address, not the mailbox SMTP, and is empty in this tenant. Do not reintroduce
-  either. Source 1 is now one attribute and is NOT expected to carry the result**) -
-  somebody having *stated* the owner; (2) display name with a trailing `-CLD`/`_CLD` stripped,
-  exact against on-prem `displayName` - a display name describes the person, a UPN describes the
-  provisioning convention in force the day the account was made; (3) UPN local part, last,
-  because it is era-dependent, and compared correctly this time (`userPrincipalName=<key>@*` and
-  `proxyAddresses=smtp:<key>@*`, exact left of the `@`, wildcard only across the domain). Every
-  answering source runs; one distinct user across them = send; two sources naming two people is
-  `Ambiguous` and refuses; zero / lookup-unavailable refuses. Corroboration stops being a filter
-  bolted on afterwards and becomes the mechanism. **The id is three on-prem attributes** (owner
-  2026-09-11): `employeeID`, `employeeNumber` and `extensionAttribute1`, searched OR'd because
-  which one is authoritative is an environment fact the plan may not assume. **`employeeType` is
-  NOT a fourth** - it holds a worker-class code describing a category, and an arm on it would
-  match everyone in that class. **And an id arm matching more than one user is DISCARDED as
-  non-evidence, never escalated to `Ambiguous`**: a placeholder in an id field would otherwise
-  refuse every account carrying it, including ones display name could have resolved. A person
-  arm (display name, UPN) matching two people still refuses.
-  **S1 consequence:** `BuildExactMatchFilter`
-  (`Services/ADDirectorySearchService.cs:432`) compares against none of `displayName`,
-  `proxyAddresses` or the three id attributes, so source 1, source 2 and source 3's alias
-  arm are all inert - and inert quietly, returning a clean `NotFound`.
-  **Cost, on the owner's challenge 2026-09-11 (*"how will that translate to run-time password
-  changes? it's already too slow"*): ONE query per checked domain, not one per source.** All
-  arms go into a single OR'd exact-match filter per domain (`displayName`,
-  `userPrincipalName=<key>@*`, `proxyAddresses=smtp:<key>@*`, `sAMAccountName`, plus the three
-  id attributes); which source answered is then computed in memory from the returned
-  attributes, so agreement costs zero query time. That is CHEAPER than today's design, which
-  issues one `ValidateExists` per candidate key (up to `2 x domains`); domains are queried in
-  parallel, so wall-clock is one round trip. **Consequence: `ValidateExists`'s signature does
-  not survive S1.** It takes one key and returns one verdict, which forces a per-key loop and
-  makes the rebuilt resolver SLOWER than what it replaces. S1 must add a term-set overload
-  returning the matched rows, with `BuildExactMatchFilter` extended to match.
-  **S0 is a hard gate on the whole plan:** a read-only survey
-  (`tools/Get-CloudAccountOwnerCoverage.ps1`) runs the derivation and reports the real hit rate.
-  A low rate makes the reveal tier the normal path and the design wrong - the plan is replaced,
-  not amended. **The next run's scope is CLD admin accounts only**, selected by directory-role
-  possession / PIM eligibility / role-assignable group membership - a tenant-asserted property,
-  environment-neutral and naming-independent. That is a **survey** change only; the killed
-  "target is an admin" permission tier stays killed. It reports per source rather than as one
-  percentage, and names its unresolved classes with samples. If PIM eligibility is unreadable
-  (needs `RoleEligibilitySchedule.Read.Directory` + Entra P2) the survey reports active
-  assignments only and says so on its face. No slice after S0 starts until the owner sees the
-  number.
-  **This stream DOES bump the base app version** (unlike a plain new module): `EmailService`
-  gains a public `SendCloudPasswordResetAsync`, and `ADSearchResult` gains optional
-  `GivenName`, `Surname` and `Enabled` members - both shared infrastructure.
-  **Self-reset needs no guard and the plan says so:** operators authenticate against on-prem
-  AD, every target is cloud-only, so the two populations cannot intersect. The adjacent
-  case - the operator being the *derived owner* - is also not a guard (declined finding
-  cpr-1, below).
-  **Change at next sign-in is an operator checkbox, default unchecked** - `forceChangePassword
-  NextSignIn` is neither always-on (*"that disallows signin in too many instances"*) nor
-  hard-coded off (*"change on login is an OPTION"*). **The general rule behind it, worth
-  applying to the whole app:** this app gives L2 the admin console's capabilities inside an
-  audited, credential-free interface, so where the portal offers an admin a choice, removing
-  that choice makes this a worse tool than the thing it replaces. Withhold credentials and
-  enforce audit; do not withhold controls. Default off because a reset that silently returns
-  an account that can no longer sign in is the worse error. The choice rides the success
-  audit's `extra`, and the owner email's closing line follows it. Since off is the default,
-  the generated password is usually the durable one - which is what makes the generator's
-  strength load-bearing.
-  **The resolved destination address IS shown to the operator, read-only** (owner challenged
-  the earlier display-name-only rule and it could not be justified). The address is not a
-  secret and showing it is the only human check on a mis-resolved owner. The real control is
-  unchanged: derived, read-only, never editable, never picked from a list.
-  **Audit events go to Splunk, so the field names are a published interface** (owner: *"these
-  logs are going to splunk, so they need to be explicit and clear."*). The plan now carries an
-  `Audit fields, and Splunk` section fixing the exact `extra` field set every event of this
-  module emits - `targetObjectId`, `targetCloudOnly`, `targetDirectoryRoles` (always an array,
-  never null - this is the field that answers "who reset a Global Admin, and when"),
-  `ownerResolution`, `ownerSam`, `ownerMail`, `forceChangePasswordNextSignIn`,
-  `passwordDelivery`, `revealUsed`, `refusalReason` - plus six rules: one fact per field (no
-  packed strings like `IntuneDevices.razor:1414`'s `wipeFlags`), JSON booleans, closed
-  enumerations, every field on every event with explicit `null`, names frozen once shipped,
-  and nothing derived from the password. `AuditService` already emits one JSON object per
-  event and `MergeExtra` passes nulls through, so no transport change is needed. Other modules
-  were not written to these rules; aligning them is a separate stream and is not authorized
-  here.
-  **REQUIREMENT for S1: the searched domains are an operator setting, discovered at runtime.**
-  `ADDirectorySearchService.ValidateExists` issues its USER query with no `-Server`, so it binds
-  whichever domain the app host happens to be joined to (`:355` scopes the `-Server` routing to
-  `objectKind == "Group"`; `ResolveGlobalCatalog` is only called from `Search` at `:660`) - an
-  accident of deployment, not a design. Raised as a cross-domain collision question; I tried to
-  close it on ADI's forest shape and the owner rejected that (`.agents/decisions.md` 2026-09-11,
-  environment neutrality), then rejected a forest-wide replacement too: the estate has several
-  domains and trusts and most are irrelevant to Entra. Ruling: *"search the domain checked. only
-  check domains that sync to Azure or that you want to check. stop wrapping the admins in
-  bubble-wrap."* Design: module config gains **Search Domains**, a checkbox list enumerated at
-  runtime from the forest and its trusts (no name hard-coded or typed); the lookup searches
-  exactly the checked domains; two or more matches across that set is `Ambiguous` and refuses;
-  an in-app note states how to choose; nothing checked or setting unreadable refuses, per the
-  app's standing fail-closed rule. **Consequence for S0, landed `b84061a`: the survey takes the
-  domain set as a parameter and reports per that set.**
-  **Resetting Global Administrator passwords is the requirement, not a risk.** The app-only
-  `User-PasswordProfile.ReadWrite.All` grant reaches every account in the tenant, and it has
-  to: nearly every target is an admin account. Settled with the population; never raise it as
-  a decision, a fork, or a newly-closed item. The one open item there is a **test**, not a
-  question - the first live call must confirm the PATCH really succeeds against an admin-role
-  target, using a disposable account.
-  **D1 SETTLED 2026-09-10 - the app generates the password** (`.agents/decisions.md`). Owner:
-  *"d1 app chooses. there's a password generator in D:\source\pwgen that will serve as the
-  model. use the algorithm it's using, not the code."* The plan now carries a full C# spec of
-  pwgen's *method* (diceware, 2-6 words from a 7,771 word list, balanced capitalisation with
-  no adjacent duplicate styles, separators from `!@#$%&*?+=`, padding distributed across every
-  slot, 18-32 chars, 60-bit floor on the effective pool, refuse after 100 attempts). Not a
-  port of its Rust and not a call to its binary. Two mandatory adaptations: `RandomNumberGenerator`
-  only (source-text test bars `System.Random`), and the word list as an embedded resource with
-  recorded provenance. This adds a slice - the generator is S2, and everything after it shifts
-  by one (service S3, email helper S4 with the base bump, page S5, write S6, records S7).
-  **Open owner decision: D3** only (the name-corroboration tolerance, answerable after S0).
-  **External prerequisites, owner-side:** a dedicated Entra app registration
-  (`User.Read.All`, `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`)
-  and its own Delinea secret. Do not reuse another module's Graph registration.
-  **openreview `codex` (`@azure-openai-eus2-global/gpt-5.5-dzs` @ xhigh, grade fallback) over
-  `c493b2a..7c47c3c`, 2026-09-10: `Acceptable with changes`, THREE material changes, all now
-  dispositioned and folded into the plan:**
-  (1) **Self-owned cloud account gap - DECLINED** on the owner's challenge
-  (`.agents/review/cpr-1.contested.md`). If the derivation resolves to the operator, the
-  operator already holds that cloud account, so there is no escalation to stop. The cited
-  `ValidateSelfGrantAsync` precedent (`Services/PermissionValidator.cs:280`) blocks taking
-  rights over *someone else's* mailbox, a different shape. The real residual - a derivation
-  that resolves to the wrong person - is the existing corroboration/ambiguity problem and
-  misfires identically whoever clicks.
-  (2) **Ungated delivery-failure reveal - UPHELD, fixed.** Owner ruling 2026-09-10: *"if the
-  send itself fails, then fail closed."* On a send failure after a successful PATCH the
-  password is discarded, not displayed, to **any** tier; the page says changed-but-not-
-  delivered and the event audits as `CloudPasswordReset_DeliveryFailed`; retrying generates a
-  new password. **Downstream delivery is out of scope** by the same ruling - the app knows
-  only whether the SMTP handoff succeeded, so "delivered" means "accepted by the mail server"
-  everywhere in the plan.
-  (3) **Corroboration has no data plumbing - UPHELD, fixed.** `ValidationProperties` for a
-  User returns only DisplayName / DN / SamAccountName / UPN / mail
-  (`Services/ADDirectorySearchService.cs:407-414`) and `ADSearchResult` (`:829`) carries no
-  such fields. Three fields are missing, not one: `GivenName`, `Surname`, `Enabled`. S1 adds
-  all three as optional members with null defaults plus a test asserting the query requests
-  them.
-  **Two survey bugs found by disbelieving the 9.6% and probing AD directly, both fixed and
-  committed:** `2426620` (a property read on an empty pipeline result threw under
-  `Set-StrictMode`) and `8feb993` (`@(Get-CloudAccountOwnerCandidate ...)` wrapped the
-  function's `,$array` return into a ONE-element array containing the array, which stringified
-  into a single space-joined LDAP key matching nobody - a silent 0% that looked like a finding;
-  a mutation-proved source-text tripwire now bars that shape). `bc079fe` gitignores the survey's
-  CSV output, which names every cloud-only account in the tenant.
-  **A separate pre-run Graph read was proposed and CANCELLED 2026-09-11.** With `otherMails`
-  struck, the only thing it would have measured is whether `employeeId` is populated - and the
-  rebuilt survey reports per source, so it answers that on its way past. A second read would
-  have been a second approval for a number the approved run already returns. Recorded so the
-  next reader does not re-propose it.
-  **The three-source rewrite LANDED (owner go "go", scope: the two tool files and their tests).**
-  `tools/CloudAccountOwnerDerivation.psm1` and `tools/Get-CloudAccountOwnerCoverage.ps1` now
-  implement it; `tests/ps/CloudAccountOwnerDerivation.Tests.ps1` was rebuilt to 74 tests, suite
-  214/0. Source 1 `Id` = the cloud account's `employeeId` OR'd against on-prem `employeeID` /
-  `employeeNumber` / `extensionAttribute1`. Source 2 `DisplayName` = the display name with a
-  trailing `-CLD`/`_CLD` stripped, exact. Source 3 `UpnKey` = the UPN **local part** compared to a
-  local part (`userPrincipalName=<key>@*`, `proxyAddresses=smtp:<key>@*`, `sAMAccountName=<key>`) -
-  this is the defect that voided the first run, and it now has a named regression test.
-  **The asymmetry that carries the safety property:** an IDENTIFIER arm matching more than one
-  user is DISCARDED as non-evidence (a value many people share was never an identifier; the other
-  sources still decide); a PERSON arm matching more than one user REFUSES as
-  `AmbiguousWithinSource` (two people sharing a display name are two real candidate people).
-  Both directions are mutation-proved. Cost drops from `2 x domains` queries per candidate key to
-  ONE OR'd query per domain, with agreement computed in memory.
-  **`employeeType` is NOT a fourth id attribute** - it holds a worker-class code (`CWK` =
-  contingent worker), a category not a person. `manager` and `otherMails` were struck as sources
-  and must not be reintroduced.
-  **NEXT, in order: (1) owner reads the exec summary of the rebuilt derivation; (2) check what
-  roles the survey app registration actually holds (free, reads no directory data) so the
-  admin-scoping query is known to be runnable; (3) owner approves the S0 re-run. One approval is
-  one run. D3 stays unanswerable until the re-run reports. No implementation is authorized.**
+- **CLOUD PASSWORD RESET: DERIVATION ABANDONED 2026-09-11, PLAN REWRITTEN, ONE DECISION OPEN.**
+  `docs/CloudPasswordReset-Plan.md`, Status In progress. New module `CloudPasswordReset` so L2
+  can reset passwords for Entra ID **cloud-only** accounts, which have no on-prem object and are
+  therefore unreachable from existing AD tooling. It replaces a process where L2 escalates by
+  telephone to L3.
+  **The S0 gate is gone and so is everything it gated.** The owner-coverage survey ran under its
+  one approval and returned **46.5%** (80 of 172 in-scope privileged cloud-only accounts); all 84
+  misses returned zero directory rows. Owner ruling: *"if we cannot get a 100% working match, then
+  matching is off the table."* Full record, including the naming-era breakdown and the two
+  mechanical fixes that would have reached only ~84%, is in `.agents/decisions.md` 2026-09-11
+  ("Owner derivation is abandoned"). **Do not re-propose any owner derivation, owner map,
+  coverage survey or `employeeId` remediation.** `employeeId` is populated on 0 of 172 cloud
+  accounts and the owner refused to populate it.
+  **The design now:** the operator types the destination address; the app generates the password,
+  PATCHes it and mails it there. Format-validated only - the module never checks who owns the
+  account. Owner ruling 2026-09-11: *"destination email needs to be in the logs and in the admin
+  alert email"*, so `destinationAddress` is a required audit field and appears in the admin alert.
+  **The security property this trades away, stated so nobody reads it as a regression:** the old
+  design's claim was that a derived destination made resetting a Global Admin useless to the
+  operator. That is false now - an operator can mail themselves any password. What replaces
+  prevention is section access + audit record + administrator alert: **detection and
+  accountability, not prevention.** The owner made that trade knowingly; the replaced phone-call
+  process has neither property.
+  **Still standing, do not reintroduce:** the "target is an admin" permission tier (decorative);
+  an invented `BlockedDirectoryRoles` config field; a stored owner map; Protected Principals as
+  the fence (and `ProtectedPrincipalEntryValidator.cs:85` refuses cloud-only entries anyway - a
+  real gap the plan states rather than papers over).
+  **Resetting Global Administrator passwords is the requirement, not a risk.** Settled with the
+  population; never raise it as a fork. The one open item there is a **test** - the first live
+  call must confirm the PATCH succeeds against an admin-role target, using a disposable account.
+  **D1 SETTLED** (the app generates the password, on pwgen's algorithm - full C# spec of the
+  method in the plan, not a port of its Rust). **D2 SETTLED 2026-09-11** (the operator names the
+  destination). **D3 WITHDRAWN** with the derivation.
+  **D4 IS OPEN AND BLOCKS S5: does the reveal permission still fence anything?** It was justified
+  by the operator having no other route to the password, which is no longer true, so it is now the
+  `idm-3` decorative-control class. Recommendation in the plan: keep it as friction plus a
+  distinct audit signal, but stop describing it as a security boundary.
+  **This stream DOES bump the base app version**, now on one change only: `EmailService` gains a
+  public `SendCloudPasswordResetAsync`. The `ADSearchResult` / `ValidationProperties` additions
+  (`GivenName`, `Surname`, `Enabled`) are deleted with the derivation.
+  **Change at next sign-in is an operator checkbox, default unchecked** - neither always-on
+  (*"that disallows signin in too many instances"*) nor hard-coded off (*"change on login is an
+  OPTION"*). The general rule behind it: this app gives L2 the admin console's capabilities inside
+  an audited, credential-free interface, so withhold credentials and enforce audit; do not
+  withhold controls.
+  **Audit events go to Splunk, so the field names are a published interface** (*"these logs are
+  going to splunk, so they need to be explicit and clear."*). The plan's `Audit fields, and
+  Splunk` section fixes the exact `extra` field set and six rules: one fact per field, JSON
+  booleans, closed enumerations, every field on every event with explicit `null`, names frozen
+  once shipped, nothing derived from the password. Aligning other modules is a separate,
+  unauthorized stream.
+  **On a send failure after a successful PATCH, fail closed** (owner 2026-09-10): the password is
+  discarded, not displayed to any tier; audited as `CloudPasswordReset_DeliveryFailed`; retrying
+  generates a new one. "Delivered" means accepted by the mail server, everywhere in the plan.
+  **External prerequisites, owner-side:** a dedicated Entra app registration (`User.Read.All`,
+  `User-PasswordProfile.ReadWrite.All`, `RoleManagement.Read.Directory`) and its own Delinea
+  secret. Do not reuse another module's Graph registration.
+  **NEXT, in order: (1) owner answers D4; (2) owner confirms whether to shred the three survey
+  CSVs, which are untracked, gitignored, not deleted, and name every in-scope account; (3) S2
+  starts. No implementation is authorized before D4.**
+  **Loose end to raise with the owner:** the survey app registration
+  `16866221-3e2b-4ea5-8aae-157b043b6d7c` holds write grants it never needed
+  (`Directory.ReadWrite.All`, `User.ReadWrite.All`, `Group.ReadWrite.All`,
+  `UserAuthenticationMethod.ReadWrite.All`).
 
 - **SERVICE HEALTH MODULE: 1.3.1 IMPLEMENTED 2026-09-09, NOT YET DEPLOYED, NOT CONFIGURED.**
   Module `ServiceHealth` (route `/service-health`, `EnabledByDefault = false`) - a read-only
