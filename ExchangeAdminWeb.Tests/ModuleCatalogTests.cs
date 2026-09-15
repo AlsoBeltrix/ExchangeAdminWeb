@@ -28,6 +28,17 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_LicensingUpdates_IsUnderIdentityAndAccess()
+    {
+        // It writes extensionAttribute11 in AD and is not an ExchangeOnline dependent, so
+        // "Exchange" was the wrong nav home. Category is display grouping only - the section
+        // access key is the policy alias - but the grouping is what an operator navigates by.
+        var module = _catalog.GetById("LicensingUpdates");
+        Assert.NotNull(module);
+        Assert.Equal("Identity & Access", module!.Category);
+    }
+
+    [Fact]
     public void Catalog_RiskyUsers_MainPermissionIsFailClosed()
     {
         var module = _catalog.GetById("RiskyUsers")!;
