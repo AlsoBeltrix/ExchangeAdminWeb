@@ -7,6 +7,17 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+- **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
+  `docs/AlphabeticalModuleOrdering-Plan.md` is Implemented and owns the manual acceptance
+  checklist. Landed 2026-09-15 in `e5a8ccd`, `73be51c`, `7057f9c`, `12b699f`, `5090996`,
+  `b657ac0`; app version 2.21.0. Every catalog-driven list now orders by `DisplayName` with
+  `StringComparer.OrdinalIgnoreCase`, nav categories are named from `Modules/ModuleCategories.cs`,
+  and the bottom sidebar block is selected by `ModuleCategories.Administration` rather than the
+  old integer threshold. A new module declares no position: the author picks a category and the
+  name decides the order. Blazor markup has no test harness here, so the rendered sidebar,
+  Module Config tree and home tiles are unverified by automation - run the plan's manual checks
+  after a dev deploy. The plan's implementation codereview has not been dispatched.
+
 - **CloudPasswordReset: the owner is populating `employeeID` on Entra CLD accounts (2026-09-15).**
   This replaces heuristic name/alias matching with a direct key: the CLD account's `employeeID`
   matches the AD employee record's employee identifier, and that record supplies the destination
@@ -84,12 +95,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Owner-reported issues, raised 2026-09-15; none implemented.**
-  1. *Licensing Updates sits in the wrong nav category.* `Modules/ModuleCatalog.cs` gives it
-     `Category = "Exchange"`; it writes `extensionAttribute11` in AD and is not an
-     ExchangeOnline dependent, so it belongs under `Identity & Access`. Category is nav
-     grouping only - section-access keys are per-module policy aliases, so the move does not
-     touch authorization. Quickest of the three.
+- **Owner-reported issues, raised 2026-09-15. Issue 1 is landed; 2 and 3 are not started.**
+  1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
+     now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
+     grouping only - section-access keys are per-module policy aliases - so the move did not
+     touch authorization. Closed.
   2. *Service Health misses `status.cloud.microsoft`.* Microsoft splits its status reporting;
      the module currently reads only the Graph service-health source. Needs a decision on how
      that second source is obtained (no documented Graph equivalent is established) before any

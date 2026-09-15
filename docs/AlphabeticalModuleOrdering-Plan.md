@@ -1,6 +1,12 @@
 # Alphabetical Module Ordering Plan
 
-Status: Approved 2026-09-15 - ready to implement
+Status: Implemented 2026-09-15 - manual acceptance checks outstanding
+Landed in `e5a8ccd`, `73be51c`, `7057f9c`, `12b699f`, `5090996`, `b657ac0`. App version 2.21.0.
+Verification at the final commit: build 0 errors, `dotnet test` 2484 passed / 0 failed /
+3 skipped, `dotnet format --verify-no-changes` exit 0, `git diff --check` exit 0,
+`Invoke-Pester tests/ps` 140 passed / 0 failed, PSScriptAnalyzer 0 errors. The manual
+acceptance checklist below is unrun, and the implementation codereview has not been dispatched.
+
 Base app version at drafting: 2.20.2
 Repository base: `7d4b976`
 
