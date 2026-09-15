@@ -158,11 +158,18 @@
     private IEnumerable<IGrouping<string, AdminModuleDescriptor>> GetPrimaryModuleGroups()
     {
         return Catalog.GetOrdered()
-            .Where(m => !m.IsSystemModule && !m.IsConfigOnly && m.SortOrder < 900 && Enablement.IsModuleEnabled(m.Id))
+            .Where(m => !m.IsSystemModule && !m.IsConfigOnly && !IsAdministrationModule(m) && Enablement.IsModuleEnabled(m.Id))
             .OrderBy(m => GetCategorySortOrder(m.Category))
             .ThenBy(m => m.SortOrder)
             .GroupBy(m => m.Category);
     }
+
+    // What puts a module in the Administration block at the bottom of the sidebar rather
+    // than the primary nav. This used to be a SortOrder >= 900 threshold, which restated the
+    // category it always agreed with; ModuleCatalogTests pins the Administration set so the
+    // two selections are known to have stayed identical.
+    private static bool IsAdministrationModule(AdminModuleDescriptor module) =>
+        string.Equals(module.Category, ModuleCategories.Administration, StringComparison.OrdinalIgnoreCase);
 
     private static int GetCategorySortOrder(string category)
     {
@@ -192,7 +199,7 @@
             .ToList();
 
         authorizedAdminAdjacentModules = new();
-        foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && m.SortOrder >= 900 && Enablement.IsModuleEnabled(m.Id)))
+        foreach (var module in Catalog.GetOrdered().Where(m => !m.IsSystemModule && IsAdministrationModule(m) && Enablement.IsModuleEnabled(m.Id)))
         {
             if ((await AuthorizationService.AuthorizeAsync(user, module.MainPermission.PolicyAlias)).Succeeded)
             {

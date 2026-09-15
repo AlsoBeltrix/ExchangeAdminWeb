@@ -194,6 +194,24 @@ public class ModuleCatalogTests
     }
 
     [Fact]
+    public void Catalog_AdministrationCategory_ContainsExactlyTheAdminPages()
+    {
+        // NavMenu.razor splits the sidebar on ModuleCategories.Administration: a module in this
+        // category renders in the bottom Administration block, everything else in the primary
+        // nav. That split used to read a SortOrder >= 900 threshold, and the two selections were
+        // verified identical when the threshold was removed. This pins the set so the swap
+        // cannot quietly change meaning later - adding a module here moves it out of the
+        // primary nav, which is a nav decision, not a descriptor detail.
+        var administration = _catalog.GetAll()
+            .Where(m => string.Equals(m.Category, ModuleCategories.Administration, StringComparison.OrdinalIgnoreCase))
+            .Select(m => m.Id)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(new[] { "AdminBulkJobs", "AdminEventLog", "AdminSettings" }, administration);
+    }
+
+    [Fact]
     public void Catalog_AllModulesHaveUniqueIds()
     {
         var ids = _catalog.GetAll().Select(m => m.Id).ToList();
