@@ -4,6 +4,15 @@ Status: Draft - pending owner approval
 Base app version at drafting: 2.20.2
 Repository base: `7d4b976`
 
+Review: `openreview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, frontier
+graded fallback - the harness's frontier and standard pairs are identical, so this
+carries standard-tier weight) over 7d4b976..c9688a0`: **Acceptable with changes**.
+Two required changes, both verified against the code and both now folded in: the
+missed `GetConfigurablePolicyAliases()` use of `SortOrder`, and the stale
+`SortOrder = 800,` fixture in `tests/ps/ValidatorChecks.Tests.ps1`. One further
+suggestion (make the package validator reject `SortOrder`) is recorded under
+Out of scope.
+
 ## Goal
 
 Modules appear in alphabetical order by display name everywhere the application
@@ -24,14 +33,26 @@ All line references verified at `7d4b976`.
 - All 28 descriptors in `Modules/ModuleCatalog.cs` set it.
 - `Modules/ModuleCatalog.cs:32`:
   `public IReadOnlyList<AdminModuleDescriptor> GetOrdered() => _modules.OrderBy(m => m.SortOrder).ToList();`
+- `Modules/ModuleCatalog.cs:40`: `GetConfigurablePolicyAliases()` independently
+  orders by `m.SortOrder`. It does not call `GetOrdered()`, so it needs its own
+  replacement order or the build breaks.
 - `GetOrdered()` consumers: `Components/Layout/NavMenu.razor:40,160,186,190,195`;
   `Components/Pages/Home.razor:51,67`; `Components/Pages/AdminSettings.razor:81`;
   `Components/Pages/AdminEventLog.razor:1275`;
   `Components/Pages/ExchangeOnlineConfig.razor:162`;
   `ExchangeAdminWeb.Tests/UsageTrackerWiringTests.cs:152`.
-- `SortOrder` has exactly two jobs:
-  1. Position within a rendered list (all of the above).
-  2. A 900 threshold that splits primary nav from the Administration block, at
+- `tests/ps/ValidatorChecks.Tests.ps1:44` builds a fixture descriptor snippet that
+  includes `SortOrder = 800,`. `tools/validate-module-package.ps1` never reads
+  `SortOrder`, so the fixture is stale text rather than a validated field, but it
+  would still teach the next module author to write a field that no longer exists.
+- `SortOrder` has exactly three jobs:
+  1. Position within a rendered list (all `GetOrdered()` consumers above).
+  2. Position of the policy-alias list from `GetConfigurablePolicyAliases()`.
+     Its one caller, `Components/Pages/ModuleConfig.razor:1201`, seeds a
+     dictionary, and `Catalog_GetConfigurablePolicyAliases_MatchesExpected`
+     (`ModuleCatalogTests.cs:218`) asserts membership with `Assert.Contains`, so
+     this order is not currently observable. It still has to compile.
+  3. A 900 threshold that splits primary nav from the Administration block, at
      `NavMenu.razor:161` (`m.SortOrder < 900`) and `NavMenu.razor:195`
      (`m.SortOrder >= 900`).
 
@@ -68,10 +89,16 @@ stated non-goal, asserted by a test rather than assumed.
 5. Remove `.ThenBy(m => m.SortOrder)` at `NavMenu.razor:163`, replacing it with an
    explicit `.ThenBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase)` so the
    within-section order does not depend on `OrderBy` stability.
-6. Tests (see Verification).
-7. Update the two binding contract docs: `docs/AdminModuleSpec.md:23,242` and
+6. Reorder `GetConfigurablePolicyAliases()` (`ModuleCatalog.cs:40`) by
+   `DisplayName`, case-insensitive, keeping each module's main alias immediately
+   before its own granular aliases. Same ordering rule as `GetOrdered()`, so the
+   two stay consistent.
+7. Update the stale fixture snippet in `tests/ps/ValidatorChecks.Tests.ps1:44` to
+   drop the `SortOrder = 800,` line.
+8. Tests (see Verification).
+9. Update the two binding contract docs: `docs/AdminModuleSpec.md:23,242` and
    `docs/AdminModuleDeveloperGuide.md:214,273`.
-8. Bump `<VersionPrefix>`, `<AssemblyVersion>` and `<FileVersion>` in
+10. Bump `<VersionPrefix>`, `<AssemblyVersion>` and `<FileVersion>` in
    `ExchangeAdminWeb.csproj` from 2.20.2 to 2.21.0. Shared UI and a module-contract
    change, so the base app version moves; no module `Version` changes, because no
    module's own behavior changes.
@@ -88,6 +115,11 @@ stated non-goal, asserted by a test rather than assumed.
   governs whether history is rewritten. Leave them.
 - `Components/Pages/ServiceHealth.razor`'s local `sortOrder` variable. Unrelated
   identifier for the service-list sort control.
+- Teaching `tools/validate-module-package.ps1` to reject a submitted snippet that
+  still carries `SortOrder`. Raised in review; declined for this work stream. The
+  validator has never read the field, so nothing regresses by leaving it alone,
+  and adding a new rejection rule is new validator behavior rather than part of
+  removing the field. Reconsider if a module package arrives carrying it.
 
 ## Open design question for the owner
 
@@ -117,13 +149,16 @@ per commit").
    `AdminSettings`, `AdminEventLog`, `AdminBulkJobs`. Still no visible change,
    because the two conditions select identical sets today.
 3. **Make ordering alphabetical.** Redefine `GetOrdered()`; replace
-   `.ThenBy(m => m.SortOrder)` with the display-name comparison. Replace
+   `.ThenBy(m => m.SortOrder)` with the display-name comparison; reorder
+   `GetConfigurablePolicyAliases()` the same way. Replace
    `Catalog_GetOrdered_ReturnsSortedBySortOrder`
    (`ExchangeAdminWeb.Tests/ModuleCatalogTests.cs:337`) with an alphabetical
    assertion. This is the step with visible effect.
 4. **Delete the field.** Remove it from `AdminModuleDescriptor` and from all 28
-   descriptors. The compiler enumerates any missed reference, since the property is
-   `required`.
+   descriptors, and from the fixture snippet in
+   `tests/ps/ValidatorChecks.Tests.ps1:44`. The compiler enumerates any missed C#
+   reference, since the property is `required`; the PowerShell fixture is a
+   here-string and the compiler cannot see it, so it is listed explicitly.
 5. **Update the contract docs** (`AdminModuleSpec.md`, `AdminModuleDeveloperGuide.md`)
    and bump the app version.
 
@@ -138,6 +173,9 @@ Repo verification entry point (`.agents/repo-guidance.md`), run after each commi
 - `dotnet test ExchangeAdminWeb.slnx`
 - `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`
 - `git diff --check HEAD`
+
+Step 4 touches a `.ps1` file, so that commit also runs
+`Invoke-ScriptAnalyzer -Path . -Recurse` and `Invoke-Pester tests/ps`.
 
 ### Tests this change owns
 
