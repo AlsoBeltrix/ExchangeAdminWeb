@@ -1,6 +1,6 @@
 # Alphabetical Module Ordering Plan
 
-Status: Draft - pending owner approval
+Status: Approved 2026-09-15 - ready to implement
 Base app version at drafting: 2.20.2
 Repository base: `7d4b976`
 
@@ -121,18 +121,22 @@ stated non-goal, asserted by a test rather than assumed.
   and adding a new rejection rule is new validator behavior rather than part of
   removing the field. Reconsider if a module package arrives carrying it.
 
-## Open design question for the owner
+## Settled ruling
 
-Replacing the 900 threshold with a `Category == "Administration"` test makes a
-string value load-bearing for placement. The alternative is an explicit boolean on
-the descriptor (for example `IsAdministration`), which states the intent directly
-and cannot be broken by a typo in a category string.
+Owner ruling 2026-09-15: the nav split reads the category, not a new descriptor
+boolean. Implement it as the named constant `ModuleCategories.Administration`,
+guarded by the catalog test that pins the Administration set to exactly
+`AdminSettings`, `AdminEventLog` and `AdminBulkJobs`. This adds no field to the
+contract while the work is removing one, and the test closes the typo risk that a
+raw string literal would carry. Do not introduce `IsAdministration`.
 
-Recommendation: use the category with a named constant
-(`ModuleCategories.Administration`) plus a catalog test asserting that the
-Administration set is exactly the three expected module IDs. This adds no field to
-the contract while the current work is removing one, and the test closes the typo
-risk. Raise as one ruling; do not implement the boolean without it.
+Owner instruction, same ruling: whatever the final shape is, the module creation
+path must teach it. `docs/AdminModuleDeveloperGuide.md` and
+`docs/AdminModuleSpec.md` must describe the descriptor exactly as it ends up -
+no `SortOrder`, and the category named from `ModuleCategories` - so the next
+module author writes a descriptor that compiles and lands in the right section.
+`.claude/commands/new-module-command.md` needs no edit: it delegates to those two
+documents and never names the field itself (verified 2026-09-15).
 
 ## Implementation steps
 
@@ -159,8 +163,16 @@ per commit").
    `tests/ps/ValidatorChecks.Tests.ps1:44`. The compiler enumerates any missed C#
    reference, since the property is `required`; the PowerShell fixture is a
    here-string and the compiler cannot see it, so it is listed explicitly.
-5. **Update the contract docs** (`AdminModuleSpec.md`, `AdminModuleDeveloperGuide.md`)
-   and bump the app version.
+5. **Update the contract docs and bump the version.** In
+   `docs/AdminModuleDeveloperGuide.md` (lines 214, 273) and
+   `docs/AdminModuleSpec.md` (lines 23, 242): remove `SortOrder` from the
+   descriptor listing and the worked example, replace the "sorted by `SortOrder`"
+   sentence with the alphabetical rule, and state that `Category` must be one of
+   the `ModuleCategories` constants and that `Administration` is what places a
+   module in the bottom nav block. Read both documents for any other sentence
+   that implies an author chooses a position; the goal is that someone following
+   the guide end to end writes a descriptor that compiles and lands correctly.
+   Then bump the app version.
 
 Steps 1, 2 and 4 are behavior-preserving; only step 3 changes what an operator sees.
 Splitting them this way keeps the visible change isolated in one reviewable commit.
