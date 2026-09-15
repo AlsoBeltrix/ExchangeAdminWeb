@@ -129,8 +129,6 @@ This project's transcripts only — the default scope the token baseline is meas
 Point the tool at `C:\Users\mcoelho\.claude\projects` with `-TranscriptRoot` for every
 local project. The script reads the first `transcript-root:` entry in this file; if a
 second machine is ever recorded here, pass `-TranscriptRoot` explicitly on it.
-- harness-cli: codex.ps1 (recorded 2026-07-27, refresh offer)
-- harness-cli: codex.cmd (recorded 2026-07-27, refresh offer)
 
 ## macOS observations (historical, not re-probed 2026-09-14)
 

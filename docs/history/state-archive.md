@@ -13,6 +13,20 @@ still ran it inline.
 > can be run from the dev instance. Read every "no dev tenant" below as "live validation
 > not yet performed."
 
+## Archived 2026-09-15 (drift sweep)
+
+Preserved verbatim. The entry below recorded a completed records correction whose durable
+content now has canonical homes: the evidence in `.agents/machines.md` (ASHBIAMWEB1 / Deploy
+and the dated deployment receipt), and the still-open caveats in `.agents/state.md`
+`## Blockers` under "Falsified deployment/configuration blockers". Nothing is closed by this
+rotation.
+
+- **Deployment/configuration basis corrected 2026-09-14, as of `a16c316`.**
+  `.agents/machines.md` (ASHBIAMWEB1 / Deploy) owns the verified deployed base versions, shared
+  database path and configuration observations. Old deployment and initial Graph-configuration
+  blockers are falsified. Assembly metadata and database rows do not prove live authentication,
+  page appearance or manual acceptance. Exact deployed module versions were not checked.
+
 ## Archived 2026-09-14 (drift sweep)
 
 Superseded descriptions below are preserved verbatim. Deployment and configuration claims

@@ -3,7 +3,7 @@
 Current work and blockers only. Rules live in `docs/ProjectConstitution.md` and
 `.agents/repo-guidance.md`, decisions in `.agents/decisions.md`, and machine observations in
 `.agents/machines.md`. Each plan owns its implementation and manual acceptance checklist.
-Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archived 2026-09-14).
+Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archived 2026-09-15).
 
 ## Now
 
@@ -21,12 +21,6 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   tooling remains deleted; its earlier survey approval is not standing query authority.
   D4 remains unresolved. Survey-data disposition and unnecessary survey-registration grants
   remain open outside module implementation; see Blockers and `.agents/machines.md`.
-
-- **Deployment/configuration basis corrected 2026-09-14, as of `a16c316`.**
-  `.agents/machines.md` (ASHBIAMWEB1 / Deploy) owns the verified deployed base versions, shared
-  database path and configuration observations. Old deployment and initial Graph-configuration
-  blockers are falsified. Assembly metadata and database rows do not prove live authentication,
-  page appearance or manual acceptance. Exact deployed module versions were not checked.
 
 - **Service Health is implemented; design acceptance and manual checks remain.**
   `docs/ServiceHealth-Plan.md` owns the design and checklist. The original dashboard appearance
