@@ -7,6 +7,19 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+- **Handoff 2026-09-15. Branch `master`, verified head `e30c6a8`, working tree clean.**
+  Nine commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
+  separately - do not push, and do not treat the remote lag as drift. The owner's issue queue
+  is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo); its item 1 is
+  marked DONE there. Next agreed item: the Mailbox Migrations stale open report, described
+  under Next as owner-reported issue 3. Nothing is in flight; no plan is approved for it yet,
+  so the first action is reproduction and root cause, then a plan. Likely starting points,
+  not yet read: `Components/Pages/Migration.razor` (1917 lines; the status page and its
+  open-report state), `Services/MigrationService.cs` (981 lines). Working hypothesis only,
+  unverified: the open report is held in page state keyed by batch name, so a recreated batch
+  of the same name matches the stale entry. Do not implement against that hypothesis without
+  confirming it in the code.
+
 - **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
   `docs/AlphabeticalModuleOrdering-Plan.md` is Implemented and owns the manual acceptance
   checklist. Landed 2026-09-15 in `e5a8ccd`, `73be51c`, `7057f9c`, `12b699f`, `5090996`,
