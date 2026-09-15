@@ -211,7 +211,6 @@ public sealed record AdminModuleDescriptor
     public required string Route { get; init; }
     public required string IconCss { get; init; }
     public string Category { get; init; } = "Other";
-    public required int SortOrder { get; init; }
     public required bool EnabledByDefault { get; init; }
     public required bool IsSystemModule { get; init; }
     public string Version { get; init; } = "1.0.0";
@@ -269,8 +268,7 @@ new()
     Description = "Manage Entra ID Conditional Access named locations.",
     Route = "named-locations",
     IconCss = "bi bi-geo-alt-fill-nav-menu",
-    Category = "Identity & Access",
-    SortOrder = 790,
+    Category = ModuleCategories.IdentityAndAccess,
     EnabledByDefault = false,
     IsSystemModule = false,
     Version = "1.0.0",
@@ -296,6 +294,15 @@ new()
 - Granular permissions should also be fail-closed when they grant privileged
   sub-capabilities.
 - `IsSystemModule = true` is reserved for core host functions.
+- `Category` must name one of the `ModuleCategories` constants
+  (`Modules/ModuleCategories.cs`). Write the constant, not the string. The
+  property's `"Other"` default is not one of them, so a descriptor that leaves
+  `Category` unset fails the catalog test - always set it. See Categories And
+  Navigation.
+- There is no ordering field. The descriptor cannot choose a position in the
+  sidebar or on the home page; every catalog-driven list is alphabetical by
+  `DisplayName`. An older `SortOrder` integer was removed in app 2.21.0; a
+  descriptor that still sets it does not compile.
 - `Version` is the module's version, not the application version. Increment it
   whenever the module behavior or config contract changes.
 - `ConfigFields` are string-valued. Do not stuff complex structured config into
@@ -317,14 +324,38 @@ new()
 
 ## Categories And Navigation
 
-Use one of the established categories:
+`Category` is declared with one of the constants in `Modules/ModuleCategories.cs`:
 
-- `Exchange`
-- `Directory & Groups`
-- `Identity & Access`
-- `Infrastructure`
-- `Administration`
-- `Other`
+| Constant | Rendered heading |
+| --- | --- |
+| `ModuleCategories.Exchange` | Exchange |
+| `ModuleCategories.DirectoryAndGroups` | Directory & Groups |
+| `ModuleCategories.IdentityAndAccess` | Identity & Access |
+| `ModuleCategories.Infrastructure` | Infrastructure |
+| `ModuleCategories.Administration` | Administration |
+
+There is no sixth category. `Catalog_EveryCategoryIsAModuleCategoriesConstant`
+fails any descriptor whose category is not one of these, including the `"Other"`
+default the property carries when `Category` is left unset. Adding a category is a
+nav change: add the constant, add it to `PrimaryCategoryOrder` in
+`Components/Layout/NavMenu.razor` if it belongs in the primary nav, and update that
+test.
+
+The category is what decides where in the sidebar the module lands:
+
+- The four operational categories render in the primary nav under their own
+  headings, in the fixed order Exchange, Directory & Groups, Identity & Access,
+  Infrastructure (`PrimaryCategoryOrder`).
+- `ModuleCategories.Administration` puts the module in the Administration block at
+  the bottom of the sidebar instead (`NavMenu.IsAdministrationModule`). That
+  category is the only thing that does it - there is no flag and no number.
+
+Within a section, and in every other catalog-driven list - home page cards, Admin
+Settings, the Module Config tree - modules are listed alphabetically by
+`DisplayName`, compared with `StringComparer.OrdinalIgnoreCase`
+(`ModuleCatalog.GetOrdered()`). The comparison is ordinal on purpose: the same order
+on every host and locale. Choosing a category and a display name is the whole of the
+placement decision.
 
 The sidebar and home page are catalog-driven. A module appears when:
 

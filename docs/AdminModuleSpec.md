@@ -19,8 +19,7 @@ new AdminModuleDescriptor
     Description = "What this module does.", // Home page card text
     Route = "my-module",                // URL path (no leading slash)
     IconCss = "bi bi-icon-nav-menu",    // CSS class for nav icon
-    Category = "Other",                 // Sidebar/home grouping
-    SortOrder = 800,                    // Position in nav/home (lower = higher)
+    Category = ModuleCategories.Infrastructure, // Sidebar grouping; a ModuleCategories constant
     EnabledByDefault = false,           // Enabled on fresh installs
     IsSystemModule = false,             // true = cannot disabled
     Version = "1.0.0",                  // Module version (not app version)
@@ -36,6 +35,24 @@ new AdminModuleDescriptor
     ]
 }
 ```
+
+### Category And Ordering
+
+`Category` must be one of the constants in `Modules/ModuleCategories.cs` -
+`Exchange`, `DirectoryAndGroups`, `IdentityAndAccess`, `Infrastructure`,
+`Administration` - written as the constant, not as a repeated string literal. A
+catalog test fails any other value, including the `"Other"` default the property
+carries when `Category` is left unset. Category is display grouping only; it reaches
+no authorization path.
+
+`ModuleCategories.Administration` is the one category with behavior attached: a
+module in it renders in the Administration block at the bottom of the sidebar
+instead of the primary nav (`NavMenu.IsAdministrationModule`).
+
+The descriptor has no ordering field. Every catalog-driven list is alphabetical by
+`DisplayName`, compared with `StringComparer.OrdinalIgnoreCase`
+(`ModuleCatalog.GetOrdered()`). A module author picks a category and a display name;
+position follows from them.
 
 ## Permission Model
 
@@ -239,8 +256,13 @@ Shared infrastructure in `ExchangeServiceBase`:
 ## UI Rendering
 
 Modules are rendered automatically by the catalog in:
-- **NavMenu**: sorted by `SortOrder`, filtered by enablement + authorization
-- **Home page**: cards with `DisplayName`, `Description`, link to `Route`
+- **NavMenu**: primary nav grouped by `Category` in the fixed section order Exchange,
+  Directory & Groups, Identity & Access, Infrastructure, with the modules inside each
+  section listed alphabetically by `DisplayName`; filtered by enablement +
+  authorization. A module whose `Category` is `ModuleCategories.Administration`
+  renders in the Administration block at the bottom instead of the primary nav.
+- **Home page**: cards with `DisplayName`, `Description`, link to `Route`, in the same
+  alphabetical order
 - **Module Config pages**: section access + config fields per module
 
 System modules are grouped separately with warning styling.
