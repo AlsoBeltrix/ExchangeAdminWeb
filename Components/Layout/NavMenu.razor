@@ -149,10 +149,10 @@
     private bool isAdminSettingsAuthorized;
     private static readonly string[] PrimaryCategoryOrder =
     [
-        "Exchange",
-        "Directory & Groups",
-        "Identity & Access",
-        "Infrastructure"
+        ModuleCategories.Exchange,
+        ModuleCategories.DirectoryAndGroups,
+        ModuleCategories.IdentityAndAccess,
+        ModuleCategories.Infrastructure
     ];
 
     private IEnumerable<IGrouping<string, AdminModuleDescriptor>> GetPrimaryModuleGroups()

@@ -2,6 +2,7 @@ using ExchangeAdminWeb.Authorization;
 using ExchangeAdminWeb.Modules;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace ExchangeAdminWeb.Tests;
@@ -165,6 +166,31 @@ public class ModuleCatalogTests
         // The two that do belong there - the Graph credential and the search cap - are untouched.
         Assert.Contains(module.ConfigFields, f => f.Key == "GraphDelineaSecretId");
         Assert.Contains(module.ConfigFields, f => f.Key == "SearchResultLimit");
+    }
+
+    [Fact]
+    public void Catalog_EveryCategoryIsAModuleCategoriesConstant()
+    {
+        // Category is nav grouping only and reaches no authorization path, but a value that
+        // matches no PrimaryCategoryOrder entry in NavMenu.razor silently drops the module out
+        // of the primary nav - a typo nothing else would catch. Every descriptor therefore names
+        // a ModuleCategories constant, and this is the tripwire for a raw string creeping back.
+        var known = typeof(ModuleCategories)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Where(f => f.IsLiteral && !f.IsInitOnly && f.FieldType == typeof(string))
+            .Select(f => (string)f.GetRawConstantValue()!)
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Five and only five: Exchange, Directory & Groups, Identity & Access, Infrastructure
+        // and Administration. Adding a sixth is a nav change, not an incidental edit.
+        Assert.Equal(5, known.Count);
+
+        foreach (var module in _catalog.GetAll())
+        {
+            Assert.True(
+                known.Contains(module.Category),
+                $"Module '{module.Id}' declares category '{module.Category}', which is not a ModuleCategories constant.");
+        }
     }
 
     [Fact]
