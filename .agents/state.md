@@ -7,6 +7,17 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+- **CloudPasswordReset: the owner is populating `employeeID` on Entra CLD accounts (2026-09-15).**
+  This replaces heuristic name/alias matching with a direct key: the CLD account's `employeeID`
+  matches the AD employee record's employee identifier, and that record supplies the destination
+  mailbox. The owner directs reopening module work on this basis. The name/alias/legacy-suffix
+  rules proposed in `.agents/research/cloud-password-owner-runtime.md` are consequently candidates
+  for demotion to fallback or deletion, and the 89/82 split from the old experiment is superseded
+  as a coverage claim once enrollment completes. Open: enrollment is in progress, not complete, so
+  the resolver's behavior for an unpopulated `employeeID` (refuse vs fall back) is undecided, as is
+  whether `employeeID` alone is sufficient without a corroborating name check. Implementation
+  remains on hold pending an updated plan.
+
 - **CloudPasswordReset: runtime owner investigation reopened; implementation remains on hold.**
   The owner requested completion of the runtime-association investigation and authorized the
   M365Connections/PTK connection. Scope is individually owned employee CLD accounts. L2 alone
@@ -72,6 +83,23 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   (`.agents/review/pgwt-3.contested.md`).
 
 ## Next
+
+- **Owner-reported issues, raised 2026-09-15; none implemented.**
+  1. *Licensing Updates sits in the wrong nav category.* `Modules/ModuleCatalog.cs` gives it
+     `Category = "Exchange"`; it writes `extensionAttribute11` in AD and is not an
+     ExchangeOnline dependent, so it belongs under `Identity & Access`. Category is nav
+     grouping only - section-access keys are per-module policy aliases, so the move does not
+     touch authorization. Quickest of the three.
+  2. *Service Health misses `status.cloud.microsoft`.* Microsoft splits its status reporting;
+     the module currently reads only the Graph service-health source. Needs a decision on how
+     that second source is obtained (no documented Graph equivalent is established) before any
+     design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
+  3. *Mailbox Migrations shows a stale open report.* With a migration report open on the
+     module's status page, deleting and recreating the batch under the same name elsewhere
+     (another session or PowerShell) leaves the refreshed page showing the previous
+     migration's report until the operator closes and reopens it. Suspected identity-by-name
+     caching in the open-report state; not yet diagnosed. Reproduction and root cause
+     unestablished.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
