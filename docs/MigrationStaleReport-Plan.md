@@ -8,6 +8,14 @@ Repository base: `6ccdf9d`
 
 Owner-reported issue 3 of the 2026-09-15 queue, recorded in `.agents/state.md`.
 
+Review: `codereview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, standard)
+over 6ccdf9d..d48f750`: three candidate findings, all verified against the code at
+the pinned head and all admitted. Recorded under Review findings below; the plan
+body is NOT yet revised to absorb them, pending the owner's remedy ruling.
+Harness codex-cli 0.154.0 (cache recorded 0.153.2; cached flags still valid).
+Capability proof: reviewer read `Migration.razor:771` and ran `git log --oneline -3`,
+both succeeded.
+
 ## Goal
 
 The Mailbox Migrations status page must never display a migration report that was
@@ -196,6 +204,48 @@ Requires a dev deploy. Not satisfiable by automation.
    explicitly reopened - and that reopening shows the new migration's report.
 5. Confirm the Close button still closes the panel.
 
+## Review findings
+
+All three were independently verified against the code at `d48f750` before being
+admitted. None is a defect in shipped code - no code has shipped - so each is a
+required revision to this plan rather than a `.agents/review/` finding record.
+
+**MSR-A - the plan's call-site list is not exhaustive.** `ExecuteUserAction`
+reloads the user list on its success path at `Migration.razor:1495-1496`
+(`if (result.Success && expandedBatch != null) batchUsers = await
+MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch);`) and the Steps section
+omits it. Trigger: open a report, then run Complete / Approve / Pause / Resume /
+Clear on that user. The list refreshes and the report panel keeps the pre-action
+text. This is the reported defect class surviving in a first-party workflow, so
+the step-2 list must grow to six sites.
+
+**MSR-B - Option A does not invalidate an in-flight report fetch.**
+`LoadUserReport` sets `loadingReport`, awaits `GetMigrationUserReportAsync`
+(`:1769-1776`), then assigns `reportUser`/`userReport`. Nothing disables the
+refresh controls while that fetch is outstanding: the batch-users refresh button
+gates on `loadingBatchUsers != null` (`:620-622`), not on `loadingReport`. Trigger:
+open a report, then refresh before the fetch returns. `CloseUserReport()` clears
+the fields and the late continuation repopulates them, restoring the stale panel.
+Report fetches use `Get-MigrationUserStatistics -IncludeReport`
+(`Services/MigrationService.cs:872-875`) and can be slow, so the window is real.
+Remedy: capture a monotonic report generation in `LoadUserReport` and assign only
+if it is still current; `CloseUserReport()` increments it.
+
+**MSR-C - the proposed tripwire can pass with a broken branch.** Step 4 anchors
+per method body, but two of the sites have two independent stale-producing
+branches each: `ToggleBatchDetails` (`:1304-1314`) and the search paths
+(`:1709-1717`, `:1741-1747`). A single `CloseUserReport()` anywhere in the method
+satisfies a body-anchored assertion while the other branch stays unguarded - the
+exact failure `MigrationStatusPageTests.cs:18-21` warns about. Anchor each
+assertion to its branch, not its method.
+
+Reviewer judgments confirmed without change: the cited lines and quoted
+declarations are accurate; the batch-name-keying claim is correct because the
+repro reuses the name; the module-only version bump is correct.
+
 ## Pending decisions
 
 - The remedy choice above (Option A or Option B). Nothing else is open.
+  MSR-A and MSR-C apply to either option. MSR-B applies to either option and is
+  slightly larger under Option B, which keeps a fetch outstanding on every
+  refresh rather than only on operator action.
