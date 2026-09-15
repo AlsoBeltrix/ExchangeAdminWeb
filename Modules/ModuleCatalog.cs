@@ -29,7 +29,12 @@ public sealed class ModuleCatalog
     }
 
     public IReadOnlyList<AdminModuleDescriptor> GetAll() => _modules;
-    public IReadOnlyList<AdminModuleDescriptor> GetOrdered() => _modules.OrderBy(m => m.SortOrder).ToList();
+    // Display order is alphabetical by display name, case-insensitive and culture-independent.
+    // OrdinalIgnoreCase is deliberate over a culture-sensitive comparison: it gives the same
+    // order on every host and locale, which a hand-maintained integer used to guarantee by
+    // accident. No display name begins with a digit or punctuation today.
+    public IReadOnlyList<AdminModuleDescriptor> GetOrdered() =>
+        _modules.OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
     public AdminModuleDescriptor? GetById(string id) => _byId.GetValueOrDefault(id);
     public AdminModuleDescriptor? GetByRoute(string route) => _byRoute.GetValueOrDefault(route);
     public AdminModuleDescriptor? GetByPolicyAlias(string alias) => _byPolicyAlias.GetValueOrDefault(alias);
@@ -37,7 +42,11 @@ public sealed class ModuleCatalog
     public IReadOnlyList<string> GetConfigurablePolicyAliases()
     {
         var result = new List<string>();
-        foreach (var m in _modules.Where(m => !m.IsSystemModule && !m.IsConfigOnly).OrderBy(m => m.SortOrder))
+        // Same ordering rule as GetOrdered(), so the two stay consistent; each module's main
+        // alias still comes immediately before its own granular aliases.
+        foreach (var m in _modules
+            .Where(m => !m.IsSystemModule && !m.IsConfigOnly)
+            .OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
             result.Add(m.MainPermission.PolicyAlias);
             foreach (var gp in m.GranularPermissions)

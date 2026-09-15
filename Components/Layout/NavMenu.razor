@@ -160,7 +160,7 @@
         return Catalog.GetOrdered()
             .Where(m => !m.IsSystemModule && !m.IsConfigOnly && !IsAdministrationModule(m) && Enablement.IsModuleEnabled(m.Id))
             .OrderBy(m => GetCategorySortOrder(m.Category))
-            .ThenBy(m => m.SortOrder)
+            .ThenBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase)
             .GroupBy(m => m.Category);
     }
 

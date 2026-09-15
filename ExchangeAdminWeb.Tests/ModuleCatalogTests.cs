@@ -378,11 +378,84 @@ public class ModuleCatalogTests
     }
 
     [Fact]
-    public void Catalog_GetOrdered_ReturnsSortedBySortOrder()
+    public void Catalog_GetOrdered_ReturnsSortedByDisplayName()
     {
+        // Replaces the old SortOrder assertion. Every list the app renders from the catalog -
+        // sidebar sections, Home tiles, the Module Config tree, the Admin Settings list - reads
+        // this order, so it is the single place alphabetical ordering has to hold.
+        // OrdinalIgnoreCase, matching GetOrdered(): stable across hosts and locales.
         var ordered = _catalog.GetOrdered();
-        for (int i = 1; i < ordered.Count; i++)
-            Assert.True(ordered[i].SortOrder >= ordered[i - 1].SortOrder);
+
+        for (var i = 1; i < ordered.Count; i++)
+        {
+            Assert.True(
+                StringComparer.OrdinalIgnoreCase.Compare(ordered[i - 1].DisplayName, ordered[i].DisplayName) <= 0,
+                $"'{ordered[i - 1].DisplayName}' must not sort after '{ordered[i].DisplayName}'.");
+        }
+    }
+
+    [Fact]
+    public void Catalog_GetConfigurablePolicyAliases_IsOrderedByDisplayName()
+    {
+        // The alias list seeds the Module Config access tree, so it follows the same rule as
+        // GetOrdered(): a module's aliases appear in display-name order, with each module's main
+        // alias immediately before its own granular aliases.
+        var expected = _catalog.GetAll()
+            .Where(m => !m.IsSystemModule && !m.IsConfigOnly)
+            .OrderBy(m => m.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(m => new[] { m.MainPermission.PolicyAlias }
+                .Concat(m.GranularPermissions.Select(gp => gp.PolicyAlias)))
+            .ToArray();
+
+        Assert.Equal(expected, _catalog.GetConfigurablePolicyAliases());
+    }
+
+    [Fact]
+    public void Catalog_PolicyAliases_AreUnaffectedByOrdering()
+    {
+        // Non-goal guard for docs/AlphabeticalModuleOrdering-Plan.md. Section access is keyed on
+        // policy alias (SectionAccessService.BuildFailClosedSet), never on category or list
+        // position, so reordering the catalog must not add, drop or rename a single alias - every
+        // stored section_access row keeps pointing at the same thing. Pinned as a literal set:
+        // deriving it from the catalog would make the test agree with any change.
+        var expected = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "ExchangeOnline",
+            "MailboxPermissions", "MailboxPermissionsOnPrem",
+            "CalendarPermissions", "CalendarPermissionsOnPrem",
+            "MigrationCheck", "MigrationCreate", "MigrationManage",
+            "DelegationReport",
+            "MessageTrace",
+            "RecipientLookup",
+            "OutOfOffice",
+            "BlockedSenders", "BlockedSendersUnblock",
+            "GroupManagement", "GroupManagementOnPrem",
+            "M365GroupManagement",
+            "Comms10k",
+            "SelfServiceGroups",
+            "MfaReset",
+            "AccountLockoutRemediation", "AccountLockoutRemediationLogoff",
+            "ConferenceRooms",
+            "NamedLocations",
+            "EmergencyDisable",
+            "RiskyUsers", "RiskyUsersRemediate",
+            "DhcpAuthorization",
+            "BitLockerRecovery",
+            "IntuneDevices", "IntuneDevicesDelete", "IntuneDevicesPrivileged", "IntuneDevicesEntraDelete",
+            "ServiceHealth",
+            "LicensingUpdates",
+            "ADAttributeEditor", "ADAttributeEditorLevel1", "ADAttributeEditorLevel2", "ADAttributeEditorLevel3",
+            "AdminSettings",
+            "EventLog", "UndoAuditedActions",
+            "AdminBulkJobs"
+        };
+
+        var actual = _catalog.GetAll()
+            .SelectMany(m => new[] { m.MainPermission.PolicyAlias }
+                .Concat(m.GranularPermissions.Select(gp => gp.PolicyAlias)))
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
