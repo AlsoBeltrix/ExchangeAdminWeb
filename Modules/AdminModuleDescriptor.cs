@@ -8,7 +8,6 @@ public sealed record AdminModuleDescriptor
     public required string Route { get; init; }
     public required string IconCss { get; init; }
     public string Category { get; init; } = "Other";
-    public required int SortOrder { get; init; }
     public required bool EnabledByDefault { get; init; }
     public required bool IsSystemModule { get; init; }
     public string Version { get; init; } = "1.0.0";

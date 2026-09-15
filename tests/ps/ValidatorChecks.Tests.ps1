@@ -41,7 +41,6 @@ new AdminModuleDescriptor
     Route = "my-module",
     IconCss = "bi bi-geo-alt-fill-nav-menu",
     Category = "Other",
-    SortOrder = 800,
     EnabledByDefault = false,
     IsSystemModule = false,
     Version = "1.0.0",
