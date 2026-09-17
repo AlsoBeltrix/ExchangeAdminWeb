@@ -207,7 +207,9 @@ public sealed class ModuleCatalog
             // 1.8.1: the open migration report is cleared on every batch-user reload
             // 1.8.2: that close now happens after the reload lands, not before it, so a report
             // opened mid-reload cannot survive it (msr-1, docs/MigrationStaleReport-Plan.md).
-            Version = "1.8.2",
+            // 1.8.3: a failed search no longer leaves loadingBatchUsers set for the life of the
+            // circuit (docs/MigrationButtonGating-Plan.md, prerequisite to the button gate).
+            Version = "1.8.3",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

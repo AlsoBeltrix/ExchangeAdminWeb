@@ -1726,7 +1726,6 @@
                 StateHasChanged();
 
                 ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName));
-                loadingBatchUsers = null;
                 return;
             }
 
@@ -1758,7 +1757,6 @@
             StateHasChanged();
 
             ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!));
-            loadingBatchUsers = null;
         }
         catch (Exception ex)
         {
@@ -1766,7 +1764,12 @@
         }
         finally
         {
+            // Both of the branches above set loadingBatchUsers before an await and the catch
+            // swallows the exception, so clearing it on the success path only left it stuck for
+            // the life of the circuit whenever Exchange failed. ToggleBatchDetails and
+            // RefreshBatchUsers already clear it here; this method now matches them.
             isSearching = false;
+            loadingBatchUsers = null;
         }
     }
 

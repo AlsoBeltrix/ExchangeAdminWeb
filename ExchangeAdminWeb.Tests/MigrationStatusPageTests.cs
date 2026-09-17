@@ -586,6 +586,38 @@ public class MigrationStatusPageTests
     }
 
     [Fact]
+    public void EverySetterOfTheRowLoadingFlagClearsItInAFinally()
+    {
+        // loadingBatchUsers gates the two refresh arrows today, and is about to gate the whole
+        // page. A setter that clears it only on the success path leaves it stuck for the life of
+        // the circuit the first time Exchange throws - SearchUser did exactly that, clearing it
+        // after each await while its finally cleared only isSearching. Anchored per occurrence
+        // rather than per method so a fourth setter added later cannot skip the finally.
+        var page = ReadPage();
+
+        var setters = Regex.Matches(page, @"(?<![A-Za-z])loadingBatchUsers\s*=(?!=)\s*(?<value>[^\r\n]+)")
+            .Where(m => m.Groups["value"].Value.Trim() != "null;")
+            .ToList();
+
+        Assert.True(setters.Count >= 4,
+            $"expected every row-loading setter to still be present, found {setters.Count}");
+
+        foreach (var setter in setters)
+        {
+            var method = EnclosingMethodName(page, setter.Index);
+            var body = GetMethodBody(method);
+
+            Assert.True(body.Contains("finally", StringComparison.Ordinal),
+                $"{method} sets loadingBatchUsers but has no finally to clear it in");
+
+            var cleanup = ExtractBlock(body, "finally");
+            Assert.True(cleanup.Contains("loadingBatchUsers = null;", StringComparison.Ordinal),
+                $"{method} sets loadingBatchUsers but does not clear it in its finally; a throw "
+                + "there leaves the flag stuck and the controls it gates dead");
+        }
+    }
+
+    [Fact]
     public void AUserActionThatReloadsTheRowsClosesTheReport()
     {
         // The site the first draft of the plan missed (review finding MSR-A). A per-user action -
@@ -727,6 +759,20 @@ public class MigrationStatusPageTests
 
         Assert.Fail($"unbalanced braces after '{opener}'");
         return "";
+    }
+
+    /// <summary>
+    /// The name of the method whose body contains <paramref name="index"/>, found by walking back
+    /// to the nearest member signature. Lets an assertion start from an occurrence rather than
+    /// from a hard-coded list of method names.
+    /// </summary>
+    private static string EnclosingMethodName(string source, int index)
+    {
+        var signatures = Regex.Matches(source[..index],
+            @"\n    private\s+(?:async\s+)?[A-Za-z][^\r\n=]*?\b(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(");
+
+        Assert.True(signatures.Count > 0, $"no enclosing method found for offset {index}");
+        return signatures[^1].Groups["name"].Value;
     }
 
     private static string ReadPage() =>
