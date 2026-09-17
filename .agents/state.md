@@ -7,18 +7,25 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-15. Branch `master`, verified head `e30c6a8`, working tree clean.**
-  Nine commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
+- **2026-09-17. Branch `master`, head `3e4f13d`, working tree clean.**
+  Eighteen commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
   separately - do not push, and do not treat the remote lag as drift. The owner's issue queue
-  is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo); its item 1 is
-  marked DONE there. Next agreed item: the Mailbox Migrations stale open report, described
-  under Next as owner-reported issue 3. Nothing is in flight; no plan is approved for it yet,
-  so the first action is reproduction and root cause, then a plan. Likely starting points,
-  not yet read: `Components/Pages/Migration.razor` (1917 lines; the status page and its
-  open-report state), `Services/MigrationService.cs` (981 lines). Working hypothesis only,
-  unverified: the open report is held in page state keyed by batch name, so a recreated batch
-  of the same name matches the stale entry. Do not implement against that hypothesis without
-  confirming it in the code.
+  is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3 are
+  landed; item 2 is unstarted and needs a decision before design. Nothing is in flight.
+
+- **Mailbox Migrations no longer shows a stale open report; manual checks and the codereview
+  remain.** `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance
+  checklist. Landed 2026-09-17 in `3e4f13d`; Migration module version 1.8.1, no base app bump.
+  The earlier batch-name-caching hypothesis was FALSIFIED by reading the page: the report was
+  never keyed on batch name, and that fix would not have touched the reported repro, which
+  reuses the name. Actual cause: `userReport` is a one-time snapshot, the render guard at
+  `Migration.razor:771` keys on the email address alone, and seven paths reloaded or discarded
+  `batchUsers` without clearing it. One `CloseUserReport()` helper now owns the clear at all
+  seven, and a `reportGeneration` counter drops the result of a fetch a reload superseded.
+  Ten source-level tripwires guard it, anchored per branch; all three guard-proof mutations
+  bit. Nothing here reaches the rendered page - no bUnit harness exists - so the plan's manual
+  checks are the only evidence that the operator sees the fix. The implementation codereview
+  has not been dispatched and needs a go.
 
 - **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
   `docs/AlphabeticalModuleOrdering-Plan.md` is Implemented and owns the manual acceptance
@@ -108,7 +115,7 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Owner-reported issues, raised 2026-09-15. Issue 1 is landed; 2 and 3 are not started.**
+- **Owner-reported issues, raised 2026-09-15. Issues 1 and 3 are landed; 2 is not started.**
   1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
      now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
      grouping only - section-access keys are per-module policy aliases - so the move did not
@@ -117,12 +124,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      the module currently reads only the Graph service-health source. Needs a decision on how
      that second source is obtained (no documented Graph equivalent is established) before any
      design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
-  3. *Mailbox Migrations shows a stale open report.* With a migration report open on the
-     module's status page, deleting and recreating the batch under the same name elsewhere
-     (another session or PowerShell) leaves the refreshed page showing the previous
-     migration's report until the operator closes and reopens it. Suspected identity-by-name
-     caching in the open-report state; not yet diagnosed. Reproduction and root cause
-     unestablished.
+  3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`; see the
+     Now entry above and `docs/MigrationStaleReport-Plan.md`. Code-side closed; the plan's
+     manual acceptance checklist and the implementation codereview are what remain.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
