@@ -7,12 +7,12 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-17. Branch `master`, verified head `3e4f13d`, working tree clean.**
-  Verification was last run at `3e4f13d`; everything on top of it is records only.
-  Twenty-one commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
-  separately - do not push, and do not treat the remote lag as drift. The owner's issue queue
-  is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3 are
-  landed, item 3 with one open review finding (`msr-1`, below). Nothing is in flight.
+- **Handoff 2026-09-17. Branch `master`, verified head `2b93fdc`, working tree clean.**
+  Verification was last run at `2b93fdc`; the records commit on top of it is docs only.
+  Twenty-three commits are local and unpushed; both remotes sit at `ace4d44`. The owner is
+  pushing separately - do not push, and do not treat the remote lag as drift. The owner's issue
+  queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3
+  are landed, with no open review findings. Nothing is in flight.
   **Next agreed item: queue item 7, the slow Service Health
   load** - described under Next as owner-reported issue 7. No plan exists for it, so the first
   action is root cause, then a plan. Starting point, already checked: the page ALREADY has a
@@ -23,9 +23,10 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   anything: the authorization round trip runs before `LoadAsync`, and how the page renders
   while that is outstanding is unverified.
 
-- **Mailbox Migrations no longer shows a stale open report; manual checks and the codereview
-  remain.** `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance
-  checklist. Landed 2026-09-17 in `3e4f13d`; Migration module version 1.8.1, no base app bump.
+- **Mailbox Migrations no longer shows a stale open report; only the manual checks remain.**
+  `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance checklist. Landed
+  2026-09-17 in `3e4f13d`, with the review fix `2b93fdc` on top; Migration module version 1.8.2,
+  no base app bump.
   The earlier batch-name-caching hypothesis was FALSIFIED by reading the page: the report was
   never keyed on batch name, and that fix would not have touched the reported repro, which
   reuses the name. Actual cause: `userReport` is a one-time snapshot, the render guard at
@@ -42,15 +43,17 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `1250220..3e4f13d`, verdict **findings (1)**, 2026-09-17, capability proof passed. Four of the five things it was
   asked about came back clean and stand as reviewed - no eighth reload path, the
   generation guard correct on all three continuation paths, no half-populated field
-  combination, and the module-only 1.8.1 bump right. The fifth produced **`msr-1`**
-  (MEDIUM, admitted, `.agents/review/findings/msr-1.md`, indexed in
-  `.agents/review/index.md`): the **Report** button at `Migration.razor:737-739` is
-  gated on neither `loadingBatchUsers` nor `actionInProgress`, and `RefreshBatchUsers`
-  bumps the generation BEFORE its await without nulling `batchUsers` - so a report
-  opened during a reload writes itself over rows that were replaced underneath it. The
-  ten tripwires cannot see it: they assert the close precedes the refetch, which is
-  exactly what the defective code does. Confirmed line by line before intake. **No code
-  is authorized for it** - the fix is a follow-up slice and needs a go.
+  combination, and the module-only bump right. The fifth produced **`msr-1`** (MEDIUM,
+  `.agents/review/findings/msr-1.md`), **fixed 2026-09-17 in `2b93fdc`**: closing the report
+  before the await was not enough, because the refresh-in-place paths leave the old rows and
+  their **Report** button rendered for the whole Exchange call. One helper,
+  `ReplaceBatchUsers`, now owns every assignment of `batchUsers` and closes the report
+  itself, so the close lands after the await. **The lesson worth keeping is about the tests,
+  not the code:** the original ten tripwires asserted that the close precedes the refetch,
+  which the defective code did, so they passed the bug - the guard proof's first mutation is
+  literally the pre-fix code and only the three new tripwires caught it. Assert the negative
+  per occurrence (nothing assigns `batchUsers` outside the helper), not the ordering per
+  method.
 
 - **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
   `docs/AlphabeticalModuleOrdering-Plan.md` is Implemented and owns the manual acceptance
@@ -150,10 +153,10 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      that second source is obtained (no documented Graph equivalent is established) before any
      design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
      Blocked on that decision, which is why item 7 was taken first.
-  3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`; see the
-     Now entry above and `docs/MigrationStaleReport-Plan.md`. Code-side closed; the plan's
-     manual acceptance checklist is owner-deferred and the implementation codereview is what
-     remains.
+  3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`, reviewed,
+     and its one finding fixed in `2b93fdc`; see the Now entry above and
+     `docs/MigrationStaleReport-Plan.md`. Code-side closed; only the plan's owner-deferred
+     manual acceptance checklist remains.
 
 - **Queue items not yet started, in the owner's own words.** Numbering is the queue's.
   4. *Break out permissions for message trace vs header analysis.* Two capabilities behind one

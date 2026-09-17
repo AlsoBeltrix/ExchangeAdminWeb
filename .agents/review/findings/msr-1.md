@@ -3,9 +3,9 @@
 **Severity**: MEDIUM - reintroduces the reported stale-report symptom through a narrower
 door. The panel the fix was written to close can still be left open over rows that were
 replaced underneath it, so the operator can read a report that pre-dates the reload.
-**Status**: Open
-**Branch**: - (direct-to-main when authorized)
-**Commit**: -
+**Status**: Fixed and guard-proved 2026-09-17
+**Branch**: - (direct to master)
+**Commit**: 2b93fdc
 
 ## Evidence
 
@@ -62,24 +62,68 @@ guard at `:771` lives inside the `batchUsers` loop.
 
 ## Approach
 
-Not yet authorized; no code written. The reviewer's suggestion is to await into a local,
-call `CloseUserReport()`, then assign `batchUsers` - so any report opened during the
-reload is dropped by the generation bump that follows it. The alternative is to disable
-the Report button while `loadingBatchUsers != null`, matching the refresh button beside it.
-The first is the stronger guarantee; the second is one attribute. Choosing between them is
-a plan question, not an intake one.
+The owner's go was "fix it", with no option named, so the choice was the coder's.
+
+Taken: the structural form of the reviewer's suggestion. Rather than reordering the two
+offending call sites, one private helper now owns every replacement of the rendered rows
+and closes the report itself:
+
+```
+private void ReplaceBatchUsers(List<MigrationUserInfo> users)
+{
+    CloseUserReport();
+    batchUsers = users;
+}
+```
+
+All seven assignment sites hand it the awaited fetch directly -
+`ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(batchName));` - which is
+what puts the close on the same side of the await as the new rows. The five discards
+(`batchUsers = null;`) are untouched: those paths stop rendering the rows, and the existing
+discard guard already covers them. The pre-await `CloseUserReport()` calls stay as well, so
+the panel still clears the moment the operator asks for a reload.
+
+Rejected: gating the **Report** button on `loadingBatchUsers != null`, matching the refresh
+button beside it. One attribute, but it blocks a read-only diagnostic the operator may
+legitimately want mid-reload, and it leaves the invariant unenforced - the next reload path
+added to the page would still be free to get it wrong.
 
 ## Files changed
 
-None yet. Expected: `Components/Pages/Migration.razor`,
-`ExchangeAdminWeb.Tests/MigrationStatusPageTests.cs`, `Modules/ModuleCatalog.cs`,
-`docs/MigrationStaleReport-Plan.md`.
+- `Components/Pages/Migration.razor` - the helper, and seven assignment sites routed
+  through it.
+- `ExchangeAdminWeb.Tests/MigrationStatusPageTests.cs` - three tripwires.
+- `Modules/ModuleCatalog.cs` - Migration module 1.8.1 -> 1.8.2. No base app bump; the
+  change is module-scoped.
+- `docs/MigrationStaleReport-Plan.md` - an `msr-1 fixed` subsection and a shortened
+  Outstanding.
 
 ## Guard proof
 
-Not yet run. Note that the existing ten tripwires cannot catch this: they assert that
-`CloseUserReport()` precedes the refetch, which is exactly what the defective code already
-does. A tripwire for this finding has to assert ordering *after* the await, not before it.
+The intake note said a tripwire for this finding has to assert ordering *after* the await,
+not before it. With the helper in place that ordering is structural, so the load-bearing
+assertion is a negative one instead, anchored per occurrence:
+`NoCodePathAssignsBatchUsersWithoutClosingTheReport` walks every `batchUsers =` in the page
+and requires each to be either `null;` or the single `users;` inside the helper. An eighth
+reload path cannot slip past it. `TheRowReplacementHelperClosesTheReportBeforeAssigning` and
+`EveryRowRefetchIsHandedStraightToTheHelper` pin the helper's internals and the call shape.
+
+Three mutations, each applied, run, and restored byte-identically
+(`--filter FullyQualifiedName~MigrationStatusPageTests`, 52 tests):
+
+| mutation | result |
+| --- | --- |
+| M1 `RefreshBatchUsers` assigns `batchUsers` directly again | 2 failed, 50 passed |
+| M2 the helper assigns before closing | 1 failed, 51 passed |
+| M3 the post-action reload assigns directly again | 2 failed, 50 passed |
+
+M1 is exactly the pre-fix code. The ten tripwires that shipped with `3e4f13d` all passed it;
+only the three new ones failed. That is the finding itself, restated as evidence.
+
+Full verification at the fix commit: `dotnet build ExchangeAdminWeb.slnx -c Release` clean,
+`dotnet test ExchangeAdminWeb.slnx` 2497 passed / 3 skipped / 0 failed,
+`dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` clean,
+`git diff --check HEAD` clean.
 
 ## Coder dispute
 
@@ -103,4 +147,10 @@ call all stood.
 
 ## Closeout
 
-Pending. Needs an owner go before any code.
+Closed 2026-09-17 on the coder-side guard proof, per the repo rule that only CRITICAL
+findings take a reviewer verification round. Landed in `2b93fdc`, direct to `master`, not
+pushed.
+
+The residual risk named under Known gaps is unchanged and is now moot for this mechanism:
+the window still exists in the sense that the operator can click **Report** during a
+reload, but the report that opens is discarded rather than rendered over stale rows.
