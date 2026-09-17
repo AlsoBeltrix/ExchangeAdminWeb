@@ -7,11 +7,13 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-17. Branch `master`, verified head `0b0efdd`, working tree clean.**
-  Nineteen commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
+- **Handoff 2026-09-17. Branch `master`, verified head `3e4f13d`, working tree clean.**
+  Verification was last run at `3e4f13d`; everything on top of it is records only.
+  Twenty-one commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
   separately - do not push, and do not treat the remote lag as drift. The owner's issue queue
   is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3 are
-  landed. Nothing is in flight. **Next agreed item: queue item 7, the slow Service Health
+  landed, item 3 with one open review finding (`msr-1`, below). Nothing is in flight.
+  **Next agreed item: queue item 7, the slow Service Health
   load** - described under Next as owner-reported issue 7. No plan exists for it, so the first
   action is root cause, then a plan. Starting point, already checked: the page ALREADY has a
   full-page spinner (`Components/Pages/ServiceHealth.razor:63-66`, gated on
@@ -35,8 +37,20 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   checks are the only evidence that the operator sees the fix. **Owner 2026-09-17: those
   checks are deferred indefinitely, not skipped** - migrations are production actions, and the
   owner will verify opportunistically the next time a real migration comes up. Do not re-queue
-  them as blocking work and do not treat their absence as drift. The implementation codereview
-  has not been dispatched and needs a go.
+  them as blocking work and do not treat their absence as drift. **The implementation codereview is done** -
+  codex, `@azure-openai-eus2-global/gpt-5.5-dzs` at xhigh, standard tier, over
+  `1250220..3e4f13d`, verdict **findings (1)**, 2026-09-17, capability proof passed. Four of the five things it was
+  asked about came back clean and stand as reviewed - no eighth reload path, the
+  generation guard correct on all three continuation paths, no half-populated field
+  combination, and the module-only 1.8.1 bump right. The fifth produced **`msr-1`**
+  (MEDIUM, admitted, `.agents/review/findings/msr-1.md`, indexed in
+  `.agents/review/index.md`): the **Report** button at `Migration.razor:737-739` is
+  gated on neither `loadingBatchUsers` nor `actionInProgress`, and `RefreshBatchUsers`
+  bumps the generation BEFORE its await without nulling `batchUsers` - so a report
+  opened during a reload writes itself over rows that were replaced underneath it. The
+  ten tripwires cannot see it: they assert the close precedes the refetch, which is
+  exactly what the defective code does. Confirmed line by line before intake. **No code
+  is authorized for it** - the fix is a follow-up slice and needs a go.
 
 - **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
   `docs/AlphabeticalModuleOrdering-Plan.md` is Implemented and owns the manual acceptance

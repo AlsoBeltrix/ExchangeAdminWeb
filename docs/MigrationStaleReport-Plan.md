@@ -1,6 +1,6 @@
 # Migration Stale Open Report Plan
 
-Status: Implemented 2026-09-17. Manual acceptance checklist below is outstanding.
+Status: Implemented 2026-09-17. Implementation reviewed 2026-09-17: one MEDIUM finding (msr-1) is open, and the manual acceptance checklist below is outstanding.
 Remedy ruled by the owner 2026-09-15: Option A, clear the open report on reload.
 Plan approved by the owner 2026-09-17; steps 1-6 landed in the commit that carries
 this status change.
@@ -334,10 +334,36 @@ repro reuses the name; the module-only version bump is correct.
 None. The remedy is ruled (Option A), the review findings are absorbed, and the
 owner approved implementation on 2026-09-17.
 
+## Implementation review
+
+`codereview codex (@azure-openai-eus2-global/gpt-5.5-dzs @ xhigh, standard) over
+1250220..3e4f13d: findings (1)`. Dispatched 2026-09-17T13:42Z, codex-cli 0.154.0,
+read-only, capability proof passed - the reviewer quoted `Migration.razor:778`
+verbatim and ran `git log --oneline -3`, echoing all three real subjects.
+
+The reviewer was asked directly about five things. Four came back clean and stand
+as reviewed: there is no eighth path that reloads or discards `batchUsers` without
+clearing the report, the generation guard is correct on all three continuation
+paths of `LoadUserReport`, no field combination was found that renders a
+half-populated panel, and the module-only version bump to 1.8.1 is right.
+
+The fifth produced **msr-1** (MEDIUM, admitted, `.agents/review/findings/msr-1.md`):
+the ten tripwires assert that `CloseUserReport()` precedes the refetch, and that is
+exactly what `RefreshBatchUsers` does - it bumps the generation *before* its await
+and never nulls `batchUsers`, so the old rows and their **Report** button
+(`Migration.razor:737-739`, gated on neither `loadingBatchUsers` nor
+`actionInProgress`) stay live for the whole reload. A report opened inside that
+window captures the post-bump generation and writes itself over rows that have
+since been replaced. `ExecuteUserAction`'s success reload has the same shape and a
+narrower window. The finding was confirmed line by line before intake, not accepted
+on the reviewer's word.
+
+No code is authorized for it. The fix is a follow-up slice and needs an owner go.
+
 ## Outstanding
 
+- **msr-1**, above. It is the same symptom this plan set out to remove, reachable
+  through a narrower door, and the existing tripwires cannot see it.
 - The manual acceptance checklist above. It needs a dev deploy and is the only
   evidence that reaches the rendered page; nothing in this repo can render
   `Migration.razor`.
-- The implementation codereview for this slice has not been dispatched and needs an
-  owner go.
