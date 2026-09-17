@@ -204,8 +204,9 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            // 1.8.0: CSV export of the migration batch status list (docs/ModuleCsvExport-Plan.md).
-            Version = "1.8.0",
+            // 1.8.1: the open migration report is cleared on every batch-user reload
+            // (docs/MigrationStaleReport-Plan.md).
+            Version = "1.8.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

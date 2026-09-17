@@ -462,6 +462,166 @@ public class MigrationStatusPageTests
         Assert.Contains("batchUsers?.Any(", body, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EveryDiscardOfBatchUsersAlsoClosesTheOpenReport()
+    {
+        // The reported defect: a batch deleted and recreated under the same name is a DIFFERENT
+        // migration with the same key, but the open report panel is keyed on the email address
+        // alone (":771"), so the snapshot fetched for the old migration kept rendering under the
+        // new one's row. See docs/MigrationStaleReport-Plan.md.
+        //
+        // Anchored per OCCURRENCE, not per method: ToggleBatchDetails and SearchUser each discard
+        // batchUsers on two independent paths, and a method-anchored assertion passes while only
+        // one of them is guarded.
+        var page = ReadPage();
+
+        var discards = Regex.Matches(page, @"batchUsers = null;[ \t]*\r?\n[ \t]*(?<next>[^\r\n]+)");
+        Assert.True(discards.Count >= 5,
+            $"expected every batchUsers discard site to still be present, found {discards.Count}");
+
+        foreach (Match discard in discards)
+        {
+            Assert.StartsWith(
+                "CloseUserReport();",
+                discard.Groups["next"].Value.Trim(),
+                StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void BothBranchesOfToggleBatchDetailsCloseTheReport()
+    {
+        // Collapse discards the rows; expand replaces them with another batch's. Both leave a
+        // rendered report pointing at rows that are gone or belong to someone else.
+        var body = GetMethodBody("ToggleBatchDetails");
+
+        var collapse = ExtractBlock(body, "if (expandedBatch == batchName)");
+        Assert.Contains("CloseUserReport();", collapse, StringComparison.Ordinal);
+
+        var expand = body[(body.IndexOf(collapse, StringComparison.Ordinal) + collapse.Length)..];
+        Assert.Contains("CloseUserReport();", expand, StringComparison.Ordinal);
+        Assert.Contains("GetMigrationBatchUsersAsync", expand, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BothBranchesOfSearchUserCloseTheReport()
+    {
+        // Search jumps the operator to a different expanded batch. Same two-branch shape: one path
+        // matches a batch name, the other resolves a user to their batch.
+        var body = GetMethodBody("SearchUser");
+
+        var batchMatch = ExtractBlock(body, "if (matchedBatch != null)");
+        Assert.Contains("CloseUserReport();", batchMatch, StringComparison.Ordinal);
+
+        var userMatch = body[(body.IndexOf(batchMatch, StringComparison.Ordinal) + batchMatch.Length)..];
+        Assert.Contains("CloseUserReport();", userMatch, StringComparison.Ordinal);
+        Assert.Contains("GetMigrationBatchUsersAsync", userMatch, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RefreshBatchUsersClosesTheReportBeforeRefetching()
+    {
+        // This one never nulls batchUsers - it refetches over the top - so the discard guard above
+        // cannot see it. The report still describes the pre-refresh state of the row.
+        var body = GetMethodBody("RefreshBatchUsers");
+
+        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var fetch = body.IndexOf("GetMigrationBatchUsersAsync", StringComparison.Ordinal);
+        Assert.True(close > 0, "RefreshBatchUsers must close the open report");
+        Assert.True(fetch > close, "the close must precede the refetch");
+    }
+
+    [Fact]
+    public void AUserActionThatReloadsTheRowsClosesTheReport()
+    {
+        // The site the first draft of the plan missed (review finding MSR-A). A per-user action -
+        // Complete, Approve, Pause, Resume - reloads the batch's users on success, and the report
+        // panel is describing the state that action just changed.
+        var body = GetMethodBody("ExecuteUserAction");
+
+        var reload = ExtractBlock(body, "if (result.Success && expandedBatch != null)");
+        Assert.Contains("CloseUserReport();", reload, StringComparison.Ordinal);
+        Assert.Contains("GetMigrationBatchUsersAsync", reload, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReloadingTheBatchTableClosesTheReport()
+    {
+        var body = GetMethodBody("LoadMigrationStatus");
+
+        Assert.Contains("CloseUserReport();", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ClosingTheReportClearsEveryFieldAndBumpsTheGeneration()
+    {
+        // One helper owns the clear, so a new reload path has one call to make rather than four
+        // fields to remember. The generation bump is what makes the clear hold: without it a fetch
+        // already in flight lands afterwards and repopulates the panel the reload just emptied.
+        var body = GetMethodBody("CloseUserReport");
+
+        Assert.Contains("reportGeneration++", body, StringComparison.Ordinal);
+        Assert.Contains("reportUser = null;", body, StringComparison.Ordinal);
+        Assert.Contains("userReport = null;", body, StringComparison.Ordinal);
+        Assert.Contains("loadingReport = null;", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoReportTextIsWrittenByASupersededFetch()
+    {
+        // Get-MigrationUserStatistics -IncludeReport is slow. The operator can click Report, then
+        // collapse or search, and the continuation resumes against a table that has moved on -
+        // rendering a report under whichever row now holds that address.
+        //
+        // Guarded by ORDER, not presence: the generation check must be the last thing between the
+        // await and every write to userReport, on the success path and the error path alike.
+        var body = GetMethodBody("LoadUserReport");
+
+        Assert.Contains("var generation = reportGeneration;", body, StringComparison.Ordinal);
+
+        var writes = Regex.Matches(body, @"userReport = ");
+        Assert.True(writes.Count >= 2,
+            $"expected the success and error writes, found {writes.Count}");
+
+        foreach (Match write in writes)
+        {
+            var preceding = body[..write.Index];
+            var guard = preceding.LastIndexOf(
+                "if (generation != reportGeneration) return;", StringComparison.Ordinal);
+            var resumption = preceding.LastIndexOf("await ", StringComparison.Ordinal);
+
+            Assert.True(guard > resumption,
+                "every report write after the await must sit behind the generation check");
+        }
+    }
+
+    [Fact]
+    public void ASupersededFetchDoesNotResurrectTheSpinner()
+    {
+        // finally runs on the superseded continuation too. An unguarded loadingReport = null there
+        // is harmless today, but the symmetric bug - writing loadingReport back - is not, and the
+        // guard is what documents that the whole continuation is void, not just its assignments.
+        var body = GetMethodBody("LoadUserReport");
+
+        Assert.Matches(
+            new Regex(@"if \(generation == reportGeneration\)\s*\r?\n\s*loadingReport = null;"),
+            body);
+    }
+
+    [Fact]
+    public void TheCloseButtonCallsTheSharedHelper()
+    {
+        // It was an inline lambda nulling two of the four fields. An inline reset cannot bump the
+        // generation, so a manual Close during a slow fetch reopened the panel by itself.
+        var panel = ExtractSpan(
+            GetUserRowMarkup(),
+            "@if (reportUser == user.EmailAddress && userReport != null)",
+            "@userReport");
+
+        Assert.Contains("@onclick=\"CloseUserReport\"", panel, StringComparison.Ordinal);
+        Assert.DoesNotContain("userReport = null", panel, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// The markup emitted per batch: the whole body of the batches loop.
     /// </summary>

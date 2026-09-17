@@ -1,10 +1,12 @@
 # Migration Stale Open Report Plan
 
-Status: Draft - awaiting plan approval. No implementation authorized.
+Status: Implemented 2026-09-17. Manual acceptance checklist below is outstanding.
 Remedy ruled by the owner 2026-09-15: Option A, clear the open report on reload.
+Plan approved by the owner 2026-09-17; steps 1-6 landed in the commit that carries
+this status change.
 
-Base app version at drafting: 2.21.0
-Migration module version at drafting: 1.8.0
+Base app version at drafting: 2.21.0 (unchanged - module-scoped change)
+Migration module version: 1.8.0 at drafting, 1.8.1 as shipped
 Repository base: `6ccdf9d`
 
 Owner-reported issue 3 of the 2026-09-15 queue, recorded in `.agents/state.md`.
@@ -241,15 +243,32 @@ site, then restore:
 Restoring by file copy keeps the old mtime and MSBuild will skip the rebuild -
 touch the file after restoring, or the next run tests the mutated binary.
 
+**Result, run 2026-09-17.** All three mutations bit, each naming the intended site,
+and the restored file was verified byte-identical to the original:
+
+| Mutation | Test that failed |
+|----------|------------------|
+| 1. `CloseUserReport()` removed from the `ToggleBatchDetails` COLLAPSE branch only | `EveryDiscardOfBatchUsersAlsoClosesTheOpenReport` and `BothBranchesOfToggleBatchDetailsCloseTheReport` |
+| 2. generation check removed before the success-path `userReport` write | `NoReportTextIsWrittenByASupersededFetch` |
+| 3. `reportGeneration++` removed from `CloseUserReport` | `ClosingTheReportClearsEveryFieldAndBumpsTheGeneration` |
+
+Mutation 1 is the one that matters most: the other `ToggleBatchDetails` branch was
+left guarded, and both tripwires still failed, which is the branch-anchoring
+property MSR-C asked for.
+
 ## Verification
 
-- `dotnet build ExchangeAdminWeb.slnx -c Release`
-- `dotnet test ExchangeAdminWeb.slnx`
-- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore`
-- `git diff --check HEAD`
+Run 2026-09-17, all green:
+
+- `dotnet build ExchangeAdminWeb.slnx -c Release` - build succeeded, 0 errors.
+  The one CS8604 warning is pre-existing in `AccountLockoutRemediationService.cs`
+  and untouched by this change.
+- `dotnet test ExchangeAdminWeb.slnx` - 2494 passed, 0 failed, 3 skipped.
+- `dotnet format ExchangeAdminWeb.slnx --verify-no-changes --no-restore` - exit 0.
+- `git diff --check HEAD` - exit 0.
 
 No PowerShell is touched, so PSScriptAnalyzer and Pester are not required by this
-change.
+change and were not run.
 
 ## Manual acceptance checklist
 
@@ -312,5 +331,13 @@ repro reuses the name; the module-only version bump is correct.
 
 ## Pending decisions
 
-None. The remedy is ruled (Option A) and the review findings are absorbed. This
-plan needs owner approval before implementation begins.
+None. The remedy is ruled (Option A), the review findings are absorbed, and the
+owner approved implementation on 2026-09-17.
+
+## Outstanding
+
+- The manual acceptance checklist above. It needs a dev deploy and is the only
+  evidence that reaches the rendered page; nothing in this repo can render
+  `Migration.razor`.
+- The implementation codereview for this slice has not been dispatched and needs an
+  owner go.

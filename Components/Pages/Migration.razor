@@ -775,7 +775,7 @@
                                                                                 <div class="bg-white border-top p-3">
                                                                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                                                                         <strong>Report for @user.EmailAddress</strong>
-                                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="() => { reportUser = null; userReport = null; }">Close</button>
+                                                                                        <button class="btn btn-sm btn-outline-secondary" @onclick="CloseUserReport">Close</button>
                                                                                     </div>
                                                                                     <pre class="bg-light p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.8rem; white-space: pre-wrap;">@userReport</pre>
                                                                                 </div>
@@ -870,6 +870,10 @@
     private string? loadingReport;
     private string? reportUser;
     private string? userReport;
+    // Bumped on every close. An in-flight LoadUserReport captures the value it started under and
+    // drops its result if the generation has moved on, so a slow fetch cannot repopulate a panel
+    // that a reload just cleared.
+    private int reportGeneration;
     private PermissionResult? batchActionResult;
     private string searchQuery = "";
     private bool isSearching = false;
@@ -1182,6 +1186,7 @@
         isLoadingStatus = true;
         expandedBatch = null;
         batchUsers = null;
+        CloseUserReport();
 
         try
         {
@@ -1305,6 +1310,7 @@
         {
             expandedBatch = null;
             batchUsers = null;
+            CloseUserReport();
             return;
         }
 
@@ -1312,6 +1318,7 @@
         expandedBatch = batchName;
         loadingBatchUsers = batchName;
         batchUsers = null;
+        CloseUserReport();
 
         try
         {
@@ -1330,6 +1337,7 @@
     private async Task RefreshBatchUsers(string batchName)
     {
         loadingBatchUsers = batchName;
+        CloseUserReport();
 
         try
         {
@@ -1493,7 +1501,10 @@
             }
 
             if (result.Success && expandedBatch != null)
+            {
+                CloseUserReport();
                 batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch);
+            }
         }
         catch (Exception ex)
         {
@@ -1711,6 +1722,7 @@
                 expandedBatch = matchedBatch.BatchName;
                 loadingBatchUsers = matchedBatch.BatchName;
                 batchUsers = null;
+                CloseUserReport();
                 StateHasChanged();
 
                 batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName);
@@ -1742,6 +1754,7 @@
             expandedBatch = searchResult.BatchId;
             loadingBatchUsers = searchResult.BatchId;
             batchUsers = null;
+            CloseUserReport();
             StateHasChanged();
 
             batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!);
@@ -1757,32 +1770,52 @@
         }
     }
 
+    // The open report is a snapshot fetched once. Any reload of batchUsers can change which
+    // migration a row refers to - a batch deleted and recreated under the same name is a different
+    // migration with the same key - so the snapshot must not survive the reload. Never render
+    // report text that was not just fetched. Every site that reloads or discards batchUsers calls
+    // this; the generation bump also invalidates a fetch that is still in flight.
+    private void CloseUserReport()
+    {
+        reportGeneration++;
+        reportUser = null;
+        userReport = null;
+        loadingReport = null;
+    }
+
     private async Task LoadUserReport(string emailAddress)
     {
+        // Same row clicked twice: close it.
         if (reportUser == emailAddress)
         {
-            reportUser = null;
-            userReport = null;
+            CloseUserReport();
             return;
         }
 
+        CloseUserReport();
+        var generation = reportGeneration;
         loadingReport = emailAddress;
-        reportUser = null;
-        userReport = null;
 
         try
         {
-            userReport = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            var text = await MigrationSvc.GetMigrationUserReportAsync(emailAddress);
+            if (generation != reportGeneration) return;
+            userReport = text;
             reportUser = emailAddress;
         }
         catch (Exception ex)
         {
+            if (generation != reportGeneration) return;
             userReport = $"Error: {ex.Message}";
             reportUser = emailAddress;
         }
         finally
         {
-            loadingReport = null;
+            // A superseded continuation leaves loadingReport alone: the CloseUserReport that
+            // superseded it already nulled it, and a late write would resurrect a spinner for a
+            // fetch nobody is waiting on.
+            if (generation == reportGeneration)
+                loadingReport = null;
         }
     }
 
