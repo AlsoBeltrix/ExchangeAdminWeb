@@ -7,12 +7,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-17. Branch `master`, verified head `2b93fdc`, working tree clean.**
-  Verification was last run at `2b93fdc`; the records commit on top of it is docs only.
-  Twenty-three commits are local and unpushed; both remotes sit at `ace4d44`. The owner is
-  pushing separately - do not push, and do not treat the remote lag as drift. The owner's issue
-  queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3
-  are landed, with no open review findings. Nothing is in flight.
+- **Handoff 2026-09-17. Branch `master`, verified head is the button-gating commit, working
+  tree clean.** Twenty-six commits are local and unpushed; both remotes sit at `ace4d44`. The
+  owner is pushing separately - do not push, and do not treat the remote lag as drift. The
+  owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo).
+  Items 1 and 3 are landed, with no open review findings. Nothing is in flight.
   **Next agreed item: queue item 7, the slow Service Health
   load** - described under Next as owner-reported issue 7. No plan exists for it, so the first
   action is root cause, then a plan. Starting point, already checked: the page ALREADY has a
@@ -22,6 +21,31 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   what the operator actually sees during `OnInitializedAsync` (`:317-335`) before proposing
   anything: the authorization round trip runs before `LoadAsync`, and how the page renders
   while that is outstanding is unverified.
+
+- **Every control on Mailbox Migrations is gated on one in-flight predicate.**
+  `docs/MigrationButtonGating-Plan.md` is Implemented. Landed 2026-09-17 in `00da11e` (the
+  prerequisite `loadingBatchUsers` leak) and the commit on top of it; Migration module 1.9.0,
+  no base app bump. The owner's rule - a control is clickable only when its click will
+  definitively execute - is recorded as a general rule in `.agents/decisions.md` (2026-09-17).
+  **It was applied to `Components/Pages/Migration.razor` only. Sweeping the rest of the app is
+  an unscoped follow-up that nobody has approved** - do not treat other pages' ungated buttons
+  as drift, and do not start the sweep without an explicit go.
+  The page now has one `IsBusy` predicate over eight in-flight flags; 27 of 31 buttons consult
+  it, and the four that do not are named with reasons in the tests. Staged-confirmation state is
+  deliberately excluded: folding it in would have disabled Confirm at the only moment it renders,
+  and no destructive action could ever be executed again - caught by the codex review of the
+  plan, before any code, when all three then-proposed tests would have passed the broken shape.
+  The tab strip is anchors, which ignore `disabled`, so the refusal lives in `SelectTab` /
+  `SelectStatusTab`; the guard cannot move into `LoadMigrationStatus`, because
+  `ExecuteBulkBatchAction` calls that to refresh the table while it is itself still busy.
+  Seven source-level tripwires guard it (the plan specified six; the seventh enforces the tab
+  guard, which would otherwise have shipped unenforced). Two of them initially failed against
+  correct code because the scanners read the words "await" and "finally" out of the new
+  explanatory comments - **a source scanner in this repo must strip comments before matching.**
+  Guard proof: three representative controls (Delete row action, Show report, batch Details)
+  each mutated back to their pre-gate form, each failing exactly
+  `EveryButtonConsultsTheBusyPredicate`, 1 failed / 59 passed, restores byte-identical.
+  Nothing here reaches the rendered page - no bUnit harness exists.
 
 - **Mailbox Migrations no longer shows a stale open report; only the manual checks remain.**
   `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance checklist. Landed

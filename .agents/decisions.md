@@ -5,6 +5,48 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-17 - A control is clickable only when its click will definitively execute
+
+Status: Active general rule. Implemented on `Components/Pages/Migration.razor` only
+(`docs/MigrationButtonGating-Plan.md`, module 1.9.0). The app-wide sweep is an
+unscoped follow-up, not part of that work.
+
+Owner ruling, verbatim:
+
+> so it should not be possible to click any buttons until the system is ready for that
+> button click to be definitively executed.
+
+The rule. A control must be disabled whenever an asynchronous operation is running whose
+result could invalidate that click, or be invalidated by it. It is not enough for a
+handler to guard against re-entering itself. A Blazor circuit stays interactive across
+every `await`: the page keeps rendering and keeps accepting clicks while a handler is
+suspended, so any control left live during a long operation can be clicked, accepted, and
+then silently discarded or applied to state that has since been replaced underneath it.
+Silently dropping an accepted click is the failure being outlawed, not just the crash.
+
+What follows from it, and is the shape to copy:
+
+1. **One page-level predicate, not per-control guards.** A single `IsBusy` reads every
+   in-flight flag on the page; every control consults it. A per-control guard only knows
+   about its own operation, which is exactly the blind spot.
+2. **Staged state is not in-flight state.** "Waiting for the operator to type a ticket"
+   must stay out of the predicate. Folding it in disables the Confirm button at the only
+   moment it is ever rendered, and no destructive action can be executed again. This was
+   caught by review of the plan, before code; all three originally proposed tests would
+   have passed the broken version.
+3. **Set the flag before the first `await`, not after an authorization round-trip.** Until
+   the flag is set the predicate reads false and the gate is open, so the click can be
+   repeated for the whole duration of that first await.
+4. **Clear it in a `finally`.** A stuck flag under a page-wide gate deadens every control
+   on the page for the life of the circuit, so a leak is far more damaging here than under
+   a per-control guard.
+5. **`<a>` ignores the `disabled` attribute.** Tab strips and link-styled controls need the
+   refusal in the handler; the `disabled` class is styling only.
+6. **Name the exemptions and say why.** Controls that touch no in-flight state stay live -
+   dismissing a banner, closing a panel, serving a constant, and cancelling a staged action
+   the operator must always be able to back out of. Everything else is gated, and a test
+   asserts the ungated set equals exactly that named list, so a new ungated button fails.
+
 ### 2026-09-14 - Runtime owner investigation: employee CLD scope and L2-only workflow
 
 Status: Active requirements and investigation authority. Module implementation remains

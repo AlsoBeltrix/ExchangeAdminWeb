@@ -708,6 +708,269 @@ public class MigrationStatusPageTests
         Assert.DoesNotContain("userReport = null", panel, StringComparison.Ordinal);
     }
 
+    /// <summary>Every flag that means "an async operation is running on this page right now".</summary>
+    private static readonly string[] InFlightFlags =
+    {
+        "isLoading", "isCreating", "isLoadingStatus", "isSearching",
+        "loadingBatchUsers", "actionInProgress", "loadingReport", "isDownloadingCsv",
+    };
+
+    /// <summary>
+    /// The buttons that must stay live while the page is busy, each with the reason it is safe.
+    /// </summary>
+    private static readonly Dictionary<string, string> ExemptButtons = new(StringComparer.Ordinal)
+    {
+        ["DownloadSampleCsv"] =
+            "serves a constant; touches no page state and no in-flight operation",
+        ["() => batchActionResult = null"] =
+            "dismisses a result banner; gating it would trap the message on screen",
+        ["CloseUserReport"] =
+            "rendered only once a report has landed, so there is no pull for it to interrupt",
+        ["CancelPendingAction"] =
+            "the operator must always be able to back out of a staged action; it keeps its own "
+            + "actionInProgress guard instead",
+    };
+
+    [Fact]
+    public void EveryButtonConsultsTheBusyPredicate()
+    {
+        // The owner's ruling: it must not be possible to click a button until the system is ready
+        // for that click to be definitively executed. A Blazor circuit stays interactive across
+        // every await, so a button that guards only against re-entering itself can still be
+        // clicked while some other operation is in flight - and the click is then accepted and
+        // silently discarded, or lands on a table being replaced underneath it. One page-level
+        // predicate answers that for every control. This walks the markup rather than a list of
+        // known buttons, so a button added later cannot quietly skip the gate.
+        var ungated = GetButtonTags(ReadPage())
+            .Where(tag => !tag.Contains("IsBusy", StringComparison.Ordinal))
+            .Select(tag => Regex.Match(tag, @"@onclick=""(?<handler>[^""]*)""").Groups["handler"].Value)
+            .OrderBy(handler => handler, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(
+            ExemptButtons.Keys.OrderBy(handler => handler, StringComparer.Ordinal).ToList(),
+            ungated);
+    }
+
+    [Fact]
+    public void TheBusyPredicateNamesEveryInFlightFlag()
+    {
+        // The gate is only as wide as the predicate. A new long-running operation that adds its
+        // own flag and forgets to name it here leaves every control on the page live for the
+        // whole of it, and every button still looks correctly guarded.
+        var predicate = GetMemberBody("IsBusy");
+
+        foreach (var flag in InFlightFlags)
+            Assert.True(Regex.IsMatch(predicate, WholeWord(flag)),
+                $"IsBusy does not consult {flag}; the page stays clickable while it is set");
+    }
+
+    [Fact]
+    public void TheBusyPredicateExcludesStagedConfirmationState()
+    {
+        // The one mistake that would make this page unusable, and the reason the plan was reviewed
+        // before it was written. pendingActionLabel means "waiting for the operator to type a
+        // ticket", not "busy". The Confirm button is rendered ONLY while pendingActionLabel is
+        // non-null, so folding that field into the shared predicate disables Confirm at the only
+        // moment it is ever shown - no destructive action could be executed again - while every
+        // other guard on the page still reads as correct.
+        var predicate = GetMemberBody("IsBusy");
+
+        foreach (var staged in new[]
+                 { "pendingActionLabel", "pendingActionTicket", "pendingActionTarget", "pendingActionCallback" })
+        {
+            Assert.False(predicate.Contains(staged, StringComparison.Ordinal),
+                $"IsBusy names {staged}, which is staged state, not in-flight state; Confirm would "
+                + "be disabled at the only moment it is rendered");
+        }
+
+        // And Confirm really does live inside that conditional fragment, which is what makes the
+        // exclusion load-bearing rather than a matter of taste.
+        var confirm = Assert.Single(GetButtonTags(GetMemberBody("PendingActionConfirm")),
+            tag => tag.Contains("@onclick=\"ConfirmPendingAction\"", StringComparison.Ordinal));
+        Assert.Contains("IsBusy", confirm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheExemptButtonsAreExemptOnPurpose()
+    {
+        // Exemptions are the part of a blanket rule that rots. Each of these is safe for a
+        // specific reason; this pins the reason rather than the name, so an exemption cannot be
+        // widened by accident and a fifth cannot appear without an edit here.
+        var tags = GetButtonTags(ReadPage());
+
+        foreach (var (handler, reason) in ExemptButtons)
+        {
+            Assert.True(
+                tags.Any(tag => tag.Contains($"@onclick=\"{handler}\"", StringComparison.Ordinal)),
+                $"exempt button '{handler}' is gone; drop it from the exemption list ({reason})");
+        }
+
+        // Cancel is the only exemption that still needs a guard of its own: it must refuse while
+        // the action it would cancel is already executing.
+        var cancel = Assert.Single(tags,
+            tag => tag.Contains("@onclick=\"CancelPendingAction\"", StringComparison.Ordinal));
+        Assert.Contains("disabled=\"@(actionInProgress != null)\"", cancel, StringComparison.Ordinal);
+
+        // Close is rendered only after a report has landed.
+        var panel = ExtractSpan(GetUserRowMarkup(),
+            "@if (reportUser == user.EmailAddress && userReport != null)", "@userReport");
+        Assert.Contains("@onclick=\"CloseUserReport\"", panel, StringComparison.Ordinal);
+
+        // Sample CSV serves a constant; it must not grow a call into Exchange.
+        Assert.DoesNotContain("MigrationSvc", GetMethodBody("DownloadSampleCsv"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryInFlightFlagIsClearedInAFinally()
+    {
+        // A flag cleared only on the success path sticks for the life of the circuit the first
+        // time Exchange throws - and under a page-wide gate a stuck flag deadens the entire page,
+        // not just the one control it used to grey. SearchUser did exactly this. Anchored per
+        // occurrence rather than per method, so a new setter cannot skip the finally.
+        var page = StripLineComments(ReadPage());
+
+        foreach (var flag in InFlightFlags)
+        {
+            var setters = NonClearingSetters(page, flag).ToList();
+            Assert.True(setters.Count > 0, $"{flag} is never set; is it still an in-flight flag?");
+
+            foreach (var setter in setters)
+            {
+                var method = EnclosingMethodName(page, setter.Index);
+                var body = StripLineComments(GetMethodBody(method));
+
+                Assert.True(body.Contains("finally", StringComparison.Ordinal),
+                    $"{method} sets {flag} but has no finally to clear it in");
+
+                var cleanup = ExtractBlock(body, "finally");
+                Assert.True(Regex.IsMatch(cleanup, WholeWord(flag) + @"\s*=\s*(null|false);"),
+                    $"{method} sets {flag} but does not clear it in its finally; a throw there "
+                    + "leaves the flag stuck and every control on the page dead");
+            }
+        }
+    }
+
+    [Fact]
+    public void SingleFlightHandlersSetTheirFlagBeforeTheFirstAwait()
+    {
+        // A flag set after the authorization round-trip is false for the whole of that round-trip.
+        // The circuit stays interactive across it, so the gate never closed and the operator can
+        // click the same button again, or any other. Five handlers had this shape. Asserted per
+        // handler rather than per setter: a handler may well learn which row to load only after an
+        // await, so what matters is that SOME in-flight flag is set before the first one.
+        var page = StripLineComments(ReadPage());
+
+        var handlers = InFlightFlags
+            .SelectMany(flag => NonClearingSetters(page, flag))
+            .Select(setter => EnclosingMethodName(page, setter.Index))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(name => name, StringComparer.Ordinal);
+
+        foreach (var handler in handlers)
+        {
+            var body = StripLineComments(GetMethodBody(handler));
+            var firstAwait = body.IndexOf("await ", StringComparison.Ordinal);
+            if (firstAwait < 0)
+                continue;
+
+            var closedEarly = InFlightFlags
+                .SelectMany(flag => NonClearingSetters(body, flag))
+                .Any(setter => setter.Index < firstAwait);
+
+            Assert.True(closedEarly,
+                $"{handler} sets no in-flight flag before its first await; the page gate is open "
+                + "for the whole of that await and the click can be repeated");
+        }
+    }
+
+    [Fact]
+    public void TheTabStripRefusesClicksWhileThePageIsBusy()
+    {
+        // An <a> ignores the disabled attribute entirely, so the button sweep cannot reach the tab
+        // strip - and the Migration Status tab calls CloseUserReport, so clicking it mid-pull
+        // discards a report that takes minutes to fetch. The gate has to be in the handler; the
+        // greying is styling only and must never be mistaken for the guard.
+        var strip = ExtractSpan(ReadPage(), "<ul class=\"nav nav-tabs mb-3\">", "</ul>");
+
+        var handlers = Regex.Matches(strip, @"@onclick=""(?<handler>[^""]*)""")
+            .Select(match => match.Groups["handler"].Value)
+            .ToList();
+
+        Assert.Equal(3, handlers.Count);
+        Assert.Equal(3, Regex.Matches(strip, @"IsBusy \? ""disabled""").Count);
+
+        foreach (var handler in handlers)
+        {
+            var call = Regex.Match(handler, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(");
+            var method = call.Success ? call.Groups["name"].Value : handler;
+
+            Assert.True(GetMethodBody(method).Contains("if (IsBusy) return;", StringComparison.Ordinal),
+                $"tab handler {method} does not refuse while the page is busy, and the anchor it "
+                + "hangs off cannot be disabled in markup");
+        }
+    }
+
+    /// <summary>
+    /// <paramref name="source"/> with line comments removed. The scans below look for words that
+    /// also occur in prose - "await", "finally", the flag names themselves - so a comment
+    /// explaining one of these rules would otherwise be read as code breaking it.
+    /// </summary>
+    private static string StripLineComments(string source) =>
+        Regex.Replace(source, @"//[^\r\n]*", "");
+
+    /// <summary>A regex matching <paramref name="identifier"/> only as a whole identifier.</summary>
+    private static string WholeWord(string identifier) =>
+        $@"(?<![A-Za-z0-9_]){Regex.Escape(identifier)}(?![A-Za-z0-9_])";
+
+    /// <summary>
+    /// Every assignment of a non-clearing value to <paramref name="flag"/>: the places that put the
+    /// page into a busy state, excluding the clears and the field declaration itself.
+    /// </summary>
+    private static IEnumerable<Match> NonClearingSetters(string source, string flag) =>
+        Regex.Matches(source, WholeWord(flag) + @"\s*=(?!=)\s*(?<value>[^\r\n]+)")
+            .Where(match => match.Groups["value"].Value.Trim() is not ("null;" or "false;"));
+
+    /// <summary>
+    /// Every &lt;button&gt; tag in <paramref name="markup"/>, from "&lt;button" through its closing
+    /// "&gt;".
+    /// </summary>
+    /// <remarks>
+    /// A naive "&lt;button.*?&gt;" stops at the first "&gt;" it meets, and several handlers on this
+    /// page are lambdas - @onclick="() =&gt; DeleteBatch(...)" - whose arrow ends the match inside
+    /// the attribute list, hiding every attribute after it. This walks the tag and ignores any
+    /// "&gt;" sitting inside a quoted attribute value.
+    /// </remarks>
+    private static List<string> GetButtonTags(string markup)
+    {
+        var tags = new List<string>();
+
+        for (var start = markup.IndexOf("<button", StringComparison.Ordinal); start >= 0;
+             start = markup.IndexOf("<button", start + 1, StringComparison.Ordinal))
+        {
+            var quote = '\0';
+            for (var i = start; i < markup.Length; i++)
+            {
+                var c = markup[i];
+                if (quote != '\0')
+                {
+                    if (c == quote) quote = '\0';
+                }
+                else if (c is '"' or '\'')
+                {
+                    quote = c;
+                }
+                else if (c == '>')
+                {
+                    tags.Add(markup[start..(i + 1)]);
+                    break;
+                }
+            }
+        }
+
+        return tags;
+    }
+
     /// <summary>
     /// The markup emitted per batch: the whole body of the batches loop.
     /// </summary>

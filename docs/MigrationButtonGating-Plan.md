@@ -1,6 +1,12 @@
 # Migration page: no control is clickable unless the click will definitively execute
 
-Status: Draft 2026-09-17, revised 2026-09-17 after review. Awaiting owner approval. Not implemented.
+Status: Implemented 2026-09-17. Drafted and revised 2026-09-17 after codex review, approved
+by the owner, and landed in two commits: the prerequisite `loadingBatchUsers` leak
+(`00da11e`) and the gate itself (module 1.9.0). The general rule it establishes is recorded
+in `.agents/decisions.md` (2026-09-17); applying it to the rest of the app is an unscoped
+follow-up, not part of this plan. Deviation from the plan as written: seven tripwires
+shipped, not six - the seventh enforces the tab-strip handler guard, which the plan
+required but left unenforced.
 
 ## Goal
 

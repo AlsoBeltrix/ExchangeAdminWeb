@@ -21,15 +21,19 @@
     <h2>Exchange Migration<ModuleVersion /></h2>
     <p class="text-muted">Check migration eligibility and create migration batches to/from Exchange Online</p>
 
+    @* The tab strip is anchors, and an <a> ignores the disabled attribute entirely, so the gate
+       has to live in the handler. The disabled class is styling only - it greys the link and
+       tells the operator why nothing happens; SelectTab and SelectStatusTab do the actual
+       refusing. Switching tabs mid-operation discards a running report or user reload. *@
     <ul class="nav nav-tabs mb-3">
         <li class="nav-item">
-            <a class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => tabIndex = 0" href="javascript:void(0)">Single User Check</a>
+            <a class="nav-link @(tabIndex == 0 ? "active" : "") @(IsBusy ? "disabled" : "")" @onclick="() => SelectTab(0)" href="javascript:void(0)">Single User Check</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => tabIndex = 1" href="javascript:void(0)">Bulk CSV Check</a>
+            <a class="nav-link @(tabIndex == 1 ? "active" : "") @(IsBusy ? "disabled" : "")" @onclick="() => SelectTab(1)" href="javascript:void(0)">Bulk CSV Check</a>
         </li>
         <li class="nav-item">
-            <a class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="LoadMigrationStatus" href="javascript:void(0)">Migration Status</a>
+            <a class="nav-link @(tabIndex == 2 ? "active" : "") @(IsBusy ? "disabled" : "")" @onclick="SelectStatusTab" href="javascript:void(0)">Migration Status</a>
         </li>
     </ul>
 
@@ -58,7 +62,7 @@
                     </div>
                 </div>
 
-                <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(string.IsNullOrWhiteSpace(singleEmail) || string.IsNullOrWhiteSpace(singleTicketNumber) || isLoading)">
+                <button class="btn btn-primary" @onclick="CheckSingleEligibility" disabled="@(IsBusy || string.IsNullOrWhiteSpace(singleEmail) || string.IsNullOrWhiteSpace(singleTicketNumber))">
                     @if (isLoading)
                     {
                         <span class="spinner-border spinner-border-sm me-2"></span>
@@ -165,7 +169,7 @@
 
                                 @if (canCreate)
                                 {
-                                    <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@isCreating">
+                                    <button class="btn btn-success" @onclick="CreateSingleMigrationBatch" disabled="@IsBusy">
                                         @if (isCreating)
                                         {
                                             <span class="spinner-border spinner-border-sm me-2"></span>
@@ -232,7 +236,7 @@
                     </div>
                 </div>
 
-                <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(csvFile == null || string.IsNullOrWhiteSpace(bulkTicketNumber) || isLoading)">
+                <button class="btn btn-primary" @onclick="CheckBulkEligibility" disabled="@(IsBusy || csvFile == null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
                     @if (isLoading)
                     {
                         <span class="spinner-border spinner-border-sm me-2"></span>
@@ -335,7 +339,7 @@
 
                                 @if (canCreate)
                                 {
-                                    <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@isCreating">
+                                    <button class="btn btn-success" @onclick="CreateMigrationBatch" disabled="@IsBusy">
                                         @if (isCreating)
                                         {
                                             <span class="spinner-border spinner-border-sm me-2"></span>
@@ -388,12 +392,13 @@
                                    @onkeydown="HandleSearchKeyDown" />
                             @if (!string.IsNullOrWhiteSpace(searchQuery))
                             {
-                                <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearch" title="Clear">
+                                <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearch" title="Clear"
+                                        disabled="@IsBusy">
                                     &times;
                                 </button>
                             }
                             <button class="btn btn-outline-primary" type="button" @onclick="SearchUser"
-                                    disabled="@(isSearching || string.IsNullOrWhiteSpace(searchQuery))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchQuery))">
                                 @if (isSearching)
                                 {
                                     <span class="spinner-border spinner-border-sm"></span>
@@ -409,14 +414,14 @@
                        loaded rows - no control before then (the plan's failure-behavior table). *@
                     @if (migrationBatches is { Count: > 0 })
                     {
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync">Download CSV</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="DownloadCsvAsync" disabled="@IsBusy">Download CSV</button>
                     }
                     @* The standalone "Clear Completed" sweep was REMOVED (D6): it acted on every
                        completed batch in the table regardless of selection, and it sat beside
                        "Clear selection" sharing a word - one irreversible, one harmless. Its job is
                        now "Remove Completed" in the selection toolbar. *@
                     <div>
-                        <button class="btn btn-sm btn-primary" @onclick="LoadMigrationStatus" disabled="@isLoadingStatus">
+                        <button class="btn btn-sm btn-primary" @onclick="LoadMigrationStatus" disabled="@IsBusy">
                             @if (isLoadingStatus)
                             {
                                 <span class="spinner-border spinner-border-sm me-2"></span>
@@ -456,24 +461,24 @@
                 {
                     <div class="alert alert-secondary d-flex align-items-center gap-2 mb-3 py-2">
                         <strong>@selectedBatches.Count selected</strong>
-                        <button class="btn btn-sm btn-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                        <button class="btn btn-sm btn-danger" disabled="@(IsBusy || pendingActionLabel != null)"
                                 title="Removes every selected batch, whatever its status"
                                 @onclick="StageDeleteSelected">
                             Delete
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                        <button class="btn btn-sm btn-outline-danger" disabled="@(IsBusy || pendingActionLabel != null)"
                                 title="Removes only the selected batches whose status is Completed"
                                 @onclick="StageRemoveCompletedSelected">
                             Remove Completed
                         </button>
-                        <button class="btn btn-sm btn-outline-success" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                        <button class="btn btn-sm btn-outline-success" disabled="@(IsBusy || pendingActionLabel != null)"
                                 title="Restarts the selected batches that are idle but restartable"
                                 @onclick="StageResumeSelected">
                             Resume/Retry
                         </button>
                         @* Named "Untick all", not "Clear ...": the word "Clear" beside two
                            destructive buttons is the adjacency the owner rejected. *@
-                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@(actionInProgress != null)"
+                        <button class="btn btn-sm btn-outline-secondary ms-auto" disabled="@IsBusy"
                                 @onclick="ClearBatchSelection">
                             Untick all
                         </button>
@@ -492,7 +497,7 @@
                 else if (!batchesLoaded)
                 {
                     <div class="text-center py-5">
-                        <button class="btn btn-primary" @onclick="LoadMigrationStatus">
+                        <button class="btn btn-primary" @onclick="LoadMigrationStatus" disabled="@IsBusy">
                             Load Migration Batches
                         </button>
                     </div>
@@ -568,14 +573,14 @@
                                         <td class="text-end text-nowrap">
                                             @if (canManage && batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase))
                                             {
-                                                <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                         @onclick="() => CompleteBatch(batch.BatchName)">
                                                     Complete
                                                 </button>
                                             }
                                             @if (canManage && (batch.Status.Equals("Syncing", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Synced", StringComparison.OrdinalIgnoreCase) || batch.Status.Equals("Starting", StringComparison.OrdinalIgnoreCase)))
                                             {
-                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                         @onclick="() => StopBatch(batch.BatchName)">
                                                     Stop
                                                 </button>
@@ -587,7 +592,7 @@
                                                became invisible to every button on this page. *@
                                             @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Resume, batch.Status))
                                             {
-                                                <button class="btn btn-sm btn-outline-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                <button class="btn btn-sm btn-outline-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                         @onclick="() => ResumeBatch(batch.BatchName)">
                                                     Resume
                                                 </button>
@@ -596,12 +601,13 @@
                                                what it will remove, and a refusal comes back as this row's own error. *@
                                             @if (canManage && MigrationBatchActionPlanner.Applies(MigrationBatchAction.Delete, batch.Status))
                                             {
-                                                <button class="btn btn-sm btn-outline-danger me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                <button class="btn btn-sm btn-outline-danger me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                         @onclick="() => DeleteBatch(batch.BatchName)">
                                                     Delete
                                                 </button>
                                             }
-                                            <button class="btn btn-sm btn-outline-primary" @onclick="() => ToggleBatchDetails(batch.BatchName)">
+                                            <button class="btn btn-sm btn-outline-primary" disabled="@IsBusy"
+                                                    @onclick="() => ToggleBatchDetails(batch.BatchName)">
                                                 @if (expandedBatch == batch.BatchName && batchUsers != null)
                                                 {
                                                     <span>Hide</span>
@@ -618,7 +624,7 @@
                                             @if (expandedBatch == batch.BatchName && batchUsers != null)
                                             {
                                                 <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh batch users"
-                                                        disabled="@(loadingBatchUsers != null)"
+                                                        disabled="@IsBusy"
                                                         @onclick="() => RefreshBatchUsers(batch.BatchName)">
                                                     @if (loadingBatchUsers == batch.BatchName)
                                                     {
@@ -703,28 +709,28 @@
                                                                             {
                                                                                 @if (s.Equals("Synced", StringComparison.OrdinalIgnoreCase))
                                                                                 {
-                                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                    <button class="btn btn-sm btn-success me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                                                             @onclick="() => CompleteUser(e)">Complete</button>
                                                                                 }
                                                                                 @if (s.Equals("NeedsApproval", StringComparison.OrdinalIgnoreCase))
                                                                                 {
-                                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                    <button class="btn btn-sm btn-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                                                             @onclick="() => ApproveUser(e)">Approve</button>
                                                                                 }
                                                                                 @if (s.Equals("Syncing", StringComparison.OrdinalIgnoreCase))
                                                                                 {
-                                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                    <button class="btn btn-sm btn-outline-warning me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                                                             @onclick="() => PauseUser(e)">Pause</button>
                                                                                 }
                                                                                 @if (s.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
                                                                                     || s.Equals("Failed", StringComparison.OrdinalIgnoreCase))
                                                                                 {
-                                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                    <button class="btn btn-sm btn-primary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                                                             @onclick="() => ResumeUser(e)">Resume</button>
                                                                                 }
                                                                                 @if (s.Equals("Completed", StringComparison.OrdinalIgnoreCase))
                                                                                 {
-                                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(actionInProgress != null || pendingActionLabel != null)"
+                                                                                    <button class="btn btn-sm btn-outline-secondary me-1" disabled="@(IsBusy || pendingActionLabel != null)"
                                                                                             @onclick="() => ClearUser(e)">Clear</button>
                                                                                 }
                                                                             }
@@ -735,7 +741,7 @@
                                                                                read-only diagnostic: nothing is gained by hiding it, and the third
                                                                                status allowlist on this page to hide something the operator wanted. *@
                                                                             <button class="btn btn-sm btn-outline-danger"
-                                                                                    disabled="@(loadingReport == e)"
+                                                                                    disabled="@IsBusy"
                                                                                     @onclick="() => LoadUserReport(e)">
                                                                                 @if (loadingReport == e)
                                                                                 {
@@ -747,7 +753,7 @@
                                                                                 }
                                                                             </button>
                                                                             <button class="btn btn-sm btn-outline-secondary ms-1" title="Refresh user status"
-                                                                                    disabled="@(loadingBatchUsers != null)"
+                                                                                    disabled="@IsBusy"
                                                                                     @onclick="() => RefreshBatchUsers(expandedBatch!)">
                                                                                 &#x21bb;
                                                                             </button>
@@ -817,7 +823,7 @@
                    @onkeydown="HandleConfirmKeyDown" />
         </div>
         <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
-                disabled="@(string.IsNullOrWhiteSpace(pendingActionTicket) || actionInProgress != null)">
+                disabled="@(IsBusy || string.IsNullOrWhiteSpace(pendingActionTicket))">
             @if (actionInProgress != null)
             {
                 <span class="spinner-border spinner-border-sm"></span>
@@ -880,6 +886,23 @@
     private string? highlightedUser;
     private string batchSortColumn = "Created";
     private bool batchSortAsc = false;
+    // Download CSV had no flag of its own. Without one the predicate below cannot see the
+    // JS interop round-trip, and every other control stays live while the file is built.
+    private bool isDownloadingCsv = false;
+
+    // True whenever an async operation is running whose result could invalidate, or be
+    // invalidated by, another click. Every control on this page consults it, so a click is
+    // never accepted unless it will definitively execute.
+    //
+    // pendingActionLabel is deliberately NOT here. It means "waiting for the operator to type
+    // a ticket", not "busy": including it would disable the Confirm button at the only moment
+    // it is ever rendered, and no destructive action could be executed again. The per-button
+    // pendingActionLabel conditions already stop other actions from being staged on top of a
+    // staged one, and they stay.
+    private bool IsBusy =>
+        isLoading || isCreating || isLoadingStatus || isSearching
+        || loadingBatchUsers != null || actionInProgress != null
+        || loadingReport != null || isDownloadingCsv;
 
     // Per-action ticket confirmation
     private string pendingActionTicket = "";
@@ -968,19 +991,24 @@
 
     private async Task CreateSingleMigrationBatch()
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-            return;
-
-        if (singleResult == null || singleResult.Status != MigrationStatus.Eligible || string.IsNullOrWhiteSpace(singleTicketNumber))
-            return;
-
+        // Set before the first await, not after the authorization round-trip. Until the flag is
+        // set the page's busy predicate reads false, so the circuit stays interactive across the
+        // authorization await and the operator can click this again, or anything else. The
+        // guards moved inside the try so the existing finally clears the flag on their returns.
         isCreating = true;
         singleCreateResult = null;
-        await Task.Yield();
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
+                return;
+
+            if (singleResult == null || singleResult.Status != MigrationStatus.Eligible || string.IsNullOrWhiteSpace(singleTicketNumber))
+                return;
+
+            await Task.Yield();
+
             var finalBatchName = string.IsNullOrWhiteSpace(singleBatchName)
                 ? singleResult.EmailAddress
                 : singleBatchName.Trim();
@@ -1104,19 +1132,21 @@
 
     private async Task CreateMigrationBatch()
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
-            return;
-
-        if (bulkResult == null || bulkResult.EligibleUsers == 0 || string.IsNullOrWhiteSpace(bulkTicketNumber))
-            return;
-
+        // Set before the first await - see CreateSingleMigrationBatch for why.
         isCreating = true;
         createResult = null;
-        await Task.Yield();
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationCreate")).Succeeded)
+                return;
+
+            if (bulkResult == null || bulkResult.EligibleUsers == 0 || string.IsNullOrWhiteSpace(bulkTicketNumber))
+                return;
+
+            await Task.Yield();
+
             var eligibleEmails = bulkResult.EligibilityResults
                 .Where(r => r.Status == MigrationStatus.Eligible)
                 .Select(r => r.EmailAddress)
@@ -1178,6 +1208,21 @@
         {
             isCreating = false;
         }
+    }
+
+    // The tab-strip gate. It lives here rather than in LoadMigrationStatus because
+    // ExecuteBulkBatchAction calls LoadMigrationStatus to refresh the table while it is itself
+    // still busy - guarding the loader would silently skip that refresh.
+    private void SelectTab(int index)
+    {
+        if (IsBusy) return;
+        tabIndex = index;
+    }
+
+    private async Task SelectStatusTab()
+    {
+        if (IsBusy) return;
+        await LoadMigrationStatus();
     }
 
     private async Task LoadMigrationStatus()
@@ -1407,15 +1452,16 @@
 
     private async Task ExecuteBatchAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            return;
-
+        // Set before the first await - see CreateSingleMigrationBatch for why.
         actionInProgress = target;
         batchActionResult = null;
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+                return;
+
             var result = await action();
             batchActionResult = result;
 
@@ -1463,15 +1509,16 @@
 
     private async Task ExecuteUserAction(Func<Task<PermissionResult>> action, string auditAction, string target, string ticket)
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-            return;
-
+        // Set before the first await - see CreateSingleMigrationBatch for why.
         actionInProgress = target;
         batchActionResult = null;
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+                return;
+
             var result = await action();
             batchActionResult = result;
 
@@ -1579,50 +1626,52 @@
         string verb,
         string ticket)
     {
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
-        {
-            batchActionResult = PermissionResult.Fail("Authorization denied.");
-            try
-            {
-                Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
-            }
-            return;
-        }
-
-        if (migrationBatches == null) return;
-
-        var skippedSuffix = MigrationBatchActionPlanner.DescribeSkipped(skipped);
-
-        // Nothing eligible is "nothing to do", not an error (D2(a)). Report the skips and stop
-        // without touching Exchange, writing an audit event, or notifying anyone.
-        if (batchNames.Count == 0)
-        {
-            batchActionResult = new PermissionResult
-            {
-                Success = true,
-                Message = $"No batches to act on.{skippedSuffix}"
-            };
-            return;
-        }
-
+        // Set before the first await - see CreateSingleMigrationBatch for why. The guards moved
+        // inside the try so the existing finally clears both flags on every early return.
         actionInProgress = "clearing";
         isLoadingStatus = true;
         batchActionResult = null;
-        var succeeded = 0;
-        // Names Exchange accepted the request for, so they can be deselected after the run.
-        var accepted = new List<string>();
-        var errors = new List<string>();
-        // Audit-write failures are warnings, never operation failures: an audit
-        // failure must not make an already-completed removal look failed.
-        var auditWarnings = new List<string>();
 
         try
         {
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            if (!(await AuthorizationService.AuthorizeAsync(authState.User, "MigrationManage")).Succeeded)
+            {
+                batchActionResult = PermissionResult.Fail("Authorization denied.");
+                try
+                {
+                    Audit.LogMigrationAction(currentUser, clientIpAddress, $"{auditAction}_Denied", notificationAction, false, ticket, errorDetail: "MigrationManage authorization denied");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit for {Action} denial", auditAction);
+                }
+                return;
+            }
+
+            if (migrationBatches == null) return;
+
+            var skippedSuffix = MigrationBatchActionPlanner.DescribeSkipped(skipped);
+
+            // Nothing eligible is "nothing to do", not an error (D2(a)). Report the skips and stop
+            // without touching Exchange, writing an audit event, or notifying anyone.
+            if (batchNames.Count == 0)
+            {
+                batchActionResult = new PermissionResult
+                {
+                    Success = true,
+                    Message = $"No batches to act on.{skippedSuffix}"
+                };
+                return;
+            }
+
+            var succeeded = 0;
+            // Names Exchange accepted the request for, so they can be deselected after the run.
+            var accepted = new List<string>();
+            var errors = new List<string>();
+            // Audit-write failures are warnings, never operation failures: an audit
+            // failure must not make an already-completed removal look failed.
+            var auditWarnings = new List<string>();
             foreach (var batchName in batchNames)
             {
                 var result = await action(batchName);
@@ -1909,21 +1958,32 @@
         if (migrationBatches is not { Count: > 0 })
             return;
 
-        var rows = GetSortedBatches().ToList();
-        var csv = BuildCsv(rows);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
-        var base64 = Convert.ToBase64String(bytes);
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        await JS.InvokeVoidAsync("downloadFile", $"Migration_{timestamp}.csv", "text/csv", base64);
+        // Set before the first await so the page-wide gate closes for the whole round-trip;
+        // cleared in a finally so a failed interop cannot leave the page dead.
+        isDownloadingCsv = true;
 
         try
         {
-            Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "Migration",
-                $"{rows.Count} rows", true);
+            var rows = GetSortedBatches().ToList();
+            var csv = BuildCsv(rows);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            var base64 = Convert.ToBase64String(bytes);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            await JS.InvokeVoidAsync("downloadFile", $"Migration_{timestamp}.csv", "text/csv", base64);
+
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "Migration",
+                    $"{rows.Count} rows", true);
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for Migration status CSV export");
+            }
         }
-        catch (Exception auditEx)
+        finally
         {
-            Logger.LogError(auditEx, "Audit failed for Migration status CSV export");
+            isDownloadingCsv = false;
         }
     }
 

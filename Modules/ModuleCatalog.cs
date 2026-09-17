@@ -209,7 +209,9 @@ public sealed class ModuleCatalog
             // opened mid-reload cannot survive it (msr-1, docs/MigrationStaleReport-Plan.md).
             // 1.8.3: a failed search no longer leaves loadingBatchUsers set for the life of the
             // circuit (docs/MigrationButtonGating-Plan.md, prerequisite to the button gate).
-            Version = "1.8.3",
+            // 1.9.0: every control on the page is gated on one in-flight predicate, so a click is
+            // never accepted unless it will definitively execute (docs/MigrationButtonGating-Plan.md).
+            Version = "1.9.0",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
