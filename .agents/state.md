@@ -7,11 +7,19 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **2026-09-17. Branch `master`, head `3e4f13d`, working tree clean.**
-  Eighteen commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
+- **Handoff 2026-09-17. Branch `master`, verified head `0b0efdd`, working tree clean.**
+  Nineteen commits are local and unpushed; both remotes sit at `ace4d44`. The owner is pushing
   separately - do not push, and do not treat the remote lag as drift. The owner's issue queue
   is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo). Items 1 and 3 are
-  landed; item 2 is unstarted and needs a decision before design. Nothing is in flight.
+  landed. Nothing is in flight. **Next agreed item: queue item 7, the slow Service Health
+  load** - described under Next as owner-reported issue 7. No plan exists for it, so the first
+  action is root cause, then a plan. Starting point, already checked: the page ALREADY has a
+  full-page spinner (`Components/Pages/ServiceHealth.razor:63-66`, gated on
+  `isLoading && status == null`) and a spinner on the refresh button (`:34-37`), so the
+  complaint is not "there is no spinner" and must not be implemented as if it were. Diagnose
+  what the operator actually sees during `OnInitializedAsync` (`:317-335`) before proposing
+  anything: the authorization round trip runs before `LoadAsync`, and how the page renders
+  while that is outstanding is unverified.
 
 - **Mailbox Migrations no longer shows a stale open report; manual checks and the codereview
   remain.** `docs/MigrationStaleReport-Plan.md` is Implemented and owns the acceptance
@@ -24,7 +32,10 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   seven, and a `reportGeneration` counter drops the result of a fetch a reload superseded.
   Ten source-level tripwires guard it, anchored per branch; all three guard-proof mutations
   bit. Nothing here reaches the rendered page - no bUnit harness exists - so the plan's manual
-  checks are the only evidence that the operator sees the fix. The implementation codereview
+  checks are the only evidence that the operator sees the fix. **Owner 2026-09-17: those
+  checks are deferred indefinitely, not skipped** - migrations are production actions, and the
+  owner will verify opportunistically the next time a real migration comes up. Do not re-queue
+  them as blocking work and do not treat their absence as drift. The implementation codereview
   has not been dispatched and needs a go.
 
 - **Module ordering is alphabetical and `SortOrder` is gone; the sidebar check is unrun.**
@@ -124,9 +135,23 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      the module currently reads only the Graph service-health source. Needs a decision on how
      that second source is obtained (no documented Graph equivalent is established) before any
      design. Interacts with `docs/ServiceHealth-Plan.md`, whose appearance is binding.
+     Blocked on that decision, which is why item 7 was taken first.
   3. *Mailbox Migrations shows a stale open report.* Landed 2026-09-17 as `3e4f13d`; see the
      Now entry above and `docs/MigrationStaleReport-Plan.md`. Code-side closed; the plan's
-     manual acceptance checklist and the implementation codereview are what remain.
+     manual acceptance checklist is owner-deferred and the implementation codereview is what
+     remains.
+
+- **Queue items not yet started, in the owner's own words.** Numbering is the queue's.
+  4. *Break out permissions for message trace vs header analysis.* Two capabilities behind one
+     policy alias today. Self-contained; the obvious alternative to item 7 if that stalls.
+  5. *Explore adding other owned tenants/domains to message trace.* Exploratory; scope and
+     credential model are both undefined.
+  6. *Containerize the app so it can be deployed elsewhere rapidly.* The owner's own note asks
+     whether Docker works with IIS. Large; interacts with the whole deploy pipeline and the
+     shared-config-DB invariant. Do not start without a ruling.
+  7. *O365 status module is slow to load, inviting repeated clicks or refreshes; it needs to be
+     obvious when loading.* Taken next - see the handoff entry in Now for what is already
+     known and the trap to avoid.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
