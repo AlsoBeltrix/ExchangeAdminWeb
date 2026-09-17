@@ -8,8 +8,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 ## Now
 
 - **Handoff 2026-09-17. Branch `master`, verified head is the button-gating commit, working
-  tree clean.** Twenty-six commits are local and unpushed; both remotes sit at `ace4d44`. The
-  owner is pushing separately - do not push, and do not treat the remote lag as drift. The
+  tree clean.** Three commits are local and unpushed (`98069ef`, `00da11e`, `097c400`); both
+  remotes sit at `523b69d`, verified with `git ls-remote` on 2026-09-17 - the owner pushed the
+  earlier backlog. Do not push, and do not treat the remote lag as drift. The
   owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo).
   Items 1 and 3 are landed, with no open review findings. Nothing is in flight.
   **Next agreed item: queue item 7, the slow Service Health
