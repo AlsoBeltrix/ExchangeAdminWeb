@@ -530,6 +530,60 @@ public class MigrationStatusPageTests
         Assert.True(close > 0, "RefreshBatchUsers must close the open report");
         Assert.True(fetch > close, "the close must precede the refetch");
     }
+    [Fact]
+    public void NoCodePathAssignsBatchUsersWithoutClosingTheReport()
+    {
+        // msr-1. The three assertions above are all satisfied by a page that still leaks: they
+        // require the close to happen BEFORE the refetch, and closing before an await is not
+        // enough. The refresh-in-place paths leave the old rows - and their enabled Report button
+        // - rendered for the whole Exchange call, so a report opened inside that window captures
+        // the already-bumped generation and survives the swap.
+        //
+        // The structural fix is that exactly one place may replace the rendered rows, and it
+        // closes the report itself. Anchored per OCCURRENCE so that an eighth reload path added
+        // later cannot quietly reintroduce a bare assignment.
+        var page = ReadPage();
+
+        var assignments = Regex.Matches(page, @"(?<![A-Za-z])batchUsers\s*=\s*(?<value>[^\r\n]+)");
+        Assert.True(assignments.Count >= 6,
+            $"expected every batchUsers assignment site to still be present, found {assignments.Count}");
+
+        var replacements = assignments
+            .Select(a => a.Groups["value"].Value.Trim())
+            .Where(v => v != "null;")
+            .ToList();
+
+        Assert.Equal(new[] { "users;" }, replacements);
+    }
+
+    [Fact]
+    public void TheRowReplacementHelperClosesTheReportBeforeAssigning()
+    {
+        // The single permitted assignment site. The close must land on the same side of the await
+        // as the new rows: the caller awaits, then calls this, so the generation moves after the
+        // fetch returns and any report opened mid-reload is discarded.
+        var body = GetMethodBody("ReplaceBatchUsers");
+
+        var close = body.IndexOf("CloseUserReport();", StringComparison.Ordinal);
+        var assign = body.IndexOf("batchUsers = users;", StringComparison.Ordinal);
+        Assert.True(close > 0, "ReplaceBatchUsers must close the open report");
+        Assert.True(assign > close, "the close must precede the assignment");
+    }
+
+    [Fact]
+    public void EveryRowRefetchIsHandedStraightToTheHelper()
+    {
+        // Routing the awaited fetch directly into the helper is what puts the close after the
+        // await. Assigning to a local first and replacing later would satisfy the test above and
+        // still leave a window; every fetch occurrence has to be wrapped.
+        var page = ReadPage();
+
+        var fetches = Regex.Matches(page, @"GetMigrationBatchUsersAsync\(");
+        var wrapped = Regex.Matches(page, @"ReplaceBatchUsers\(await MigrationSvc\.GetMigrationBatchUsersAsync\(");
+        Assert.True(fetches.Count >= 5,
+            $"expected every row refetch site to still be present, found {fetches.Count}");
+        Assert.Equal(fetches.Count, wrapped.Count);
+    }
 
     [Fact]
     public void AUserActionThatReloadsTheRowsClosesTheReport()

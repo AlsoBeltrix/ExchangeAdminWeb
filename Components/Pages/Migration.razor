@@ -1322,11 +1322,11 @@
 
         try
         {
-            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(batchName);
+            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
         }
         catch
         {
-            batchUsers = new List<MigrationUserInfo>();
+            ReplaceBatchUsers(new List<MigrationUserInfo>());
         }
         finally
         {
@@ -1341,11 +1341,11 @@
 
         try
         {
-            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(batchName);
+            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(batchName));
         }
         catch
         {
-            batchUsers = new List<MigrationUserInfo>();
+            ReplaceBatchUsers(new List<MigrationUserInfo>());
         }
         finally
         {
@@ -1503,7 +1503,7 @@
             if (result.Success && expandedBatch != null)
             {
                 CloseUserReport();
-                batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch);
+                ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(expandedBatch));
             }
         }
         catch (Exception ex)
@@ -1725,7 +1725,7 @@
                 CloseUserReport();
                 StateHasChanged();
 
-                batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName);
+                ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(matchedBatch.BatchName));
                 loadingBatchUsers = null;
                 return;
             }
@@ -1757,7 +1757,7 @@
             CloseUserReport();
             StateHasChanged();
 
-            batchUsers = await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!);
+            ReplaceBatchUsers(await MigrationSvc.GetMigrationBatchUsersAsync(searchResult.BatchId!));
             loadingBatchUsers = null;
         }
         catch (Exception ex)
@@ -1781,6 +1781,18 @@
         reportUser = null;
         userReport = null;
         loadingReport = null;
+    }
+
+    // Every replacement of the rendered rows goes through here, and the close happens AFTER the
+    // await that produced them. Closing before the await is not enough: the paths that refresh in
+    // place leave the old rows - and their enabled Report button - rendered for the whole Exchange
+    // call, so a report opened inside that window captures the already-bumped generation and would
+    // survive the swap. Bumping again here discards it. Assigning batchUsers directly anywhere else
+    // reopens that hole; a test enforces that no such assignment exists.
+    private void ReplaceBatchUsers(List<MigrationUserInfo> users)
+    {
+        CloseUserReport();
+        batchUsers = users;
     }
 
     private async Task LoadUserReport(string emailAddress)

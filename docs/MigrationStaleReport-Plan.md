@@ -1,6 +1,6 @@
 # Migration Stale Open Report Plan
 
-Status: Implemented 2026-09-17. Implementation reviewed 2026-09-17: one MEDIUM finding (msr-1) is open, and the manual acceptance checklist below is outstanding.
+Status: Implemented 2026-09-17. Implementation reviewed 2026-09-17; the one MEDIUM finding it raised (msr-1) was fixed the same day. The manual acceptance checklist below is outstanding.
 Remedy ruled by the owner 2026-09-15: Option A, clear the open report on reload.
 Plan approved by the owner 2026-09-17; steps 1-6 landed in the commit that carries
 this status change.
@@ -358,12 +358,31 @@ since been replaced. `ExecuteUserAction`'s success reload has the same shape and
 narrower window. The finding was confirmed line by line before intake, not accepted
 on the reviewer's word.
 
-No code is authorized for it. The fix is a follow-up slice and needs an owner go.
+### msr-1 fixed
+
+Fixed on the owner's go, 2026-09-17. The remedy is structural rather than a patch at
+the two offending call sites: one private helper, `ReplaceBatchUsers`, now owns every
+replacement of the rendered rows and closes the report itself, and the seven
+assignment sites hand it the awaited fetch directly. The close therefore lands on the
+same side of the await as the new rows, so a report opened mid-reload is discarded by
+a generation bump that happens after it was started. Discards (`batchUsers = null;`)
+are unchanged - those paths stop rendering the rows, and their existing guard already
+covers them.
+
+Three tripwires were added. The first two are ordinary ordering assertions on the
+helper; the third is the one that matters, asserting per occurrence that no code path
+anywhere in the page assigns `batchUsers` outside the helper, so an eighth reload path
+added later cannot reintroduce the hole. The guard proof reverted each of the three
+mutations in turn - and the first mutation IS the pre-fix code, which the original ten
+tripwires passed.
+
+The alternative considered and rejected was gating the **Report** button on
+`loadingBatchUsers != null`, matching the refresh button beside it. It is one
+attribute, but it blocks a read-only diagnostic the operator may legitimately want
+during a reload, and it leaves the underlying invariant unenforced.
 
 ## Outstanding
 
-- **msr-1**, above. It is the same symptom this plan set out to remove, reachable
-  through a narrower door, and the existing tripwires cannot see it.
 - The manual acceptance checklist above. It needs a dev deploy and is the only
   evidence that reaches the rendered page; nothing in this repo can render
   `Migration.razor`.

@@ -205,8 +205,9 @@ public sealed class ModuleCatalog
             EnabledByDefault = true,
             IsSystemModule = false,
             // 1.8.1: the open migration report is cleared on every batch-user reload
-            // (docs/MigrationStaleReport-Plan.md).
-            Version = "1.8.1",
+            // 1.8.2: that close now happens after the reload lands, not before it, so a report
+            // opened mid-reload cannot survive it (msr-1, docs/MigrationStaleReport-Plan.md).
+            Version = "1.8.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",
