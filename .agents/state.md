@@ -81,6 +81,20 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   independent of the permission split; the split makes it worse by admitting header-only
   operators to that page. Not caused by this run's work.
 
+
+- **A defect in committed TEST infrastructure, found in plan review and not yet fixed.**
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs:213-228`, `ExtractBlock`, counts `{` and `}`
+  without being quote-aware, so a brace inside a string or interpolated string miscounts the
+  depth and the extracted block ends in the wrong place - usually over-capturing into the code
+  that follows. **The asymmetry is the tell:** `Tags()` in the same file IS quote-aware and its
+  doc comment explains exactly why a naive scan breaks; `ExtractBlock` never got the same
+  treatment. Consequence measured in the queue-4 review: an assertion looking for a `return`
+  inside a denial block can find one that is actually in later code, so a handler that performs
+  a protected operation after an authorization denial would pass. It is used by the live
+  click-gating suite, so any assertion built on the block's END offset is suspect; assertions
+  that only test containment within a generously-sized block are less affected. **Its own slice
+  with its own guard proof** (an interpolated string containing a brace, placed inside an
+  extracted block); deliberately not folded into another agent's work.
 - **Branch `master`, working tree clean. Nothing is in flight.**
   The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
   repo, and not ours to write to). Queue items 1, 3 and 7 are landed and closed, with no open
