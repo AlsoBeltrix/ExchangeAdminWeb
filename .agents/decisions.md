@@ -5,6 +5,41 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-18 - Weekend backlog run: plans self-approve after codex consensus, and pushes are standing
+
+Status: Active for the 2026-09-18 weekend backlog run only. Scopes down to the standing
+rules below when the run ends. Supersedes, for that window, the AGENTS.md Prime Invariant
+"Code changes require an approved plan" as an OWNER gate, and the `.agents/push-policy.md`
+ask-before-push rule.
+
+The owner set the goal "work through as much of the `queue.txt` backlog as you can over the
+weekend... only stop if you cannot proceed without me", and answered three gates:
+
+1. **Plan authority.** Verbatim: "plan, review with codex (default), revise, review loop
+   until consensus, then implement." The owner's approval step is replaced by a codex
+   review loop, not removed: a plan is implementable only once codex and the coder reach
+   consensus on it, and each revision round is re-reviewed. Codex is the default harness;
+   the standard pair in `.agents/review/harnesses.local.json` applies. This is a PLAN
+   (approach-soundness) review, closest in shape to `.agents/playbooks/openreview.md`,
+   not the landed-diff defect hunt in `codereview.md`. A plan that cannot reach consensus
+   is a stop-and-ask, which is the one case the owner said to interrupt them for.
+2. **Priority.** Verbatim: "I don't give a fuck" - ordering across queue items is the
+   working agent's call, not an owner gate. Do not ask again this run.
+3. **Push.** Both remotes, as each slice lands. Standing for this run only; the repo policy
+   file is unchanged and reverts to ask afterwards.
+
+Also settled by the owner's instruction "use agents for coding to keep your context from
+blowing up": implementation subagents ARE authorized for this run. This overrules, for its
+duration, the `.agents/repo-guidance.md` Token Budget rule "never orchestrate an
+implementation subagent from a supervising session" and the one-slice-one-session rule. It
+also resolves, for this run only, the standing "Unsettled guidance conflicts" blocker in
+`.agents/state.md` between the 2026-09-01 ruling and the 2026-08-27 decision - the owner has
+now twice chosen the coding-subagent shape. The underlying conflict is NOT settled for
+normal operation; it still needs owner reconciliation.
+
+Unchanged and still binding: the Constitution, verification before completion, guard proof
+per slice, one finding per commit, and the rule that self-review is forbidden.
+
 ### 2026-09-18 - The app-wide click-gating sweep is approved at full depth for all nine tier-1 pages
 
 Status: Active. Amends the 2026-09-17 rule below on two points; see "What the
