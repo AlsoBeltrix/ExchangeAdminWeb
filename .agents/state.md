@@ -13,7 +13,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   findings. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
   work well enough") and added the app-wide audit to their own queue themselves, so do not
   re-raise it here as an open item.
-  Six commits are local and unpushed as of this entry; both remotes sat at `523b69d`, verified
+  Work is local and unpushed - git owns the count, so ask it
+  (`git rev-list --count 523b69d..HEAD`) rather than trusting a number written here; both
+  remotes sat at `523b69d`, verified
   with `git ls-remote` on 2026-09-17. **Do not push, and do not treat the remote lag as
   drift.** Note for the next agent: `origin` (LAN gitea) was unreachable on 2026-09-18 -
   `SEC_E_CERT_EXPIRED`, its TLS certificate has expired - so only `github` could be checked.
