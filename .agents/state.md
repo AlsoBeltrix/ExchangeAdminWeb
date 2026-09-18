@@ -7,21 +7,30 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-17. Branch `master`, verified head is the button-gating commit, working
-  tree clean.** Three commits are local and unpushed (`98069ef`, `00da11e`, `097c400`); both
+- **Handoff 2026-09-18. Branch `master`, verified head `097c400`, working tree clean.**
+  Verification was last run at `097c400`; `be13a35` and this handoff on top of it are records
+  only. Four commits are local and unpushed (`98069ef`, `00da11e`, `097c400`, `be13a35`); both
   remotes sit at `523b69d`, verified with `git ls-remote` on 2026-09-17 - the owner pushed the
-  earlier backlog. Do not push, and do not treat the remote lag as drift. The
-  owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo).
-  Items 1 and 3 are landed, with no open review findings. Nothing is in flight.
-  **Next agreed item: queue item 7, the slow Service Health
-  load** - described under Next as owner-reported issue 7. No plan exists for it, so the first
-  action is root cause, then a plan. Starting point, already checked: the page ALREADY has a
-  full-page spinner (`Components/Pages/ServiceHealth.razor:63-66`, gated on
-  `isLoading && status == null`) and a spinner on the refresh button (`:34-37`), so the
-  complaint is not "there is no spinner" and must not be implemented as if it were. Diagnose
-  what the operator actually sees during `OnInitializedAsync` (`:317-335`) before proposing
-  anything: the authorization round trip runs before `LoadAsync`, and how the page renders
-  while that is outstanding is unverified.
+  earlier backlog, so the old "twenty-three unpushed, remotes at ace4d44" header was stale.
+  Do not push, and do not treat the remote lag as drift. The owner's issue queue is
+  `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo, and not ours to write
+  to). Items 1 and 3 are landed, with no open review findings. **Nothing is in flight; the
+  button gate is closed out** - the owner accepted it on 2026-09-18 ("seems to work well
+  enough") and added the app-wide audit to their own queue themselves, so do not re-raise it
+  here as an open item.
+  **Next agreed item: queue item 7, the slow Service Health load** - described under Next as
+  owner-reported issue 7, and the owner asked on 2026-09-18 for a fresh session to start it.
+  No plan exists for it, so the first action is root cause, then a plan. Starting point,
+  already checked: the page ALREADY has a full-page spinner
+  (`Components/Pages/ServiceHealth.razor:63-66`, gated on `isLoading && status == null`) and a
+  spinner on the refresh button (`:34-37`), so the complaint is not "there is no spinner" and
+  must not be implemented as if it were. Diagnose what the operator actually sees during
+  `OnInitializedAsync` (`:317-335`) before proposing anything: the authorization round trip
+  runs before `LoadAsync`, and how the page renders while that is outstanding is unverified.
+  Worth carrying in from the button-gating work: on this stack the circuit stays interactive
+  across every await, so "the page looks idle while something is running" is the same class of
+  problem, and the `IsBusy` shape in `.agents/decisions.md` (2026-09-17) may well be the
+  answer - but confirm the symptom first rather than reaching for it.
 
 - **Every control on Mailbox Migrations is gated on one in-flight predicate.**
   `docs/MigrationButtonGating-Plan.md` is Implemented. Landed 2026-09-17 in `00da11e` (the
