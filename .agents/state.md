@@ -9,8 +9,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 - **Branch `master`, working tree clean. Nothing is in flight.**
   The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
-  repo, and not ours to write to). Queue items 1, 3 and 7 are landed, with no open review
-  findings. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
+  repo, and not ours to write to). Queue items 1, 3 and 7 are landed and closed, with no open
+  review findings; the owner has since added items 8 and 9. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
   work well enough") and added the app-wide audit to their own queue themselves, so do not
   re-raise it here as an open item.
   Work is local and unpushed - git owns the count, so ask it
@@ -21,10 +21,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `SEC_E_CERT_EXPIRED`, its TLS certificate has expired - so only `github` could be checked.
   That is a host condition, not repo drift.
 
-- **Service Health now shows its spinner on the first load; only the manual checks remain.**
-  `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented and owns the acceptance checklist.
-  Landed 2026-09-18 in `d1ed96e`; ServiceHealth module version 1.3.2, no base app bump.
-  Queue item 7.
+- **Service Health now shows its spinner on the first load. Closed, nothing outstanding.**
+  `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented. The owner deployed to dev, ran its
+  manual acceptance checklist on 2026-09-18 and reported "this passes", which is the evidence
+  of record for this item. Landed 2026-09-18 in `d1ed96e`; ServiceHealth module version 1.3.2,
+  no base app bump. Queue item 7.
   **The complaint was never "there is no spinner"** - the page already had three, and they
   were all correct. Root cause: the page prerenders (`Program.cs:374`, no `prerender: false`
   anywhere in the app), prerendering emits no HTML until `OnInitializedAsync` completes, and
@@ -46,8 +47,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   steps 1, 2 and 3 each mutated back independently, each 1 failed / 34 passed against its
   named tripwire, all restores byte-identical by SHA256. Full suite green at 2510 passed /
   0 failed / 3 skipped. Nothing here reaches the rendered
-  page - no bUnit harness exists - so the plan's manual checks are the only evidence the
-  operator sees the fix. The implementation codereview has not been dispatched.
+  page - no bUnit harness exists - which is exactly why the owner's dev-deploy pass is what
+  closed it. The implementation codereview was never dispatched: the owner accepted the manual
+  result and moved to the next item. Do not re-open it on your own.
   **Noted, not fixed:** because prerender and the interactive circuit each ran
   `OnInitializedAsync`, every Service Health view used to write *two* `ServiceHealthView`
   audit entries; this change incidentally drops it to one. Whether other pages duplicate their
@@ -198,7 +200,19 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are landed; 2 is not started.**
+- **Next agreed item: queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
+  owner closed item 7 and said "pick next item from the updated list"; they did not name one,
+  so this is the working agent's pick and the owner may override it. Reasons it was chosen
+  over 8, 4, 5, 6 and 2: the rule is already settled and written down, the Migration work is
+  the worked precedent, it needs no new credential or app registration, and its deliverable is
+  an audit and an effort estimate rather than code - so it sizes the rest of the queue. Item 8
+  is the bigger prize but opens on a blocker only the owner can clear (a new app registration),
+  so surface its permissions ask early if 9 stalls. Item 2 stays blocked on a decision.
+  First action for the next session: read `docs/MigrationButtonGating-Plan.md` and the
+  2026-09-17 decision, then audit `Components/Pages/` for the same defect class. **Produce the
+  audit and a `docs/<Feature>-Plan.md` with effort - do not start fixing.**
+
+- **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are closed; 2 is not started.**
   1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
      now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
      grouping only - section-access keys are per-module policy aliases - so the move did not
@@ -222,9 +236,22 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      whether Docker works with IIS. Large; interacts with the whole deploy pipeline and the
      shared-config-DB invariant. Do not start without a ruling.
   7. *O365 status module is slow to load, inviting repeated clicks or refreshes; it needs to be
-     obvious when loading.* **Landed 2026-09-18** - see the Now entry and
-     `docs/ServiceHealthLoadFeedback-Plan.md`. Code-side closed; the plan's manual acceptance
-     checklist and the implementation codereview remain.
+     obvious when loading.* **Landed 2026-09-18 in `d1ed96e` and closed** - the owner ran the
+     manual acceptance checklist on a dev deploy and it passed. See the Now entry and
+     `docs/ServiceHealthLoadFeedback-Plan.md`. Nothing outstanding.
+  8. *New module for Microsoft Defender for Endpoint.* List and export all devices; the
+     specific ask is every Windows device in the "Can be onboarded" state, with discovery
+     sources, IP, domain, OS and other identifying detail, exportable. **The owner's own note
+     says it needs a new app registration and asks to be told the permissions and requirements
+     up front** - that ask is the first deliverable, and it blocks any code, because the app
+     registration is the owner's to create. Largest item in the queue.
+  9. *Audit the app for clicks allowed when the system is not ready to process them*, the class
+     fixed in Mailbox Migrations, then plan to fix all of them and give the owner an idea of
+     the effort. This is the app-wide sweep that state.md has twice said needs an explicit go;
+     the owner queueing it is that go, but the deliverable they asked for is an audit plus a
+     plan with an effort estimate, **not** a code sweep. The rule it applies is already
+     recorded: `.agents/decisions.md` 2026-09-17, "a control is clickable only when its click
+     will definitively execute". `docs/MigrationButtonGating-Plan.md` is the worked precedent.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the

@@ -1,9 +1,11 @@
 # Service Health Load Feedback Plan
 
-Status: Implemented 2026-09-18. Plan approved by the owner the same day; steps 1-5
-landed in the commit that carries this status change. The manual acceptance
-checklist below is outstanding, and the implementation codereview has not been
-dispatched.
+Status: Implemented 2026-09-18 in `d1ed96e`, and closed the same day. Plan approved
+by the owner on 2026-09-18; steps 1-5 landed in `d1ed96e`. The owner then deployed
+to dev, ran the manual acceptance checklist below and reported "this passes" - that
+pass is the evidence of record, since no automated test in this repo reaches a
+rendered page. The implementation codereview was not dispatched; the owner accepted
+the manual result and moved on. Nothing is outstanding.
 Remedy shape ruled by the owner 2026-09-18: Option B, keep prerendering and defer
 the data load to `OnAfterRenderAsync`, matching the precedent already set in
 `Components/Pages/BlockedSenders.razor`.
