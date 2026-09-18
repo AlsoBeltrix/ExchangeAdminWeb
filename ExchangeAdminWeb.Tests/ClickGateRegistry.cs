@@ -193,8 +193,14 @@ public static class ClickGateRegistry
     /// isDownloadingCsv is new. DownloadCsvAsync owned no in-flight flag at all, and its raise has
     /// to sit BELOW the early return on an empty list: a flag raised above that guard is never
     /// lowered, and this one is in a page-wide predicate, so it would deaden the whole page rather
-    /// than one button. Nothing in the shared suite can see that ordering - it is enforced by the
-    /// comment at the raise and by this note.
+    /// than one button. That ordering is now in RaiseMustFollowEarlyReturn below and asserted by
+    /// <see cref="ClickGateTests.EveryRaiseThatMustFollowAnEarlyReturnStillDoes"/>; it used to rest
+    /// on the comment at the raise and on this note alone.
+    /// </para>
+    /// <para>
+    /// PostAwaitLiveReads below is the other half of this page's fix and the half no gate can do.
+    /// The six obligations are what falsification 6 names for this page, and they are the reason
+    /// the banner dismiss at line 40 is safe to leave clickable at all.
     /// </para>
     /// </remarks>
     private static PageGateEntry DhcpAuthorization => new()
@@ -312,6 +318,65 @@ public static class ClickGateRegistry
             "@if (isLoading && !isOperating)",
             "@if (isOperating)",
         ],
+
+        // Falsification 6 for this page, made executable. Two distinct shapes, both real here.
+        //
+        // operationResult is PublishedFromLocal: the dismiss at line 40 can null it while either
+        // write handler is suspended at its admin-notification await. RemoveServer is the worse of
+        // the two - a deauthorization is destructive - but both end the same way.
+        //
+        // The three form fields are CapturedAtEntry: the inputs carry disabled="@IsBusy", but the
+        // browser's copy of that attribute is one round trip stale, so a keystroke landing in the
+        // gap between the click and the render would otherwise reach the audit row and the admin
+        // email. The capture is also what lets the catch audit these values at all - as locals
+        // inside the try they would be out of scope there.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("AuthorizeServer", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "the dismiss control nulls operationResult, so reading the field after the write "
+                + "await throws a NullReferenceException into this handler's own catch, which then "
+                + "audits and emails a forest-level AD write that SUCCEEDED as a failure and skips "
+                + "the confirming refresh"),
+
+            new PostAwaitLiveRead("RemoveServer", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "same path as AuthorizeServer, on the destructive half: a successful "
+                + "deauthorization reported and emailed as failed, and the table left showing the "
+                + "server that is no longer authorized"),
+
+            new PostAwaitLiveRead("AuthorizeServer", "newDnsName", "dns",
+                SnapshotShape.CapturedAtEntry,
+                "the DNS name the operator saw when the click was accepted is the one that must be "
+                + "authorized, audited and emailed; a later keystroke must not retarget the write "
+                + "or desync the audit row from it"),
+
+            new PostAwaitLiveRead("AuthorizeServer", "newIpAddress", "ip",
+                SnapshotShape.CapturedAtEntry,
+                "as newDnsName: the address written to AD and the address in the audit row and the "
+                + "admin email must be the same one"),
+
+            new PostAwaitLiveRead("AuthorizeServer", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket validated against ServiceNow must be the ticket recorded. Reading it "
+                + "live also reads it back blank on the success path, where the handler clears the "
+                + "form - the exact defect falsification 6 records on NamedLocations and "
+                + "M365GroupManagement"),
+
+            new PostAwaitLiveRead("RemoveServer", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "same obligation on the destructive handler, whose catch audits the ticket after "
+                + "several awaits"),
+        ],
+
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("DownloadCsvAsync", "isDownloadingCsv", "servers.Count == 0",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isDownloadingCsv is a member of IsBusy, so it would not grey one button "
+                + "- it would deaden every control on the page, permanently, the first time the "
+                + "operator hit Download CSV on an empty list."),
+        ],
     };
 }
 
@@ -368,7 +433,66 @@ public sealed record PageGateEntry
     /// mechanical "simplify to the predicate" pass fails instead of showing two spinners or none.
     /// </summary>
     public IReadOnlyList<string> SpinnerExpressions { get; init; } = [];
+
+    /// <summary>
+    /// Values a handler must NOT read live after its first await, each with the local that carries
+    /// the value instead. Forced by docs/ClickGatingAudit-Plan.md Revision 1 falsification 6: on six
+    /// of eleven pages the sharpest defect is not a gating defect at all but a post-await read of a
+    /// field another control can change mid-flight. Gating narrows that window - the browser's copy
+    /// of a disabled attribute is one round trip stale - and only the snapshot closes it, so the
+    /// obligation needs its own slot rather than riding on a code comment.
+    /// </summary>
+    public IReadOnlyList<PostAwaitLiveRead> PostAwaitLiveReads { get; init; } = [];
+
+    /// <summary>
+    /// Raises that must sit BELOW an early return, because the flag is not lowered on that path.
+    /// Forced by DhcpAuthorization.DownloadCsvAsync: its flag is a member of a page-wide predicate,
+    /// so a raise above the empty-list guard leaks true forever and deadens the entire page rather
+    /// than the one button it belongs to.
+    /// </summary>
+    public IReadOnlyList<RaiseAfterEarlyReturn> RaiseMustFollowEarlyReturn { get; init; } = [];
 }
+
+/// <summary>Where the local that replaces a live read gets its value.</summary>
+public enum SnapshotShape
+{
+    /// <summary>
+    /// Captured from the live field at handler entry, above the first await. The form-field case:
+    /// the operator can still be typing, and the value the handler acts on and audits must be the
+    /// one that was on screen when the click was accepted.
+    /// </summary>
+    CapturedAtEntry,
+
+    /// <summary>
+    /// Produced by the await itself and then published to the field. The result-banner case: the
+    /// field exists to be rendered and can be nulled from outside by a dismiss control, so the
+    /// handler keeps its own copy and never dereferences the field it just wrote.
+    /// </summary>
+    PublishedFromLocal,
+}
+
+/// <param name="Handler">The method that must not read <paramref name="LiveField"/> after its first await.</param>
+/// <param name="LiveField">The page field another control can change while this handler is suspended.</param>
+/// <param name="Snapshot">The local that carries the value instead.</param>
+/// <param name="Shape">Where <paramref name="Snapshot"/> gets its value; see <see cref="SnapshotShape"/>.</param>
+/// <param name="Why">What goes wrong if the live read comes back, in operator-visible terms.</param>
+public sealed record PostAwaitLiveRead(
+    string Handler,
+    string LiveField,
+    string Snapshot,
+    SnapshotShape Shape,
+    string Why);
+
+/// <param name="EarlyReturn">
+/// The guard condition verbatim, as it appears inside <c>if (...)</c>. Verbatim rather than
+/// reconstructed, in the same spirit as <see cref="PageGateEntry.SpinnerExpressions"/>: if the
+/// guard is reworded the assertion fails and someone re-checks the ordering by hand.
+/// </param>
+public sealed record RaiseAfterEarlyReturn(
+    string Handler,
+    string Flag,
+    string EarlyReturn,
+    string Consequence);
 
 /// <summary>A busy predicate and the flags it ORs together.</summary>
 /// <param name="AppliesWhen">Prose scope, e.g. "the manage view (selected != null)".</param>
@@ -398,6 +522,13 @@ public sealed record ExcludedField(string Field, string RendersAt, string Reason
 /// banner dismiss nulls operationResult, which both write handlers used to dereference after an
 /// await, so leaving it clickable was a live NullReferenceException path and not merely a gating
 /// gap. It is exempt only because those two handlers now read a local snapshot instead.
+/// <para>
+/// This is prose, but it is not only prose. Setting it obliges the page to carry a
+/// <see cref="PostAwaitLiveRead"/> for the field the control writes, and
+/// <see cref="ClickGateTests.EveryExemptionPrerequisiteIsEnforcedAndNotJustDescribed"/> re-runs
+/// that obligation's assertion here, so the exemption and the snapshot that justifies it cannot
+/// drift apart. The tie is the field name, read out of <paramref name="Snippet"/>.
+/// </para>
 /// </param>
 public sealed record ExemptControl(
     int Line,

@@ -451,6 +451,170 @@ public class ClickGateTests
         }
     }
 
+    // ---- what a gate cannot close ------------------------------------------------------------
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait(string page)
+    {
+        // docs/ClickGatingAudit-Plan.md Revision 1 falsification 6, made executable. On six of the
+        // eleven reconnoitred pages the sharpest defect is not a gating defect at all: a handler
+        // reads a page field back AFTER an await, and another control has changed it in the
+        // meantime. Gating narrows that window - the browser's copy of a disabled attribute is one
+        // round trip stale - and only a local closes it.
+        //
+        // This is the assertion the page-1 conversion was missing. A size-preserving revert of
+        // DhcpAuthorization's operationResult snapshot passed all fourteen assertions above it and
+        // was caught only incidentally, by the line-count fingerprint noticing the file had changed
+        // size at all.
+        //
+        // What is the cheapest broken implementation that still passes this? Worked through rather
+        // than assumed:
+        //   - "change nothing" fails: the live read after the await is exactly what trips it.
+        //   - "delete the feature" fails: the snapshot local must still be READ after the await, so
+        //     a handler that quietly stops using the value fails too.
+        //   - "never call the thing under test" fails: a handler that is gone, or that no longer
+        //     awaits, fails rather than being skipped.
+        //   - "rename the field" fails: the capture (CapturedAtEntry) or the publish
+        //     (PublishedFromLocal) must still name the field by its registered name.
+        // The one that does pass, stated honestly rather than papered over: this is still text
+        // containment, so it cannot prove the local is the value actually handed to the service
+        // call. It proves the live field is not read after the await and that the local is read
+        // after it - not that the two are wired together.
+        //
+        // Not in this assertion's dependency path, deliberately: ClickGateSource.ExtractBlock,
+        // which counts braces without regard for quoting and so mis-ends a block containing an
+        // interpolated string. Every handler here is full of "$"{dns} ({ip})"". This works from
+        // MethodBody, which is delimited by the next member signature, and from index arithmetic.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+
+        foreach (var obligation in entry.PostAwaitLiveReads)
+            AssertSnapshotObligationHolds(page, source, obligation);
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryExemptionPrerequisiteIsEnforcedAndNotJustDescribed(string page)
+    {
+        // An exemption granted on a precondition is only as good as the precondition. The forcing
+        // case is DhcpAuthorization line 40: the banner dismiss is safe to leave clickable during
+        // an operation ONLY because both write handlers snapshot the result they publish. Restore
+        // the field reads and that exemption is a live NullReferenceException path again - and the
+        // registry would still read as though it had been reasoned about.
+        //
+        // The tie to machinery is the field name, read out of the exemption's own registered
+        // snippet, so the two cannot be pointed at different things. It is asserted in both
+        // directions: a prerequisite demands a matching obligation, and an obligation on a field an
+        // exempt control writes demands the prerequisite be written down.
+        //
+        // What is the cheapest broken implementation that still passes this? Deleting BOTH the
+        // prerequisite note and the PostAwaitLiveReads entries for that field - a deliberate,
+        // reviewable registry edit that removes the record of why the exemption was granted, which
+        // is the most any registry-driven assertion in this suite can do. Deleting either one alone
+        // fails. Deleting neither and reverting the page fails, because this re-runs the obligation
+        // rather than restating it.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+
+        foreach (var exempt in entry.ExemptControls)
+        {
+            var field = FieldWrittenBy(exempt.Snippet);
+            var covering = entry.PostAwaitLiveReads
+                .Where(obligation =>
+                    string.Equals(obligation.LiveField, field, StringComparison.Ordinal))
+                .ToList();
+
+            if (exempt.PrerequisiteBeforeExemptionHolds is { } prerequisite)
+            {
+                Assert.False(string.IsNullOrEmpty(field),
+                    $"{page}:{exempt.Line} records a prerequisite but its snippet '{exempt.Snippet}' "
+                    + "assigns no page field, so there is nothing to tie the prerequisite to. Either "
+                    + "state it as a PostAwaitLiveRead on the field the control mutates, or move the "
+                    + "note to ConditionThatKeepsItTrue, where it is honestly prose. Recorded "
+                    + $"prerequisite: {prerequisite}");
+
+                Assert.True(covering.Count > 0,
+                    $"{page}:{exempt.Line} is exempt only because of a prerequisite elsewhere in the "
+                    + $"page, but no PostAwaitLiveReads entry names {field}, so nothing checks that "
+                    + $"the prerequisite still holds. Recorded prerequisite: {prerequisite}");
+
+                foreach (var obligation in covering)
+                    AssertSnapshotObligationHolds(page, source, obligation);
+            }
+            else
+            {
+                Assert.True(covering.Count == 0,
+                    $"{page}:{exempt.Line} stays clickable while the page is busy and assigns "
+                    + $"{field}, which {covering.Count} registered handler obligation(s) depend on "
+                    + "not changing mid-flight - yet the exemption records no "
+                    + "PrerequisiteBeforeExemptionHolds. Write down what has to stay true, or the "
+                    + "next reader grants this exemption on the gating reason alone and never learns "
+                    + "the snapshot is load-bearing.");
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryRaiseThatMustFollowAnEarlyReturnStillDoes(string page)
+    {
+        // EveryRegisteredFlagIsLoweredInAFinally proves a finally exists; it cannot see that an
+        // early return above the try skips that finally entirely. DhcpAuthorization.DownloadCsvAsync
+        // is the forcing case: isDownloadingCsv is a member of a page-wide predicate, so a raise
+        // moved above the empty-list guard does not grey one button, it deadens every control on the
+        // page, permanently, the first time the operator exports an empty list.
+        //
+        // What is the cheapest broken implementation that still passes this? None of the usual four.
+        // "Change nothing" after moving the raise fails on ordering; "delete the feature" fails
+        // because the raise must exist; "hard-code one value" - rewriting the condition - fails
+        // because the guard is matched verbatim; "never call the thing under test" fails because a
+        // missing handler fails rather than skips. Removing the return but keeping the if also
+        // fails.
+        //
+        // Honest limitation: this is textual ordering within one method body, not control flow. It
+        // cannot see a raise reached by a call, and it cannot prove the early return is reachable.
+        // It also does not use ClickGateSource.ExtractBlock, whose brace counting is not quote-aware
+        // and would mis-end any block in these interpolated-string-heavy handlers.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+
+        foreach (var rule in entry.RaiseMustFollowEarlyReturn)
+        {
+            var body = source.MethodBody(rule.Handler);
+            Assert.False(string.IsNullOrEmpty(body),
+                $"{page}: RaiseMustFollowEarlyReturn names {rule.Handler}, which does not exist");
+
+            var offset = source.Text.IndexOf(body, StringComparison.Ordinal);
+
+            var guard = body.IndexOf($"if ({rule.EarlyReturn})", StringComparison.Ordinal);
+            Assert.True(guard >= 0,
+                $"{page}: {rule.Handler} no longer carries the guard 'if ({rule.EarlyReturn})', "
+                + $"which {rule.Flag} is raised below on purpose. {rule.Consequence}");
+
+            var exit = Regex.Match(body[guard..], @"^if \([^\r\n]*\)\s*(?:\{\s*)?return\s*;");
+            Assert.True(exit.Success,
+                $"{page}:{source.LineAt(offset + guard)} 'if ({rule.EarlyReturn})' no longer returns "
+                + $"immediately, so there is no early exit left for the raise of {rule.Flag} to sit "
+                + "below. Re-check the ordering by hand before updating this entry.");
+
+            var raises = ClickGateSource.NonClearingSetters(body, rule.Flag).ToList();
+            Assert.True(raises.Count > 0,
+                $"{page}: {rule.Handler} no longer raises {rule.Flag} at all, so nothing marks the "
+                + "page busy for the whole of that operation.");
+
+            var tooEarly = raises
+                .Where(raise => raise.Index < guard + exit.Length)
+                .Select(raise => source.LineAt(offset + raise.Index))
+                .ToList();
+
+            Assert.True(tooEarly.Count == 0,
+                $"{page}: {rule.Handler} raises {rule.Flag} at line(s) {string.Join(", ", tooEarly)}, "
+                + $"at or above the early return 'if ({rule.EarlyReturn})'. Nothing lowers it on that "
+                + $"path. {rule.Consequence}");
+        }
+    }
+
     // ---- things the gate must not break ------------------------------------------------------
 
     [Theory]
@@ -522,4 +686,95 @@ public class ClickGateTests
 
     private static IEnumerable<string> AllFlags(PageGateEntry entry) =>
         entry.Predicates.SelectMany(predicate => predicate.Members).Distinct(StringComparer.Ordinal);
+
+    /// <summary>
+    /// A regex matching a READ of <paramref name="identifier"/>: a whole-word occurrence that is not
+    /// the left-hand side of an assignment. <c>x.Foo</c>, <c>f(x)</c> and <c>x == y</c> are reads;
+    /// <c>x = y</c> is not. The distinction is the whole point here - a handler clearing a form
+    /// field after a successful write is correct, while reading one back mid-flight is the defect.
+    /// </summary>
+    private static string ReadOf(string identifier) =>
+        ClickGateSource.WholeWord(identifier) + @"(?!\s*=(?!=))";
+
+    /// <summary>
+    /// The page field an inline handler snippet assigns to: "operationResult" for
+    /// <c>@onclick="() =&gt; operationResult = null"</c>. Empty when the snippet names a method
+    /// instead, which most do.
+    /// </summary>
+    private static string FieldWrittenBy(string snippet) =>
+        Regex.Match(snippet, @"=>\s*(?<field>[A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)").Groups["field"].Value;
+
+    /// <summary>
+    /// The shared machinery behind <see cref="NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait"/>
+    /// and <see cref="EveryExemptionPrerequisiteIsEnforcedAndNotJustDescribed"/>. One implementation
+    /// so an exemption's prerequisite is checked by the same code as the obligation it names, and
+    /// the two cannot drift into meaning different things.
+    /// </summary>
+    private static void AssertSnapshotObligationHolds(
+        string page, ClickGateSource source, PostAwaitLiveRead obligation)
+    {
+        var body = source.MethodBody(obligation.Handler);
+        Assert.False(string.IsNullOrEmpty(body),
+            $"{page}: PostAwaitLiveReads names handler {obligation.Handler}, which does not exist. "
+            + $"The hazard it records has not gone away: {obligation.Why}");
+
+        var offset = source.Text.IndexOf(body, StringComparison.Ordinal);
+
+        // Deliberately a failure, not a skip. A handler that no longer awaits is either a different
+        // handler or a rewritten one, and either way the entry needs a human.
+        var firstAwait = body.IndexOf("await ", StringComparison.Ordinal);
+        Assert.True(firstAwait >= 0,
+            $"{page}: {obligation.Handler} is registered as needing a snapshot of "
+            + $"{obligation.LiveField} but no longer awaits anything. Re-check the handler and this "
+            + "entry together rather than deleting either.");
+
+        var afterAwait = body[firstAwait..];
+
+        var liveReads = Regex.Matches(afterAwait, ReadOf(obligation.LiveField))
+            .Select(match => source.LineAt(offset + firstAwait + match.Index))
+            .ToList();
+        Assert.True(liveReads.Count == 0,
+            $"{page}: {obligation.Handler} reads {obligation.LiveField} after its first await, at "
+            + $"line(s) {string.Join(", ", liveReads)}. Another control can change that field while "
+            + $"this handler is suspended, and the gate cannot stop it: read {obligation.Snapshot} "
+            + $"instead. {obligation.Why}");
+
+        // Without this, "stop using the value at all" satisfies the negative above.
+        Assert.True(Regex.IsMatch(afterAwait, ReadOf(obligation.Snapshot)),
+            $"{page}: {obligation.Handler} never reads {obligation.Snapshot} after its first await, "
+            + $"so either the snapshot of {obligation.LiveField} is decoration or the handler has "
+            + "stopped using the value altogether.");
+
+        switch (obligation.Shape)
+        {
+            case SnapshotShape.CapturedAtEntry:
+                var capture = Regex.Match(body,
+                    @"\bvar\s+" + Regex.Escape(obligation.Snapshot) + @"\s*=[^\r\n;]*"
+                    + ClickGateSource.WholeWord(obligation.LiveField) + @"[^\r\n;]*;");
+                Assert.True(capture.Success,
+                    $"{page}: {obligation.Handler} has no 'var {obligation.Snapshot} = ...' capturing "
+                    + $"{obligation.LiveField}, so the local it reads is no longer that field's "
+                    + $"entry-time value. {obligation.Why}");
+                Assert.True(capture.Index < firstAwait,
+                    $"{page}:{source.LineAt(offset + capture.Index)} {obligation.Handler} captures "
+                    + $"{obligation.Snapshot} BELOW its first await. A capture taken after the "
+                    + "handler has already yielded is not a snapshot of what the operator clicked.");
+                break;
+
+            case SnapshotShape.PublishedFromLocal:
+                Assert.True(
+                    Regex.IsMatch(body,
+                        @"\bvar\s+" + Regex.Escape(obligation.Snapshot) + @"\s*=\s*await\b"),
+                    $"{page}: {obligation.Handler} no longer holds its awaited result in "
+                    + $"'var {obligation.Snapshot} = await ...'. {obligation.Why}");
+                Assert.True(
+                    Regex.IsMatch(afterAwait,
+                        ClickGateSource.WholeWord(obligation.LiveField) + @"\s*=\s*"
+                        + ClickGateSource.WholeWord(obligation.Snapshot) + ";"),
+                    $"{page}: {obligation.Handler} does not publish {obligation.Snapshot} to "
+                    + $"{obligation.LiveField}, so the banner never reports the operation the "
+                    + "operator just ran.");
+                break;
+        }
+    }
 }
