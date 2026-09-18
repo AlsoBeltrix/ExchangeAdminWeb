@@ -518,4 +518,28 @@ public class ServiceHealthServiceTests
 
         Assert.Empty(ServiceHealthService.ParseIncident(doc.RootElement).Details);
     }
+
+    /// <summary>
+    /// Source-text tripwire, not behavioural coverage (docs/ServiceHealthLoadFeedback-Plan.md).
+    /// The two Graph collections are independent reads; awaiting them one after the other
+    /// doubled the time the page spends on its spinner. Comments are stripped first - the
+    /// change this guards adds a comment that names both methods.
+    /// </summary>
+    [Fact]
+    public void TheGraphCollectionsAreFetchedConcurrently()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir != null && !File.Exists(Path.Combine(dir, "ExchangeAdminWeb.csproj")))
+            dir = Path.GetDirectoryName(dir);
+        Assert.NotNull(dir);
+
+        var source = File.ReadAllText(Path.Combine(dir!, "Services", "ServiceHealthService.cs"));
+        source = System.Text.RegularExpressions.Regex.Replace(
+            source, @"/\*.*?\*/", " ", System.Text.RegularExpressions.RegexOptions.Singleline);
+        source = System.Text.RegularExpressions.Regex.Replace(source, @"//[^\r\n]*", " ");
+
+        Assert.Contains("Task.WhenAll(servicesTask, issuesTask)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("await FetchServicesAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("await FetchIssuesAsync", source, StringComparison.Ordinal);
+    }
 }

@@ -329,4 +329,106 @@ public class ServiceHealthPageTests
     {
         Assert.Equal(expected, ServiceHealth.Humanize(key));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Load-feedback tripwires (docs/ServiceHealthLoadFeedback-Plan.md).
+    //
+    // The page prerenders, and prerendering emits no HTML until OnInitializedAsync completes.
+    // While the Graph call was awaited there, none of the page's three spinners could ever
+    // render on a first load: the operator saw the previous page sit unchanged for the whole
+    // round trip and clicked again. These guard the shape that fixes it.
+    //
+    // Every scanner below strips comments before matching. Two tripwires in the migration
+    // button-gating work failed against correct code because they matched the words "await"
+    // and "finally" inside explanatory comments - and the comments added by this very change
+    // name OnAfterRenderAsync, LoadAsync and StateHasChanged.
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Removes Razor (@* *@), block and line comments. Applied to extracted method bodies
+    /// rather than whole files; none of the bodies scanned here contain a "//" inside a string
+    /// literal, which is the one case this would mangle.
+    /// </summary>
+    private static string StripComments(string source)
+    {
+        source = Regex.Replace(source, @"@\*.*?\*@", " ", RegexOptions.Singleline);
+        source = Regex.Replace(source, @"/\*.*?\*/", " ", RegexOptions.Singleline);
+        return Regex.Replace(source, @"//[^\r\n]*", " ");
+    }
+
+    /// <summary>
+    /// Returns the brace-matched body of the named member, comments already stripped.
+    /// </summary>
+    private static string MemberBody(string source, string signatureFragment)
+    {
+        var start = source.IndexOf(signatureFragment, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"'{signatureFragment}' not found in source.");
+
+        var open = source.IndexOf('{', start);
+        Assert.True(open >= 0, $"No body brace found after '{signatureFragment}'.");
+
+        var depth = 0;
+        for (var i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{') depth++;
+            else if (source[i] == '}' && --depth == 0)
+                return StripComments(source[(open + 1)..i]);
+        }
+
+        Assert.Fail($"Unbalanced braces in the body of '{signatureFragment}'.");
+        return string.Empty;
+    }
+
+    [Fact]
+    public void OnInitializedAsync_DoesNotAwaitTheHealthServiceDirectly()
+    {
+        var body = MemberBody(PageSource(), "protected override async Task OnInitializedAsync()");
+
+        Assert.DoesNotContain("LoadAsync", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("HealthService", body, StringComparison.Ordinal);
+
+        // It must still leave the page in its loading state, or the deferred load runs behind
+        // an idle-looking page and the whole point is lost.
+        Assert.Contains("isLoading = true", body, StringComparison.Ordinal);
+        Assert.Contains("authChecked = true", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheInitialLoadRunsFromOnAfterRenderAsyncBehindAOneShotGuard()
+    {
+        var body = MemberBody(PageSource(), "protected override async Task OnAfterRenderAsync(bool firstRender)");
+
+        Assert.Contains("firstRender", body, StringComparison.Ordinal);
+        Assert.Contains("loadStarted", body, StringComparison.Ordinal);
+        // The denied path leaves authChecked false while NavigateTo is in flight. Without this
+        // term an unauthorized visitor triggers a Graph call on the way out.
+        Assert.Contains("authChecked", body, StringComparison.Ordinal);
+        Assert.Contains("LoadAsync(forceRefresh: false)", body, StringComparison.Ordinal);
+
+        var latch = body.IndexOf("loadStarted = true", StringComparison.Ordinal);
+        var load = body.IndexOf("await LoadAsync", StringComparison.Ordinal);
+        Assert.True(latch >= 0 && load > latch,
+            "loadStarted must be latched before the load is awaited, or a re-render re-enters it.");
+    }
+
+    [Fact]
+    public void LoadAsyncCallsStateHasChangedInItsFinallyBlock()
+    {
+        var body = MemberBody(PageSource(), "private async Task LoadAsync(bool forceRefresh)");
+        var final = MemberBody(body, "finally");
+
+        // Blazor does not auto-render after OnAfterRenderAsync. Without this the spinner stays
+        // up and Refresh stays disabled forever - worse than the bug being fixed.
+        Assert.Contains("StateHasChanged()", final, StringComparison.Ordinal);
+        Assert.Contains("isLoading = false", final, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheModuleVersionWasBumpedForTheLoadFeedbackChange()
+    {
+        var module = new ExchangeAdminWeb.Modules.ModuleCatalog().GetById("ServiceHealth");
+
+        Assert.NotNull(module);
+        Assert.Equal("1.3.2", module!.Version);
+    }
 }

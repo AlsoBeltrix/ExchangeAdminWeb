@@ -777,7 +777,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Infrastructure,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.1",
+            Version = "1.3.2",
             // One permission, no granular tier: the module reads and renders, and mutates
             // nothing (docs/ServiceHealth-Plan.md).
             MainPermission = new(

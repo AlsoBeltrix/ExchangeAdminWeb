@@ -7,30 +7,48 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **Handoff 2026-09-18. Branch `master`, verified head `097c400`, working tree clean.**
-  Verification was last run at `097c400`; `be13a35` and this handoff on top of it are records
-  only. Four commits are local and unpushed (`98069ef`, `00da11e`, `097c400`, `be13a35`); both
-  remotes sit at `523b69d`, verified with `git ls-remote` on 2026-09-17 - the owner pushed the
-  earlier backlog, so the old "twenty-three unpushed, remotes at ace4d44" header was stale.
-  Do not push, and do not treat the remote lag as drift. The owner's issue queue is
-  `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the repo, and not ours to write
-  to). Items 1 and 3 are landed, with no open review findings. **Nothing is in flight; the
-  button gate is closed out** - the owner accepted it on 2026-09-18 ("seems to work well
-  enough") and added the app-wide audit to their own queue themselves, so do not re-raise it
-  here as an open item.
-  **Next agreed item: queue item 7, the slow Service Health load** - described under Next as
-  owner-reported issue 7, and the owner asked on 2026-09-18 for a fresh session to start it.
-  No plan exists for it, so the first action is root cause, then a plan. Starting point,
-  already checked: the page ALREADY has a full-page spinner
-  (`Components/Pages/ServiceHealth.razor:63-66`, gated on `isLoading && status == null`) and a
-  spinner on the refresh button (`:34-37`), so the complaint is not "there is no spinner" and
-  must not be implemented as if it were. Diagnose what the operator actually sees during
-  `OnInitializedAsync` (`:317-335`) before proposing anything: the authorization round trip
-  runs before `LoadAsync`, and how the page renders while that is outstanding is unverified.
-  Worth carrying in from the button-gating work: on this stack the circuit stays interactive
-  across every await, so "the page looks idle while something is running" is the same class of
-  problem, and the `IsBusy` shape in `.agents/decisions.md` (2026-09-17) may well be the
-  answer - but confirm the symptom first rather than reaching for it.
+- **Branch `master`, working tree clean. Nothing is in flight.**
+  The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
+  repo, and not ours to write to). Queue items 1, 3 and 7 are landed, with no open review
+  findings. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
+  work well enough") and added the app-wide audit to their own queue themselves, so do not
+  re-raise it here as an open item.
+  Six commits are local and unpushed as of this entry; both remotes sat at `523b69d`, verified
+  with `git ls-remote` on 2026-09-17. **Do not push, and do not treat the remote lag as
+  drift.** Note for the next agent: `origin` (LAN gitea) was unreachable on 2026-09-18 -
+  `SEC_E_CERT_EXPIRED`, its TLS certificate has expired - so only `github` could be checked.
+  That is a host condition, not repo drift.
+
+- **Service Health now shows its spinner on the first load; only the manual checks remain.**
+  `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented and owns the acceptance checklist.
+  Landed 2026-09-18; ServiceHealth module version 1.3.2, no base app bump. Queue item 7.
+  **The complaint was never "there is no spinner"** - the page already had three, and they
+  were all correct. Root cause: the page prerenders (`Program.cs:374`, no `prerender: false`
+  anywhere in the app), prerendering emits no HTML until `OnInitializedAsync` completes, and
+  that method awaited the whole Graph round trip. So the browser's first byte of the page was
+  the finished board and no spinner could ever render. Worse, enhanced navigation
+  (`Components/App.razor` listens for `blazor:enhancedload`) leaves the *previous* page
+  rendered and interactive during the fetch, so the UI looked completely idle - hence the
+  repeated clicks. Fix follows the `BlockedSenders.razor:166-181` precedent: the load moved to
+  `OnAfterRenderAsync` behind a `firstRender && !loadStarted && authChecked` guard, with
+  `StateHasChanged()` added to `LoadAsync`'s `finally` because Blazor does not auto-render
+  after `OnAfterRenderAsync`. The two Graph collections also now run under `Task.WhenAll`
+  instead of serially.
+  **Resolved along the way, so nobody re-opens it:** the authorization round trip is NOT part
+  of this problem. `GroupAuthorizationHandler.HandleRequirementAsync`
+  (`Authorization/GroupAuthorizationHandler.cs:48-65`) is synchronous over in-memory state and
+  returns `Task.CompletedTask` - no directory or network I/O - which is why the auth check
+  stays in `OnInitializedAsync` here and in the precedent.
+  Five source-level tripwires guard it, all stripping comments before matching. Guard proof:
+  steps 1, 2 and 3 each mutated back independently, each 1 failed / 34 passed against its
+  named tripwire, all restores byte-identical by SHA256. Full suite green at 2510 passed /
+  0 failed / 3 skipped. Nothing here reaches the rendered
+  page - no bUnit harness exists - so the plan's manual checks are the only evidence the
+  operator sees the fix. The implementation codereview has not been dispatched.
+  **Noted, not fixed:** because prerender and the interactive circuit each ran
+  `OnInitializedAsync`, every Service Health view used to write *two* `ServiceHealthView`
+  audit entries; this change incidentally drops it to one. Whether other pages duplicate their
+  audit the same way is unexamined and unscoped.
 
 - **Every control on Mailbox Migrations is gated on one in-flight predicate.**
   `docs/MigrationButtonGating-Plan.md` is Implemented. Landed 2026-09-17 in `00da11e` (the
@@ -177,7 +195,7 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Owner-reported issues, raised 2026-09-15. Issues 1 and 3 are landed; 2 is not started.**
+- **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are landed; 2 is not started.**
   1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
      now `Category = ModuleCategories.IdentityAndAccess`, module version 1.1.1. Category is nav
      grouping only - section-access keys are per-module policy aliases - so the move did not
@@ -201,8 +219,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      whether Docker works with IIS. Large; interacts with the whole deploy pipeline and the
      shared-config-DB invariant. Do not start without a ruling.
   7. *O365 status module is slow to load, inviting repeated clicks or refreshes; it needs to be
-     obvious when loading.* Taken next - see the handoff entry in Now for what is already
-     known and the trap to avoid.
+     obvious when loading.* **Landed 2026-09-18** - see the Now entry and
+     `docs/ServiceHealthLoadFeedback-Plan.md`. Code-side closed; the plan's manual acceptance
+     checklist and the implementation codereview remain.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
@@ -275,8 +294,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-This records-only drift sweep requires `git diff --check`; build, tests, browser acceptance,
-AD/Graph queries and reviewer dispatches were not run. Current CI status/test counts do not
+Last run 2026-09-18 for the Service Health load-feedback slice: build Release (0 errors),
+`dotnet test ExchangeAdminWeb.slnx` (2510 passed / 0 failed / 3 skipped), `dotnet format
+--verify-no-changes` and `git diff --check HEAD`, all clean. No PowerShell was touched, so
+PSScriptAnalyzer and Pester were not run. Browser acceptance, AD/Graph queries and reviewer
+dispatches were not run. Current CI status/test counts do not
 belong here. Per-finding status is owned by `.agents/review/index.md`.
 
 ## Active sources

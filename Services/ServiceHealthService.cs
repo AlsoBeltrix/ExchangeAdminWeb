@@ -112,8 +112,16 @@ public sealed class ServiceHealthService
             var client = await _graphClientFactory()
                 ?? throw new InvalidOperationException("Service Health Graph credentials not available.");
 
-            var services = await FetchServicesAsync(client);
-            var issues = await FetchIssuesAsync(client);
+            // Concurrent, not serial: the two collections are independent reads against the
+            // same client and neither touches shared mutable state, so awaiting one after the
+            // other only doubled the time the page spends on its spinner. Still inside
+            // _cacheLock, so this widens no race the class does not already own.
+            var servicesTask = FetchServicesAsync(client);
+            var issuesTask = FetchIssuesAsync(client);
+            await Task.WhenAll(servicesTask, issuesTask);
+
+            var services = servicesTask.Result;
+            var issues = issuesTask.Result;
 
             var status = new ServiceHealthStatus
             {
