@@ -412,11 +412,30 @@ private bool StillAuthorized(BulkJob job) =>
   rule at `:253-257`: collapsing two causes lets one masquerade as the other. `CanDownload` needs
   no change - anything that is not `Available` is already refused.
 
-**Two independent reasons a denied job is not downloadable, and neither depends on the other.** The
-marker write goes through `_jobs.AppendJobMessage`, which is fail-safe and swallows its errors (the
-same shape as `MarkSaveFailed:164-172`). If it silently fails, no file was written either, so
+**Two independent reasons a denied job is not downloadable, and neither depends on the other.**
+
+**First, correct an error an earlier revision of this section carried.** `_jobs.AppendJobMessage`
+is **not** fail-safe and does **not** swallow its errors. `BulkJobService.AppendJobMessage:236` is a
+bare delegation - `=> _repository.AppendMessage(jobId, note)` - and `BulkJobRepository
+.AppendMessage:221-237` opens a connection and runs the UPDATE with **no catch anywhere**. The
+swallowing lives one level up, in the *caller*: `MarkSaveFailed:164-174` wraps its
+`AppendJobMessage` call in its own try/catch and logs. The fail-safety is a property of that
+wrapper, not of the API, and reading it as an API property is how this sentence went wrong.
+
+**So the denial marker must be written through a `MarkDenied` helper mirroring
+`MarkSaveFailed:164-174`, try/catch and all.** Implemented as a bare call instead, a repository
+exception propagates out of `OnJobCompletedAsync` before the denial audit and the marker are
+written. The exception itself is contained - `BulkJobService:515-523` swallows completion-hook
+exceptions, and the terminal state is already committed - and because the marker write is ordered
+*before* `SaveToLogPath`, no file is written and nothing becomes downloadable. But the denial audit
+would be missing and the row would render `Expired` rather than `Denied`, so the durable record of
+*why* it was refused is lost. That is the whole accountability mechanism for this feature.
+
+With the helper in place: if the marker write fails, no file was written either, so
 `_store.TryResolve` finds nothing and `ClassifyState` returns `Expired` - mislabelled, still not
-downloadable. If a future edit re-introduced the write, the marker still forces `Denied`.
+downloadable. If a future edit re-introduced the file write, the marker still forces `Denied`.
+Slice 4 carries a marker-write-failure test asserting no throw, no file, no mail and no
+downloadable export.
 
 **Scoped variation from the review's wording, stated rather than smuggled.** The review asked for
 authorization denial to be "a job-level terminal outcome". It is job-level here - one preflight,
@@ -1114,3 +1133,34 @@ The lesson carried forward as a permanent section: "The cheapest broken implemen
 passes each assertion", one row per assertion. Both review rounds found the same species of
 mistake - an assertion satisfied by the defect it was written to catch - and that table is the
 cheapest way to stop writing the third one.
+## Revision 3 - codex round 3, CONSENSUS REACHED
+
+Reviewer: codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard, 2026-09-18.
+Capability proof passed. Verdict **sound_with_changes**, one LOW finding, now fixed above.
+
+**Both round 2 findings confirmed closed.** The completion-hook gate before
+`Deserialize`/`BuildCsv`/`SaveToLogPath` closes the CSV leak, and the `Denied` state keeps the
+report non-downloadable. The four assertions were judged to meet the msr-1 standard for a source
+scan, with behavioural tests on the job processor where that is practical.
+
+**The scoped variance was upheld as sound engineering, not an under-fix.** `BulkJobService`
+persists the terminal status before `OnJobCompletedAsync` runs, so making `Denied` a runner
+terminal state would be a change to shared infrastructure and a base app version bump. Keeping the
+runner status `Completed` while the denial is job-level in every effect that matters is the correct
+trade, and the cosmetic inconsistency stays in Known gaps.
+
+**The two admitted no-automation gaps were judged acceptable known gaps rather than blockers**,
+because no current handler contains the extra sinks they describe and the plan names the
+hand-maintained sink list as the risk. They stay recorded; they do not stop the work.
+
+**The one finding (LOW)** was a false claim about existing code: the plan said `AppendJobMessage`
+is fail-safe and swallows its errors. It is not - the swallowing is in `MarkSaveFailed`'s own
+try/catch, and the API underneath runs uncaught SQL. Verified line by line before accepting.
+Corrected above, with `MarkDenied` specified as a wrapper mirroring that precedent, because
+otherwise a marker-write failure loses the denial audit - the accountability record this feature
+exists to produce.
+
+**This plan has reached codex consensus.** It stays `Status: Draft`: consensus is not approval, and
+the owner still owns the seven open questions. Question 1 gates everything, because it decides
+whether checklist step 1 copies the existing groups onto the new alias or re-grants deliberately,
+and nothing can be implemented before slice 1 lands.
