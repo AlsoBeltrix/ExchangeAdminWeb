@@ -646,8 +646,10 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Infrastructure,
             EnabledByDefault = false,
             IsSystemModule = false,
-            // 1.3.0: CSV export of the authorized-server list (docs/ModuleCsvExport-Plan.md).
-            Version = "1.3.0",
+            // 1.4.0: every control on the page is gated on one in-flight predicate, and both write
+            // handlers snapshot their inputs and their result so a mid-flight dismiss can no longer
+            // report a successful AD write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 1).
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "DhcpAuthorization",

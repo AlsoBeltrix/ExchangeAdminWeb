@@ -30,6 +30,7 @@ public static class ClickGateRegistry
     public static readonly IReadOnlyList<PageGateEntry> Pages = new[]
     {
         Migration,
+        DhcpAuthorization,
     };
 
     /// <summary>
@@ -42,7 +43,7 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            ["DhcpAuthorization.razor"] = "tier 1, page 1 of 9",
+            // Page 1 of 9, DhcpAuthorization.razor, is converted and lives in Pages above.
             ["NamedLocations.razor"] = "tier 1, page 2 of 9",
             ["MailboxPermissions.razor"] = "tier 1, page 3 of 9",
             ["CalendarPermissions.razor"] = "tier 1, page 4 of 9",
@@ -169,6 +170,149 @@ public static class ClickGateRegistry
                 + "operator concludes the action failed."),
         ],
     };
+
+    /// <summary>
+    /// DHCP Authorization: tier 1, page 1 of 9, converted 2026-09-18 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sequenced first because it is the only tier-1 page with no non-button click target of any
+    /// kind. That census was re-run against the file here rather than trusted from the plan, since
+    /// Revision 1 falsification 3 is that the scanner's non-button count is an @onclick-only
+    /// undercount: the page has no @onchange, no InputFile, no @onkeydown, no @onsubmit and no
+    /// child-component Disabled= parameter, and every @onclick in it is on one of its seven buttons.
+    /// Its three @bind text inputs DO render server state into the DOM, so they take the disabled
+    /// attribute - the only safe mechanism for a DOM-synced control - and now name IsBusy rather
+    /// than isOperating alone. They are absent from NonButtonTargets on purpose: that list is keyed
+    /// to what ClickGateSource can locate, and an input element is in neither of its tag sets, so
+    /// registering one would fail EveryNonButtonTargetIsRefusedByItsDeclaredMechanism rather than
+    /// document anything.
+    /// </para>
+    /// <para>
+    /// isDownloadingCsv is new. DownloadCsvAsync owned no in-flight flag at all, and its raise has
+    /// to sit BELOW the early return on an empty list: a flag raised above that guard is never
+    /// lowered, and this one is in a page-wide predicate, so it would deaden the whole page rather
+    /// than one button. Nothing in the shared suite can see that ordering - it is enforced by the
+    /// comment at the raise and by this note.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry DhcpAuthorization => new()
+    {
+        Page = "DhcpAuthorization.razor",
+        ExpectedLineCount = 411,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy",
+                ["isLoading", "isOperating", "isDownloadingCsv"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        // Get-ClickGateAudit.ps1 reports two flags and zero stuck flags on this page, so there is
+        // nothing to list here. Worth knowing for the next reader: confirmRemove and operationResult
+        // are both nullables raised and nulled inside one awaiting method, which is most of the
+        // in-flight shape. They escape the detector only because neither is nulled in a finally.
+        // Moving either clear into a finally would turn it into a false positive AND, for
+        // confirmRemove, into the page-killing mistake ExcludedFields exists to refuse.
+        ScannerFalsePositives = [],
+
+        ExcludedFields =
+        [
+            new ExcludedField("confirmRemove", "the Yes/No pair at 82-83",
+                "names the row whose deauthorization is staged; it is not an operation in flight. "
+                + "The pair is rendered only while it is set, so folding it into IsBusy would "
+                + "disable Yes at the only moment it is ever shown and no server could be "
+                + "deauthorized again - the exact regression a review of the Migration plan caught "
+                + "before any code was written"),
+        ],
+
+        ExemptControls =
+        [
+            new ExemptControl(40, "@onclick=\"() => operationResult = null\"",
+                "dismisses the result banner. Gating it on IsBusy would trap the previous "
+                + "operation's message on screen for the whole of a refresh or a CSV export, which "
+                + "is the same reason Migration's banner dismiss at 442 is exempt. Neither "
+                + "LoadServers nor DownloadCsvAsync reads operationResult, so a dismiss during "
+                + "either is definitively executed",
+                KeepsItsOwnGuard: "disabled=\"@isOperating\"",
+                ConditionThatKeepsItTrue:
+                "the handler stays a pure field reset. The moment anything else is wired to this "
+                + "button it is an operation and belongs behind IsBusy like the rest",
+                PrerequisiteBeforeExemptionHolds:
+                "AuthorizeServer and RemoveServer must keep the write result in a local - "
+                + "var result = await ...; operationResult = result; - and read that local "
+                + "afterwards. Before they did, this control could null operationResult while "
+                + "either handler was suspended at its admin-notification await, and the following "
+                + "operationResult.Success read threw a NullReferenceException into the handler's "
+                + "own catch, which then audited and emailed a forest-level AD write that had "
+                + "SUCCEEDED as a failure and skipped the confirming refresh. The narrower guard "
+                + "above is belt and braces only: the browser's copy of a disabled attribute is one "
+                + "round trip stale, so the guard narrows that window and the local is what closes "
+                + "it. Reinstate the field reads and this exemption is a live defect again"),
+
+            new ExemptControl(83, "@onclick=\"() => confirmRemove = null\"",
+                "backs out of a staged deauthorization, and the operator must always be able to do "
+                + "that. The pair can still be on screen during another operation because "
+                + "AuthorizeServer does not clear confirmRemove, and cancelling only resets a "
+                + "staged selection - the Yes button beside it is gated, so nothing can be executed "
+                + "from this state while the page is busy",
+                ConditionThatKeepsItTrue:
+                "nothing reads confirmRemove after an await. The moment a handler does, this "
+                + "control can null it mid-flight and the exemption stops holding"),
+        ],
+
+        // Verified by exhaustive census, not inherited from the plan: this page has none. It is the
+        // only tier-1 page of which that is true, which is why it was taken first.
+        NonButtonTargets = [],
+
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("LoadServers", ["AuthorizeServer", "RemoveServer"],
+                "Both write handlers call it to refresh the server table while isOperating is still "
+                + "true, so IsBusy is true at that call. A guard here makes every confirming "
+                + "refresh a silent no-op: the banner reports the forest-level write succeeded "
+                + "while the table still lists the old set of servers, and the operator concludes "
+                + "it failed and retries."),
+        ],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(50, "@onclick=\"DownloadCsvAsync\"",
+                ["servers.Count == 0"],
+                RendersOnlyWhen:
+                "always. The clause is the only thing stopping an export of an empty list being "
+                + "offered, and a mechanical rewrite to the bare predicate would delete it"),
+
+            new AnnotatedControl(82, "@onclick=\"() => RemoveServer(server)\"",
+                ["string.IsNullOrWhiteSpace(ticketNumber)"],
+                RendersOnlyWhen:
+                "only while confirmRemove == server. RemoveServer re-checks the ticket itself, so "
+                + "this clause is not the sole enforcement the way IntuneDevices 403 is, but it is "
+                + "still a precondition and not a busy condition"),
+
+            new AnnotatedControl(121, "@onclick=\"AuthorizeServer\"",
+                [
+                    "string.IsNullOrWhiteSpace(newDnsName)",
+                    "string.IsNullOrWhiteSpace(newIpAddress)",
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                ],
+                RendersOnlyWhen:
+                "always. Three form-validity clauses that IsBusy is OR-ed in front of, never "
+                + "substituted for"),
+        ],
+
+        SpinnerExpressions =
+        [
+            // Two spinners on this page and neither condition is the predicate. The refresh spinner
+            // suppresses itself during an operation because the write handlers call LoadServers
+            // themselves and the Authorize button is already showing one; collapsing either of these
+            // to IsBusy shows two at once, and adding isDownloadingCsv to them puts a spinner on the
+            // Refresh button during a CSV export.
+            "@if (isLoading && !isOperating)",
+            "@if (isOperating)",
+        ],
+    };
 }
 
 /// <summary>One page's gating contract. Only Page, ExpectedLineCount and Predicates are required;
@@ -248,12 +392,20 @@ public sealed record ExcludedField(string Field, string RendersAt, string Reason
 /// <param name="ConditionThatKeepsItTrue">
 /// What must remain true for the exemption to stay valid, so it cannot lapse silently.
 /// </param>
+/// <param name="PrerequisiteBeforeExemptionHolds">
+/// A change elsewhere in the page that had to land BEFORE this exemption was safe to grant, named
+/// so the exemption cannot outlive its own precondition. Forced by DhcpAuthorization line 40: its
+/// banner dismiss nulls operationResult, which both write handlers used to dereference after an
+/// await, so leaving it clickable was a live NullReferenceException path and not merely a gating
+/// gap. It is exempt only because those two handlers now read a local snapshot instead.
+/// </param>
 public sealed record ExemptControl(
     int Line,
     string Snippet,
     string Reason,
     string? KeepsItsOwnGuard = null,
-    string? ConditionThatKeepsItTrue = null);
+    string? ConditionThatKeepsItTrue = null,
+    string? PrerequisiteBeforeExemptionHolds = null);
 
 /// <summary>How a non-button control refuses a click while the page is busy.</summary>
 public enum RefusalMechanism
