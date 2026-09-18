@@ -1,10 +1,11 @@
 # Message Analysis: separate the trace-search grant from header analysis
 
-Status: Draft, **Revision 1** after a codex review returned `unsound` with four findings. All four
-were verified against the source and accepted; the changes are folded in below and the review
-record is the last section of this document. Queue item 4, in the owner's words: "Break out
-permissions for message trace vs header analysis." Drafted 2026-09-18 against `337e07b`, revised
-the same day against `155eaf7`, reading the working tree (which carries another agent's in-flight
+Status: Draft, **Revision 2** after two codex review rounds, each returning `unsound` - four
+findings then two. All six were verified against the source and accepted, one of the last two with
+a scoped implementation variance that is stated explicitly; the changes are folded in below and
+both review records are the last two sections of this document. Queue item 4, in the owner's words:
+"Break out permissions for message trace vs header analysis." Drafted 2026-09-18 against `337e07b`,
+revised the same day against `155eaf7` and then `c3b4239`, reading the working tree (which carries another agent's in-flight
 `ToggleDetail` change and a `MessageTrace` module version already at 1.4.2). Line numbers below
 are as of that working tree; every claim also names the method or the exact string it rests on, so
 a shifted line number does not invalidate it.
@@ -256,8 +257,10 @@ canTrace = (await AuthorizationService.AuthorizeAsync(user, "MessageTraceSearch"
 | 13 | reports page init | `MessageTraceReports.razor:126` | `AuthorizeAsync(user, "MessageTraceSearch")`. |
 | 14 | reports `Download` | `MessageTraceReports.razor:146` | re-check before `Exports.TryDownloadAsync`. |
 | 15 | snapshot capture | `MessageTrace.razor` `OnInitializedAsync` | capture the authorization decision on the circuit, where the principal is live, for the off-circuit re-check at point 16. See "The background export job". |
-| 16 | background job | `Services/Jobs/MessageTraceDetailJobProcessor.cs` `ProcessRowAsync:76-85` | fail closed on a missing or stale snapshot **before** `_details.GetMessageDetailAsync`. This is the enforcement point a UI gate cannot reach: the job runs later, off-circuit, under the module's shared Exchange credential. |
-| 17 | not gated | `OnRecipientInput`, `ToggleRowSelection`, `ToggleSelectAll`, `ClearSelection`, `TogglePasteInput`, `ClearHeaderAnalysis`, `ShowHeadersTab` | pure circuit-local UI state, no backend call. Named so the exemption is explicit. |
+| 16 | background job, per row | `Services/Jobs/MessageTraceDetailJobProcessor.cs` `ProcessRowAsync:76-85` | fail closed on a missing or stale snapshot **before** `_details.GetMessageDetailAsync`. This is the enforcement point a UI gate cannot reach: the job runs later, off-circuit, under the module's shared Exchange credential. |
+| 17 | background job, completion | same file, `OnJobCompletedAsync:94-136` | **the point a row gate does not cover.** The same preflight, as the first statement, so no CSV is built, no file is saved and no mail is sent. Without it a fully denied job still publishes a downloadable export - see "Gating the rows is not enough". |
+| 18 | export listing | `Services/MessageTraceExportListing.cs` `ClassifyState:258-278` | a denied job must classify as non-downloadable. New `Denied` state and marker; `CanDownload` (`:45`) then refuses it for free. |
+| 19 | not gated | `OnRecipientInput`, `ToggleRowSelection`, `ToggleSelectAll`, `ClearSelection`, `TogglePasteInput`, `ClearHeaderAnalysis`, `ShowHeadersTab` | pure circuit-local UI state, no backend call. Named so the exemption is explicit. |
 
 ### Placement constraint on `ToggleDetail`
 
@@ -342,21 +345,106 @@ question.** The repo already carries every piece:
   with `private const string Section = "ConferenceRooms";` at `:35` and the capture at
   `ConferenceRooms.razor:711-712`.
 
-Applied here: `private const string Section = "MessageTraceSearch";` on the processor, the same
-`snapshot is null || !snapshot.IsStillAuthorized(allowed)` refusal as the first statements of
-`ProcessRowAsync`, audited and returning a `Failed` row before `GetMessageDetailAsync`; and the
-matching `JobAuthorizationSnapshot.Capture(user, "MessageTraceSearch", SectionAccess.GetGroupsForSection("MessageTraceSearch"))`
+Applied here: `private const string Section = "MessageTraceSearch";` on the processor, and the same
+`snapshot is null || !snapshot.IsStillAuthorized(allowed)` refusal; plus the matching
+`JobAuthorizationSnapshot.Capture(user, "MessageTraceSearch", SectionAccess.GetGroupsForSection("MessageTraceSearch"))`
 in `MessageTrace.razor`'s `OnInitializedAsync`, which requires injecting `SectionAccessService`
 into the page as `ConferenceRooms.razor` does.
 
-**Jobs already queued when the split deploys have no snapshot, and they are refused.**
-`FromJson` returns `null` for null, blank or invalid JSON (`:98-110`) and the guard treats `null`
-as denied, so this needs no extra code - it is what the precedent already does. Refusing them is
-the fail-closed answer and it is the right one: the alternative is letting a job whose submitter's
-entitlement was never checked against the new permission read tenant mail detail. The operator
-sees a failed export and re-submits, which costs one re-run and re-authorizes properly. Slice
-ordering below shrinks the affected set to jobs queued before the *capture* slice rather than
-before the *enforcement* slice, so in practice it should be empty.
+### Gating the rows is not enough: the completion path publishes a file on its own
+
+**This is Revision 2's HIGH finding, and it is the most consequential thing in this document.** An
+earlier draft put the refusal only in `ProcessRowAsync`. That produces a job in which every row is
+denied, no Exchange call is made - **and a downloadable CSV of trace data is written anyway**. A
+failed row is not a failed job in this runner, and the completion path never consults
+authorization:
+
+- `BulkJobService.ExecuteRowsAsync:464-466` ends
+  `return cancelled ? (BulkJobStatus.Cancelled, "Cancelled by operator.") : (BulkJobStatus.Completed, null);`
+  Per-row `Failed` outcomes are recorded (`:447-455`) and change nothing about the job status.
+- `RunJobAsync:385-386` hands that status to `FinishAndNotify`, which persists it and then calls
+  `NotifyCompletedInScope` -> `processor.OnJobCompletedAsync` (`:475-486`, `:510-524`).
+- `MessageTraceDetailJobProcessor.OnJobCompletedAsync:104-110` **reconstructs a row from the
+  payload whenever `_fetched` has none**:
+
+  ```csharp
+  details.Add(_fetched.TryGetValue(i, out var d)
+      ? d
+      : new MessageTraceDetail { Summary = messages[i], Error = "Not processed (job did not reach this message)." });
+  ```
+
+  and then calls `BuildCsv` (`:112`) and `SaveToLogPath` (`:117`) unconditionally.
+- `MessageTraceDetailReport.BuildCsv:98-130` writes `Received`, `Backend`, `SenderAddress`,
+  `RecipientAddress`, `Subject`, `Status`, `MessageId`, `MessageTraceId`, `Size`, `FromIP` and
+  `ToIP` from `detail.Summary` **before** it reaches `FinalOutcome`/`OutcomeDetail` (`:124-126`),
+  which are the only two columns the error touches. Eleven columns of trace data per message.
+- `MessageTraceExportListing.ClassifyState:258-278` returns `NotProduced` only when the status is
+  not `Completed`; a denied job is `Completed`, the file resolves, so the state is `Available`.
+  `CanDownload => State == MessageTraceExportState.Available` (`:45`), and `TryDownloadAsync:182-196`
+  hands back the bytes.
+- `:131-132` also sends the "your export is ready" mail.
+
+So the denial produced a file. This is Known Failure Class 2 (a loop whose per-item failures do not
+fail the whole) and Class 3 (fail-closed authorization) in the same defect, and it is the shape
+that ships looking correct: every row says Denied in the jobs panel while the export sits on the
+reports page.
+
+**Remedy: one preflight, consulted by both hooks.**
+
+```csharp
+private bool StillAuthorized(BulkJob job) =>
+    JobAuthorizationSnapshot.FromJson(job.AuthSnapshotJson) is { } snapshot
+    && snapshot.IsStillAuthorized(_sectionAccess.GetGroupsForSection(Section));
+```
+
+- `ProcessRowAsync` - first statements: refuse, audit, return a `Failed` row, before
+  `_details.GetMessageDetailAsync`.
+- `OnJobCompletedAsync` - **first statement, before `Deserialize`**: refuse, mark the job denied,
+  audit, and `return`. No `BuildCsv`. No `SaveToLogPath`, so **no file is written anywhere**. No
+  ready mail, and no failure mail either - `SendMessageTraceFailureAsync` says the export could not
+  be *saved*, which is untrue here, and `ResolveRecipients` sends to operator-chosen addresses who
+  may not hold the permission. Silence plus an audit row plus a visible Denied state on the reports
+  page is the right notification, and it is a deliberate choice rather than an omission.
+- `MessageTraceExportListing` - a `DeniedMarker` alongside `SaveFailedMarker` (`:101`), a new
+  `MessageTraceExportState.Denied` member, a `ClassifyState` branch for it placed immediately after
+  the `job.Status != Completed` check and **before** `SaveFailed`, and `Describe`/`ShortStatus`
+  text (`:217-232`). Adding a member rather than reusing `Failed` is required by that file's own
+  rule at `:253-257`: collapsing two causes lets one masquerade as the other. `CanDownload` needs
+  no change - anything that is not `Available` is already refused.
+
+**Two independent reasons a denied job is not downloadable, and neither depends on the other.** The
+marker write goes through `_jobs.AppendJobMessage`, which is fail-safe and swallows its errors (the
+same shape as `MarkSaveFailed:164-172`). If it silently fails, no file was written either, so
+`_store.TryResolve` finds nothing and `ClassifyState` returns `Expired` - mislabelled, still not
+downloadable. If a future edit re-introduced the write, the marker still forces `Denied`.
+
+**Scoped variation from the review's wording, stated rather than smuggled.** The review asked for
+authorization denial to be "a job-level terminal outcome". It is job-level here - one preflight,
+one job-level marker, one job-level report state - but the runner's own terminal *status* stays
+`Completed`. It cannot be changed from the completion hook: by the time `OnJobCompletedAsync` runs,
+`FinishAndNotify` has already persisted the terminal state through a compare-and-swap from a
+non-terminal status, which `MarkSaveFailed:158-161` records as the reason it uses
+`AppendJobMessage` rather than `TryFinish`. Making denial a first-class terminal status would mean
+changing `BulkJobService` for every module - shared infrastructure, a base app version bump, and
+outside this plan's scope. Recorded in Known gaps as the cleaner home if the owner ever wants it.
+
+### What a refused job looks like end to end
+
+Correcting this plan's earlier claim that refusing a snapshot-less job "needs no extra code". That
+was true at the row level and **false at the job level**, which is exactly how the defect above got
+past the first two drafts. The end-to-end behaviour after slice 4:
+
+1. The runner starts the job normally; `CountRows` parses the payload and `TryStart` succeeds.
+2. Every row is refused before any Exchange call. `_fetched` stays empty. Each refusal is audited.
+3. `ExecuteRowsAsync` returns `Completed` - unchanged, and now harmless.
+4. `OnJobCompletedAsync` refuses on the same preflight and returns immediately.
+5. **No file is written. No mail is sent.** One job-level denial audit row is written.
+6. The reports page lists the job with state **Denied**, `CanDownload` false, and
+   `TryDownloadAsync` refuses with the Denied text; the refusal is still audited by the page.
+7. The jobs panel shows the job as Completed with every row Failed. Cosmetically imperfect, see
+   Known gaps.
+
+Files written: **none**. That is the property the behavioural tests assert.
 
 Honest scope, inherited from the mechanism and worth restating rather than overselling: this
 re-checks the captured decision against the section's current group set. It does **not** detect
@@ -528,6 +616,14 @@ slice rather than those queued before slice 4.
       earlier presence-only assertions would all have passed it.
     - **late check** - move `ExportCsv`'s gate below the CSV build loop. The earlier draft had no
       ordering assertion for this method at all, so this mutation would have passed.
+    - **conditional-return fall-through** - rewrite one handler's deny block as
+      `if (!auth.Succeeded) { if (someFlag) return; }`. Revision 2 showed the earlier assertions
+      accepted this; assertion 3 must reject it.
+    - **string-brace overcapture** - put a `}` inside a string literal in one deny block, for
+      example an audit message containing `"denied {reason}"` written with a literal brace. A
+      non-quote-aware extractor mis-scans this; the test-local quote-aware scanner must not, and
+      the assertion must still pass on correct code. This mutation is a *negative* proof: the suite
+      stays green.
     - **over-gating** - add the `MessageTraceSearch` check to `AnalyzeHeadersAsync`, which must
       fail `MessageTrace_HeaderAnalysisIsNotGatedOnTheSearchGranular`.
 13. Separately confirm the existing `ClickGateStuckFlagTests` `ToggleDetail_*` and `RunTrace_*`
@@ -541,16 +637,33 @@ shutting the back one.
 ### Slice 4 - enforce in the background job processor
 
 14. `Services/Jobs/MessageTraceDetailJobProcessor.cs`: inject `SectionAccessService`, add
-    `private const string Section = "MessageTraceSearch";`, and refuse a missing or stale snapshot
-    as the first statements of `ProcessRowAsync`, before `_details.GetMessageDetailAsync`,
-    mirroring `ConferenceRoomBulkProcessor.cs:75-84` - audit the denial and return a `Failed` row.
-15. **Behavioural** tests, not tripwires: the processor is a plain class and is unit-testable with
-    NSubstitute, as `ConferenceRoomBulkProcessorTests.cs:157` already does for the precedent.
-16. Guard proof: change `snapshot is null ||` to `snapshot is not null &&` (inverting the
-    fail-closed default), confirm the null-snapshot test fails, restore.
+    `private const string Section = "MessageTraceSearch";` and the single `StillAuthorized(job)`
+    preflight, mirroring `ConferenceRoomBulkProcessor.cs:75-84`.
+15. Call it from **both** hooks: `ProcessRowAsync`, before `_details.GetMessageDetailAsync` (audit,
+    return a `Failed` row); and `OnJobCompletedAsync`, as its first statement, returning before
+    `Deserialize`, `BuildCsv`, `SaveToLogPath` and every mail. One private method, two call sites -
+    a second copy of the predicate is how the two hooks drift apart.
+16. `Services/MessageTraceExportListing.cs`: `DeniedMarker`, a `MessageTraceExportState.Denied`
+    member, the `ClassifyState` branch immediately after the `job.Status != Completed` check and
+    before `SaveFailed`, and the `Describe`/`ShortStatus` text.
+17. **Behavioural** tests, not tripwires: the processor is a plain class and is unit-testable with
+    NSubstitute, as `ConferenceRoomBulkProcessorTests.cs:157` already does for the precedent. The
+    completion-path tests assert **no file exists** afterwards, against a real temp directory, not
+    merely that a substitute was not called.
+18. Guard proof, four mutations, each restored byte-identically:
+    - invert the fail-closed default: `snapshot is null ||` becomes `snapshot is not null &&`;
+      the null-snapshot row test must fail.
+    - delete the `OnJobCompletedAsync` preflight while keeping the row one. **This is the
+      Revision 2 defect exactly**, and it must fail the no-file test. If it does not, the tests are
+      testing the row gate twice and the whole slice is decorative.
+    - delete the row preflight while keeping the completion one; the never-called-Exchange test
+      must fail.
+    - remove the `Denied` branch from `ClassifyState`; the non-downloadable listing test must fail.
 
 This is the one slice whose gate is proven by behaviour rather than by string matching, because
-the code under test is reachable without a rendered page.
+the code under test is reachable without a rendered page. Mutation 2 is the reason the slice is
+worth its session: it is the only check in this plan that would have caught the defect the second
+review found.
 
 ## Tests
 
@@ -582,17 +695,37 @@ exactly that, and for `ExportCsv` it did not even assert ordering, so a check pl
 `JS.InvokeVoidAsync("downloadFile", ...)` (`:956`) would have passed while the whole result set
 shipped.
 
-Every gated handler gets the same three assertions, expressed once as a shared helper and applied
+Revision 2 found that the first attempt at this was still too weak. Three assertions - assigned
+call, a brace-balanced `if (!local.Succeeded)` block containing a `return`, and ordering before the
+sink - are all satisfied by:
+
+```csharp
+if (!auth.Succeeded) { if (auditSucceeded) return; }
+await MsgTrace.GetMessageDetailAsync(...);
+```
+
+The block contains a `return`; not every denied path takes it. So the assertion has to prove the
+deny block **terminates unconditionally, and ends before the sink**, not that a `return` appears
+somewhere inside it.
+
+Every gated handler gets the same four assertions, expressed once as a shared helper and applied
 per handler:
 
 1. **the call** - the body matches `AuthorizeAsync\(\s*\w+(\.\w+)*\s*,\s*"MessageTraceSearch"\s*\)`
    and the result is assigned to a local; capture that local's name from the assignment rather
    than hard-coding it.
-2. **the denial branch** - the body contains `if (!<local>.Succeeded)` and the brace-balanced block
-   that `if` introduces contains a `return`. Use `ClickGateSource.ExtractBlock` for the balanced
-   scan; a substring search would stop at the first `}` inside a nested audit call.
-3. **the ordering** - `index(call) < index(denial branch) < index(protected sink)`, where the sink
-   is named per handler below. A check after the sink protects nothing.
+2. **the deny block** - the body contains `if (!<local>.Succeeded)` and the block it introduces is
+   extracted by a **quote-aware** balanced scan that returns both offsets, not just the text.
+3. **unconditional termination** - the block's **last statement** is `return;` or a `throw`, and no
+   `if`, `switch`, `?:`, `&&`, `||` or `goto` appears between the block's opening brace and that
+   terminator. A conditional return is not a gate.
+4. **the ordering** - `index(call) < index(block start)` and `index(block end) < index(sink)`,
+   where the sink is named per handler below. Asserting against the block *end* rather than its
+   start is what stops a deny block that swallows the sink.
+
+Assertions 3 and 4 are a canonical-shape pin rather than control-flow analysis: they refuse
+anything that is not the plain guard this repo already writes (`BlockedSenders.razor:314-329`).
+That is a deliberate trade - see "The robust option, costed" below.
 
 | handler | protected sink asserted against |
 | --- | --- |
@@ -603,14 +736,58 @@ per handler:
 | `EmailSelectedDetails` | `BulkJobs.Enqueue(` |
 | `MessageTraceReports.Download` | `TryDownloadAsync(` |
 
+### External dependency: `ClickGateSource.ExtractBlock` is not quote-aware
+
+**Do not fix this here.** `ExchangeAdminWeb.Tests/ClickGateSource.cs:213-232` counts braces with no
+quote tracking:
+
+```csharp
+for (var i = open; i < source.Length; i++)
+{
+    if (source[i] == '{') depth++;
+    else if (source[i] == '}' && --depth == 0)
+        return source[open..(i + 1)];
+}
+```
+
+A `{` or `}` inside a string literal or an interpolated string inside the deny block therefore
+unbalances the count and the extractor over-captures into later code, where it can find a `return`
+belonging to something else entirely. The asymmetry is visible in the same file: `Tags:94-128` **is**
+quote-aware (`:107-118`) and its doc comment at `:88-93` explains exactly why it had to be;
+`ExtractBlock` never got the same treatment. It also returns only the block text, not its end
+offset, so assertion 4 cannot be written against it as it stands.
+
+That file is committed infrastructure shared with the click-gating harness and is being edited by
+another work stream, so this plan records the defect rather than repairing it. Until it is fixed,
+the new tests use a small **test-local** quote-aware scanner returning `(start, end)`, declared in
+the new test file and documented as temporary. When `ExtractBlock` is made quote-aware and returns
+offsets, retire the local one in the same commit - this repo should not grow a third permanent
+scanner.
+
+### The robust option, costed
+
+Assertions 3 and 4 pin a shape; they do not analyse control flow, and a handler written in some
+other legitimate shape would fail them even though it is correct. The robust alternative is a
+Roslyn assertion over the parsed method body: extract the `@code { ... }` block from the `.razor`
+file, wrap it as a class body, parse with `Microsoft.CodeAnalysis.CSharp`, and assert that every
+path from the `if (!auth.Succeeded)` condition reaches a `return`/`throw` without reaching the sink
+invocation.
+
+Cost: one new test-project package reference, one new technique nothing else in this repo uses, and
+roughly one session to build and prove, plus ongoing maintenance of the `@code` extraction. Benefit:
+real control-flow analysis for five page handlers - and none for the background job, which is
+already proven behaviourally and is the more dangerous gate. Recommendation: ship the shape pin now
+and treat Roslyn as a separate, separately-approved improvement to the shared harness, where it
+would serve every page rather than this one. Open question 7.
+
 ### The tests
 
 In `PageAuthorizationRecheckTests.cs`, under a new section header explaining that these gate a
 READ behind a granular (Constitution `:29`, direct event invocation), not a write:
 
 1. `MessageTrace_TraceHandlers_RefuseWhenTheSearchGranularIsDenied` - a `[Theory]` over the six
-   handlers in the table above, applying all three assertions. This replaces the earlier
-   presence-only theory; do not ship the weaker form.
+   handlers in the table above, applying all four assertions. This replaces both earlier forms; do
+   not ship the presence-only version or the one that accepts a `return` anywhere in the block.
 2. `MessageTrace_TabSwitchIsGated` - `ShowTraceTab` and `UseHeaderTraceSuggestion` both consult
    `canTrace` and return without setting `activeTab = "trace"` when it is false. Uses
    `MemberBody`/`MethodBody` as appropriate.
@@ -648,13 +825,58 @@ the way `ConferenceRoomBulkProcessorTests.cs:157` builds its snapshot:
 9. `ProcessRow_ProceedsWhenTheSnapshotIsStillValid` - the counterweight, so 7 and 8 cannot be
    satisfied by a processor that refuses everything.
 
-These three are stronger than anything else in this plan: they execute the gate rather than read
-it. That is the whole reason the job slice is worth having rather than deferring.
+The completion path, which is where Revision 2's defect lived. These run against a **real temp
+export directory** so "no file" is a filesystem fact, not a substitute's call count:
+
+10. `Completion_WritesNoFileWhenTheJobCarriesNoSnapshot` - run `OnJobCompletedAsync` with a null
+    `AuthSnapshotJson` and assert the export directory is **empty afterwards**, no
+    `SendMessageTraceResultAsync` call, no `SendMessageTraceFailureAsync` call, and a denial audit
+    row. Asserting on the directory rather than on a mock is deliberate: a mocked store would pass
+    even if the processor wrote the file with `File.WriteAllText`, which is what `SaveToLogPath:190-196`
+    actually does.
+11. `Completion_WritesNoFileWhenTheCapturedGroupIsNoLongerGranted` - same, stale snapshot.
+12. `Completion_StillProducesTheExportWhenTheSnapshotIsValid` - the counterweight: a file exists and
+    the ready mail is sent.
+13. `Completion_MarksTheJobDeniedSoTheReportIsNotDownloadable` - the denial marker is appended to
+    the job record.
+
+And in `MessageTraceExportListingTests.cs`:
+
+14. `ClassifyState_ReturnsDeniedForAJobMarkedDenied`, and `CanDownload` is false for it.
+15. `TryDownloadAsync_RefusesADeniedExport` - even given a job id, with a valid ticket, and even if
+    a file were somehow present at the resolved path. Construct that case explicitly: write a file
+    at the store path, mark the job denied, and assert the download is still refused. This is the
+    defence-in-depth claim, and it is worth one test rather than a sentence.
+
+These nine are stronger than anything else in this plan: they execute the gate rather than read it.
+That is the whole reason the job slice is worth having rather than deferring - and tests 10 and 11
+are the only checks anywhere in this document that would have caught the Revision 2 defect.
+
+### The cheapest broken implementation that still passes each assertion
+
+The discipline that would have caught both review rounds, written down so the next reader applies
+it before shipping. For every assertion, what is the laziest wrong code that satisfies it, and what
+covers that gap:
+
+| assertion | cheapest thing that still passes | covered by |
+| --- | --- | --- |
+| 1 (the call) | a handler that awaits the check and ignores the answer | assertions 2-4 |
+| 2 (deny block present) | `if (!auth.Succeeded) { _logger.LogWarning("denied"); }` - falls through | assertion 3 |
+| 3 (unconditional terminator) | a correct guard that then leaks via a *second*, ungated path into the same sink elsewhere in the method | nothing here. Single-sink handlers only; a handler with two sinks needs its own assertion. Recorded in Known gaps. |
+| 4 (ordering) | a guard whose block is correct but which sits after an *earlier* partial disclosure the sink list does not name | the per-handler sink list, which is hand-maintained. `ExportCsv` has two sinks for this reason; a new sink in a new handler is an unforced error. |
+| 5 (tab switch gated) | `canTrace` consulted for rendering only, with `ShowTraceTab` still assigning | assert the assignment is inside the guarded branch, not merely that `canTrace` is mentioned |
+| 6 (header analysis not gated) | deleting header analysis entirely | manual checklist item 4 |
+| 7-9 (row gate) | a processor that refuses every row unconditionally | test 9, the counterweight |
+| 10-13 (completion gate) | a processor that never writes a file at all | test 12, the counterweight |
+| 14-15 (listing) | `CanDownload` hard-coded false | the existing `MessageTraceExportListingTests` Available cases |
+
+Two of these have no automated cover and are listed in Known gaps rather than papered over. That is
+the point of the table.
 
 Behavioural coverage for the authorization decision itself already exists and is not duplicated
 here: `GroupAuthorizationHandlerTests` covers the handler, `JobAuthorizationSnapshotTests` covers
 `Capture`/`IsStillAuthorized`, and `ModuleCatalogTests` covers policy generation. The page-level
-tripwires assert only wiring, the denial branch and ordering, which those cannot see.
+tripwires assert only wiring, the deny block's shape and ordering, which those cannot see.
 
 ## Verification
 
@@ -707,12 +929,35 @@ Needs a dev deploy. Nothing in this repo reaches the rendered page.
 - [ ] 11. After slice 4: submit a detail export, then remove the Search grant from the section
       before the job runs (pause the runner or use a large selection to widen the window). The job
       must fail with an authorization denial rather than produce an export.
-- [ ] 12. After slice 4: confirm any export job that was already queued before slice 2 shipped now
-      fails with an authorization denial rather than completing. Expected and correct; listed so
-      it is recognised as the designed behaviour and not reported as a regression.
+- [ ] 12. After slice 4: confirm any export job that was already queued before slice 2 shipped is
+      refused. Expected and correct; listed so it is recognised as the designed behaviour and not
+      reported as a regression. **What to look for, precisely** (this is the Revision 2 defect, and
+      "the rows said Denied" is not enough): the reports page shows the job as **Denied**, the
+      Download button is disabled, clicking through is refused, **no file exists** in the export
+      directory for that job id, and no "your export is ready" mail arrived.
+- [ ] 13. After slice 4: on the jobs panel, the denied job reads Completed with every row Failed.
+      Confirm that is what is seen and accept it; the runner's terminal status is deliberately not
+      changed by this plan (Known gaps).
 
 ## Known gaps
 
+- **A denied job still reports `Completed` in the runner's own status model.** Authorization
+  denial is not a first-class terminal status: `OnJobCompletedAsync` runs after `FinishAndNotify`
+  has already committed the terminal state through a compare-and-swap
+  (`MessageTraceDetailJobProcessor.cs:158-161` records why), so the module can mark and classify
+  the job but not restate its status. Making denial a runner-level terminal outcome would change
+  `BulkJobService` for every module - shared infrastructure, a base app version bump, and outside
+  this plan. That is the cleaner home if the owner ever wants it; the jobs panel reading
+  "Completed, all rows Failed" is the visible cost until then.
+- **`ClickGateSource.ExtractBlock` is not quote-aware** (`ExchangeAdminWeb.Tests/ClickGateSource.cs:213-232`),
+  while `Tags:94-128` in the same file is. Recorded here as a dependency for the coordinator to
+  schedule, not fixed by this plan - that file is shared with the click-gating harness and is being
+  edited by another work stream. The new tests carry a temporary test-local scanner instead; retire
+  it when the shared one is fixed.
+- **Assertion 3 cannot see a second, ungated path to the same sink** inside one handler, and
+  assertion 4 only knows the sinks it is told about. Both are hand-maintained lists. Every handler
+  gated here has exactly one sink today; a future handler with two needs its own assertion. Named
+  in "The cheapest broken implementation" table rather than left implicit.
 - **Mid-flight group-membership revocation is still undetected for a running job.** Slice 4
   re-checks the captured decision against the section's current group set, so removing the group
   from `MessageTraceSearch` stops the job; removing the *operator* from a group that is still
@@ -735,7 +980,7 @@ Needs a dev deploy. Nothing in this repo reaches the rendered page.
 - **Tripwires are text analysis of C# inside `.razor` files.** They can be defeated by unusual
   formatting. They prove the call, the denial branch and the ordering; they do not prove the gate
   decides correctly. Only the slice 4 processor tests execute a gate.
-- **No test in this repo can render either page**, so items 2-12 of the manual checklist are the
+- **No test in this repo can render either page**, so items 2-13 of the manual checklist are the
   only evidence that an operator experiences the split.
 
 ## Open questions
@@ -755,6 +1000,9 @@ Each answerable in one line.
    rows), or left ungated because the operator already ran the trace that produced it?
 6. Module version: patch (as written) or minor, given the Migration button gate took a minor for a
    comparable behavioural change?
+7. Ship the canonical-shape pin for the page gates now and treat a Roslyn control-flow assertion as
+   a separate improvement to the shared harness (recommended), or pay for Roslyn in this work
+   stream? Cost is in "The robust option, costed".
 
 Withdrawn in Revision 1: "is closing the background job's authorization gap in scope?" It is not a
 judgment call. `AuthSnapshotJson`, `JobAuthorizationSnapshot` and the `ConferenceRoomBulkProcessor`
@@ -783,7 +1031,7 @@ reviewer's word. **All four were confirmed and all four are accepted.** Nothing 
 | # | severity | finding | verified by | disposition |
 | --- | --- | --- | --- | --- |
 | 1 | HIGH | The plan identified the reports leak and then put main-page enforcement in one slice and reports enforcement in the next, calling them separately landable. Deploying the first alone shuts the front door and leaves `/message-analysis/reports` open. | `MessageTraceReports.razor:4`, `:126`, `:143`, `:146-157`; `MessageTraceExportListing.cs:119-123`; `BulkJobRepository.cs:373-388` - the SQL filters on `module_id` and `job_type` only, with no submitter predicate anywhere in the chain | Accepted. Both pages now land in **one** commit (slice 3). The "separately landable" claim is deleted, and the Slices section opens with a per-boundary exposure table stating the real property: no boundary opens an exposure that does not already exist at HEAD. |
-| 2 | HIGH | The background export job was left as an open question while the plan claimed full enforcement coverage. A queued job runs later under the shared Exchange credential with no re-check. | `MessageTraceDetailJobProcessor.ProcessRowAsync:76-85` goes straight to `_details.GetMessageDetailAsync`; `MessageTrace.razor:1157-1170` enqueues with no `AuthSnapshotJson`; the precedent exists at `BulkJobModels.cs:80`, `JobAuthorizationSnapshot.cs:49-93`, `ConferenceRoomBulkProcessor.cs:35`, `:75-84`, `ConferenceRooms.razor:711-712` | Accepted, and closed rather than deferred. New section "The background export job"; new slice 2 (capture, inert) and slice 4 (refuse, with three behavioural tests). Open question 6 withdrawn with its reasoning. Jobs already queued carry no snapshot and are refused - `FromJson` returns null for absent JSON (`:98-110`) and the guard treats null as denied, so this needs no extra code; stated explicitly and added to the manual checklist as item 12. |
+| 2 | HIGH | The background export job was left as an open question while the plan claimed full enforcement coverage. A queued job runs later under the shared Exchange credential with no re-check. | `MessageTraceDetailJobProcessor.ProcessRowAsync:76-85` goes straight to `_details.GetMessageDetailAsync`; `MessageTrace.razor:1157-1170` enqueues with no `AuthSnapshotJson`; the precedent exists at `BulkJobModels.cs:80`, `JobAuthorizationSnapshot.cs:49-93`, `ConferenceRoomBulkProcessor.cs:35`, `:75-84`, `ConferenceRooms.razor:711-712` | Accepted, and closed rather than deferred. New section "The background export job"; new slice 2 (capture, inert) and slice 4 (refuse, with three behavioural tests). Open question 6 withdrawn with its reasoning. Jobs already queued carry no snapshot and are refused - `FromJson` returns null for absent JSON (`:98-110`) and the guard treats null as denied, so this needs no extra code; stated explicitly and added to the manual checklist as item 12. **Corrected by Revision 2:** "no extra code" was true at the row level and false at the job level - a denied job still published a file. See Revision 2 finding 1. |
 | 3 | MEDIUM | The proposed tripwires asserted that `AuthorizeAsync` appears, so a handler that ignores `Succeeded` passes them all. `ExportCsv` was presence-only, so a check placed after `JS.InvokeVoidAsync` would have satisfied it. | the draft's own test list; `ExportCsv:916-956` with the download at `:956` and the build loop at `:923` | Accepted - this is the `msr-1` shape, tripwires the defective code also satisfies, and the repo has been bitten by it once. New subsection "Assert the denial branch, never the present call": three assertions per handler (call, `if (!local.Succeeded)` with a balanced-block `return`, ordering) against a named protected sink per handler, including two sinks for `ExportCsv`. Guard proof extended from three removed-gate mutations to five, adding an ignored-result mutation and a late-check mutation. |
 | 4 | LOW | The recovery analysis was too pessimistic: it said a combined deploy leaves no way back without hand-editing the database. | `ModuleConfig.razor:875-882` admits `AdminSettings` or module admin; `ModuleCatalog.cs:88-96` registers `AdminSettings` with a **static** `GroupAuthorizationRequirement(adminGroups, alias)`, which `GroupAuthorizationHandler:74-76` reads from `requirement.AllowedGroups` without touching the section store; aliases come from the running descriptor at `:910-912`; the save is the ordinary path at `:1197-1214` | Accepted. Rewritten as an avoidable **outage window**. Added the narrowing the reviewer did not mention: the section-access save re-checks `AdminSettings` specifically, so the repair needs a global admin, not a module admin. The slice-1 -> configure -> enforce ordering stands as the no-outage path. |
 
@@ -795,3 +1043,74 @@ the module-only version bump, and the `ToggleDetail` re-check placement against 
 Findings 1 and 2 are the ones that mattered. Both are the same mistake in two places: naming an
 exposure correctly and then filing it somewhere that does not close it - one into a later slice,
 one into an open question.
+
+## Revision 2 - codex review, round 2
+
+Reviewed 2026-09-18 against the plan as committed in `c3b4239`. Same reviewer and settings.
+Verdict: **`unsound`**, two findings. Both verified against source; **both accepted**, one with a
+scoped implementation variance that is stated rather than smuggled. Nothing rejected.
+
+Closed and not revisited: the page/reports window, the recovery-claim framing, the module-only
+version bump, environment neutrality, the module permission contract.
+
+**Finding 1 (HIGH) - a fully denied job still completed and published a downloadable CSV.**
+Revision 1 put the refusal only in `ProcessRowAsync`. Verified line by line that this leaves the
+export intact: `BulkJobService.cs:447-455` records a `Failed` row and `:464-466` returns
+`Completed` regardless; `RunJobAsync:385-386` -> `FinishAndNotify:475-486` -> `NotifyCompletedInScope:510-524`
+fires the completion hook anyway; `MessageTraceDetailJobProcessor.cs:104-110` substitutes a
+payload-backed `MessageTraceDetail` for every row `_fetched` lacks, then `:112` builds the CSV,
+`:117` saves it and `:131-132` mails "ready"; `MessageTraceDetailReport.cs:98-130` writes eleven
+summary columns before the error columns at `:124-126`; and
+`MessageTraceExportListing.ClassifyState:258-278` returns `Available` for a `Completed` job whose
+file resolves, which `:45` and `:182-196` turn into a download. Known Failure Class 2 and Class 3
+in one defect.
+
+Accepted in full. New subsection "Gating the rows is not enough: the completion path publishes a
+file on its own"; one shared `StillAuthorized(job)` preflight consulted by both hooks; the
+completion hook returns before `Deserialize`, `BuildCsv`, `SaveToLogPath` and every mail, so **no
+file is written**; a new `DeniedMarker` and `MessageTraceExportState.Denied` make the report
+non-downloadable, with a new member rather than a reuse of `Failed` because that file's own rule at
+`:253-257` forbids collapsing two causes. Enforcement table gains points 17 and 18. Slice 4 gains
+the completion refusal, the listing change, four guard mutations (including deleting the completion
+preflight while keeping the row one - this exact defect), and six new behavioural tests that assert
+**no file exists** against a real temp directory rather than a mock's call count.
+
+*Scoped variance, and the reason:* the review asked for denial to be "a job-level terminal
+outcome". It is job-level here - one preflight, one marker, one report state - but the runner's
+terminal *status* stays `Completed`. It cannot be changed from the completion hook, because
+`FinishAndNotify` has already committed it through a compare-and-swap; the codebase records this at
+`MessageTraceDetailJobProcessor.cs:158-161` as the reason `MarkSaveFailed` uses `AppendJobMessage`
+rather than `TryFinish`. Making denial a first-class terminal status means editing `BulkJobService`
+for every module, which is shared infrastructure and would invalidate the module-only version bump
+this same review confirmed as correct. Recorded in Known gaps as the cleaner home if the owner
+wants it.
+
+Also accepted: the instruction to re-examine "refused with no extra code". It was true at the row
+level and false at the job level - precisely how this got past two drafts. A new subsection, "What
+a refused job looks like end to end", states the seven-step behaviour and the headline: **files
+written, none.**
+
+**Finding 2 (MEDIUM) - the denial-branch assertion still accepted a conditional return.** Verified:
+Revision 1's three assertions are all satisfied by
+`if (!auth.Succeeded) { if (auditSucceeded) return; }` followed by the sink. Verified the second
+half too: `ClickGateSource.cs:213-232` counts braces with no quote tracking, so a brace inside a
+string over-captures the block; `Tags:94-128` in the same file **is** quote-aware and `:88-93`
+explains why, which makes the asymmetry an oversight rather than a decision. `ExtractBlock` also
+returns only the block text, so an assertion on the block's *end* offset cannot be written against
+it at all.
+
+Accepted. Four assertions now, not three: assigned call; quote-aware balanced extraction returning
+both offsets; **unconditional termination** (last statement is `return;`/`throw`, with no `if`,
+`switch`, `?:`, `&&`, `||` or `goto` between the opening brace and it); and ordering against the
+block **end**, not its start. Two guard mutations added - conditional-return fall-through, and a
+string-brace overcapture that must leave the suite green.
+
+Per instruction, `ExtractBlock` is **not** fixed here: recorded as an external dependency with file
+and lines in Known gaps, with a temporary test-local quote-aware scanner in the meantime and an
+explicit instruction to retire it when the shared one is repaired. The Roslyn option is costed in
+"The robust option, costed" and raised as open question 7 rather than silently declined.
+
+The lesson carried forward as a permanent section: "The cheapest broken implementation that still
+passes each assertion", one row per assertion. Both review rounds found the same species of
+mistake - an assertion satisfied by the defect it was written to catch - and that table is the
+cheapest way to stop writing the third one.
