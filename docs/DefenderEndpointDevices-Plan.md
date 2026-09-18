@@ -989,9 +989,16 @@ Listed separately so none of them is mistaken for a citation.
    string.**
 6. **`startswith` on `osPlatform`** is not documented. Treated as unknown; **R1(d)** tests it
    against the live service, and S1 ships the client-side rule that is correct either way (T6).
-7. **Rate limits are per tenant, not per application.** Assumed. At `PageSize` 1000 a default-
-   ceiling run costs 20 requests against a 100-per-minute limit, so there is headroom either way;
-   it would matter if this ever polls or if two operators refresh together.
+7. **Rate limits are per tenant, not per application.** Assumed. The request count is **not a
+   fixed number** and must not be written as one: T3 asks for `$top = min(MaxDevices + 1, 10000)`
+   in a single request, and how many requests a full run actually costs depends on the page size
+   the service chooses to honour, which **R1(g)** observes. Single-request branch: one request.
+   Cursor branch: `ceil(matching devices / observed page size)`. Either way the ceiling bounds it,
+   and against a 100-per-minute limit there is headroom; it would matter only if this ever polls
+   or if several operators refresh together. **An earlier revision of this line assumed a fixed
+   `PageSize` of 1000 and a 20-request run. That is obsolete** - the revision 2 paging design
+   removed the fixed page size, and carrying the old number into code or into rate-limit
+   reasoning is the stale-reference failure class this repo names.
 8. **The paging contract.** Whether `GET /api/machines` emits `@odata.nextLink` is **not
    documented** - the only mention on the Defender API pages names Microsoft Graph, not this
    collection (T3). Nothing is assumed: R1(g) probes it with `$top=1` and both branches are
@@ -1219,3 +1226,32 @@ the least-privilege analysis, the `CanBeOnboarded` literal, the field mapping, t
 all six open questions. The versioning call is unaffected - nothing here touches a shared file -
 so module `1.0.0` with no base app version bump still stands. No source file was touched; this
 plan file is still the only artifact.
+# Revision 3 - codex round 3, CONSENSUS REACHED
+
+Reviewer: codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard, 2026-09-18.
+Capability proof passed. Verdict **sound_with_changes**, one LOW finding, now fixed.
+
+**Both round 2 findings confirmed closed.** `$skip` is no longer a live path; T3 and S1 refuse on
+full-page-without-cursor, on `MaxDevices` exceedance and on any request failure; and the reviewer
+independently confirmed the S1 guard test is **not vacuous** by comparing against the design at
+`b12a7b1`. The stale S1 live-proof references are gone in substance - body text assigns live proof
+to R1, and S1 says stub-only.
+
+**R1(g) was explicitly upheld as an adequate way to handle the undocumented paging contract**,
+and the reason is worth keeping because it is the answer to "shouldn't this be resolved before the
+owner creates the app registration?": it cannot be. Observing the contract *requires* the
+registration. What makes pre-deciding both branches sufficient is that no multi-page behaviour
+ships that R1(g) has not observed, and every ambiguous no-cursor state refuses rather than
+rendering or exporting a partial list. The uncertainty is bounded by refusal, not by hope.
+
+**The one finding (LOW):** Assumption 7 still carried `PageSize 1000` and a fixed 20-request run
+from before the revision 2 paging design removed the fixed page size - the stale-reference failure
+class again, and the second time it has appeared in this plan across three rounds. Fixed: the
+request count is now expressed in terms of the chosen `$top`, the service-observed page size and
+the branch R1(g) records, with the obsolete number named as obsolete so it cannot be carried into
+code.
+
+**This plan has reached codex consensus.** It stays `Status: Draft` because consensus is not the
+same as approval here: the owner still has to answer the six open questions - question 1 above all,
+since it decides whether S4 exists and who must grant consent - and create the app registration,
+which is theirs to do and which no amount of planning can substitute for.
