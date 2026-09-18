@@ -216,12 +216,14 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
   against orchestrating subagents for its duration; recon ran as a read-only workflow.
 
-- **BLOCKED: the click-gating design was falsified by reconnaissance and needs a re-scope answer.**
+- **The click-gating design was falsified by reconnaissance and re-scoped; work is unblocked.**
   An 11-page read-only recon (34 agents, no errors) over slice 1 + tier 1 landed 2026-09-18 and
   is recorded as **Revision 1 in `docs/ClickGatingAudit-Plan.md`** - read that before touching
-  any page. The audit's counts stand; its design and estimate do not. **Do not implement tier 1
-  until the owner picks A, B or C in Revision 1's decision section.** Recommendation on record
-  is C: full depth on four pages, measure, then re-decide.
+  any page. The audit's counts stand; its design and estimate do not. **Owner settled the
+  re-scope on 2026-09-18: option A, all nine pages at full depth, 20-29 sessions plus 2-3
+  dev-deploy passes** (`.agents/decisions.md` 2026-09-18, which also amends points 1 and 4 of
+  the 2026-09-17 rule). Tiers 2-4 remain unapproved. Work order: slice 0B, slice 1, then the
+  nine pages in Revision 1's revised order.
   The four falsifications that matter most, all verified against source:
   1. **There is no `ErrorBoundary` anywhere in the app** (zero matches in `Components/`,
      `Services/`, `Program.cs`). A throw from a handler tears the circuit down, so it does not

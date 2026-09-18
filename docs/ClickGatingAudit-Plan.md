@@ -1,6 +1,6 @@
 # App-wide click gating: audit and remediation plan
 
-Status: **Approved in part; design superseded by Revision 1 and BLOCKED on a re-scope decision.**
+Status: **Approved, in progress.** Design is Revision 1; the original design below is superseded.
 Queue item 9. Drafted 2026-09-18 against `3e19aef`.
 
 **Approved scope, owner 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and shared
@@ -14,7 +14,7 @@ Implementation must not exceed that scope.
 > including the central risk statement and the prescribed remedy for non-button controls. The
 > sections between here and Revision 1 are the original audit: its **counts stand and were
 > reproduced by the committed scanner**, but its *design and estimate are superseded*.
-> Tier 1 is blocked on a re-scope decision recorded in Revision 1.
+> The re-scope decision was settled on 2026-09-18: option A, all nine pages at full depth.
 
 This document is the deliverable the owner asked for: an audit of the whole app for the
 defect class fixed on Mailbox Migrations, plus a plan and an effort estimate. **It contains
@@ -593,7 +593,7 @@ contract change.
 | owner dev-deploy acceptance | 1 pass | 2-3 passes |
 | **approved scope total** | **8-11** | **20-29 sessions + 2-3 owner passes** |
 
-## The decision this is blocked on
+## The re-scope decision - SETTLED 2026-09-18, option A
 
 Tier 1 as now understood is roughly **two and a half times** what was approved, and about half
 the new work is a different defect class from the one queue item 9 named.
@@ -609,10 +609,20 @@ Three ways forward:
   NamedLocations, MailboxPermissions, CalendarPermissions) to a standard worth copying,
   measure, then re-decide with real numbers instead of a third estimate.
 
-**Recommendation: C.** It is the only option that replaces an estimate with a measurement, the
-first two pages are genuinely small, and pages 3-4 are the twins - so the expensive thinking is
-done once and inherited. It also defers the shared-component change to the point where its
-blast radius is understood, rather than dragging unapproved tier-2 pages in now.
+Recommendation on record was C. **The owner chose A on 2026-09-18: all nine pages, full depth,
+20-29 sessions plus 2-3 dev-deploy passes.** Recorded in `.agents/decisions.md` (2026-09-18).
+Tiers 2, 3 and 4 remain unapproved.
+
+The shared-component contract change is therefore in scope, and it reaches tier 2 pages: fixing
+`ADIdentityAutocomplete` closes the suggestion-row gap everywhere it is instantiated, including
+on pages this plan does not otherwise touch. That is a consequence of the component being
+shared, not a scope expansion - but it must not become a licence to edit those pages.
+
+Work order: slice 0B (shared reader, registry, eleven assertions), then slice 1 (the two
+prerequisite fixes, catch-shaped not finally-shaped), then the nine pages in the revised order
+above, with the shared-component change taken at page 6 (GroupManagement), where it is first
+unavoidable. The snapshot-at-entry obligation travels with each page that needs it rather than
+being batched, so it is never separated from the read it protects.
 
 ## Two things worth acting on regardless of that decision
 

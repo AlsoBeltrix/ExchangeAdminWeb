@@ -5,7 +5,60 @@ conversation history and should name superseded guidance when relevant.
 
 ## Decisions
 
+### 2026-09-18 - The app-wide click-gating sweep is approved at full depth for all nine tier-1 pages
+
+Status: Active. Amends the 2026-09-17 rule below on two points; see "What the
+reconnaissance changed". Plan and evidence: `docs/ClickGatingAudit-Plan.md`, Revision 1.
+
+The owner was shown three re-scope options after reconnaissance roughly tripled the
+estimate, and chose the largest: **all nine tier-1 pages, everything closed**, at 20-29
+sessions plus 2-3 dev-deploy acceptance passes. Tiers 2, 3 and 4 remain unapproved.
+
+Approved scope, in the revised page order (easiest to hardest, by measured structure, not
+by write count): DhcpAuthorization, NamedLocations, MailboxPermissions, CalendarPermissions,
+IntuneDevices, GroupManagement, M365GroupManagement, ConferenceRooms, SelfServiceGroups.
+Plus slice 0 (scanner, shared reader, registry, eleven assertions), slice 1 (the two
+prerequisite fixes), the `ADIdentityAutocomplete` / `RecipientAutocomplete` shared-component
+contract change, and the snapshot-at-entry obligations on six pages.
+
+**What the reconnaissance changed**, all verified against source on 2026-09-18:
+
+1. **"One page-level predicate" is wrong on two pages.** `SelfServiceGroups` has two
+   mutually exclusive views with disjoint flag sets - a single predicate either traps the
+   operator in the manage view or leaves the browse view ungated, and it was the only page
+   whose adversarial verdict came back "unsound". `ConferenceRooms` has a Bulk Jobs panel
+   driven by a background `OnJobChanged` callback that the form predicate has no authority
+   over. The registry therefore carries a **list** of scoped predicates. This qualifies
+   point 1 of the 2026-09-17 entry; the default is still one per page.
+2. **"Clear it in a `finally`" does not close the risk it was written for.** There is no
+   `ErrorBoundary` anywhere in the app (zero matches across `Components/`, `Services/`,
+   `Program.cs`), so an exception escaping a handler tears the circuit down rather than
+   leaving a live page with a stuck flag. A `finally` lowers the flag and the circuit still
+   dies. The remedy on a throw path is a **catch that converts the throw into a visible
+   failure result**; the `finally` remains correct for non-throw paths. The genuine
+   page-deadeners are a call with no timeout or cancellation token, and a normal return that
+   skips a lowering nested inside an `if`. This qualifies point 4 of the 2026-09-17 entry.
+3. **A handler guard is the wrong mechanism for any DOM-synced control** - a checkbox,
+   radio, `@bind` select or `InputFile`. The handler refuses, the backing field is
+   unchanged, the render diff emits no correction, and the browser keeps the operator's
+   action while the server never took it. Three refusal mechanisms are required: the
+   disabled attribute (the only safe one here), a child-component `Disabled=` parameter, and
+   the handler guard, which is safe only where no rendered attribute mirrors server state.
+4. **Gating narrows but cannot close a post-await read of a live form field.** On six of
+   eleven pages this is the sharpest defect. Only a snapshot at handler entry closes it.
+
+**Unsettled, recorded as an assumption rather than a fact.** Whether Blazor Server can
+dispatch a second event callback while the first handler is suspended at an `await`
+decides whether markup-only gating is ever sufficient. Reconnaissance split on it and
+neither side could cite file evidence, because it is a framework question. The work
+proceeds assuming it CAN, and stays robust either way by using the disabled attribute plus
+an in-handler entry guard. Confirm empirically on a dev deploy before relying on either
+answer.
+
 ### 2026-09-17 - A control is clickable only when its click will definitively execute
+
+> **Amended 2026-09-18** (entry above): points 1 and 4 below are qualified by
+> reconnaissance findings. The rule itself stands unchanged.
 
 Status: Active general rule. Implemented on `Components/Pages/Migration.razor` only
 (`docs/MigrationButtonGating-Plan.md`, module 1.9.0). The app-wide sweep is an
