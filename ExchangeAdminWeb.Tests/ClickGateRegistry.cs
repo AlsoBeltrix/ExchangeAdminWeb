@@ -216,13 +216,27 @@ public static class ClickGateRegistry
                 AppliesWhen: "the whole page"),
         ],
 
-        // Get-ClickGateAudit.ps1 reports two flags and zero stuck flags on this page, so there is
-        // nothing to list here. Worth knowing for the next reader: confirmRemove and operationResult
+        // Get-ClickGateAudit.ps1 reports THREE flags and ONE stuck flag on this page as of the
+        // conversion (isDownloadingCsv, isLoading, isOperating; stuck: operationResult). An earlier
+        // revision of this comment said two and zero, and this slice's own fix is what changed it -
+        // see the operationResult entry below. Worth knowing for the next reader: confirmRemove and operationResult
         // are both nullables raised and nulled inside one awaiting method, which is most of the
         // in-flight shape. They escape the detector only because neither is nulled in a finally.
         // Moving either clear into a finally would turn it into a false positive AND, for
         // confirmRemove, into the page-killing mistake ExcludedFields exists to refuse.
-        ScannerFalsePositives = [],
+        ScannerFalsePositives =
+        [
+            new ScannerFalsePositive("operationResult",
+                "the result banner's backing field, not a busy signal. It became a reported stuck "
+                + "flag as a DIRECT CONSEQUENCE of this page's own snapshot fix, which is worth "
+                + "understanding before anyone 'corrects' it: the scanner counts a bare-token "
+                + "assignment to a nullable as a raise (Get-ClickGateAudit.ps1:209), so the new "
+                + "`operationResult = result;` publish reads as one, the `operationResult = null;` "
+                + "at handler entry reads as the lowering, and that lowering is not in a finally. "
+                + "Moving it into a finally to silence the scanner would clear the banner at the "
+                + "END of the handler that just set it, so the operator would never see the "
+                + "outcome. The scanner is wrong here and must stay wrong."),
+        ],
 
         ExcludedFields =
         [
