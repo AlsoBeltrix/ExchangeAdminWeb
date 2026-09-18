@@ -42,7 +42,7 @@
     {
         <div class="alert @(operationResult.Success ? "alert-success" : "alert-danger") alert-dismissible">
             @operationResult.Message
-            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+            <button type="button" class="btn-close" @onclick="() => operationResult = null" disabled="@isOperating"></button>
         </div>
     }
 
@@ -52,12 +52,12 @@
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>Named Locations</strong>
                     <div>
-                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(locations.Count == 0)">Download CSV</button>
-                        <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@isLoading">
+                        <button class="btn btn-outline-secondary btn-sm me-1" @onclick="DownloadCsvAsync" disabled="@(IsBusy || locations.Count == 0)">Download CSV</button>
+                        <button class="btn btn-outline-primary btn-sm me-1" @onclick="LoadLocations" disabled="@IsBusy">
                             @if (isLoading && editingLocation == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Refresh
                         </button>
-                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isLoading">New Location</button>
+                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@IsBusy">New Location</button>
                     </div>
                 </div>
                 <div class="card-body p-0">
@@ -98,7 +98,7 @@
                                                 </small>
                                             </td>
                                             <td>
-                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => EditLocation(loc)" disabled="@isOperating">Edit</button>
+                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => EditLocation(loc)" disabled="@IsBusy">Edit</button>
                                             </td>
                                         </tr>
                                     }
@@ -120,27 +120,27 @@
                     <strong>@(showForm ? (editingLocation != null ? "Edit Location" : "New Location") : "Location Details")</strong>
                     @if (showForm)
                     {
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm">Cancel</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm" disabled="@IsBusy">Cancel</button>
                     }
                 </div>
                 <div class="card-body">
                     @if (!showForm)
                     {
                         <p class="text-muted mb-3">Select a named location to edit it, or create a new one.</p>
-                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isLoading">New Location</button>
+                        <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@IsBusy">New Location</button>
                     }
                     else
                     {
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Display Name</label>
-                            <input type="text" class="form-control" @bind="formDisplayName" disabled="@isOperating" />
+                            <input type="text" class="form-control" @bind="formDisplayName" disabled="@IsBusy" />
                         </div>
 
                         @if (editingLocation == null)
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Type</label>
-                                <select class="form-select" @bind="formType" disabled="@isOperating">
+                                <select class="form-select" @bind="formType" disabled="@IsBusy">
                                     <option value="ip">IP Ranges</option>
                                     <option value="country">Countries/Regions</option>
                                 </select>
@@ -158,10 +158,10 @@
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">IP Ranges (CIDR, one per line)</label>
-                                <textarea class="form-control" rows="5" @bind="formIpRanges" placeholder="10.0.0.0/8&#10;192.168.1.0/24&#10;2001:db8::/32" disabled="@isOperating"></textarea>
+                                <textarea class="form-control" rows="5" @bind="formIpRanges" placeholder="10.0.0.0/8&#10;192.168.1.0/24&#10;2001:db8::/32" disabled="@IsBusy"></textarea>
                             </div>
                             <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="chkTrusted" @bind="formIsTrusted" disabled="@isOperating" />
+                                <input type="checkbox" class="form-check-input" id="chkTrusted" @bind="formIsTrusted" disabled="@IsBusy" />
                                 <label class="form-check-label" for="chkTrusted">Mark as trusted</label>
                             </div>
                         }
@@ -169,17 +169,17 @@
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Country Codes (ISO 3166-1 alpha-2)</label>
-                                <CountryCodePicker @bind-Value="formCountryCodes" Disabled="@isOperating" />
+                                <CountryCodePicker @bind-Value="formCountryCodes" Disabled="@IsBusy" />
                             </div>
                             <div class="mb-3 form-check">
-                                <input type="checkbox" class="form-check-input" id="chkUnknown" @bind="formIncludeUnknown" disabled="@isOperating" />
+                                <input type="checkbox" class="form-check-input" id="chkUnknown" @bind="formIncludeUnknown" disabled="@IsBusy" />
                                 <label class="form-check-label" for="chkUnknown">Include unknown countries/regions</label>
                             </div>
                         }
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@isOperating" />
+                            <input type="text" class="form-control" @bind="formTicketNumber" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -188,17 +188,17 @@
                                 {
                                     @if (confirmDelete == editingLocation.Id)
                                     {
-                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(editingLocation)" disabled="@(isOperating || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteLocation(editingLocation)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
                                         <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmDelete = null" disabled="@isOperating">Cancel</button>
                                     }
                                     else
                                     {
-                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = editingLocation.Id" disabled="@isOperating">Delete</button>
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = editingLocation.Id" disabled="@IsBusy">Delete</button>
                                     }
                                 }
                             </div>
                             <button class="btn btn-primary" @onclick="SaveLocation"
-                                    disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber))">
                                 @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 @(editingLocation != null ? "Update" : "Create")
                             </button>
@@ -216,6 +216,7 @@
     private bool authChecked;
     private bool isLoading;
     private bool isOperating;
+    private bool isDownloadingCsv;
     private string? loadError;
 
     private List<NamedLocation> locations = new();
@@ -235,6 +236,13 @@
     private string EffectiveType => editingLocation != null
         ? (editingLocation.LocationType == NamedLocationType.Ip ? "ip" : "country")
         : formType;
+
+    // Page-wide gate, per the owner ruling of 2026-09-17: a control is clickable only when its
+    // click will definitively execute. Every operation on this page either replaces the location
+    // list underneath the form (LoadLocations) or writes to Graph against a form the operator can
+    // still be typing into, so one predicate covers the whole page - there is no second view with
+    // a disjoint flag set here. confirmDelete is deliberately NOT a member; see ClickGateRegistry.
+    private bool IsBusy => isLoading || isOperating || isDownloadingCsv;
 
     protected override async Task OnInitializedAsync()
     {
@@ -314,6 +322,24 @@
     {
         isOperating = true;
         operationResult = null;
+
+        // Snapshot the whole form at handler entry. Every input feeding this write carries
+        // disabled="@IsBusy", but the browser's copy of that attribute is one round trip stale,
+        // and EditLocation and ShowCreateForm blank formTicketNumber outright - so a field read
+        // back after an await is not the value the operator clicked Save on. Reading the ticket
+        // live used to put a blank ticket in the audit row. Capturing here rather than inside the
+        // try is also what lets the catch audit these values at all: declared in the try they
+        // would be out of scope there.
+        var existing = editingLocation;
+        var isIp = EffectiveType == "ip";
+        var name = formDisplayName.Trim();
+        var values = ParseLines(isIp ? formIpRanges : formCountryCodes);
+        var trusted = formIsTrusted;
+        var includeUnknown = formIncludeUnknown;
+        var ticket = formTicketNumber.Trim();
+        var action = existing != null ? "NamedLocations_Update" : "NamedLocations_Create";
+        var auditTarget = existing != null ? $"{name} ({existing.Id})" : name;
+
         await Task.Yield();
 
         try
@@ -323,56 +349,42 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
-                var deniedAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
-                var deniedTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, deniedAction, "NamedLocations", deniedTarget, false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", deniedAction); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", auditTarget, false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
                 return;
             }
 
-            var action = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
-            var target = formDisplayName.Trim();
-
-            if (editingLocation != null)
+            if (values.Count == 0)
             {
-                if (editingLocation.LocationType == NamedLocationType.Ip)
+                operationResult = new NamedLocationResult
                 {
-                    var ranges = ParseLines(formIpRanges);
-                    if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
-                    operationResult = await LocationService.UpdateIpLocationAsync(editingLocation.Id, target, ranges, formIsTrusted);
-                }
-                else
-                {
-                    var codes = ParseLines(formCountryCodes);
-                    if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
-                    operationResult = await LocationService.UpdateCountryLocationAsync(editingLocation.Id, target, codes, formIncludeUnknown);
-                }
-                target = $"{target} ({editingLocation.Id})";
-            }
-            else
-            {
-                if (EffectiveType == "ip")
-                {
-                    var ranges = ParseLines(formIpRanges);
-                    if (ranges.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one IP range is required." }; return; }
-                    operationResult = await LocationService.CreateIpLocationAsync(target, ranges, formIsTrusted);
-                }
-                else
-                {
-                    var codes = ParseLines(formCountryCodes);
-                    if (codes.Count == 0) { operationResult = new NamedLocationResult { Success = false, Message = "At least one country code is required." }; return; }
-                    operationResult = await LocationService.CreateCountryLocationAsync(target, codes, formIncludeUnknown);
-                }
+                    Success = false,
+                    Message = isIp ? "At least one IP range is required." : "At least one country code is required."
+                };
+                return;
             }
 
-            var ticket = formTicketNumber.Trim();
+            // One await site, so the outcome lands in a local. operationResult is a rendered field
+            // and the banner dismiss is deliberately left clickable while a refresh or an export
+            // is running, so it can be nulled from outside; dereferencing the field after the
+            // notification await below threw a NullReferenceException into this handler's own
+            // catch, which then audited and emailed a Graph write that had SUCCEEDED as a failure
+            // and skipped the confirming refresh.
+            var result = await (existing != null
+                ? (isIp
+                    ? LocationService.UpdateIpLocationAsync(existing.Id, name, values, trusted)
+                    : LocationService.UpdateCountryLocationAsync(existing.Id, name, values, includeUnknown))
+                : (isIp
+                    ? LocationService.CreateIpLocationAsync(name, values, trusted)
+                    : LocationService.CreateCountryLocationAsync(name, values, includeUnknown)));
+            operationResult = result;
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", auditTarget, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, result.Success, ticket, new Dictionary<string, string> { ["Location"] = auditTarget }, result.Success ? null : result.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
 
-            if (operationResult.Success)
+            if (result.Success)
             {
                 showForm = false;
                 editingLocation = null;
@@ -384,10 +396,8 @@
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to save named location");
-            var failAction = editingLocation != null ? "NamedLocations_Update" : "NamedLocations_Create";
-            var failTarget = editingLocation != null ? $"{formDisplayName.Trim()} ({editingLocation.Id})" : formDisplayName.Trim();
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, failAction, "NamedLocations", failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = failTarget }, ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "NamedLocations", auditTarget, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, false, ticket, new Dictionary<string, string> { ["Location"] = auditTarget }, ex.Message); } catch { }
         }
         finally
         {
@@ -400,6 +410,15 @@
         isOperating = true;
         operationResult = null;
         confirmDelete = null;
+
+        // Same snapshot obligation as SaveLocation, on the destructive half. loc is a parameter
+        // and so is already captured at the click; the ticket is not, and this handler audits it
+        // several awaits later, including from its catch. The result goes into a local for the
+        // same reason SaveLocation's does: the banner dismiss can null operationResult while this
+        // handler is suspended at the notification await.
+        var ticket = formTicketNumber.Trim();
+        var target = $"{loc.DisplayName} ({loc.Id})";
+
         await Task.Yield();
 
         try
@@ -409,21 +428,20 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new NamedLocationResult { Success = false, Message = "Authorization denied." };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations_Delete auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations_Delete auth denial"); }
                 return;
             }
 
-            var target = $"{loc.DisplayName} ({loc.Id})";
-            var ticket = formTicketNumber.Trim();
-            operationResult = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
+            var result = await LocationService.DeleteAsync(loc.Id, loc.DisplayName);
+            operationResult = result;
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", operationResult.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", result.Success, ticket, new Dictionary<string, string> { ["Location"] = target }, result.Success ? null : result.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for NamedLocations delete"); }
 
-            if (operationResult.Success)
+            if (result.Success)
             {
                 showForm = false;
                 editingLocation = null;
@@ -435,8 +453,8 @@
         {
             operationResult = new NamedLocationResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete named location {Id}", loc.Id);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", $"{loc.DisplayName} ({loc.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Location"] = $"{loc.DisplayName} ({loc.Id})" }, ex.Message); } catch { }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "NamedLocations_Delete", "NamedLocations", target, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for NamedLocations delete"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "NamedLocations_Delete", false, ticket, new Dictionary<string, string> { ["Location"] = target }, ex.Message); } catch { }
         }
         finally
         {
@@ -474,23 +492,42 @@
 
     private async Task DownloadCsvAsync()
     {
+        // The raise MUST stay below this guard. isDownloadingCsv is a member of IsBusy, and the
+        // early return leaves no finally behind it, so a raise above the guard would not grey one
+        // button - it would deaden every control on the page, permanently, the first time the
+        // operator hit Download CSV with nothing loaded.
         if (locations.Count == 0)
             return;
 
-        var csv = BuildCsv(locations);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
-        var base64 = Convert.ToBase64String(bytes);
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        await JS.InvokeVoidAsync("downloadFile", $"NamedLocations_{timestamp}.csv", "text/csv", base64);
+        isDownloadingCsv = true;
+
+        // Snapshot the list being exported. LoadLocations replaces the field wholesale, so a
+        // refresh landing while the JS interop is in flight would otherwise put a different row
+        // count in the audit row than the file the operator actually received.
+        var rows = locations;
+        await Task.Yield();
 
         try
         {
-            Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "NamedLocations",
-                $"{locations.Count} rows", true);
+            var csv = BuildCsv(rows);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(csv);
+            var base64 = Convert.ToBase64String(bytes);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            await JS.InvokeVoidAsync("downloadFile", $"NamedLocations_{timestamp}.csv", "text/csv", base64);
+
+            try
+            {
+                Audit.LogModuleAction(currentUser, clientIpAddress, "ExportCsv", "NamedLocations",
+                    $"{rows.Count} rows", true);
+            }
+            catch (Exception auditEx)
+            {
+                Logger.LogError(auditEx, "Audit failed for Named Locations CSV export");
+            }
         }
-        catch (Exception auditEx)
+        finally
         {
-            Logger.LogError(auditEx, "Audit failed for Named Locations CSV export");
+            isDownloadingCsv = false;
         }
     }
 

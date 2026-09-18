@@ -31,6 +31,7 @@ public static class ClickGateRegistry
     {
         Migration,
         DhcpAuthorization,
+        NamedLocations,
     };
 
     /// <summary>
@@ -43,8 +44,8 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Page 1 of 9, DhcpAuthorization.razor, is converted and lives in Pages above.
-            ["NamedLocations.razor"] = "tier 1, page 2 of 9",
+            // Pages 1 and 2 of 9, DhcpAuthorization.razor and NamedLocations.razor, are converted
+            // and live in Pages above.
             ["MailboxPermissions.razor"] = "tier 1, page 3 of 9",
             ["CalendarPermissions.razor"] = "tier 1, page 4 of 9",
             ["IntuneDevices.razor"] = "tier 1, page 5 of 9; has a partial ActionsDisabled already",
@@ -376,6 +377,300 @@ public static class ClickGateRegistry
                 + "lowered. isDownloadingCsv is a member of IsBusy, so it would not grey one button "
                 + "- it would deaden every control on the page, permanently, the first time the "
                 + "operator hit Download CSV on an empty list."),
+        ],
+    };
+
+    /// <summary>
+    /// Named Locations: tier 1, page 2 of 9, converted 2026-09-18 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Sequenced second because all eleven of its click targets are buttons. That was re-checked
+    /// against the file rather than trusted from the plan, since Revision 1 falsification 3 is that
+    /// the scanner's non-button count is an @onclick-only undercount. The hand census of everything
+    /// the scanner cannot see finds no anchor, no div/span/td handler, no @onkeydown, no @onsubmit
+    /// and no InputFile; what it does find is seven DOM-synced controls and one child component:
+    /// the display-name input (136), the type select (143), the IP-ranges textarea (161), the
+    /// trusted checkbox (164), the include-unknown checkbox (175) and the ticket input (182), plus
+    /// CountryCodePicker at 172. All seven render server state into the DOM, so all seven take the
+    /// disabled attribute - the only safe mechanism for a DOM-synced control - and all seven now
+    /// name IsBusy rather than isOperating alone. They are absent from NonButtonTargets on purpose,
+    /// following the DhcpAuthorization precedent: that list is keyed to what ClickGateSource can
+    /// locate, and an input, a select, a textarea and a child component are in neither Tags("a")
+    /// nor NonButtonClickTargets(), so registering one would fail
+    /// <see cref="ClickGateTests.EveryNonButtonTargetIsRefusedByItsDeclaredMechanism"/> rather than
+    /// document anything.
+    /// </para>
+    /// <para>
+    /// CountryCodePicker was the hazard Revision 1 falsification 2 singled out as the worst in
+    /// tier 1: it latches _initialized on its first parameter push (Components/Shared/
+    /// CountryCodePicker.razor 45, 49-56) and Apply is the sole ValueChanged path (79-85), so a
+    /// handler guard on it would desync the picker permanently and write the OLD country set to
+    /// Graph. It needs no page-level workaround and no contract change: it already declares
+    /// [Parameter] public bool Disabled and already applies it to all four of its interactive
+    /// elements - the filter input (5), every country checkbox (15), Apply (32) and Clear (33).
+    /// It is instantiated at exactly one site in the whole repo, NamedLocations.razor:172, so
+    /// nothing outside this page is reached. The change here is one word: Disabled="@isOperating"
+    /// became Disabled="@IsBusy".
+    /// </para>
+    /// <para>
+    /// isDownloadingCsv is new, on the same shape as DhcpAuthorization's: DownloadCsvAsync owned no
+    /// in-flight flag, and its raise has to sit BELOW the empty-list early return or the flag leaks
+    /// true forever and, being a member of a page-wide predicate, deadens the whole page. See
+    /// RaiseMustFollowEarlyReturn below.
+    /// </para>
+    /// <para>
+    /// PostAwaitLiveReads is the larger half of this page's fix and the half no gate can do. Eleven
+    /// obligations: the eight that make SaveLocation act on the form as it was when the click was
+    /// accepted, the two on DeleteLocation, and the one that stops a mid-export refresh putting a
+    /// different row count in the audit row than the file the operator received. The ticket capture
+    /// is the defect falsification 6 names for this page by name - a blanked ticket read into the
+    /// audit row - and the operationResult pair is what makes the banner dismiss at line 45 safe to
+    /// leave clickable at all.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry NamedLocations => new()
+    {
+        Page = "NamedLocations.razor",
+        ExpectedLineCount = 538,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy",
+                ["isLoading", "isOperating", "isDownloadingCsv"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        // One page-wide predicate is right here, and that was tested rather than assumed: Revision
+        // 1 found a single predicate provably wrong on two OTHER pages (SelfServiceGroups' two
+        // mutually exclusive views, ConferenceRooms' background-callback jobs panel). This page has
+        // one view. The list panel and the form panel render side by side and share every flag:
+        // both write handlers finish by calling LoadLocations, which replaces the collection the
+        // list renders AND invalidates editingLocation, which is a reference into the old list. So
+        // there is no control here that is safe to leave live while another is working.
+        ScannerFalsePositives =
+        [
+            new ScannerFalsePositive("operationResult",
+                "the result banner's model. Get-ClickGateAudit.ps1 reports it as a stuck flag on "
+                + "this page, and the report is an artefact of the fix rather than of a defect: the "
+                + "field is nullable, so the scanner counts ANY bare-token assignment as a raise "
+                + "(Get-ClickGateAudit.ps1:209), and the snapshot publish 'operationResult = result;' "
+                + "is exactly that, while 'operationResult = null;' at handler entry is the lowering. "
+                + "Raised and lowered in one awaiting method with the lowering outside a finally is "
+                + "the stuck-flag shape. Moving the clear into a finally would wipe the banner the "
+                + "instant the operation that wrote it finished. Note for whoever reads the audit "
+                + "next: DhcpAuthorization now reports the same thing for the same reason, and the "
+                + "'zero stuck flags' note on its entry above predates its own snapshot fix."),
+        ],
+
+        ExcludedFields =
+        [
+            new ExcludedField("confirmDelete", "the Confirm Delete / Cancel pair at 191-192",
+                "holds the id of the location whose deletion is staged; it is not an operation in "
+                + "flight. The pair renders only while confirmDelete == editingLocation.Id, so "
+                + "folding it into IsBusy would disable Confirm Delete at the only moment it is "
+                + "ever shown and no named location could be deleted again - the regression a "
+                + "review of the Migration plan caught before any code was written"),
+
+            new ExcludedField("showForm", "the whole right-hand form, 134-205",
+                "means 'the operator is filling in a form', not 'the page is working'. Every "
+                + "control that IsBusy exists to protect - the name, type, ranges, countries, "
+                + "ticket and Save - is inside the block showForm gates, so folding it in would "
+                + "disable the form at the only moment it renders"),
+        ],
+
+        ExemptControls =
+        [
+            new ExemptControl(45, "@onclick=\"() => operationResult = null\"",
+                "dismisses the result banner. Gating it on IsBusy would trap the previous "
+                + "operation's message on screen for the whole of a refresh or a CSV export, the "
+                + "same reason Migration's dismiss at 442 and DhcpAuthorization's at 40 are exempt. "
+                + "Neither LoadLocations nor DownloadCsvAsync reads operationResult, so a dismiss "
+                + "during either is definitively executed",
+                KeepsItsOwnGuard: "disabled=\"@isOperating\"",
+                ConditionThatKeepsItTrue:
+                "the handler stays a pure field reset. The moment anything else is wired to this "
+                + "button it is an operation and belongs behind IsBusy with the rest",
+                PrerequisiteBeforeExemptionHolds:
+                "SaveLocation and DeleteLocation must keep the write result in a local - "
+                + "var result = await ...; operationResult = result; - and read that local "
+                + "afterwards. Before they did, this control could null operationResult while "
+                + "either handler was suspended at its admin-notification await, and the following "
+                + "operationResult.Success read threw a NullReferenceException into the handler's "
+                + "own catch, which then audited and emailed a Conditional Access write that had "
+                + "SUCCEEDED as a failure and skipped the confirming refresh. On DeleteLocation "
+                + "that is a named location that really is gone being reported as still present. "
+                + "The narrower guard above is belt and braces only: the browser's copy of a "
+                + "disabled attribute is one round trip stale, so the guard narrows the window and "
+                + "the local is what closes it. Reinstate the field reads and this exemption is a "
+                + "live defect again"),
+
+            new ExemptControl(192, "@onclick=\"() => confirmDelete = null\"",
+                "backs out of a staged deletion, and the operator must always be able to do that. "
+                + "It can still be on screen during a refresh or an export because neither clears "
+                + "confirmDelete, and cancelling only resets a staged selection - Confirm Delete "
+                + "beside it at 191 is gated, so nothing can be executed from this state while the "
+                + "page is busy",
+                KeepsItsOwnGuard: "disabled=\"@isOperating\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads confirmDelete after an await. Both write handlers null it at entry "
+                + "and again on success; the moment one READS it mid-flight, this control can null "
+                + "it under them and the exemption stops holding"),
+        ],
+
+        // Verified by hand census, not inherited from the plan: the scanner finds no @onclick off a
+        // button, and the seven DOM-synced controls it cannot see are covered by the disabled
+        // attribute rather than by an entry here. See the remarks above for why they are not listed.
+        NonButtonTargets = [],
+
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("LoadLocations", ["SaveLocation", "DeleteLocation"],
+                "Both write handlers call it to refresh the list while isOperating is still true, "
+                + "so IsBusy is true at that call. A guard here makes every confirming refresh a "
+                + "silent no-op: the banner says the Conditional Access write succeeded while the "
+                + "table still shows the old set of named locations, and the operator concludes it "
+                + "failed and retries. It is also the Refresh button's own handler, which is "
+                + "refused in markup by disabled=\"@IsBusy\" and must not be refused twice."),
+        ],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(55, "@onclick=\"DownloadCsvAsync\"",
+                ["locations.Count == 0"],
+                RendersOnlyWhen:
+                "always. The clause is the only thing stopping an export of an empty list being "
+                + "offered, and a mechanical rewrite to the bare predicate would delete it"),
+
+            new AnnotatedControl(130, "@onclick=\"ShowCreateForm\"",
+                [],
+                RendersOnlyWhen:
+                "only while !showForm - it is the placeholder panel's New Location button, and the "
+                + "header carries an identical one at 60 that renders unconditionally. Registered "
+                + "with no clause to preserve because the reachability is what the scanner cannot "
+                + "see: 60 and 130 have byte-identical markup, so a reviewer reading either in "
+                + "isolation cannot tell they are two controls rather than one moved line"),
+
+            new AnnotatedControl(191, "@onclick=\"() => DeleteLocation(editingLocation)\"",
+                ["string.IsNullOrWhiteSpace(formTicketNumber)"],
+                RendersOnlyWhen:
+                "only while confirmDelete == editingLocation.Id. DeleteLocation does not re-check "
+                + "the ticket, so unlike DhcpAuthorization 82 this clause IS the only enforcement "
+                + "of the ticket requirement on a deletion - the IntuneDevices 403 shape. It is "
+                + "OR-ed with IsBusy and must never be replaced by it"),
+
+            new AnnotatedControl(200, "@onclick=\"SaveLocation\"",
+                [
+                    "string.IsNullOrWhiteSpace(formDisplayName)",
+                    "string.IsNullOrWhiteSpace(formTicketNumber)",
+                ],
+                RendersOnlyWhen:
+                "always, while the form is open. Two form-validity clauses that IsBusy is OR-ed in "
+                + "front of, never substituted for; SaveLocation re-checks neither"),
+        ],
+
+        SpinnerExpressions =
+        [
+            // Two spinners and neither condition is the predicate. The refresh spinner suppresses
+            // itself while a location is being edited, because a save or a delete ends by calling
+            // LoadLocations itself and the Save button is already showing one; collapsing either to
+            // IsBusy shows two at once, and adding isDownloadingCsv to them puts a spinner on the
+            // Refresh button during a CSV export.
+            "@if (isLoading && editingLocation == null)",
+            "@if (isOperating)",
+        ],
+
+        // Falsification 6 for this page, made executable. Two shapes, both real here.
+        //
+        // operationResult is PublishedFromLocal on both write handlers: the dismiss at line 45 is
+        // exempt and can null it while either is suspended at its admin-notification await.
+        //
+        // The rest are CapturedAtEntry. The inputs carry disabled="@IsBusy", but the browser's copy
+        // of that attribute is one round trip stale, and formTicketNumber is worse than stale - it
+        // is blanked outright by EditLocation (308) and ShowCreateForm (295), which is exactly the
+        // "blanked ticket read into the audit row" falsification 6 names for this page. The capture
+        // is also what lets the catch audit these values: as locals inside the try they would be out
+        // of scope there, which is why the pre-conversion catch re-read the live fields.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SaveLocation", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "the dismiss control nulls operationResult, so reading the field after the write "
+                + "await throws a NullReferenceException into this handler's own catch, which then "
+                + "audits and emails a Conditional Access write that SUCCEEDED as a failure and "
+                + "skips the confirming refresh"),
+
+            new PostAwaitLiveRead("DeleteLocation", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "same path on the destructive half: a named location that really was deleted "
+                + "reported and emailed as still present, and the table left listing it"),
+
+            new PostAwaitLiveRead("SaveLocation", "editingLocation", "existing",
+                SnapshotShape.CapturedAtEntry,
+                "editingLocation decides Create versus Update, supplies the id the write targets "
+                + "and the id in the audit row. CancelForm and EditLocation both reassign it, and "
+                + "so does this handler's own success path - so a live read after an await could "
+                + "audit one location's id against another's write, or dereference null inside the "
+                + "catch, where an escaping NullReferenceException tears the circuit down"),
+
+            new PostAwaitLiveRead("SaveLocation", "formDisplayName", "name",
+                SnapshotShape.CapturedAtEntry,
+                "the display name the operator saw when the click was accepted is the one that "
+                + "must be written to Graph, audited and emailed; a later keystroke must not "
+                + "rename the target or desync the audit row from it"),
+
+            new PostAwaitLiveRead("SaveLocation", "formIpRanges", "values",
+                SnapshotShape.CapturedAtEntry,
+                "the CIDR list actually written to the Conditional Access policy. Read live, a "
+                + "keystroke landing during the authorization round trip silently changes which "
+                + "ranges become trusted"),
+
+            new PostAwaitLiveRead("SaveLocation", "formCountryCodes", "values",
+                SnapshotShape.CapturedAtEntry,
+                "the country list written to the policy, and the field CountryCodePicker writes "
+                + "through ValueChanged. Same hazard as formIpRanges; only one of the two is used, "
+                + "chosen by isIp, and both are captured on the one line"),
+
+            new PostAwaitLiveRead("SaveLocation", "formIsTrusted", "trusted",
+                SnapshotShape.CapturedAtEntry,
+                "whether the IP location is marked trusted, which is what makes it bypass policy. "
+                + "A checkbox toggled during the authorization round trip must not change the "
+                + "write the operator confirmed"),
+
+            new PostAwaitLiveRead("SaveLocation", "formIncludeUnknown", "includeUnknown",
+                SnapshotShape.CapturedAtEntry,
+                "the country location's include-unknown flag, on the same footing as formIsTrusted"),
+
+            new PostAwaitLiveRead("SaveLocation", "formTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket recorded against the change. This is the defect falsification 6 names "
+                + "for this page: EditLocation and ShowCreateForm blank the field, and the gate "
+                + "cannot stop a keystroke in the round trip before the disabled attribute lands, "
+                + "so the audit row and the admin email recorded a ticket that was not the one the "
+                + "operator typed - or no ticket at all"),
+
+            new PostAwaitLiveRead("DeleteLocation", "formTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the same obligation on the destructive handler, whose catch audits the ticket "
+                + "after several awaits. loc needs no entry: it is a parameter, so it is already "
+                + "captured at the click"),
+
+            new PostAwaitLiveRead("DownloadCsvAsync", "locations", "rows",
+                SnapshotShape.CapturedAtEntry,
+                "LoadLocations replaces the collection wholesale, so a refresh landing while the "
+                + "JS interop is in flight would put a row count in the audit row that does not "
+                + "match the file the operator received. The CSV bytes were always built from a "
+                + "local; the audit line was not"),
+        ],
+
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("DownloadCsvAsync", "isDownloadingCsv", "locations.Count == 0",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isDownloadingCsv is a member of IsBusy, so it would not grey one button "
+                + "- it would deaden every control on the page, permanently, the first time the "
+                + "operator hit Download CSV before the list had loaded."),
         ],
     };
 }

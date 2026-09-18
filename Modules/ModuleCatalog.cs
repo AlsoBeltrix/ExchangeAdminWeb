@@ -576,8 +576,11 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.IdentityAndAccess,
             EnabledByDefault = false,
             IsSystemModule = false,
-            // 1.1.0: CSV export of the named-location list (docs/ModuleCsvExport-Plan.md).
-            Version = "1.1.0",
+            // 1.2.0: every control on the page is gated on one in-flight predicate, and both write
+            // handlers snapshot the form and their result so a mid-flight dismiss or keystroke can
+            // no longer retarget a Conditional Access write, blank its ticket, or report a
+            // successful write as failed (docs/ClickGatingAudit-Plan.md tier 1, page 2).
+            Version = "1.2.0",
             MainPermission = new(
                 "Access",
                 "NamedLocations",
