@@ -2,19 +2,24 @@
 
 Status: Draft
 
-Revision: 2 (2026-09-18). Two codex rounds, both returned **unsound**; eight findings
+Revision: 3 (2026-09-18). Three codex rounds, all returned **unsound**; ten findings
 total, all verified against the file and all accepted. Round 1 reshaped the source
 design, the slicing, the timeout model and the test seam. Round 2 found that the `mac`
-fallback defeated this plan's own no-silent-green rule, that the budget test could not
-distinguish the correct timeout model from the broken one, and that two page tripwires
-passed with the feature deleted. Sections 18 and 19 carry the two review records.
+fallback defeated this plan's own no-silent-green rule. Round 3 found two cheap-pass
+holes that survived a full per-assertion audit, because both lived in the
+*relationship between* tests rather than inside any one of them. Sections 18, 19 and
+20 carry the three review records.
 
-**Read 5.1 and 5.1.1 first.** The rule that green requires positive affirmation is
-what the design hangs on, and 5.1.1's three-predicate split is what stops the rest of
-the plan from quietly undermining it - which is exactly what Revision 1 did.
+**Read 5.1 and 5.1.1 first**, then **13.1**. The rule that green requires positive
+affirmation is what the design hangs on; 5.1.1's predicate split is what stops the
+rest of the plan from quietly undermining it - which is exactly what Revision 1 did;
+and 13.1's two-part verification rule, with its four completed quadrant tables, is
+what stops the suite from certifying an implementation that gets each predicate right
+in the cases someone wrote down and wrong in the one they did not.
 
 Owner: Michael
-Repository base: `337e07b`; Revision 0 at `16ebdf4`, Revision 1 at `f6530e3`
+Repository base: `337e07b`; Revision 0 at `16ebdf4`, Revision 1 at `f6530e3`,
+Revision 2 at `09699b9`
 Base app version at drafting: 2.21.0 (no base bump proposed)
 ServiceHealth module version: 1.3.2 at drafting; 1.4.0 after slice 1, 1.4.1 after
 slice 2
@@ -543,6 +548,17 @@ value. Nothing in stage 2 can trigger it. Concretely: RSS returning
 even though it would have said `Available`. Revision 1 got this wrong and would have
 rendered that case green; test 3b and probe G exist solely to keep it wrong-proof.
 
+**"iff" means all five failure classes, not just the transport one.** The fallback
+must fire on a non-200 *and* on a 200 with the wrong content type *and* on an
+unparseable body *and* on a missing status element *and* on a present-but-empty one.
+Revision 2 asserted this in prose but tested only the non-200 shape, so an
+implementation keyed on `!response.IsSuccessStatusCode` passed the whole suite - codex
+round 3 finding 1. The production cost of that shortcut is precisely the scenario this
+plan was built around: `/api/feed/mac` drifts to the measured 200-plus-HTML-shell
+shape (2.1.1), `/api/posts/mac` is still sitting there saying `Available`, and the row
+degrades to Unknown instead of using the fallback and flagging it in `SourceLabel`.
+Test 4 is now a theory over all five classes and probe I is the regression guard.
+
 The resulting row is labelled with whichever source answered (`SourceLabel`), so an
 operator can see on the board that the primary path has stopped working even while
 the signal is still arriving. That label is the early warning that a code change is
@@ -556,6 +572,14 @@ whole-strip link-out in 6.5. Note the deliberate asymmetry: `Reachable` tracks
 `Answered`, never `Healthy`, so a board where both surfaces report degradation is
 `Reachable = true` with two red rows - which is the correct reading, since the source
 is working perfectly and the news is simply bad.
+
+That asymmetry is load-bearing and was untested until Revision 3. `Reachable =
+Surfaces.Any(s => s.IsHealthy)` passed Revision 2's entire matrix, because nothing
+exercised the quadrant where every surface answers and none is healthy - codex round 3
+finding 2. Under that implementation the strip would announce "the public status
+source could not be read" at the exact moment it had been read and was reporting
+trouble, inverting the message precisely when the feature is supposed to earn its
+place. Test 6b covers both uncovered quadrants and probe J is the regression guard.
 
 Both surfaces are issued **concurrently** and share one budget; see 6.4.
 
@@ -1014,7 +1038,7 @@ with its three gates and shared budget, the constants, the `PublicStatus` proper
 `PublicStatus` HttpClient. `Modules/ModuleCatalog.cs`: `Version` 1.3.2 -> 1.4.0 and
 the `Description` line. `ExchangeAdminWeb.Tests/ServiceHealthServiceTests.cs`: the
 updated `TheGraphCollectionsAreFetchedConcurrently` (8.2) and service tests 1 to 11,
-including 3b, from section 12.3. `ExchangeAdminWeb.Tests/ServiceHealthPageTests.cs`:
+including 3b, 4b and 6b, from section 12.3. `ExchangeAdminWeb.Tests/ServiceHealthPageTests.cs`:
 the version assertion and rename (8.3), in this same commit. The seam change is
 described in 12.1; it is
 **not** a `Func<Task<PublicStatusBoard>>`. Nothing renders yet, and that is fine - the
@@ -1086,20 +1110,32 @@ whose `Log` method throws, not a mock of the catch block.
 
 Codex has now found the same class of defect three rounds running: round 1, a seam
 that let every test pass without running the fetcher; round 2, one assertion satisfied
-by code that already exists in the file and another satisfied by a sentinel `-1`. The
-repo has a recorded precedent in the migration button-gating work, where the guard
-proof's first mutation was literally the pre-fix code because the tripwires accepted
-it.
+by code that already exists in the file and another satisfied by a sentinel `-1`;
+round 3, two predicates that a wrong implementation could satisfy across the whole
+suite. The repo has a recorded precedent in the migration button-gating work, where
+the guard proof's first mutation was literally the pre-fix code because the tripwires
+accepted it.
 
-So this is a standing rule for this plan, not a one-off fix, and it is repeated in
-section 13:
+So this is a standing rule for this plan, not a one-off fix. It has two parts, both
+stated in full in 13.1:
 
-> **For every assertion, name the cheapest broken implementation that makes it pass.
-> If the answer is "delete the feature", "change nothing", or "hard-code one value",
-> the assertion is decoration and must be strengthened before it is written.**
+> **Part 1, per assertion.** Name the cheapest broken implementation that makes it
+> pass. If the answer is "delete the feature", "change nothing", "hard-code one value"
+> or "never call the thing under test", the assertion is decoration and must be
+> strengthened before it is written.
+>
+> **Part 2, per predicate.** Then take each predicate the design depends on and name
+> the cheapest implementation of *that predicate* which satisfies the whole suite.
+> Enumerate its input quadrants; the holes are the ones nothing exercises.
 
-Every test below carries that answer explicitly. Three assertions were rewritten
-during this pass because their honest answer was "delete the feature"; they are
+Part 2 exists because Part 1 is not sufficient: it was applied to all fourteen tests
+in Revision 2 and two defects still got through, both of them living in the
+*relationship between* tests rather than inside any one of them. The four completed
+quadrant tables are in 13.1.
+
+Every test below carries its Part 1 answer explicitly in the third column. Three
+assertions were rewritten in Revision 2 because their honest answer was "delete the
+feature", and three more cases were added in Revision 3 from the Part 2 sweep; all are
 flagged in the table.
 
 ### 12.3 Service tests (slice 1)
@@ -1110,11 +1146,13 @@ All driven through `GetStatusAsync` against the extended `StubHandler`.
 | --- | --- | --- |
 | 1 | **Round-trip, not shape.** Both surfaces answer affirmatively with a *distinctive* token per surface; assert the two entries carry those tokens, the declared order, the surface names, the source labels, **and** that each path's request counter is exactly 1. | Returning two hard-coded entries and never issuing a request. Stopped by the counters and by asserting the token came back from the body. Revision 1's version asserted only names and order and would have passed a fully stubbed-out fetcher. |
 | 2 | **Token mapping, both polarities in one `[Theory]`.** `Available` and `Operational` healthy; `ServiceDegradation`, `Unknown`, `ServiceRestored`, `somethingNew`, `""` not-healthy. | `IsHealthy => false`. Stopped only because the healthy cases are in the *same* theory. Splitting the polarities into two tests would reintroduce the cheap pass. |
-| 3 | **The drift catalogue.** Ten responses, all asserting `IsHealthy == false` and a non-empty `Degraded`: 404; 400; 500; **200 carrying the 2058-byte SPA HTML shell** (the measured drift shape, 2.1.1); 200 JSON with `Status` renamed to `state`; 200 JSON with an unknown token; 200 RSS with `<status>` absent; 200 with an empty body; 200 with truncated JSON; well-formed body served as `text/html`. **Plus an affirmative control row in the same theory asserting healthy.** | `IsHealthy => false`. Stopped by the affirmative control, which Revision 1 omitted - without it this whole catalogue is passed by a constant. |
+| 3 | **The drift catalogue.** Ten responses, all asserting `IsHealthy == false` and a non-empty `Degraded`: 404; 400; 500; **200 carrying the 2058-byte SPA HTML shell** (the measured drift shape, 2.1.1); 200 JSON with `Status` renamed to `state`; 200 JSON with an unknown token; 200 RSS with `<status>` absent; **200 RSS with `<status></status>` present but empty**; 200 with an empty body; 200 with truncated JSON; well-formed body served as `text/html`. **Plus an affirmative control row in the same theory asserting healthy.** | `IsHealthy => false`. Stopped by the affirmative control, which Revision 1 omitted - without it this whole catalogue is passed by a constant. The present-but-empty row was added in Revision 3: the extraction gate at 6.3 requires a **present, non-empty** value, and nothing exercised the empty half of that conjunction. |
 | 3b | **The fallback cannot launder an unhealthy primary.** RSS primary answers `ServiceDegradation`; JSON fallback is stubbed to answer `Available`. Assert the row is **not-healthy**, `SourceLabel` names the RSS primary, and the **JSON path counter is 0**. A second case: primary answers an unrecognised `Wibble`; assert not-healthy, raw token surfaced, JSON counter still 0. | Never implementing the fallback at all. Stopped by pairing with test 4, which *requires* the fallback to fire; the two are a differential pair and neither is sound alone. **This is the codex round 2 finding 1 guard.** |
-| 4 | **The fallback fires on `!Answered`, and is labelled.** RSS primary returns 500; JSON fallback returns an affirmative post. Assert the row is healthy, `SourceLabel` names the fallback, primary counter 1, fallback counter 1. Second case: primary affirmative, fallback counter **0**. | Always calling the fallback. Stopped by the second case and by 3b. |
+| 4 | **The fallback fires on every `!Answered` class, and is labelled.** A `[Theory]` with one row per stage-1 failure class, each making the RSS primary fail that way while the JSON fallback returns an affirmative post: **(a)** non-200; **(b)** 200 carrying the SPA HTML shell (wrong content type); **(c)** 200 `application/rss+xml` with an unparseable body; **(d)** 200 well-formed RSS with `<status>` absent; **(e)** 200 well-formed RSS with `<status></status>` empty. Every row asserts the mac row is **healthy**, `SourceLabel` names the fallback, primary counter 1 and fallback counter 1. Plus the negative control: primary affirmative, fallback counter **0**. | **Falling back only on non-200** and treating (b) to (e) as terminal Unknown. Revision 2's version used case (a) alone, so the whole class passed - codex round 3 finding 1. Stopped by rows (b) to (e), each of which fails against a transport-only trigger, and by probe I. |
+| 4b | **A failing fallback does not invent an answer.** RSS primary returns 500 and the JSON fallback also fails (200 HTML shell). Assert the mac row is not-healthy, **both** counters are 1, and `Degraded` records that both sources were tried rather than only the last one. | Reporting only the fallback's reason, or silently rendering the row as if the primary had never been attempted. Stopped by the both-counters and both-reasons assertions. Added in Revision 3 from the quadrant sweep: nothing covered "primary unusable **and** fallback unusable". |
 | 5 | **Content-type gate fires before the parser.** The identical valid-JSON body served once as `application/json` (healthy) and once as `text/html` (not-healthy). | `IsHealthy => false`. Stopped because the same body must produce opposite results, so only the gate can explain the difference. |
-| 6 | **Per-surface isolation.** `mac` affirmative, `azure` 500: `mac` healthy, `azure` not-healthy with a reason, `Reachable` true. Both failing: `Reachable` false with non-empty `Unreachable`. | Blanket-failing the board on any error (Known Failure Class 2). Stopped by the mixed case. |
+| 6 | **Per-surface isolation.** `mac` affirmative, `azure` 500: `mac` healthy, `azure` not-healthy with a reason, `Reachable` true, **and the mac fallback counter is 0**. Both failing: `Reachable` false with non-empty `Unreachable`. | Blanket-failing the board on any error (Known Failure Class 2). Stopped by the mixed case. The added fallback-counter assertion stops a fallback mis-wired to fire on *any* surface's failure rather than on the mac primary's - which every other test in this table would have accepted. |
+| 6b | **`Reachable` tracks `Answered`, never `Healthy`.** A `[Theory]` over the two uncovered quadrants: **(a)** every surface answers and **none is healthy** (mac `ServiceDegradation`, azure an unrecognised token); **(b)** one surface answers unhealthily and the other never answers (mac `ServiceDegradation`, azure 500). Both rows assert `Reachable == true`, `Unreachable == null`, both surfaces still listed with their tokens, and the mac fallback counter 0. | **`Reachable = Surfaces.Any(s => s.IsHealthy)`** - codex round 3 finding 2. It satisfies every other test in this table, and it inverts the strip's message at the exact moment the feature earns its place: the board would say "the public status source could not be read" when in fact it was read perfectly and the news was bad. Stopped by quadrant (a), which no earlier test reached. Probe J pins it. |
 | 7 | **Sanitizer.** The live `mac` payload from 2.1 on a not-healthy response: `<div>` and anchor survive with `target="_blank"` and `rel="noopener noreferrer"`. A `<script>` payload: gone. Asserted on the model's `ContentHtml`. | `ContentHtml => ""`. Stopped by the survives-intact half. |
 | 8 | **Concurrency.** Both handlers block on a shared `TaskCompletionSource` completed only once the handler has seen **both** requests, with a short test-level timeout. Assert both rows healthy. | Serializing the two surfaces. The first request never completes, the budget cancels it, both rows come back not-healthy, and the healthy assertion fails. |
 | 9 | **One shared budget across the whole method, including the fallback.** See 12.3.1 - rewritten this round. | See 12.3.1. |
@@ -1173,12 +1211,15 @@ fails, restore, confirm byte-identical by SHA256, confirm the suite is green.
 | F | Give each request its own timeout instead of the shared budget | test 9, on elapsed time |
 | **G** | **Trigger the fallback on `!Healthy` instead of `!Answered`** - that is, restore Revision 1's exact logic | **test 3b.** This probe is the codex round 2 finding 1 regression guard, and it is the one to run first, because the mutation is a plausible thing for a future reader to "simplify" the code back into |
 | **H** | **Delete the public-status strip from the page entirely** | **tests 12 and 13.** Under Revision 1's assertions this mutation passed both, which is what finding 3 caught. If it passes either one after the slice-2 work, the tripwire is still decoration |
+| **I** | **Trigger the fallback on non-200 only** - `if (!response.IsSuccessStatusCode)` in place of `if (!answered)` | **test 4, rows (b) to (e).** Codex round 3 finding 1. Under Revision 2's single-shape test 4 this mutation passed the entire suite, while in production a drifted `/api/feed/mac` returning the HTML shell would degrade to Unknown instead of using the fallback that was sitting right there |
+| **J** | **`Reachable = Surfaces.Any(s => s.IsHealthy)`** | **test 6b, quadrant (a).** Codex round 3 finding 2. This mutation passed Revision 2's whole matrix and would have told the operator the public source could not be read at the precise moment it had been read and was reporting trouble |
 
-Probes D through H each exist because the corresponding claim was prose-only, or the
+Probes D through J each exist because the corresponding claim was prose-only, or the
 corresponding assertion was satisfiable without the feature, in an earlier revision.
-**A claim in this plan with no probe against it should be treated as not yet proven**,
-and probes G and H in particular are the standing regression guards for the two
-defects that got furthest before being caught.
+**A claim in this plan with no probe against it should be treated as not yet proven.**
+Probes G and H are the standing regression guards for the two defects that got
+furthest before being caught; probes I and J are the guards for the two that survived
+a full per-assertion audit and were only caught by the predicate-level sweep in 13.1.
 
 Note the mutation-probe restore trap recorded in memory and in
 `docs/ServiceHealthLoadFeedback-Plan.md:170-172`: `Copy-Item` preserves the old
@@ -1226,9 +1267,97 @@ Two structural habits fall out of it and both are already applied in section 12:
   under condition Y, or a no-op implementation passes. Tests 3b and 4 are that pair
   for the fallback.
 
+#### Part 2: the per-assertion pass is not sufficient, and here is the proof
+
+Revision 2 applied the rule above to all fourteen tests and it caught five real holes.
+Two defects survived it anyway, and codex round 3 found both. The reason they survived
+is structural rather than careless, and it is the lesson actually worth recording:
+
+> **Both defects lived in the relationship *between* tests, not inside any one of
+> them.** Test 4 was sound on its own - it proved the fallback fires. What let the
+> wrong implementation through was the *absence* of the other failure classes. Test 6
+> was sound on its own. What let it through was an *uncovered quadrant*. A rule that
+> asks its question one assertion at a time is structurally incapable of finding
+> either.
+
+So the rule has a second half, and it runs after the per-assertion pass:
+
+> **Take each predicate the design depends on. Ask what the cheapest implementation of
+> *that predicate* is which satisfies the entire suite. Enumerate the predicate's
+> input quadrants and mark which test reaches each one. The holes are the quadrants
+> nothing exercises.**
+
+The difference in practice: part 1 asks "what breaks this test?", part 2 asks "what
+breaks this *concept* while passing every test?". Only the second finds a predicate
+that is right in the three cases you wrote down and wrong in the fourth you did not.
+
+#### The completed quadrant tables
+
+Four predicates carry this design. Every quadrant below now names the test that
+reaches it; the three marked **new in R3** were empty when codex round 3 arrived, and
+two of them are the findings.
+
+**`Answered(response)`** - gates the fallback and feeds `Reachable`.
+
+| Quadrant | Reached by |
+| --- | --- |
+| 200, right content type, parses, status present | 1, 3 control, 4 control, 5 |
+| non-200 | 3, 4(a) |
+| 200, wrong content type | 3, 5, **4(b) new in R3** |
+| 200, right content type, unparseable | 3, **4(c) new in R3** |
+| 200, parses, status element absent | 3, **4(d) new in R3** |
+| 200, parses, status present but empty | **3 and 4(e), both new in R3** |
+
+The last row was empty in *both* directions - the extraction gate requires a
+"present, non-empty" value and nothing exercised the empty half of that conjunction.
+That one was found by this sweep, not by the review.
+
+**`Healthy(token)`** - gates the green row.
+
+| Quadrant | Reached by |
+| --- | --- |
+| `Available` / `Operational` | 2, 3 control |
+| known unhealthy (`ServiceDegradation`, `Unknown`, `ServiceRestored`) | 2, 3b(a), 6b |
+| present but unrecognised | 2, 3b(b), 6b(a) |
+| absent / empty | 2, 3 |
+| healthy-looking body behind a wrong content type | 5 |
+
+Sound before this round. Test 5 is what stops `Healthy` being computed by sniffing the
+body independently of the gates.
+
+**`Reachable(board)`** - gates the "could not read" line.
+
+| any answered? | any healthy? | Expected | Reached by |
+| --- | --- | --- | --- |
+| yes | yes | true | 1, 6 |
+| partly | yes | true | 6 |
+| **yes** | **no** | **true** | **6b(a) new in R3** |
+| **partly** | **no** | **true** | **6b(b) new in R3** |
+| no | no | false | 6, 10 |
+
+Row 3 is codex round 3 finding 2. `Any(IsHealthy)` satisfies rows 1, 2 and 5, which
+was the whole of Revision 2's coverage.
+
+**"fallback fired"** - gates the second request.
+
+| Primary state | Expected | Reached by |
+| --- | --- | --- |
+| Answered + healthy | no fallback | 4 control |
+| Answered + known unhealthy | no fallback | 3b(a) |
+| Answered + unrecognised | no fallback | 3b(b) |
+| !Answered, transport | fallback | 4(a) |
+| **!Answered, other four gates** | **fallback** | **4(b)-(e) new in R3** |
+| !Answered, fallback also unusable | both tried, row unhealthy | **4b new in R3** |
+| a *different* surface failed | no mac fallback | **6, assertion added in R3** |
+
+Row 5 is codex round 3 finding 1. Rows 6 and 7 came out of this sweep: nothing covered
+"both sources unusable", and nothing stopped a fallback mis-wired to fire on any
+surface's failure.
+
 The implementer must record, in the slice's commit message or the review packet, the
 cheapest-broken-implementation answer for any assertion they add that is not already
-priced in section 12.
+priced in section 12 - and, if they add or change a predicate, its completed quadrant
+table.
 
 ## 14. Manual acceptance checklist
 
@@ -1571,3 +1700,85 @@ content types, so only the gate can explain the differing results.
 
 **Nothing was rejected this round either.** Eight findings across two rounds, eight
 accepted.
+
+## 20. Revision 3 - codex review round 3, 2026-09-18
+
+Reviewer: codex, third pass over Revision 2 as committed at `09699b9`.
+Verdict: **unsound**, two MEDIUM findings.
+
+Confirmed closed by the reviewer and not revisited: round 2's three findings are all
+shut in the text; versioning is module-scoped only; no Constitution or module-contract
+violation; no unrecoverable first-deploy state. **The Revision 2 divergence was
+upheld** - the stricter reading of an unrecognised token (answered, not-healthy, no
+fallback) was judged correct, so 5.1.2 stands as written.
+
+Both citations were checked against the committed file before any edit.
+**Both verified exactly as cited. Both accepted; neither rejected.** Ten findings
+across three rounds, ten accepted.
+
+| # | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| 1 | MED | Test 4 proves the fallback fires on transport failure only, not on every `!Answered` class | Accepted. Test 4 is now a theory over all five classes; probe I added. |
+| 2 | MED | `Reachable` can be implemented as `Any(IsHealthy)` and pass the whole matrix | Accepted. Test 6b added over both uncovered quadrants; probe J added. |
+
+**Finding 1 - verified and accepted.** `Answered` is three gates at :517-528 and the
+fallback is stated as iff stage 1 failed, explicitly naming wrong content type,
+unparseable body, and missing or empty status (:538-541) - but test 4 at :1115 used a
+single shape, RSS returns 500, and probe G at :1174 only mutated `!Healthy` versus
+`!Answered`. So `if (!response.IsSuccessStatusCode)` passed the entire suite while
+violating the iff contract. The production consequence is the exact scenario this plan
+was built around and is worse for being so: `/api/feed/mac` drifts to the measured
+200-plus-HTML-shell shape, `/api/posts/mac` is still answering `Available`, and the
+row degrades to Unknown rather than falling back and flagging it in `SourceLabel`. The
+one drift shape the plan has hard evidence for was the one the guard did not cover.
+Test 4 is now a `[Theory]` with a row per stage-1 failure class - non-200, wrong
+content type, unparseable, status absent, status empty - each asserting a healthy row,
+the fallback source label, and both counters at 1. Test 3b is unchanged and remains
+the opposite-polarity proof.
+
+**Finding 2 - verified and accepted.** 6.3 separates the concepts explicitly at
+:551-557 and 6.5 renders a single "could not read" line when `Reachable` is false
+(:668-672), but nothing pinned it: test 2 (:1112) is token polarity, 3b (:1114) is row
+health and counters, and test 6 (:1117) covered only one-healthy-one-failed and
+both-failed. `Reachable = Surfaces.Any(s => s.IsHealthy)` satisfies all three. The
+uncovered quadrant is the one that matters - every surface answers and none is
+healthy - where the broken implementation tells the operator the public source could
+not be read at the precise moment it was read and was reporting trouble. That inverts
+the strip's message exactly when the feature is supposed to earn its place, which
+makes it worse than the feature simply being absent. Test 6b covers that quadrant and
+the mixed one (one answered-unhealthy, one unanswered), asserting `Reachable` true,
+no unreachable line, rows still listed, and no fallback for the answered primary.
+
+**The lesson, and why it is the real finding.** Revision 2 applied the
+cheapest-broken-implementation rule to all fourteen tests and it caught five holes.
+These two survived it, and the reviewer's diagnosis of why is correct and worth more
+than either finding: **both defects lived in the relationship between tests rather
+than inside any one of them.** Test 4 was sound on its own; the absence of the other
+failure classes is what let the wrong implementation through. Test 6 was sound on its
+own; an uncovered quadrant is what did it. A rule that asks its question one assertion
+at a time is structurally incapable of finding either.
+
+Section 13.1 now has a Part 2 that runs after the per-assertion pass: take each
+predicate the design depends on, ask what the cheapest implementation of *that
+predicate* is which satisfies the whole suite, and enumerate its input quadrants to
+find the ones nothing exercises. Four completed quadrant tables are recorded there -
+`Answered`, `Healthy`, `Reachable`, and "fallback fired" - each naming the test that
+reaches every quadrant. Both findings are the worked examples.
+
+**Applying Part 2 turned up three more gaps that codex did not flag**, all closed in
+this revision:
+
+- **`Answered`, present-but-empty status value.** The extraction gate requires a
+  "present, non-empty" value and *nothing exercised the empty half of that
+  conjunction* - not as a drift case and not as a fallback trigger. It was the only
+  quadrant empty in both directions. Added to test 3 and as row (e) of test 4.
+- **"fallback fired", both sources unusable.** Nothing covered primary unusable *and*
+  fallback unusable. An implementation could report only the fallback's reason, or
+  render the row as though the primary had never been tried. New test 4b asserts both
+  counters at 1 and both reasons recorded.
+- **"fallback fired", triggered by a different surface's failure.** A fallback
+  mis-wired to fire on any surface's failure rather than on the mac primary's would
+  have passed every test in the table. Closed for free by adding a
+  mac-fallback-counter-zero assertion to test 6's existing mixed case.
+
+**Nothing was rejected this round either.**
