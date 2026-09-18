@@ -208,13 +208,39 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   Audit headline: 273 clickable buttons across 33 pages, **205 across 30 pages not gated against
   concurrent work**, and only 3 pages have any page-level busy predicate (Migration's `IsBusy`,
   done; `IntuneDevices` and `RiskyUsers` have `ActionsDisabled`, both incomplete).
-  Progress: slice 0 part A landed - `tools/Get-ClickGateAudit.ps1` with 14 Pester tests in
-  `tests/ps/ClickGateAudit.Tests.ps1`. The tool reproduces the plan's published totals exactly
-  and is calibrated against Migration (8 flags, `IsBusy`, exemptions at 223/442/784/836, anchors
-  at 30/33/36). `ExchangeAdminWeb.Tests/ClickGateSource.cs` is written and compiles but is
-  deliberately **not committed**: the registry it serves changed shape, see below.
+  **Slice 0 is COMPLETE.** Part A (`f0658c0`): `tools/Get-ClickGateAudit.ps1` + 14 Pester tests;
+  the tool reproduces the plan's published totals exactly and is calibrated against Migration
+  (8 flags, `IsBusy`, exemptions at 223/442/784/836, anchors at 30/33/36). Part B (`8c6596b`):
+  `ClickGateSource.cs`, `ClickGateRegistry.cs`, `ClickGateTests.cs` - 14 shared assertions over a
+  per-page registry, seeded with **Migration only** (the one page whose gating is known-good;
+  registering the partial IntuneDevices/RiskyUsers predicates would have shipped a red suite).
+  The self-enforcing property is `EveryPageIsRegisteredOrDeclaredUnconverted`: a new page is in
+  neither `Pages` nor `NotYetConverted`, so the suite fails and names it.
   **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
   against orchestrating subagents for its duration; recon ran as a read-only workflow.
+
+- **Next: slice 1, the two prerequisite fixes. Do NOT use the obvious try/finally - the recon
+  proved it breaks both pages.** Details, all verified against source:
+  - **`BlockedSenders.razor` `ConfirmUnblock`.** `isLoading` raised at 278; lowered at 305, 336,
+    406 as straight-line statements. The method has five trys (294, 325, 344, 359, 389) and the
+    awaits at **290, 291, 321** plus `BeginOperation` at **340** sit outside all of them. The
+    remedy is **a catch converting the throw into a `PermissionResult.Fail`, mirroring 351-356**,
+    not a finally - with no `ErrorBoundary` in the app a throw kills the circuit and a finally
+    changes nothing. **Load-bearing and invisible: 406 must keep running BEFORE the
+    `LoadBlockedSenders` call at 413.** Wrapping 278-414 in try/finally moves the lowering after
+    the refresh, and a busy guard in that callee then silently no-ops it, leaving the just-
+    unblocked sender on screen. Also note `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180
+    while `isLoading` is ALREADY true from 170, so a guard in `LoadBlockedSenders` kills the
+    initial load outright - `loadStarted` is latched at 179 and never retries.
+  - **`MessageTrace.razor` `ToggleDetail`** (959-999). No finally at all; both lowerings (987,
+    996) are nested inside `if (token == detailRequestToken)`, so a superseded fetch returns
+    without lowering by design. The real escape is `Audit.LogLookupAction` at **992, outside
+    every try** (`AuditService.WriteAuditEvent` is not throw-proof: its `BeginOperation` at
+    `AuditService.cs:397` sits outside the try at 407). Fix as a **token-guarded finally**, and
+    note `RunTrace:779` is today the only out-of-method rescue - folding `detailLoading` into a
+    predicate that gates Search (299) removes that rescue at the same moment the page-wide blast
+    radius appears.
+  Neither page is in the registry yet; both are declared in `NotYetConverted` with their reason.
 
 - **The click-gating design was falsified by reconnaissance and re-scoped; work is unblocked.**
   An 11-page read-only recon (34 agents, no errors) over slice 1 + tier 1 landed 2026-09-18 and
