@@ -275,9 +275,10 @@ is a documented value of the `machine` resource's own `onboardingStatus`; `onboa
 documented `$filter` property on that collection; and the discovered-devices article says "You can
 also use the onboarding status column on API queries to filter out unmanaged devices", which only
 makes sense if unmanaged devices are in the API's results. **That is strong, but it is inference
-from three documents rather than one sentence, so S1's first live task is to prove it against the
-tenant and record the answer in this file.** If it turns out the machines collection returns only
-onboarded devices, the fallback is to source the whole list from the same advanced hunting
+from three documents rather than one sentence, so R1(a) proves it against the live service and
+records the answer in this file before S3 or S4 proceed.** If it turns out the machines
+collection returns only onboarded devices, the fallback is to source the whole list from the same
+advanced hunting
 `DeviceInfo` query that already supplies discovery sources - which changes the permission ask to
 `ThreatHunting.Read.All` being mandatory rather than optional, and would need to go back to the
 owner. This is the single riskiest unknown in the plan.
@@ -516,13 +517,40 @@ The owner asked to "List & Export **all** devices". A single bounded page silent
 as "the first N devices", and a CSV that has been handed on to someone else carries no hint that
 it was cut short. **Paging is therefore in this plan, in S1, not deferred.**
 
-The API facts: `$top` has a maximum of 10,000, maximum page size is 10,000, `$skip` is supported,
-and rate limits are 100 calls per minute and 1,500 per hour.
+The API facts that are documented: `$top` has a maximum of 10,000, maximum page size is 10,000,
+`$skip` is supported, and rate limits are 100 calls per minute and 1,500 per hour.
 
-The algorithm, in S1:
+**The fact that is NOT documented, and that the whole design turns on: whether this endpoint
+emits `@odata.nextLink` at all.** The only mention anywhere on the Defender for Endpoint API pages
+is a Tip on `apis-intro` reading "When more than one query request is required to retrieve all the
+results, **Microsoft Graph** returns an `@odata.nextLink` property in the response" - it names
+Graph, on a Defender page, and links to Graph's paging article. That is not evidence about this
+collection. R1(g) settles it before any multi-page behaviour ships.
 
-1. Request a page of `PageSize` (fixed at 1000 in source - well inside the 10,000 maximum, and
-   small enough that a failure costs little). Server-side filter on `onboardingStatus` as per D1.
+### The completion rule
+
+A run is complete only on a **positive proof of exhaustion**. Absence of evidence is never
+treated as proof, and every ambiguous state takes the same exit as the ceiling: refusal.
+
+- **P1 - single request.** The request asked for `$top = N`, the response returned **fewer than
+  N** rows, and carried no `@odata.nextLink`. Complete.
+- **P2 - cursor chain.** Every continuation was an `@odata.nextLink` followed as an absolute URL,
+  and the final response carried no `@odata.nextLink` and was short in the P1 sense. Complete.
+- **Refuse** when any of these holds: a response returns **exactly** the `$top` it was asked for
+  and carries **no** `@odata.nextLink`; accumulating the next page would exceed `MaxDevices`; or
+  any request in the chain fails. No table, no export button, and a message saying which.
+
+The full-page-without-a-cursor case is the one worth spelling out, because it is the case that
+looks like success: a response holding exactly as many rows as we asked for is indistinguishable
+from a server that capped us. "Exactly N devices exist" and "the first N of more" produce byte-
+identical responses. There is no way to tell them apart, so the module does not guess.
+
+The mechanics:
+
+1. Ask for `$top = min(MaxDevices + 1, 10000)` in one request, with the server-side
+   `onboardingStatus` filter from D1. Asking for one more than the ceiling is what makes the
+   ceiling test decisive in a single round trip: if `MaxDevices + 1` rows come back, more than
+   `MaxDevices` match, and that is a refusal without a second call.
 2. **If the response carries `@odata.nextLink`, follow it as an absolute URL.** The module-local
    client can do this and the shared `GraphTokenClient` cannot: `GraphTokenClient` prepends its
    base URL to whatever path it is handed (`GraphTokenClient.cs:35`), so concatenating an absolute
@@ -531,25 +559,51 @@ The algorithm, in S1:
    this client is module-local, the fix is available here without touching shared code:
    `GetWithStatusAsync` accepts either a relative path or an absolute URL, and a test asserts an
    absolute URL is sent unmodified.
-3. If no `@odata.nextLink` is returned, fall back to `$skip` paging until a short page arrives.
-   **`$skip` paging is order-dependent and the machines collection documents no `$orderby`
-   support**, so pages can in principle overlap or gap. Both paths therefore de-duplicate on
-   device `id` while accumulating, and the count reported is the distinct count. The dedupe is not
-   belt-and-braces: it is the only thing making the `$skip` fallback trustworthy.
-4. Stop when the pages run out - **or** when `MaxDevices` (config, default 20000) would be
-   exceeded, which is the interesting case.
+3. Accumulate, **de-duplicating on device `id`**. This is cheap insurance against a duplicate row
+   inside a cursor chain. **It is explicitly NOT a completeness argument** - see below.
+4. Stop on P1, P2, or a refusal condition. Never on "the page looked short enough".
 
-**When the ceiling is hit, the listing FAILS. It does not truncate.** The page renders no table
-and no export button, and says in words: more devices match than the configured maximum of N, so
-the report would be incomplete; raise Maximum Devices in Module Config, or narrow the filters.
-That is the loud outcome. A partial CSV that looks complete is the one result this module must
-never produce, and `.agents/repo-guidance.md` Known Failure Class 2 - never report blanket
-success over an incomplete run - is the rule it would break.
+### Why `$skip` is not used - rejected alternative, with the argument
+
+Revision 1 had a `$skip` fallback for the case where no `@odata.nextLink` comes back, and argued
+that de-duplicating on `id` made it trustworthy. **That argument is wrong, and it is written out
+here rather than deleted so the next person to reach for `$skip` hits the reasoning instead of a
+silence:**
+
+- **De-duplication removes overlaps. It cannot detect a gap.** The two failures are not
+  symmetrical. If the window moves between requests so that pages overlap, the duplicate `id`s are
+  visible and dropping them is correct. If the window moves the other way, the skipped devices
+  leave no trace anywhere in the accumulated set - there is nothing to compare against, no
+  sequence number, no gap in a key. The loop's own data cannot distinguish "these are all of
+  them" from "these are the ones I happened to see".
+- **A short page is exactly what a moved window produces.** So "page until a short page arrives"
+  terminates identically on a complete collection and on a truncated one. The old step 3 used
+  that as its stopping condition, which means the fallback path could accumulate a subset, declare
+  the run complete, and hand S2 and S3 a list to render and export - the precise silent truncation
+  the rest of this section promises cannot happen.
+- **`$skip` is order-dependent and the machines collection documents no `$orderby` support.** With
+  no stable order there is no stable window, and nothing in the documentation says otherwise.
+
+`$skip` therefore stays out of the design. Reintroducing it needs **a cited source that `$skip`
+paging is stable for this endpoint** - not an argument from de-duplication, which is the argument
+that was already tried and does not hold.
+
+### When the ceiling is hit, the listing FAILS - it does not truncate
+
+The page renders no table and no export button, and says in words: more devices match than the
+configured maximum of N, so the report would be incomplete; raise Maximum Devices in Module
+Config, or narrow the filters. That is the loud outcome. A partial CSV that looks complete is the
+one result this module must never produce, and `.agents/repo-guidance.md` Known Failure Class 2 -
+never report blanket success over an incomplete run - is the rule it would break.
 
 The ceiling exists at all for two reasons that are about the API and not about any particular
-deployment: the endpoint allows 100 calls per minute, and an unbounded loop against a paged API
-is how a read module becomes an outage. At `PageSize` 1000 the default ceiling is 20 requests.
-Whether refusal or a clearly-marked partial is the right behaviour at the ceiling is Q5.
+deployment: the endpoint allows 100 calls per minute, and an unbounded loop against a paged API is
+how a read module becomes an outage. The request count follows from the page size rather than
+from a number written here: at `$top = min(MaxDevices + 1, 10000)` the default ceiling of 20000
+costs **one** request when the endpoint emits no cursor, and at most `ceil(MaxDevices / pageSize)`
+when it does, where `pageSize` is whatever the service actually returns per page - which R1(g)
+observes rather than this file asserting. Whether refusal or a clearly-marked partial is the right
+behaviour at the ceiling is Q5.
 
 Separately, and unchanged: a **`404`** from the first page is the documented empty result, not a
 failure (T5).
@@ -587,17 +641,19 @@ Three separate hazards in one line of query string:
 2. **Property-name casing is inconsistent in Microsoft's own documentation.** The machine resource
    table spells the property `onboardingstatus`; the filterable-properties list spells it
    `onboardingStatus`; the OData samples page spells other properties `ComputerDnsName`,
-   `OsPlatform`, `HealthStatus` with leading capitals. S1 verifies the JSON property name the
-   service actually returns and the casing the filter actually accepts, and records both here.
-   The deserializer is configured case-insensitively regardless.
+   `OsPlatform`, `HealthStatus` with leading capitals. **R1(b)** verifies the JSON property name
+   the service actually returns and the casing the filter actually accepts, and records both here.
+   The deserializer is configured case-insensitively regardless, so S1 can be written and tested
+   against stubs before that answer exists.
 3. **"All Windows devices" has no single filter value.** `osPlatform` carries `Windows10`,
    `Windows11` and the server variants as separate values, so `osPlatform eq 'Windows'` matches
    nothing. The module filters `onboardingStatus` server-side and applies the Windows test
    client-side as an ordinal case-insensitive `StartsWith("Windows")`, with the rule stated on the
    page and a "Windows only" toggle the operator can clear. `startswith(osPlatform,'Windows')`
    might work server-side - `startswith` is documented for `computerDnsName` - but it is not
-   documented for `osPlatform` and this plan does not assume it. S1 tests it live and, if it
-   works, this section gets revised rather than the code getting clever.
+   documented for `osPlatform` and this plan does not assume it. **R1(d)** tests it against the
+   live service and, if it works, this section gets revised rather than the code getting clever.
+   S1 ships the client-side rule, which is correct either way.
 
 ### T7 - the hunting query is a second, failable call and must fail visibly and narrowly
 
@@ -663,19 +719,32 @@ drawn on compilation order, not on conceptual grouping.
   `ServiceHealthService.GetGraphClientAsync()` (`ServiceHealthService.cs:50-71`) but reading
   `DefenderEndpointDevices` / `GraphDelineaSecretId` and never another module's config;
   `IsAvailable`; `ListDevicesAsync(filters)`. 404 on the first page handled per T5, other
-  non-success per T7's reporting rule, **full paging with de-duplication and the `MaxDevices`
+  non-success per T7's reporting rule, and the **P1/P2 completion rule with the `MaxDevices`
   refusal per T3**.
-- Paging tests are the load-bearing ones in this slice: two pages joined by `@odata.nextLink`
-  (asserting the absolute URL is sent unmodified); the `$skip` fallback when no `nextLink` is
-  returned; an overlapping page proving the `id` de-duplication; and the ceiling case, which must
-  return a **refusal**, not a short list. Reverting the refusal to a truncation must fail a test
-  by name.
+- **Every test in S1 runs against a stub `HttpMessageHandler`. S1 makes no live call** - the
+  client, the response parser and the query builder are all exercised against canned responses,
+  and the live questions belong to R1.
+- Paging tests are the load-bearing ones in this slice:
+  - a cursor chain - two pages joined by `@odata.nextLink`, the second short and cursor-free -
+    completes, and the absolute URL is asserted to be sent unmodified;
+  - a single short cursor-free page completes (P1);
+  - a duplicate row spanning two pages is de-duplicated on `id`;
+  - a chain that would exceed `MaxDevices` **refuses**;
+  - **the guard test: a full page - exactly the `$top` that was asked for - carrying no
+    `@odata.nextLink` must produce a refusal, not a list.**
+- **Why that guard is not vacuous, which is the part worth keeping.** Against the committed
+  design (`b12a7b1`), that same stubbed response falls into the old step 3's `$skip` fallback,
+  pages until something short comes back, and renders a list - so the test **fails on the design
+  this revision replaces** and passes only after it. It is the executable form of the gapped-
+  `$skip` scenario the reviewer asked for: once `$skip` is gone that scenario is unreachable, and
+  a full page with no cursor is the state that would otherwise let an unprovable result through.
 - `Program.cs`: `AddSingleton<DefenderEndpointDeviceService>()` beside the other module services,
   plus the named `HttpClient` the module needs. Additive registration for one module; it is part
   of adding a module and does not make this a shared-infrastructure change.
 - Tests with a **slice-local** stub `HttpMessageHandler`. Do not reference
   `GraphTokenClientTests.StubHandler` - it is `private sealed` and unreachable from another test
   class.
+
 Nothing user-reachable ships in S1: no catalog entry, so no route and no page.
 
 **S1 performs no live call, and cannot.** This was wrong in Revision 0, which put the live
@@ -731,6 +800,28 @@ config page. Its answers are recorded **in this file** before S3 starts.
   rather than truncates, so the failure mode is visible rather than silent - this is verifying an
   environment fact, which `.agents/repo-guidance.md` invariant 7 requires, not resting a design
   on an assumed one.
+- **(g) The paging contract. This is the decisive one and it has a designed experiment, because
+  no Learn page states the answer (T3).** Issue `GET /api/machines?$top=1` with a filter known to
+  match more than one device, and record two things: (i) does the response carry
+  `@odata.nextLink`, and (ii) does following that link return a *different* device?
+
+  Both branches are decided in advance, so R1(g) records a fact and does not reopen a design
+  argument:
+
+  - **Cursor present and it advances** - the endpoint supports cursor paging. P2 applies,
+    multi-page runs ship, and the observed per-page row count is recorded here so the request
+    budget in T3 can be computed rather than guessed.
+  - **No cursor** - the endpoint has no continuation token. The module stays **single-request**,
+    asking for `$top = min(MaxDevices + 1, 10000)`, completing on P1 and refusing on a full page
+    exactly as T3 says. `MaxDevices` above 10,000 then cannot be satisfied and the refusal message
+    says so. This file is revised to state that the endpoint emits no cursor, so the next reader
+    does not re-litigate it.
+
+  **No multi-page behaviour ships that R1(g) has not observed.** Following a cursor that has never
+  been seen to exist is speculative code on a read path that must not silently under-report, and
+  the single-request branch is correct-but-limited rather than wrong. If R1(g) cannot be run - no
+  tenant has more than one matching device, say - that is recorded as "not established" and the
+  single-request branch ships, because the ambiguous case refuses anyway.
 
 ### S3 - CSV export (starts after R1's answers are recorded)
 
@@ -785,8 +876,8 @@ No PowerShell changes are planned, so PSScriptAnalyzer and Pester are not expect
 if a slice does touch a `.ps1`, both run.
 
 **Non-vacuity, per the repo standard.** For each of: the 404-is-empty mapping (T5), the
-`MaxDevices` refusal and the paging de-duplication (T3), the token scope literal (T2), and the
-three distinct enrichment-failure reasons (T7) - revert the
+`MaxDevices` refusal and the full-page-without-a-cursor refusal (T3), the token scope literal
+(T2), and the three distinct enrichment-failure reasons (T7) - revert the
 behaviour, confirm the specific test fails by name, restore, confirm green. Confirm the revert
 actually landed on disk before trusting the verdict, and **touch the file after restoring**: a
 `Copy-Item` restore carries the backup's timestamp and MSBuild will happily keep testing the
@@ -882,13 +973,13 @@ Listed separately so none of them is mistaken for a citation.
    The module does not depend on it - the hunting query filters nothing on onboarding status and
    merges by `DeviceId` - which is a deliberate way of not betting on an unverified literal.
 2. **`GET /api/machines` returns `CanBeOnboarded` devices.** Inferred from three documents (see
-   "The 'Can be onboarded' state"); no single Learn sentence says it outright. S1 proves it. The
-   fallback if it is false changes the permission ask, so it goes back to the owner rather than
-   being absorbed.
+   "The 'Can be onboarded' state"); no single Learn sentence says it outright. **R1(a)** proves
+   it. The fallback if it is false changes the permission ask, so it goes back to the owner rather
+   than being absorbed.
 3. **`ipAddresses` is present on list responses.** The OData samples page shows it on machine list
    responses; the List machines and Get machine by ID reference pages both omit it from their own
-   examples. Assumed present; verified in S1. If it is not, `MacAddresses` and `IpAddresses` leave
-   the CSV and only `lastIpAddress` survives.
+   examples. Assumed present; verified by **R1(e)**, before S3 writes the CSV. If it is not,
+   `MacAddresses` and `IpAddresses` leave the CSV and only `lastIpAddress` survives.
 4. **`LoggedOnUsers` is empty for non-onboarded devices.** Reasoning, not documentation: there is
    no sensor on such a device. The column is not in the CSV, so nothing breaks if the reasoning is
    wrong.
@@ -896,13 +987,20 @@ Listed separately so none of them is mistaken for a citation.
    itself is verified from the Graph reference and the migration table; the exact string the
    consent screen shows was not read from a Learn page. **Grant by permission name, not by display
    string.**
-6. **`startswith` on `osPlatform`** is not documented. Treated as unknown and tested live (T6).
+6. **`startswith` on `osPlatform`** is not documented. Treated as unknown; **R1(d)** tests it
+   against the live service, and S1 ships the client-side rule that is correct either way (T6).
 7. **Rate limits are per tenant, not per application.** Assumed. At `PageSize` 1000 a default-
    ceiling run costs 20 requests against a 100-per-minute limit, so there is headroom either way;
    it would matter if this ever polls or if two operators refresh together.
-8. **The machines collection does not support `$orderby`.** Not documented either way; treated as
-   unsupported, which is why the `$skip` fallback de-duplicates on `id` rather than trusting page
-   boundaries (T3).
+8. **The paging contract.** Whether `GET /api/machines` emits `@odata.nextLink` is **not
+   documented** - the only mention on the Defender API pages names Microsoft Graph, not this
+   collection (T3). Nothing is assumed: R1(g) probes it with `$top=1` and both branches are
+   pre-decided. The one inference the design does rest on is that **the service honours `$top`
+   and returns fewer rows than asked for only when the collection is exhausted** (rule P1). That
+   cannot be proven from the documentation either, which is precisely why a **full** page with no
+   cursor refuses instead of completing: the ambiguous case is routed away from the inference
+   rather than through it. `$orderby` is likewise undocumented on this collection, which is one of
+   the three reasons `$skip` is not used at all (T3).
 
 ## Open questions for the owner
 
@@ -1036,3 +1134,88 @@ has a documented default and a conservative fallback.
 permission ask, the `CanBeOnboarded` literal, the field mapping and what is not obtainable, and
 all six open questions except Q5's wording. No source file was touched; this plan file is still
 the only artifact.
+
+## Revision 2 - codex round 2, 2026-09-18
+
+Same reviewer and configuration. Verdict on Revision 1: **unsound**, two findings. Both were
+re-verified against this file before being acted on; both were confirmed exactly as described,
+and both are closed here. Revision 1's record above is left intact - it is the history of what
+round 1 changed, and round 2 upheld two of its conclusions.
+
+**Carried forward from round 1, independently confirmed by round 2:** finding 1 is closed
+(`PostAsync` collapses non-success to null; `ExtractGraphError` is `internal static` and reachable
+without editing that file; the module-only version call is sound **provided
+`Services/GraphTokenClient.cs` is not touched**). Finding 3's validator reasoning is confirmed -
+`validate-module-package.ps1` accumulates `CAT002`, `PAGE001` and `PAGE009` through `Add-Issue`
+and exits non-zero, so the config-only-descriptor alternative really was closed. **And the
+invariant-7 rebuttal recorded in Revision 1 was upheld:** asking about or verifying an unavoidable
+environment fact is permitted; resting a safety argument on this deployment's shape is not. That
+reasoning stays in this file deliberately.
+
+### Finding A (HIGH) - the `$skip` fallback could still export a silently partial list. ACCEPTED
+
+Finding 2 was closed on the main path only. Revision 1's T3 step 3 read "If no `@odata.nextLink`
+is returned, fall back to `$skip` paging until a short page arrives", conceded that pages "can in
+principle overlap or gap", and then concluded that de-duplicating on `id` was "the only thing
+making the `$skip` fallback trustworthy". **That conclusion does not follow, and the sentence was
+wrong.** The corrected reasoning is now written into T3 under "Why `$skip` is not used" rather
+than quietly deleted, because the next person to reach for `$skip` needs to meet the argument:
+
+- de-duplication removes overlaps and **cannot detect a gap** - skipped devices leave no trace in
+  the accumulated set, so the loop's own data cannot tell "all of them" from "the ones I saw";
+- **a short page is exactly what a moved window produces**, so "page until a short page arrives"
+  terminates identically on a complete collection and a truncated one;
+- `$skip` is order-dependent and this collection documents no `$orderby`.
+
+**Changed:** `$skip` is removed from the design entirely and recorded as a named rejected
+alternative; reintroducing it requires a cited source that `$skip` paging is stable for this
+endpoint, not an argument from de-duplication. De-duplication is demoted to cheap insurance
+against a duplicate row inside a cursor chain and is explicitly labelled **not a completeness
+argument**. The request-count sentence now derives from the page size instead of restating a
+stale "20 requests". A guard test was added to S1 - a full page carrying no `@odata.nextLink` must
+refuse - together with the note proving it bites: against the committed design (`b12a7b1`) that
+same stubbed response falls into the `$skip` fallback and renders a list, so the test fails before
+this change and passes after. It is the executable equivalent of the gapped-`$skip` scenario the
+reviewer asked for, which becomes unreachable once `$skip` is gone.
+
+**The completion rule, in full, so it does not have to be reconstructed:** a run is complete only
+on a positive proof of exhaustion, and absence of evidence is never proof.
+
+- **P1 - single request.** Asked for `$top = N`, fewer than N rows returned, no
+  `@odata.nextLink`. Complete.
+- **P2 - cursor chain.** Every continuation followed an `@odata.nextLink` as an absolute URL, and
+  the final response carried none and was short in the P1 sense. Complete.
+- **Refuse** when a response returns exactly the `$top` it asked for and carries no
+  `@odata.nextLink`; when the next page would exceed `MaxDevices`; or when any request in the
+  chain fails. No table, no export button.
+
+A full page with no cursor is byte-identical whether exactly N devices exist or the server capped
+us, so the module refuses rather than guessing. That is why it cannot silently under-report: the
+only route to a rendered table is a proof, and every ambiguous state exits through the same
+refusal the ceiling already uses.
+
+One dependency this exposed and did not paper over: **whether this endpoint emits
+`@odata.nextLink` at all is undocumented** - the only mention on the Defender API pages names
+Microsoft Graph. So **R1(g)** was added: probe `$top=1` against a filter matching more than one
+device, with both branches pre-decided (cursor present, P2 applies and multi-page ships; cursor
+absent, single-request at `$top = min(MaxDevices + 1, 10000)` with the full-page refusal, and this
+file revised to say so). No multi-page behaviour ships that R1(g) has not observed. Assumption 8
+was rewritten from the old `$orderby` note to state the paging contract and the one inference P1
+rests on.
+
+### Finding B (MEDIUM) - stale references to the pre-R1 slice order. ACCEPTED
+
+Revision 1 created the R1 gate but left five sentences still assigning live proof to S1 - Known
+Failure Class 4, and two rounds of edits is how it got in. All five are repointed: the
+endpoint-coverage proof to R1(a), the JSON/filter casing to R1(b), server-side `startswith` to
+R1(d), and `ipAddresses` to R1(e), in both the body and the Assumptions list. A sixth was found
+on the sweep the reviewer asked for and fixed too - Assumption 6 said `startswith` was "tested
+live" without naming the gate. S1 now states positively that **every one of its tests runs against
+a stub and it makes no live call**, and a missing blank line that ran a paragraph into a bullet
+list was repaired.
+
+**Unchanged by this revision:** `Status: Draft`, the API recommendation, the permission ask and
+the least-privilege analysis, the `CanBeOnboarded` literal, the field mapping, the descriptor, and
+all six open questions. The versioning call is unaffected - nothing here touches a shared file -
+so module `1.0.0` with no base app version bump still stands. No source file was touched; this
+plan file is still the only artifact.
