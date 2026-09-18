@@ -21,7 +21,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 - **Service Health now shows its spinner on the first load; only the manual checks remain.**
   `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented and owns the acceptance checklist.
-  Landed 2026-09-18; ServiceHealth module version 1.3.2, no base app bump. Queue item 7.
+  Landed 2026-09-18 in `d1ed96e`; ServiceHealth module version 1.3.2, no base app bump.
+  Queue item 7.
   **The complaint was never "there is no spinner"** - the page already had three, and they
   were all correct. Root cause: the page prerenders (`Program.cs:374`, no `prerender: false`
   anywhere in the app), prerendering emits no HTML until `OnInitializedAsync` completes, and
