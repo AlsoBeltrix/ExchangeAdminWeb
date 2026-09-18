@@ -13,13 +13,11 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   review findings; the owner has since added items 8 and 9. The button gate is closed out - the owner accepted it on 2026-09-18 ("seems to
   work well enough") and added the app-wide audit to their own queue themselves, so do not
   re-raise it here as an open item.
-  Work is local and unpushed - git owns the count, so ask it
-  (`git rev-list --count 523b69d..HEAD`) rather than trusting a number written here; both
-  remotes sat at `523b69d`, verified
-  with `git ls-remote` on 2026-09-17. **Do not push, and do not treat the remote lag as
-  drift.** Note for the next agent: `origin` (LAN gitea) was unreachable on 2026-09-18 -
-  `SEC_E_CERT_EXPIRED`, its TLS certificate has expired - so only `github` could be checked.
-  That is a host condition, not repo drift.
+  **Both remotes are level with local at `3e19aef`**, verified with `git ls-remote` on
+  2026-09-18; `origin` (LAN gitea) was reachable on that check, so the `SEC_E_CERT_EXPIRED`
+  TLS failure seen earlier the same day was transient. This supersedes the earlier
+  "local and unpushed, both remotes at `523b69d`" note. Re-verify with `git ls-remote` rather
+  than trusting this line; push policy is unchanged (`.agents/push-policy.md`).
 
 - **Service Health now shows its spinner on the first load. Closed, nothing outstanding.**
   `docs/ServiceHealthLoadFeedback-Plan.md` is Implemented. The owner deployed to dev, ran its
@@ -200,7 +198,28 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Next agreed item: queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
+- **Queue 9's audit is done; the plan awaits an owner scope decision. No code has changed.**
+  `docs/ClickGatingAudit-Plan.md` is Draft and owns the findings, tiering, effort estimate and
+  acceptance checklist. Headline: 273 clickable buttons across 33 pages, **205 across 30 pages
+  not gated against concurrent work**, and only 3 pages have any page-level busy predicate
+  (Migration's `IsBusy`, done; `IntuneDevices` and `RiskyUsers` have `ActionsDisabled`, both
+  incomplete). Estimate 16-22 agent sessions plus 4 owner dev-deploy passes for all four tiers,
+  or 7-10 sessions for the scanner, the two prerequisite fixes and tier 1 (every page that can
+  execute a destructive write). **The one open decision is how much of that to approve** - the
+  plan recommends slice 0 + slice 1 + tier 1 now, then re-deciding once the shared test harness
+  makes per-page cost measurable instead of estimated.
+  **Two live stuck-flag defects were found and confirmed by reading the source, independent of
+  the sweep:** `BlockedSenders.razor:278` (`isLoading` raised, cleared only post-await at :305,
+  :336, :406, never in a `finally`; the exposure is the uncaught `AuthorizeAsync` at :290-291,
+  since the service and notification calls are individually caught) and
+  `MessageTrace.razor:976` (`detailLoading`, same shape). These are prerequisites: widening a
+  flag that can stick into a page-wide gate turns a dead button into a dead page.
+  The audit scanner is **not yet in the repo** - it lives only in a temp file, so its algorithm
+  is written into the plan and committing it as `tools/Get-ClickGateAudit.ps1` with Pester
+  coverage is slice 0. Known false positives are disclosed there too. Nothing here reaches the
+  rendered page; no bUnit harness exists.
+
+- **Superseded by the entry above: next agreed item was queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
   owner closed item 7 and said "pick next item from the updated list"; they did not name one,
   so this is the working agent's pick and the owner may override it. Reasons it was chosen
   over 8, 4, 5, 6 and 2: the rule is already settled and written down, the Migration work is
@@ -208,9 +227,9 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   an audit and an effort estimate rather than code - so it sizes the rest of the queue. Item 8
   is the bigger prize but opens on a blocker only the owner can clear (a new app registration),
   so surface its permissions ask early if 9 stalls. Item 2 stays blocked on a decision.
-  First action for the next session: read `docs/MigrationButtonGating-Plan.md` and the
-  2026-09-17 decision, then audit `Components/Pages/` for the same defect class. **Produce the
-  audit and a `docs/<Feature>-Plan.md` with effort - do not start fixing.**
+  That audit is now delivered as `docs/ClickGatingAudit-Plan.md`; the paragraph above is kept
+  only for the reasoning behind picking 9 over 8, 4, 5, 6 and 2. **First action for the next
+  session: wait for the owner's scope answer on that plan. Do not start fixing.**
 
 - **Owner-reported issues, raised 2026-09-15. Issues 1, 3 and 7 are closed; 2 is not started.**
   1. *Licensing Updates sat in the wrong nav category.* Landed 2026-09-15 as `7d4b976`: it is
@@ -252,6 +271,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
      plan with an effort estimate, **not** a code sweep. The rule it applies is already
      recorded: `.agents/decisions.md` 2026-09-17, "a control is clickable only when its click
      will definitively execute". `docs/MigrationButtonGating-Plan.md` is the worked precedent.
+     **The audit and estimate are delivered** (2026-09-18, `docs/ClickGatingAudit-Plan.md`,
+     Draft); the item stays open pending the owner's answer on how much of it to approve.
 
 - **Manual validation is outstanding operational work.** Start with
   `docs/DevValidation-2.3.34.md`: Admin Settings access, protected-user alias refusal and the
