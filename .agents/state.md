@@ -198,16 +198,24 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Queue 9's audit is done; the plan awaits an owner scope decision. No code has changed.**
-  `docs/ClickGatingAudit-Plan.md` is Draft and owns the findings, tiering, effort estimate and
-  acceptance checklist. Headline: 273 clickable buttons across 33 pages, **205 across 30 pages
-  not gated against concurrent work**, and only 3 pages have any page-level busy predicate
-  (Migration's `IsBusy`, done; `IntuneDevices` and `RiskyUsers` have `ActionsDisabled`, both
-  incomplete). Estimate 16-22 agent sessions plus 4 owner dev-deploy passes for all four tiers,
-  or 7-10 sessions for the scanner, the two prerequisite fixes and tier 1 (every page that can
-  execute a destructive write). **The one open decision is how much of that to approve** - the
-  plan recommends slice 0 + slice 1 + tier 1 now, then re-deciding once the shared test harness
-  makes per-page cost measurable instead of estimated.
+- **Queue 9's click-gating sweep is APPROVED IN PART and in progress.**
+  `docs/ClickGatingAudit-Plan.md` owns the findings, tiering, effort estimate and acceptance
+  checklist. **Owner approved 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and
+  shared test harness, the two prerequisite stuck-flag fixes, and the nine pages that can execute
+  a destructive AD/Exchange/Graph write. **Tiers 2, 3 and 4 are NOT approved**; they are
+  re-decided once the shared harness makes the per-page cost a measurement rather than an
+  estimate. Do not exceed that scope.
+  Audit headline: 273 clickable buttons across 33 pages, **205 across 30 pages not gated against
+  concurrent work**, and only 3 pages have any page-level busy predicate (Migration's `IsBusy`,
+  done; `IntuneDevices` and `RiskyUsers` have `ActionsDisabled`, both incomplete).
+  Progress: slice 0 part A landed - `tools/Get-ClickGateAudit.ps1` with 14 Pester tests in
+  `tests/ps/ClickGateAudit.Tests.ps1`. The tool reproduces the plan's published totals exactly
+  and is calibrated against Migration (8 flags, `IsBusy`, exemptions at 223/442/784/836, anchors
+  at 30/33/36). Part B - the shared tripwire suite and its exemption registry - is next;
+  `ExchangeAdminWeb.Tests/ClickGateSource.cs` is written and compiles but is not yet committed,
+  because the registry shape is still being fitted to the 11 per-page reconnaissance reports.
+  **The owner also enabled ultracode for that session**, which supersedes the Token Budget rule
+  against orchestrating subagents for the duration; recon ran as a read-only workflow.
   **Two live stuck-flag defects were found and confirmed by reading the source, independent of
   the sweep:** `BlockedSenders.razor:278` (`isLoading` raised, cleared only post-await at :305,
   :336, :406, never in a `finally`; the exposure is the uncaught `AuthorizeAsync` at :290-291,

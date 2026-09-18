@@ -1,6 +1,12 @@
 # App-wide click gating: audit and remediation plan
 
-Status: Draft, awaiting owner approval. Queue item 9. Drafted 2026-09-18 against `3e19aef`.
+Status: **Approved in part, in progress.** Queue item 9. Drafted 2026-09-18 against `3e19aef`.
+
+**Approved scope, owner 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and shared
+test harness, the two prerequisite stuck-flag fixes, and the nine pages that can execute a
+destructive AD/Exchange/Graph write. Tiers 2, 3 and 4 are **not** approved; they are re-decided
+once the shared harness makes the per-page cost a measurement rather than the estimate below.
+Implementation must not exceed that scope.
 
 This document is the deliverable the owner asked for: an audit of the whole app for the
 defect class fixed on Mailbox Migrations, plus a plan and an effort estimate. **It contains
