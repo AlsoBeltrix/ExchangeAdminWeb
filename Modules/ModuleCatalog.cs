@@ -325,7 +325,7 @@ public sealed class ModuleCatalog
             // 1.1.0: unblock now gates the TARGET through the protected-principal check. The module
             // previously re-checked only the operator, so a protected principal could be unblocked.
             // 1.4.0: CSV export of the blocked-sender list (docs/ModuleCsvExport-Plan.md).
-            Version = "1.4.0",
+            Version = "1.4.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

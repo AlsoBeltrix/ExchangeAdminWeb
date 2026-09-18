@@ -283,62 +283,106 @@
         var ticket = ticketNumber.Trim();
         var unblockReason = reason.Trim();
 
-        // Re-check authorization immediately before the write: a user removed from the
-        // section group (or whose module was disabled) mid-session must not keep mutating.
-        // The unblock write requires the granular BlockedSendersUnblock policy; viewing
-        // the list only requires the main BlockedSenders policy.
-        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-        var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "BlockedSendersUnblock");
-        if (!authCheck.Succeeded)
-        {
-            try
-            {
-                Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
-                    "BlockedSenders", address, success: false, ticketNumber: ticket,
-                    errorDetail: "Authorization denied (BlockedSendersUnblock).");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Failed to write audit for denied unblock of {Address}", address);
-            }
-            result = PermissionResult.Fail("Authorization denied. You do not have permission to unblock senders.");
-            isLoading = false;
-            return;
-        }
-
-        // Protected-principal gate. Unblocking changes a principal's mail-flow state, so it is a
-        // mutating operation on a target and must be gated like every other one - this module was
-        // missing it entirely, which the authorization re-check above does NOT cover: that checks
-        // the OPERATOR, this checks the TARGET.
+        // Everything from here to the opening of the operation scope runs inside one catch. The
+        // authorization round trip, the protection gate and BeginOperation can all throw, and an
+        // exception escaping a Blazor Server event handler is not recoverable here: there is no
+        // ErrorBoundary anywhere in this app (verified across Components/, Services/ and
+        // Program.cs - docs/ClickGatingAudit-Plan.md Revision 1, falsification 1), so the throw
+        // tears the circuit down and the operator loses the whole page, not just this button.
         //
-        // A dedicated gate, NOT PermissionValidator.ValidateTargetMailboxAsync: that helper skips
-        // Exchange resolution when the protection config holds only address-form user rows, which
-        // would let an alias-addressed protected principal through, and it denies every
-        // unresolvable address - wrong here, where external and decommissioned senders are exactly
-        // what needs clearing. See BlockedSenderProtectionGate for the full reasoning.
-        // authState was resolved just above for the authorization re-check; reuse it rather than
-        // letting the gate reach for ambient state.
-        var gate = await ProtectionGate.EvaluateAsync(address, authState.User);
-        var protectedError = gate.Reason;
-        if (gate.Denied)
+        // A catch, deliberately NOT a try/finally wrapped round the method. Two reasons, and the
+        // second is the load-bearing one:
+        //  * a finally cannot rescue a torn-down circuit - it lowers a flag on a page that is
+        //    already gone - whereas a catch keeps the circuit alive and shows the operator why
+        //    nothing happened;
+        //  * the isLoading = false at the end of this method must keep running BEFORE the
+        //    LoadBlockedSenders refresh below. A finally moves it after, and once that refresh
+        //    consults a page-level busy predicate (the click-gating sweep,
+        //    docs/ClickGatingAudit-Plan.md) it would silently no-op, leaving the sender that was
+        //    just unblocked still on screen. ConfirmUnblock_LowersIsLoadingBeforeTheRefresh pins
+        //    that ordering.
+        BlockedSenderGateDecision gate;
+        OperationTraceService.OperationScope scope;
+        try
         {
+            // Re-check authorization immediately before the write: a user removed from the
+            // section group (or whose module was disabled) mid-session must not keep mutating.
+            // The unblock write requires the granular BlockedSendersUnblock policy; viewing
+            // the list only requires the main BlockedSenders policy.
+            var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var authCheck = await AuthorizationService.AuthorizeAsync(authState.User, "BlockedSendersUnblock");
+            if (!authCheck.Succeeded)
+            {
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
+                        "BlockedSenders", address, success: false, ticketNumber: ticket,
+                        errorDetail: "Authorization denied (BlockedSendersUnblock).");
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit for denied unblock of {Address}", address);
+                }
+                result = PermissionResult.Fail("Authorization denied. You do not have permission to unblock senders.");
+                isLoading = false;
+                return;
+            }
+
+            // Protected-principal gate. Unblocking changes a principal's mail-flow state, so it is a
+            // mutating operation on a target and must be gated like every other one - this module was
+            // missing it entirely, which the authorization re-check above does NOT cover: that checks
+            // the OPERATOR, this checks the TARGET.
+            //
+            // A dedicated gate, NOT PermissionValidator.ValidateTargetMailboxAsync: that helper skips
+            // Exchange resolution when the protection config holds only address-form user rows, which
+            // would let an alias-addressed protected principal through, and it denies every
+            // unresolvable address - wrong here, where external and decommissioned senders are exactly
+            // what needs clearing. See BlockedSenderProtectionGate for the full reasoning.
+            // authState was resolved just above for the authorization re-check; reuse it rather than
+            // letting the gate reach for ambient state.
+            gate = await ProtectionGate.EvaluateAsync(address, authState.User);
+            if (gate.Denied)
+            {
+                var protectedError = gate.Reason;
+                try
+                {
+                    Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
+                        "BlockedSenders", address, success: false, ticketNumber: ticket,
+                        errorDetail: gate.AuditDetail ?? protectedError);
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to write audit for protected-principal denied unblock of {Address}", address);
+                }
+                result = PermissionResult.Fail(protectedError ?? "Access denied.");
+                isLoading = false;
+                return;
+            }
+
+            scope = OperationTrace.BeginOperation("BlockedSenders", "UnblockSender",
+                currentUser, clientIpAddress, target: address, ticket: ticket);
+        }
+        catch (Exception ex)
+        {
+            // Fail closed. Nothing has been written at this point, so a preflight that could not
+            // complete refuses the unblock rather than guessing at its answer - the operator is
+            // told why, and the page stays alive and usable.
+            Logger.LogError(ex, "Unblock preflight failed for {Address}", address);
             try
             {
                 Audit.LogModuleAction(currentUser, clientIpAddress, "UnblockSender_Denied",
                     "BlockedSenders", address, success: false, ticketNumber: ticket,
-                    errorDetail: gate.AuditDetail ?? protectedError);
+                    errorDetail: $"Preflight failed before the write: {ex.Message}");
             }
-            catch (Exception ex)
+            catch (Exception auditEx)
             {
-                Logger.LogWarning(ex, "Failed to write audit for protected-principal denied unblock of {Address}", address);
+                Logger.LogWarning(auditEx, "Failed to write audit for failed unblock preflight of {Address}", address);
             }
-            result = PermissionResult.Fail(protectedError ?? "Access denied.");
+            result = PermissionResult.Fail(
+                $"Could not verify whether {address} may be unblocked, so nothing was changed: {ex.Message}");
             isLoading = false;
             return;
         }
-
-        var scope = OperationTrace.BeginOperation("BlockedSenders", "UnblockSender",
-            currentUser, clientIpAddress, target: address, ticket: ticket);
 
         PermissionResult opResult;
         try

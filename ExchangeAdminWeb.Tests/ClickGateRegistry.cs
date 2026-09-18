@@ -53,7 +53,8 @@ public static class ClickGateRegistry
             ["SelfServiceGroups.razor"] = "tier 1, page 9 of 9; needs view-scoped predicates",
 
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
-            ["BlockedSenders.razor"] = "slice 1 prerequisite: ConfirmUnblock needs a catch before it can be gated",
+            ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
+                + "preflight now fails closed in a catch, guarded by ClickGateStuckFlagTests",
             ["MessageTrace.razor"] = "slice 1 prerequisite: ToggleDetail lowers detailLoading inside an if",
 
             // Tiers 2-4: audited, NOT approved for conversion. Do not convert without an owner go.

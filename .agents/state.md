@@ -219,20 +219,22 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
   against orchestrating subagents for its duration; recon ran as a read-only workflow.
 
-- **Next: slice 1, the two prerequisite fixes. Do NOT use the obvious try/finally - the recon
-  proved it breaks both pages.** Details, all verified against source:
-  - **`BlockedSenders.razor` `ConfirmUnblock`.** `isLoading` raised at 278; lowered at 305, 336,
-    406 as straight-line statements. The method has five trys (294, 325, 344, 359, 389) and the
-    awaits at **290, 291, 321** plus `BeginOperation` at **340** sit outside all of them. The
-    remedy is **a catch converting the throw into a `PermissionResult.Fail`, mirroring 351-356**,
-    not a finally - with no `ErrorBoundary` in the app a throw kills the circuit and a finally
-    changes nothing. **Load-bearing and invisible: 406 must keep running BEFORE the
-    `LoadBlockedSenders` call at 413.** Wrapping 278-414 in try/finally moves the lowering after
-    the refresh, and a busy guard in that callee then silently no-ops it, leaving the just-
-    unblocked sender on screen. Also note `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180
-    while `isLoading` is ALREADY true from 170, so a guard in `LoadBlockedSenders` kills the
-    initial load outright - `loadStarted` is latched at 179 and never retries.
-  - **`MessageTrace.razor` `ToggleDetail`** (959-999). No finally at all; both lowerings (987,
+- **Slice 1 is half done. `BlockedSenders` is fixed; `MessageTrace` is next. Do NOT use the
+  obvious try/finally - the recon proved it breaks both pages.**
+  - **DONE - `BlockedSenders.razor` `ConfirmUnblock`.** Landed 2026-09-18; module 1.4.0 -> 1.4.1,
+    no base app bump. The preflight (authorization round trip, protection gate, `BeginOperation`)
+    now runs inside one try whose catch converts the throw into a `PermissionResult.Fail`, audits
+    an `UnblockSender_Denied` row and **returns** - fail closed, so an unreadable authorization
+    answer can never become an unauthorized Exchange write. Six tripwires in
+    `ClickGateStuckFlagTests`; guard proof three mutations, each failing exactly its named
+    assertion, restores byte-identical. **The `return` is additionally compiler-enforced:**
+    dropping it is CS0165 on the unassigned `gate`/`scope` locals, which is a stronger guarantee
+    than the tripwire. **The page is NOT converted** - this only removed the prerequisite hazard;
+    it stays in `NotYetConverted` (tier 3, unapproved). Note for whoever converts it later:
+    `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180 while `isLoading` is ALREADY true from
+    170, so a guard inside `LoadBlockedSenders` kills the initial load outright - `loadStarted`
+    is latched at 179 and never retries.
+  - **NEXT - `MessageTrace.razor` `ToggleDetail`** (959-999). No finally at all; both lowerings (987,
     996) are nested inside `if (token == detailRequestToken)`, so a superseded fetch returns
     without lowering by design. The real escape is `Audit.LogLookupAction` at **992, outside
     every try** (`AuditService.WriteAuditEvent` is not throw-proof: its `BeginOperation` at
