@@ -211,11 +211,52 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   Progress: slice 0 part A landed - `tools/Get-ClickGateAudit.ps1` with 14 Pester tests in
   `tests/ps/ClickGateAudit.Tests.ps1`. The tool reproduces the plan's published totals exactly
   and is calibrated against Migration (8 flags, `IsBusy`, exemptions at 223/442/784/836, anchors
-  at 30/33/36). Part B - the shared tripwire suite and its exemption registry - is next;
-  `ExchangeAdminWeb.Tests/ClickGateSource.cs` is written and compiles but is not yet committed,
-  because the registry shape is still being fitted to the 11 per-page reconnaissance reports.
-  **The owner also enabled ultracode for that session**, which supersedes the Token Budget rule
-  against orchestrating subagents for the duration; recon ran as a read-only workflow.
+  at 30/33/36). `ExchangeAdminWeb.Tests/ClickGateSource.cs` is written and compiles but is
+  deliberately **not committed**: the registry it serves changed shape, see below.
+  **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
+  against orchestrating subagents for its duration; recon ran as a read-only workflow.
+
+- **BLOCKED: the click-gating design was falsified by reconnaissance and needs a re-scope answer.**
+  An 11-page read-only recon (34 agents, no errors) over slice 1 + tier 1 landed 2026-09-18 and
+  is recorded as **Revision 1 in `docs/ClickGatingAudit-Plan.md`** - read that before touching
+  any page. The audit's counts stand; its design and estimate do not. **Do not implement tier 1
+  until the owner picks A, B or C in Revision 1's decision section.** Recommendation on record
+  is C: full depth on four pages, measure, then re-decide.
+  The four falsifications that matter most, all verified against source:
+  1. **There is no `ErrorBoundary` anywhere in the app** (zero matches in `Components/`,
+     `Services/`, `Program.cs`). A throw from a handler tears the circuit down, so it does not
+     leave a live page with a stuck flag - which means the planned "lower every flag in a
+     `finally`" assertion **does not close the risk it was written for**. The real page-deadener
+     is a call with no timeout or cancellation token; `BlockedSenderService.UnblockSenderAsync`
+     (`Services/BlockedSenderService.cs:48`) is the confirmed live example.
+  2. **A handler guard on a DOM-synced control corrupts data** - the plan prescribed exactly
+     that for non-button targets. The field is unchanged, the render diff emits no correction,
+     the browser keeps the operator's action. On `NamedLocations` it writes the OLD country set
+     to Graph permanently, because `CountryCodePicker` latches `_initialized` (45, 49-56).
+     Three refusal mechanisms are needed where the plan had one.
+  3. **The scanner cannot see the controls that matter.** Its "7 non-button targets app-wide" is
+     an `@onclick`-only count; `@onchange`, `InputFile`, `@onkeydown`, `@bind` and child
+     `Disabled=` are invisible. Across these 11 pages alone the real number is about **35**, all
+     needing hand enumeration with nothing detecting an omission.
+  4. **A page-wide predicate is provably wrong on `SelfServiceGroups`** (two mutually exclusive
+     views; the only adversarial verdict that came back "unsound") **and `ConferenceRooms`**
+     (background `OnJobChanged` callback owns the jobs panel). The registry needs a list of
+     scoped predicates, not one name.
+  Revised estimate for the approved scope: **20-29 sessions + 2-3 owner passes**, up from 8-11.
+  Unsettled and worth an empirical check on a dev deploy: whether Blazor Server can interleave
+  event callbacks across an `await`. The plan proceeds on the labelled assumption that it can,
+  and stays robust either way (attribute plus in-handler guard).
+
+- **Two live defects found by that recon, neither caused nor fixed by the gating work. Not
+  scheduled; they need an owner go.**
+  1. **`IntuneDevices.razor:403`** - the `WipeNameConfirmed` clause is the **only** enforcement
+     of the typed device-name confirmation on a factory wipe anywhere in the codebase.
+     `ExecuteActionAsync` re-checks authorization, ticket and protected principal but never
+     re-reads `wipeConfirmName`, so the second key on the app's most destructive action is UI
+     only. A mechanical predicate rewrite of that line would delete it outright.
+  2. **`Services/BlockedSenderService.cs:48`** - `UnblockSenderAsync` takes no
+     `CancellationToken` and the file has no timeout, so an Exchange Online stall deadens the
+     Blocked Senders page with no recovery but a reload.
   **Two live stuck-flag defects were found and confirmed by reading the source, independent of
   the sweep:** `BlockedSenders.razor:278` (`isLoading` raised, cleared only post-await at :305,
   :336, :406, never in a `finally`; the exposure is the uncaught `AuthorizeAsync` at :290-291,
