@@ -7,6 +7,80 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
+- **A WEEKEND BACKLOG RUN IS IN PROGRESS (started 2026-09-18). Read
+  `.agents/decisions.md` 2026-09-18 "Weekend backlog run" before doing anything here.**
+  The owner set the goal "work through as much of the queue.txt backlog as you can over the
+  weekend... only stop if you cannot proceed without me" and settled three gates: plans
+  self-approve after a **codex review loop to consensus** instead of an owner gate; priority
+  across queue items is the working agent's call ("I don't give a fuck" - do not ask again);
+  and pushes to both remotes are standing. Implementation subagents are authorized, which
+  overrules the Token Budget one-slice-one-session rule **for this run only**. All of that
+  scopes down when the run ends; the underlying subagent guidance conflict in Blockers is
+  still unsettled for normal operation.
+  Per-item state, all plans `Status: Draft` and none implemented:
+  - **Queue 2, `status.cloud.microsoft`** - `docs/ServiceHealthPublicStatus-Plan.md` (`16ebdf4`).
+    A machine-readable JSON API exists and answers unauthenticated; an iframe is impossible,
+    not merely fragile (live response sends `X-Frame-Options: DENY`). **Codex round 1 returned
+    `unsound`**: the endpoints come out of a minified SPA bundle and are undocumented, so they
+    cannot be the primary source; also a deferred version bump, an unproven 5-second budget, a
+    test seam that would make the guards vacuous, and a totality claim the catch does not
+    prove. Revision in flight. **The owner's premise is confirmed but sharper than expected:**
+    the public page carries one sentence per surface, not a second incident list, so it will
+    never show an Exchange incident Graph is missing - it answers "are Microsoft's own admin
+    surfaces up". That reframing is its open question 1 and may change whether it is worth
+    building at all.
+  - **Queue 4, message trace vs header analysis permissions** -
+    `docs/MessageTracePermissionSplit-Plan.md` (`155eaf7`). Header analysis touches no Exchange,
+    Graph or directory call (`HeaderAnalysisService.cs:1-3`, `:123`), so it is the low-privilege
+    half; main permission keeps it, a new fail-closed granular gates trace. **Deploy hazard,
+    stated first in the plan on purpose: a new alias denies EVERY operator including the owner
+    until a group is stored against it, and the alias cannot be granted before the descriptor
+    is deployed** - hence three commits with a mandatory deploy boundary. Codex review in
+    flight.
+  - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md` (`50e1724`).
+    **May be zero work.** The cloud query passes no domain, organization or accepted-domain
+    filter (`MessageTraceService.cs:434-450`); the only scoping is the session's `-Organization`
+    (`ExoConnectionPool.cs:440-445`), which names a tenant, so extra accepted domains on the
+    existing tenant are already covered. Slice 0 is one read-only search to turn that inference
+    into a measurement. Separate tenants are real work whose hardest blocker is that per-tenant
+    authorization has no expression in the current model: policies register once at startup
+    from a static list, there is no `IAuthorizationPolicyProvider` anywhere, and invariant 7
+    forbids naming a tenant in source. **Blocked on the owner:** which domains, and are they
+    accepted domains or separate tenants.
+  - **Queue 6, containerize** - `docs/Containerization-Feasibility.md` (`e45dc50`).
+    **Answered: do not.** 13-17 sessions to reach what the existing installer reaches in 3-4.
+    The blocker is the Delinea bootstrap credential living in the Windows **per-user**
+    credential locker (`CredentialManagerService.cs:1,11-12`), which is also why the csproj
+    carries an OS-versioned TFM and why both deploy paths set `loadUserProfile`. A container
+    has no profile and the credential cannot be baked into an image without breaking credential
+    isolation. Recommends hardening `tools/Install-ExchangeAdminWeb.ps1` instead; that plan is
+    NOT written. **Needs an owner ruling.**
+  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md` (`b12a7b1`).
+    The deliverable the owner asked for by name is the app-registration requirement list.
+    Microsoft Graph has **no** Defender device-inventory resource, so this uses the
+    WindowsDefenderATP API. `Machine.Read.All` alone covers the list; discovery sources
+    additionally need `ThreatHunting.Read.All`, which is tenant-wide and needs a **Privileged
+    Role Administrator** to consent - that trade is its open question 1. "Can be onboarded" is
+    the portal label; the API literal is `CanBeOnboarded`. **"Domain" is only partly
+    obtainable** - no domain property on the machine resource, so AD domain/OU membership
+    cannot be exported. Codex round 1 closed (3 findings); **round 2 returned `unsound`** on one
+    surviving defect worth remembering: de-duplicating a `$skip` page sequence on device id
+    removes overlaps but **cannot detect a gap**, so a short page reads as "collection ended"
+    and a partial export looks complete. Round 3 revision in flight, replacing `$skip` with a
+    positive-proof completion rule.
+  - **Queue 9, click-gating** - slice 1 complete (see below); tier 1 page 1
+    (`DhcpAuthorization`) in progress. Eight pages remain after it.
+
+- **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
+  `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace` policy
+  (`:4`, `:126`), and `Exports.GetExports()` (`:143`) calls
+  `_jobs.GetFinishedByType(ModuleName, JobType, ListLimit)` with **no submitter filter** - the
+  table renders `@item.SubmittedBy` per row (`:78`) precisely because it is an all-operators
+  listing - while `Download` (`:146`) serves any listed export to any policy holder. So every
+  operator can download every other operator's full message-trace detail exports. This is
+  independent of the permission split; the split makes it worse by admitting header-only
+  operators to that page. Not caused by this run's work.
+
 - **Branch `master`, working tree clean. Nothing is in flight.**
   The owner's issue queue is `C:\Users\mcoelho\Desktop\queue.txt` (machine-local, not in the
   repo, and not ours to write to). Queue items 1, 3 and 7 are landed and closed, with no open
