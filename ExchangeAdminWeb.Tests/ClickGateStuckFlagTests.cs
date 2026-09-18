@@ -152,10 +152,104 @@ public sealed class ClickGateStuckFlagTests
             + "LoadBlockedSenders. Use a catch, as the existing preflight and write catches do.");
     }
 
+    // ---- MessageTrace.ToggleDetail -------------------------------------------------------------
+    //
+    // detailLoading is raised before the detail fetch and was lowered only inside the two
+    // "if (token == detailRequestToken)" branches, with no finally anywhere in the method. The audit
+    // write at the top of the catch sits outside every try, so a throw from it exited the method
+    // with the flag still raised and every detail button on the page dead for the life of the
+    // circuit. The remedy here IS a finally - unlike ConfirmUnblock above, nothing in this method
+    // runs after the clear, so relocating it past a refresh is not a risk.
+    //
+    // The token guard inside the finally is the part that is easy to lose. Dropping it lets a
+    // superseded fetch clear the newer request's flag and re-enable the button mid-flight, so
+    // ToggleDetail_FinallyKeepsTheTokenGuard exists specifically to refuse that "simplification".
+
+    [Fact]
+    public void ToggleDetail_RaisesDetailLoadingBeforeItsFirstAwait()
+    {
+        var body = ToggleDetail();
+
+        var raise = body.IndexOf("detailLoading = true;", StringComparison.Ordinal);
+        Assert.True(raise >= 0, "ToggleDetail no longer raises detailLoading");
+
+        var firstAwait = FirstAwait(body);
+        Assert.True(firstAwait >= 0, "ToggleDetail has no await; this guard is pointed at the wrong method");
+
+        Assert.True(raise < firstAwait,
+            "ToggleDetail must raise detailLoading before its first await, or a second click slips in");
+    }
+
+    [Fact]
+    public void ToggleDetail_FinallyKeepsTheTokenGuard()
+    {
+        var body = ToggleDetail();
+
+        var (finallyStart, finallyLength) = BlockAfter(body, "finally", 0);
+        Assert.True(finallyStart >= 0,
+            "ToggleDetail must lower detailLoading in a finally: the audit write in its catch is "
+            + "outside every try, so a throw there escapes the method with the flag still raised");
+
+        var block = body.Substring(finallyStart, finallyLength);
+
+        Assert.True(block.Contains("detailLoading = false;", StringComparison.Ordinal),
+            "ToggleDetail's finally must lower detailLoading");
+
+        // Load-bearing, not decoration. An unconditional clear here lets a superseded fetch lower
+        // the flag that the NEWER in-flight fetch owns, re-enabling the button while that fetch is
+        // still running. Only the request that still holds the token may clear it.
+        Assert.True(block.Contains("token == detailRequestToken", StringComparison.Ordinal),
+            "ToggleDetail's finally must keep the token guard: a bare clear lets a superseded "
+            + "fetch re-enable the button while the newer fetch is still in flight");
+    }
+
+    [Fact]
+    public void ToggleDetail_LowersDetailLoadingOnlyInsideTheFinally()
+    {
+        var body = ToggleDetail();
+
+        var (finallyStart, finallyLength) = BlockAfter(body, "finally", 0);
+        Assert.True(finallyStart >= 0, "ToggleDetail no longer has a finally");
+
+        var clears = Regex.Matches(body, @"(?<![A-Za-z0-9_])detailLoading\s*=\s*false\s*;");
+        Assert.True(clears.Count > 0, "ToggleDetail no longer lowers detailLoading anywhere");
+
+        // Per occurrence, deliberately, and this is the lesson from the pre-fix tripwires: an
+        // ordering assertion over the method as a whole ("the last clear follows the last await")
+        // is satisfied by a clear nested inside a conditional, which is exactly the defect. Every
+        // clear has to be the one on the unconditional exit path, so every clear is checked.
+        foreach (Match clear in clears)
+        {
+            Assert.True(clear.Index >= finallyStart && clear.Index < finallyStart + finallyLength,
+                "ToggleDetail lowers detailLoading outside its finally. A clear inside an "
+                + "if (token == detailRequestToken) branch is skipped when the branch is not taken "
+                + "and unreachable when the audit call in the catch throws.");
+        }
+    }
+
+    [Fact]
+    public void RunTrace_StillRescuesDetailLoadingAndSupersedesTheToken()
+    {
+        var body = ClickGateSource.Load("MessageTrace.razor").MethodBody("RunTrace");
+        Assert.False(string.IsNullOrEmpty(body), "RunTrace not found in MessageTrace.razor");
+
+        // The token guard above means a superseded fetch never clears the flag itself, so these two
+        // lines are the only out-of-method rescue: a new trace lowers detailLoading and bumps the
+        // token, which turns the in-flight fetch's finally into the no-op it must be. Deleting
+        // either one strands the flag whenever a trace is re-run while a detail fetch is open.
+        Assert.True(body.Contains("detailLoading = false;", StringComparison.Ordinal),
+            "RunTrace must lower detailLoading: it is the only rescue for a fetch superseded by a new trace");
+        Assert.True(body.Contains("detailRequestToken++;", StringComparison.Ordinal),
+            "RunTrace must bump detailRequestToken, or a late detail response renders against new results");
+    }
+
     // ---- helpers -------------------------------------------------------------------------------
 
     private static string ConfirmUnblock() =>
         ClickGateSource.Load("BlockedSenders.razor").MethodBody("ConfirmUnblock");
+
+    private static string ToggleDetail() =>
+        ClickGateSource.Load("MessageTrace.razor").MethodBody("ToggleDetail");
 
     /// <summary>Offset of the first <c>await</c> statement, or -1.</summary>
     private static int FirstAwait(string source)

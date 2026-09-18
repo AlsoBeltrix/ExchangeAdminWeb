@@ -55,7 +55,8 @@ public static class ClickGateRegistry
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
             ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
                 + "preflight now fails closed in a catch, guarded by ClickGateStuckFlagTests",
-            ["MessageTrace.razor"] = "slice 1 prerequisite: ToggleDetail lowers detailLoading inside an if",
+            ["MessageTrace.razor"] = "tier 4, not approved; slice 1 prerequisite done - ToggleDetail now "
+                + "lowers detailLoading in a token-guarded finally, guarded by ClickGateStuckFlagTests",
 
             // Tiers 2-4: audited, NOT approved for conversion. Do not convert without an owner go.
             ["ADAttributeEditor.razor"] = "tier 2, not approved",

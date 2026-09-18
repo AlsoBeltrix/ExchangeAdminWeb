@@ -984,7 +984,6 @@
             if (token == detailRequestToken)
             {
                 detail = fetched;
-                detailLoading = false;
             }
         }
         catch (Exception ex)
@@ -993,6 +992,23 @@
             if (token == detailRequestToken)
             {
                 detail = new MessageTraceDetail { Summary = msg, Error = ex.Message };
+            }
+        }
+        finally
+        {
+            // The lowering lives in a finally because it was previously unreachable on a real path.
+            // It used to sit inside the two "if (token == detailRequestToken)" branches above, and
+            // the audit write at the top of the catch is outside every try - so a throw from the
+            // audit call exited this method with detailLoading still raised, leaving every detail
+            // button on the page dead for the life of the circuit. A page-level busy predicate would
+            // widen that from one dead button to a dead page, which is why this is fixed first.
+            //
+            // The token guard inside the finally is load-bearing; do not "simplify" it to a bare
+            // clear. A superseded fetch completing after a newer click has taken the token would
+            // otherwise lower the NEWER request's flag and re-enable the button while that fetch is
+            // still in flight. Only the request that still owns the token may clear it.
+            if (token == detailRequestToken)
+            {
                 detailLoading = false;
             }
         }

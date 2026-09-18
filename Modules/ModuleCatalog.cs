@@ -263,7 +263,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.Exchange,
             EnabledByDefault = true,
             IsSystemModule = false,
-            Version = "1.4.1",
+            Version = "1.4.2",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

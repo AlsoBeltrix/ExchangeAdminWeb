@@ -219,30 +219,33 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
   against orchestrating subagents for its duration; recon ran as a read-only workflow.
 
-- **Slice 1 is half done. `BlockedSenders` is fixed; `MessageTrace` is next. Do NOT use the
-  obvious try/finally - the recon proved it breaks both pages.**
-  - **DONE - `BlockedSenders.razor` `ConfirmUnblock`.** Landed 2026-09-18; module 1.4.0 -> 1.4.1,
-    no base app bump. The preflight (authorization round trip, protection gate, `BeginOperation`)
-    now runs inside one try whose catch converts the throw into a `PermissionResult.Fail`, audits
-    an `UnblockSender_Denied` row and **returns** - fail closed, so an unreadable authorization
-    answer can never become an unauthorized Exchange write. Six tripwires in
-    `ClickGateStuckFlagTests`; guard proof three mutations, each failing exactly its named
-    assertion, restores byte-identical. **The `return` is additionally compiler-enforced:**
-    dropping it is CS0165 on the unassigned `gate`/`scope` locals, which is a stronger guarantee
-    than the tripwire. **The page is NOT converted** - this only removed the prerequisite hazard;
-    it stays in `NotYetConverted` (tier 3, unapproved). Note for whoever converts it later:
-    `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180 while `isLoading` is ALREADY true from
-    170, so a guard inside `LoadBlockedSenders` kills the initial load outright - `loadStarted`
-    is latched at 179 and never retries.
-  - **NEXT - `MessageTrace.razor` `ToggleDetail`** (959-999). No finally at all; both lowerings (987,
-    996) are nested inside `if (token == detailRequestToken)`, so a superseded fetch returns
-    without lowering by design. The real escape is `Audit.LogLookupAction` at **992, outside
-    every try** (`AuditService.WriteAuditEvent` is not throw-proof: its `BeginOperation` at
-    `AuditService.cs:397` sits outside the try at 407). Fix as a **token-guarded finally**, and
-    note `RunTrace:779` is today the only out-of-method rescue - folding `detailLoading` into a
-    predicate that gates Search (299) removes that rescue at the same moment the page-wide blast
-    radius appears.
-  Neither page is in the registry yet; both are declared in `NotYetConverted` with their reason.
+- **SLICE 1 IS COMPLETE. Tier 1 is unblocked; the next item is page 1, `DhcpAuthorization`.**
+  Both prerequisite stuck flags are fixed. Neither page was converted - slice 1 only removed the
+  hazard that would have turned a dead button into a dead page - and both stay in
+  `NotYetConverted`, BlockedSenders as tier 3 and MessageTrace as tier 4, neither approved.
+  - **`BlockedSenders.razor` `ConfirmUnblock`** - landed 2026-09-18 in `e915476`; module
+    1.4.0 -> 1.4.1. The preflight (authorization round trip, protection gate, `BeginOperation`)
+    now runs inside one try whose catch converts the throw into a `PermissionResult.Fail`,
+    audits an `UnblockSender_Denied` row and **returns** - fail closed, so an unreadable
+    authorization answer can never become an unauthorized Exchange write. Six tripwires; three
+    mutations, each failing exactly its named assertion. **The `return` is additionally
+    compiler-enforced:** dropping it is CS0165 on the unassigned `gate`/`scope` locals.
+    **It is deliberately NOT a try/finally** - that moves the `isLoading` clear after the
+    `LoadBlockedSenders` refresh, which a busy guard in that callee would then silently no-op.
+    Note for whoever converts this page: `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180
+    while `isLoading` is ALREADY true from 170, so a guard inside `LoadBlockedSenders` kills the
+    initial load outright - `loadStarted` is latched at 179 and never retries.
+  - **`MessageTrace.razor` `ToggleDetail`** - landed 2026-09-18; module 1.4.1 -> 1.4.2. Now a
+    **token-guarded finally**. The guard inside the finally is load-bearing: a bare clear would
+    let a superseded fetch lower the NEWER request's flag and re-enable the button mid-flight.
+    Four tripwires, the negative one per occurrence per the msr-1 lesson (every
+    `detailLoading = false;` in the method must fall inside the finally block; no ordering
+    assertion). Four mutations, all real test failures rather than build failures.
+  - **Open, not fixed, and a separate finding needing its own commit:** the unwrapped
+    `Audit.LogLookupAction` calls inside catch blocks are the house idiom on `MessageTrace`
+    (six sites) and on `AnalyzeHeadersAsync`. The new finally lowers the flag on the way out,
+    but the throw still escapes the handler and, with no `ErrorBoundary` in this app, takes the
+    circuit. Same class as the `BlockedSenderService.UnblockSenderAsync` timeout gap.
 
 - **The click-gating design was falsified by reconnaissance and re-scoped; work is unblocked.**
   An 11-page read-only recon (34 agents, no errors) over slice 1 + tier 1 landed 2026-09-18 and
