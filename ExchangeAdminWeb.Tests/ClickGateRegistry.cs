@@ -877,8 +877,14 @@ public static class ClickGateRegistry
     /// click can do is dirty the form for the NEXT submission.
     /// </para>
     /// <para>
-    /// <b>The shared component is not fixed here and its blast radius is bigger than the plan says.</b>
-    /// Revision 1 schedules one contract change, ADIdentityAutocomplete, at page 6. There are two.
+    /// <b>CLOSED since this entry was written. The shared components are fixed; the paragraph above
+    /// describes the hazard as it stood at page 3 and is kept because the reasoning still explains
+    /// why the entry captures exist.</b> The contract change landed as its own slice: all three
+    /// autocompletes now withhold their suggestion rows while Disabled AND refuse in SelectResult
+    /// on entry, belt and braces, because withholding alone loses the round-trip race and a handler
+    /// guard alone leaves visibly clickable rows that silently do nothing. Base app version bumped;
+    /// no module version moved. What follows is the census as found, and it was short by one.
+    /// Revision 1 schedules one contract change, ADIdentityAutocomplete, at page 6. There were three.
     /// ADIdentityAutocomplete is instantiated 9 times across 4 pages (AdminSettings 144/172/200/259,
     /// GroupManagement 111, ModuleConfig 217/317/615, SelfServiceGroups 202) and is NOT on this page
     /// at all. RecipientAutocomplete - the one this page uses - is instantiated 8 times across 4
@@ -1330,7 +1336,10 @@ public static class ClickGateRegistry
     /// It carries disabled="@IsBusy" with the rest of the page and needs no entry below.
     /// </para>
     /// <para>
-    /// <b>The RecipientAutocomplete gap is inherited and still open.</b> Disabled= reaches the
+    /// <b>The RecipientAutocomplete gap was inherited and is now CLOSED</b> by the shared-component
+    /// slice - the rows are withheld while Disabled and SelectResult refuses on entry. The
+    /// description below is kept as the reason the entry captures exist, not as a live gap.
+    /// As it stood: Disabled= reached the
     /// component's inner input and its own Enter path; it does not reach its suggestion rows, which
     /// are ungated li elements carrying an @onmousedown that consults the parameter nowhere. A
     /// dropdown already open when the gate closed keeps clickable rows, and clicking one rewrites
@@ -2325,8 +2334,12 @@ public enum RefusalMechanism
     ChildComponentParameter,
 
     /// <summary>
-    /// The gap is in a shared component and cannot be closed from this page. ADIdentityAutocomplete
-    /// gates its input but not its suggestion rows, and is instantiated at nine sites.
+    /// The gap is in a shared component and cannot be closed from this page. The worked example was
+    /// ADIdentityAutocomplete, which gated its input but not its suggestion rows across nine sites;
+    /// that one is now fixed in the component itself. The mechanism stays because the CATEGORY is
+    /// permanent: a page cannot close a defect that lives inside a component it merely instantiates,
+    /// and the page-level registry cannot see inside one either - it inspects the call site, where
+    /// Disabled= was already present and correct the whole time.
     /// </summary>
     SharedComponentContract,
 

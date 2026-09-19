@@ -13,7 +13,14 @@
            disabled="@Disabled"
            autocomplete="off" />
 
-    @if (_showDropdown && _results.Count > 0)
+    @* Gating withholds the rows rather than styling them. An li is not a form element, so
+       disabled= is inert on it and the browser fires onmousedown regardless; greying the rows
+       without refusing the event would look refused and act live, which is worse than leaving
+       them plainly clickable. Not rendering them is the only refusal this element can make, and
+       it is not sufficient on its own - the render diff reaches the browser a round-trip later,
+       so a mousedown already in flight still arrives at SelectResult. That is the other half,
+       and it lives in the handler. *@
+    @if (ShouldRenderSuggestions(Disabled, _showDropdown, _results.Count))
     {
         <ul class="list-group position-absolute w-100 shadow-sm"
             style="z-index: 1050; max-height: 300px; overflow-y: auto; top: 100%;">
@@ -105,8 +112,28 @@
         }
     }
 
+    /// <summary>
+    /// Whether the suggestion dropdown may be rendered at all.
+    /// </summary>
+    /// <remarks>
+    /// Extracted so the refusal is a fact a test can state: the repo has no bUnit harness, so a
+    /// rule left inline in the markup is unreachable by any assertion.
+    /// </remarks>
+    internal static bool ShouldRenderSuggestions(bool disabled, bool showDropdown, int resultCount) =>
+        !disabled && showDropdown && resultCount > 0;
+
     private async Task SelectResult(ExchangeAdminWeb.Services.ADSearchResult result)
     {
+        // The second half of the gate. Withholding the rows loses a race the markup cannot win:
+        // the diff that removes them is a network round-trip away, and a mousedown dispatched
+        // before it lands still reaches here. Refusing is safe for THIS control specifically -
+        // nothing rendered mirrors the value the refusal withholds (the rows come from a
+        // directory search, not from the caller's bound value), so a refusal leaves the browser
+        // and the server agreeing on the old value instead of desyncing them. The keyboard Enter
+        // path routes through here too, so it is covered by the same statement.
+        if (Disabled)
+            return;
+
         Value = result.SamAccountName ?? result.DisplayName;
         _showDropdown = false;
         _results = [];
