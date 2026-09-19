@@ -741,7 +741,11 @@ public sealed class ModuleCatalog
             // 1.3.0: the search issues one Graph request per field (device name, UPN, serial) and
             // merges them - a single combined `or` filter returns 200 with an empty result on the
             // dev tenant (docs/IntuneDeviceManagement-Plan.md T2 Revision 2026-09-03).
-            Version = "1.3.0",
+            // 1.4.0: every control on the page now consults one busy predicate, widened to include
+            // detailLoading (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 5). A search can
+            // no longer be started - by click or by Enter - while a device action is queued, which
+            // used to discard that action's on-screen verdict.
+            Version = "1.4.0",
             // Fail-closed throughout: device inventory is not address-book data (docs/IntuneDeviceManagement-Plan.md).
             MainPermission = new(
                 "Access",

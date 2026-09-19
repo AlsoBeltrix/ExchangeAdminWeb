@@ -34,6 +34,7 @@ public static class ClickGateRegistry
         NamedLocations,
         MailboxPermissions,
         CalendarPermissions,
+        IntuneDevices,
     };
 
     /// <summary>
@@ -46,10 +47,9 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 4 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
-            // MailboxPermissions.razor and CalendarPermissions.razor - are converted and live in
-            // Pages above.
-            ["IntuneDevices.razor"] = "tier 1, page 5 of 9; has a partial ActionsDisabled already",
+            // Pages 1 to 5 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // MailboxPermissions.razor, CalendarPermissions.razor and IntuneDevices.razor - are
+            // converted and live in Pages above.
             ["GroupManagement.razor"] = "tier 1, page 6 of 9; needs a flag and a finally created in SelectGroup",
             ["M365GroupManagement.razor"] = "tier 1, page 7 of 9",
             ["ConferenceRooms.razor"] = "tier 1, page 8 of 9",
@@ -1670,6 +1670,408 @@ public static class ClickGateRegistry
                 + "'file is null' rather than 'csvFile is null' because the file is captured at entry "
                 + "now; the capture sits above the guard and the raise below it."),
         ],
+    };
+
+    /// <summary>
+    /// Intune Devices: tier 1, page 5 of 9, converted 2026-09-18 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Line 402's disabled expression carries the only enforcement of the wipe confirmation in
+    /// the whole codebase, and this conversion widened it rather than rewriting it.</b> Re-checked
+    /// against the file before anything was touched, because the repo settles this kind of claim by
+    /// reading: WipeNameConfirmed is declared at 685-687 (pre-conversion numbering) and named at
+    /// exactly one site, the disabled attribute of the confirm button; wipeConfirmName is read at
+    /// exactly one site, inside WipeNameConfirmed; and ExecuteActionAsync re-checks the granular
+    /// authorization, the ticket's presence, the ticket's validity and the protected principal, and
+    /// never reads wipeConfirmName at all. So a mechanical "replace the disabled expression with the
+    /// predicate" pass would delete the second key on the most destructive action in the app with no
+    /// server-side backstop to catch it. The edit here replaced ONLY the busy clause -
+    /// actingDeviceId != null became ActionsDisabled - and left both preconditions in place, OR-ed.
+    /// They are registered in <see cref="PageGateEntry.AnnotatedControls"/> below, which is the
+    /// assertion that fails if a later pass takes them out.
+    /// </para>
+    /// <para>
+    /// <b>A server-side re-check of the typed name is NOT in this slice and is recorded as an open
+    /// finding.</b> Adding one is a behaviour change, and the shape it would take is written down
+    /// here so the decision does not have to be re-derived: ExecuteActionAsync already captures every
+    /// other operator input at entry, so it would capture wipeConfirmName the same way and Refuse
+    /// with "The typed device name does not match." between the ticket gate and the
+    /// protected-principal check - a path that audits as it refuses, like every other refusal in that
+    /// method. Until then the markup clause is load-bearing and the PreserveClauses entry is the only
+    /// thing defending it.
+    /// </para>
+    /// <para>
+    /// <b>The predicate was genuinely partial, and the missing flag was detailLoading.</b> Revision 1
+    /// says so and the file agrees: ActionsDisabled read isSearching || actingDeviceId != null, and
+    /// ToggleDetailAsync raises a third flag the predicate never named. The operator-visible
+    /// consequence was not merely a live button. The Search button was outside the gate too, and
+    /// SearchAsync clears devices, deviceOutcomes and the open confirm bar - so a search started
+    /// while a wipe was queued discarded that wipe's verdict outright: the device's row is no longer
+    /// in the list, so neither the "Acting on ..." spinner nor the outcome alert can render, while
+    /// the audit row and the administrator email still record that it happened. The search box's
+    /// Enter path reached the same SearchAsync with the same gap. Both are closed here.
+    /// </para>
+    /// <para>
+    /// <b>Nine of the ten DOM-synced controls were gated on a clause that could never be true while
+    /// they rendered, which is worth knowing before anyone reads the diff as cosmetic.</b> The whole
+    /// confirm bar carried disabled="@(actingDeviceId != null)", and ExecuteActionAsync sets
+    /// confirmDeviceId = null in the same synchronous run as actingDeviceId = deviceId, above its
+    /// first await - so the bar unrenders on the very render that would first have shown those
+    /// controls greyed. The old attribute was dead. Widened to the predicate it is live for the one
+    /// case that can actually happen: a detail read in flight with a confirm bar open. The Cancel
+    /// button at 407 keeps the same narrow clause on purpose and is registered exempt; it is dead in
+    /// the same way, and that is recorded rather than quietly fixed, because the operator must be
+    /// able to back out of a staged wipe and the honest gate for that control is no gate.
+    /// </para>
+    /// <para>
+    /// <b>Twelve excluded staged fields, not the seven Revision 1 predicted.</b> The plan gives a
+    /// count and no list, so the list is a hand census of this file and the count is corrected rather
+    /// than reproduced. Four of the five wipe-option fields are what the prediction is most likely to
+    /// have folded together; alsoRemoveEntra, notifyPrimaryUser and showActionHelp are each
+    /// independently fatal if folded in. Every one of the twelve sits on a control that renders only
+    /// while the operator is deciding, so putting any of them in the predicate disables the control
+    /// at the only moment it exists - the regression a review of the Migration plan caught before any
+    /// code was written, and the reason this field is asserted as a negative per field.
+    /// </para>
+    /// <para>
+    /// <b>ExecuteActionAsync needed no snapshot, and that is unusual enough to say plainly.</b> It
+    /// already binds deviceId, deviceName, upn, ticket, auditAction, target, wipeOptions,
+    /// entraDeviceId, removeEntraObject, notifyRequested and notifyDefault into locals above its
+    /// first await, and reads nothing but locals and its own parameters afterwards. Falsification 6
+    /// bit on SearchAsync instead: it read searchTerm twice below await Task.Yield(), once for the
+    /// audit target and once for the Graph call, on a box that binds on oninput - so a keystroke
+    /// landing in the yield could audit one search and run another. One capture closes it.
+    /// </para>
+    /// <para>
+    /// <b>The residual double-dispatch on Confirm is a finding, not a fix.</b> The browser's copy of
+    /// the confirm button's disabled attribute is one round trip stale, so a second Confirm can still
+    /// be dispatched while the first ExecuteActionAsync is suspended at its Task.Yield. Pages 3 and 4
+    /// closed the same hazard with a guard in the CALLING method, and there is no such method here:
+    /// ExecuteActionAsync is itself the click target and raises actingDeviceId as its first
+    /// statement, which the 2026-09-17 ruling says is not enough on its own. The guard that would
+    /// work - if (ActionsDisabled) return; above the raise - also swallows a legitimate click landing
+    /// in the stale window during a detail read, silently, with no banner and no audit row, which is
+    /// the exact harm every ForbiddenGuardSite below exists to prevent. Choosing between those two is
+    /// an owner decision, so no handler guard was added and ExactlyOneGuard is empty, as it is on
+    /// pages 1 and 2 for the same structural reason.
+    /// </para>
+    /// <para>
+    /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
+    /// conversion it reports 9 buttons, Ungated 1 (line 151), GatePart 1 (line 407), Flags 3,
+    /// Predicate ActionsDisabled, OtherClick 0 and StuckFlags 0. The two it names are exactly the two
+    /// registered exemptions below, and ScannerFalsePositives is empty because nothing was reported
+    /// to suppress. Unlike pages 3 and 4 the predicate detector DOES see this page, because
+    /// ActionsDisabled is an expression-bodied bool naming three flags rather than one.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry IntuneDevices => new()
+    {
+        Page = "IntuneDevices.razor",
+        ExpectedLineCount = 1628,
+
+        // Kept as ActionsDisabled rather than renamed to IsBusy, which is what the four pages before
+        // it call their predicate. The name was already on the page and is quoted by
+        // docs/ClickGatingAudit-Plan.md and .agents/state.md, neither of which this slice may edit, so
+        // renaming would leave two governance files describing a member that no longer exists. The
+        // assertions key on this string, not on a convention, so nothing here is ambiguous.
+        //
+        // One page-wide predicate is right here, and that was tested rather than assumed: Revision 1
+        // found a single predicate provably wrong on two OTHER pages. This page has one view. The
+        // results table, the confirm bar, the per-device outcomes and the detail panel all render off
+        // state that SearchAsync replaces wholesale, ToggleDetailAsync replaces in part, and
+        // ExecuteActionAsync writes into - so there is no control here that is safe to leave live
+        // while another is working.
+        Predicates =
+        [
+            new PredicateScope("ActionsDisabled",
+                ["isSearching", "detailLoading", "actingDeviceId"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        // Empty on purpose and confirmed by running the scanner AFTER the conversion, not before:
+        // Get-ClickGateAudit.ps1 reports zero stuck flags here. expandedDeviceId, confirmDeviceId,
+        // detailDevice, detailError and errorMessage are all nullables raised and nulled inside
+        // awaiting methods, which is most of the in-flight shape, and none is reported - they escape
+        // because none is nulled in a finally. Moving any of those clears into a finally would turn
+        // it into a false positive AND, for confirmDeviceId, into the page-killing mistake
+        // ExcludedFields exists to refuse. Nothing was suppressed to achieve an empty list.
+        ScannerFalsePositives = [],
+
+        // Twelve, by hand census of this file. See the remarks on this entry for why the count
+        // differs from Revision 1's seven.
+        ExcludedFields =
+        [
+            new ExcludedField("confirmDeviceId", "the confirm bar at 245-413",
+                "names the device whose action is staged. The whole bar renders only while it equals "
+                + "the row's id, so folding it into the predicate would disable Confirm at the only "
+                + "moment it is ever shown and no device could be deleted, retired or wiped again"),
+
+            new ExcludedField("confirmAction", "the confirm bar at 245-413",
+                "which of the four actions is staged; the bar's second render condition, on the same "
+                + "footing as confirmDeviceId. It also chooses the prompt, the help summary and "
+                + "whether the wipe options and the typed-name box appear at all"),
+
+            new ExcludedField("actionTicket", "the ticket input at 388 and Confirm at 402",
+                "the staged ticket. A form value the operator is required to fill in, not an "
+                + "operation: fold it in and typing the ticket that unlocks Confirm would disable "
+                + "Confirm. The button reads it as an emptiness precondition, which is a different "
+                + "job and is registered under AnnotatedControls"),
+
+            new ExcludedField("wipeConfirmName", "the typed-name input at 397 and Confirm at 402",
+                "the typed device name confirming a factory wipe, and the sharpest case on the page: "
+                + "folding it in means typing the device name disables the button that typing it is "
+                + "supposed to enable, so no wipe could ever be confirmed. WipeNameConfirmed reads it "
+                + "as a precondition; see this entry's remarks"),
+
+            new ExcludedField("wipeKeepUserData", "the wipe option block at 263-307",
+                "an operator choice about what a wipe preserves, made while deciding. Ticking it must "
+                + "not disable the button that carries the decision out"),
+
+            new ExcludedField("wipeKeepEnrollmentData", "the wipe option block at 263-307",
+                "as wipeKeepUserData: a staged flag on the request, not an operation in flight"),
+
+            new ExcludedField("wipePersistEsimDataPlan", "the wipe option block at 263-307",
+                "as wipeKeepUserData; the iOS eSIM half of the same staged flag set"),
+
+            new ExcludedField("wipeMacOsUnlockCode", "the wipe option block at 263-307",
+                "the macOS recovery PIN the operator types before confirming. A form value, and one "
+                + "the operator is mid-way through typing exactly when the predicate would be "
+                + "consulted"),
+
+            new ExcludedField("wipeObliterationBehavior", "the wipe option block at 263-307",
+                "the macOS obliteration choice; a bound select whose value is staged, not a signal "
+                + "that anything is running"),
+
+            new ExcludedField("alsoRemoveEntra", "the Entra add-on checkbox at 362",
+                "the per-action 'also remove the Entra ID device object' opt-in. It is only ever "
+                + "ticked while the confirm bar is open, so a predicate naming it would disable the "
+                + "confirm controls the moment the operator opts in - and the opt-in is the whole "
+                + "point of the control"),
+
+            new ExcludedField("notifyPrimaryUser", "the notification checkbox at 329",
+                "the per-action 'email the device's primary user' choice, on the same footing as "
+                + "alsoRemoveEntra. It is the lost-or-stolen decision the operator makes at the "
+                + "moment of acting, so it is set precisely when the predicate must be false"),
+
+            new ExcludedField("showActionHelp", "the help panel toggle at 151",
+                "whether the 'What do these actions do?' panel is open. Not staged confirmation, but "
+                + "in the same class and more dangerous than it looks: it is a page-level bool with "
+                + "no operation behind it, so a predicate naming it would deaden every control on the "
+                + "page for as long as the help panel stayed open, and the help panel is what an "
+                + "operator opens BEFORE acting"),
+        ],
+
+        ExemptControls =
+        [
+            new ExemptControl(151, "@onclick=\"() => showActionHelp = !showActionHelp\"",
+                "opens and closes the plain-English help panel. It is a pure render toggle: the "
+                + "handler flips one bool, makes no call and awaits nothing, and the panel explains "
+                + "what delete, retire and wipe actually do. Gating it would lock the panel in "
+                + "whichever state it happened to be in for the whole of an operation - including "
+                + "closed, while a wipe the operator wanted to read about is queuing. Same reason "
+                + "Migration's banner dismiss at 442 and DhcpAuthorization's at 40 are exempt",
+                ConditionThatKeepsItTrue:
+                "the handler stays an inline field flip. The moment anything else is wired to this "
+                + "button it is an operation and belongs behind ActionsDisabled with the rest"),
+
+            new ExemptControl(407, "@onclick=\"CancelAction\"",
+                "backs out of a staged action, and the operator must always be able to do that - on "
+                + "this page more than most, because what is staged may be a factory wipe. Confirm "
+                + "beside it at 402 is gated, so nothing can be executed from this state while the "
+                + "page is busy; cancelling only clears confirmDeviceId, confirmAction, the ticket "
+                + "and the wipe options, and CancelAction makes no call and awaits nothing",
+                KeepsItsOwnGuard: "disabled=\"@(actingDeviceId != null)\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads the staged fields after an await. ExecuteActionAsync captures all of "
+                + "them at entry and clears confirmDeviceId before its first await, which is also why "
+                + "this narrow guard is dead today: the bar cannot render while actingDeviceId is "
+                + "set. It is kept rather than widened because widening it to the predicate would "
+                + "refuse a cancel during a detail read, and kept rather than deleted because the "
+                + "day a handler holds the bar open across an await it is the only thing standing "
+                + "between a cancel and the fields that handler is using"),
+        ],
+
+        // Verified by exhaustive census rather than inherited: Get-ClickGateAudit.ps1 reports
+        // OtherClick 0, and the hand census of what it cannot see finds no anchor, no div/span/td
+        // handler, no @onchange, no @onsubmit and no InputFile. What it does find is one @onkeydown
+        // and ten DOM-synced controls, both below - absent from this list on purpose, on the
+        // precedent of the four pages before it: this list is keyed to what ClickGateSource can
+        // locate, and an input and a select are in neither Tags("a") nor NonButtonClickTargets().
+        NonButtonTargets = [],
+
+        // All ten now name the page predicate. Nine of them - every control in the confirm bar -
+        // previously read disabled="@(actingDeviceId != null)", a clause that cannot be true while
+        // they render; see this entry's remarks. The search box is the tenth and was on isSearching
+        // alone, which left it typeable and its Enter path live for the whole of a detail read or a
+        // queued wipe.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(56, "id=\"searchTerm\"", "input", "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(266, "id=\"wipeKeepUserData\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(275, "id=\"wipeKeepEnrollmentData\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(281, "id=\"wipePersistEsimDataPlan\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(289, "id=\"wipeMacOsUnlockCode\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(297, "id=\"wipeObliterationBehavior\"", "select",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(329, "id=\"notifyPrimaryUser\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(362, "id=\"alsoRemoveEntra\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(388, "id=\"intuneDeviceTicket\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+            new DomSyncedControl(397, "id=\"wipeConfirmName\"", "input",
+                "disabled=\"@ActionsDisabled\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        // Five callees, all reached from ExecuteActionAsync AFTER it sets actingDeviceId, so
+        // ActionsDisabled is true at every one of these calls. This page has more of them than any
+        // converted page so far, because its write path is a chain rather than a single service call,
+        // and every link in it would fail silently.
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("PerformActionAsync", ["ExecuteActionAsync"],
+                "The single Graph write for the action. A busy guard here turns every delete, retire, "
+                + "wipe and standalone Entra removal into a no-op that still audits, still emails "
+                + "administrators and still tells the operator the action was carried out. That is "
+                + "worse than a dead button: the record says a lost laptop was wiped and it was not."),
+
+            new ForbiddenGuardSite("RemoveEntraObjectAsync", ["ExecuteActionAsync"],
+                "The second write, run only after the Intune half succeeded. A guard here skips the "
+                + "directory removal while the Intune record is already gone - the half-finished case "
+                + "S5 exists to make visible - and returns nothing for entraResult, so the page shows "
+                + "no second verdict, writes no second audit event and sends no second notification. "
+                + "The operator has no way to tell it did not run."),
+
+            new ForbiddenGuardSite("NotifyPrimaryUserAsync", ["ExecuteActionAsync"],
+                "Decides, attempts and REPORTS the affected-user notification. A guard here makes a "
+                + "requested email silently not happen and returns no note, so both the screen and "
+                + "the audit record fall silent on the one question AC19 exists to answer - was the "
+                + "user told? A silent no is indistinguishable from a send."),
+
+            new ForbiddenGuardSite("SafeAudit", ["SearchAsync", "ToggleDetailAsync", "ExecuteActionAsync"],
+                "The wrapper every audit write on this page goes through, including the two lookup "
+                + "audits and every refusal path inside ExecuteActionAsync's Refuse. A guard here "
+                + "drops the audit record for exactly the actions that matter, and drops it without "
+                + "the log line the catch would have written, because the guard returns before the "
+                + "try. The Constitution requires the audit, not a best effort at one."),
+
+            new ForbiddenGuardSite("SetOutcome", ["ExecuteActionAsync"],
+                "The only writer of deviceOutcomes, and the only thing that puts a verdict on screen. "
+                + "A guard here means a wipe runs, audits and emails while the row it belongs to "
+                + "shows nothing at all - the operator concludes the click was lost and clicks "
+                + "again."),
+        ],
+
+        // Empty for the same structural reason as pages 1 and 2: no handler on this page is called
+        // by another handler that could carry the refusal instead. ExecuteActionAsync is its own
+        // click target and raises actingDeviceId as its first statement, so a guard in it would be
+        // the re-entrancy shape the 2026-09-17 ruling rejects. The residual stale-window double
+        // dispatch that leaves open is recorded in this entry's remarks as an open finding.
+        ExactlyOneGuard = [],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(402, "@onclick=\"() => ExecuteActionAsync(device, confirmAction.Value)\"",
+                [
+                    "string.IsNullOrWhiteSpace(actionTicket)",
+                    "!WipeNameConfirmed(device, confirmAction.Value)",
+                ],
+                RendersOnlyWhen:
+                "only inside the confirm bar, so only while confirmDeviceId == device.Id and "
+                + "confirmAction is set and the operator holds the grant for that action. The two "
+                + "clauses are NOT equivalent to each other. ExecuteActionAsync re-checks the ticket "
+                + "itself - twice, for presence and for validity - so the emptiness clause is belt "
+                + "and braces. It re-checks the typed device name NOWHERE, so "
+                + "!WipeNameConfirmed(device, confirmAction.Value) is the only enforcement of the "
+                + "wipe confirmation in the entire codebase. Both are OR-ed with ActionsDisabled and "
+                + "neither may be replaced by it; see this entry's remarks for the verification and "
+                + "for the server-side re-check that is NOT implemented"),
+
+            new AnnotatedControl(523, "@onclick=\"() => BeginAction(device, IntuneDeviceAction.EntraDelete)\"",
+                [],
+                RendersOnlyWhen:
+                "three conditions deep and none of them visible to the scanner: inside the expanded "
+                + "detail row (expandedDeviceId == device.Id), inside its detailDevice != null branch, "
+                + "and then only while canEntraDelete and EntraIdUsable(detailDevice). Registered "
+                + "with no clause to preserve because the reachability is the point: it is the one "
+                + "action button that is NOT in the per-row button group, it runs the widest-scoped "
+                + "write on the page, and a reviewer reading the button group alone would not know it "
+                + "exists"),
+        ],
+
+        // Five spinner and progress conditions, every one of them reading a single flag or a
+        // per-device identity rather than the predicate, registered verbatim so a mechanical
+        // "simplify to the predicate" pass fails instead of quietly changing what the operator sees.
+        // 75 is the Search button's inline spinner and 88 the results-area banner that says a search
+        // is in flight; collapsing either to ActionsDisabled puts a search spinner on screen during a
+        // detail read or a wipe. 99 is the gate on the whole results table - fold it in and the table
+        // vanishes during an unrelated action. 418 keys the "Acting on ..." row to the device being
+        // acted on, so the predicate would spin every row at once. 483 belongs to the detail panel.
+        SpinnerExpressions =
+        [
+            "@if (isSearching)",
+            "@if (hasSearched && !isSearching)",
+            "@if (actingDeviceId == device.Id)",
+            "@if (detailLoading)",
+        ],
+
+        // Falsification 6 for this page, and the short half of the fix, because ExecuteActionAsync
+        // was already correct - see this entry's remarks. SearchAsync was not: await Task.Yield()
+        // hands the circuit back to the renderer, the search box binds on oninput, and searchTerm was
+        // read live BELOW that yield at both the audit target and the Graph call.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SearchAsync", "searchTerm", "term",
+                SnapshotShape.CapturedAtEntry,
+                "the term the operator saw when the click was accepted is the one that must be "
+                + "searched for and the one that must appear in the audit row. Read live below the "
+                + "yield it was read TWICE, at DescribeSearch for the audit target and again at "
+                + "SearchDevicesAsync, so a keystroke landing in the gap made the "
+                + "IntuneDevices_Search record name a term Graph was never asked for - and this is "
+                + "the page's only record that a lookup of someone's devices happened at all"),
+        ],
+
+        // Empty, and one near miss worth naming so the next reader does not go looking. The early
+        // return in ToggleDetailAsync - the collapse branch at the top - already sits ABOVE the
+        // detailLoading raise, which is the correct ordering and not registrable here: the assertion
+        // requires the guard to return immediately, and this one nulls expandedDeviceId first.
+        RaiseMustFollowEarlyReturn = [],
+
+        // The page's one keyboard handler, and the reason it had to move with the Search button
+        // rather than after it. Before this conversion both read isSearching, so they agreed; gating
+        // the button on the widened predicate without gating the input would have MANUFACTURED the
+        // 2eb8c15 defect - a greyed Search button beside an Enter key that still starts a search
+        // during a queued wipe.
+        //
+        // The disabled attribute rather than a handler guard, on the Migration precedent: a disabled
+        // input fires no key events, so one attribute closes the key path and the typing path
+        // together. OnSearchKeyDown's own !ActionsDisabled condition was widened from !isSearching in
+        // the same edit and is belt and braces only - it covers the one round trip in which the
+        // browser's copy of the attribute is stale, and it is not what this entry rests on.
+        KeyboardPaths =
+        [
+            new KeyboardPath(56, "id=\"searchTerm\"", "input",
+                "keydown", "OnSearchKeyDown", "SearchAsync",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@ActionsDisabled\"",
+                "Enter runs the device search that the Search button at 74 refuses while the page is "
+                + "busy. SearchAsync is not a read-only refresh: it clears devices, deviceOutcomes, "
+                + "the open confirm bar, the expanded detail row and the staged wipe options. Started "
+                + "from the keyboard during a queued wipe it therefore throws away that wipe's "
+                + "verdict - the row is gone from the new list, so neither the spinner nor the "
+                + "outcome alert can render - while the audit row and the administrator email still "
+                + "say the wipe was queued",
+                GatedTwinButtonLine: 74),
+        ],
+
+        HarmlessKeyboardPaths = [],
     };
 }
 

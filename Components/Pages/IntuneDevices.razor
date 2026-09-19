@@ -54,7 +54,7 @@
                 <div class="col-md-8">
                     <label class="form-label mb-1" for="searchTerm">Start of a device name or user principal name, or an exact serial number</label>
                     <input id="searchTerm" class="form-control" @bind="searchTerm"
-                           @bind:event="oninput" @onkeydown="OnSearchKeyDown" disabled="@isSearching"
+                           @bind:event="oninput" @onkeydown="OnSearchKeyDown" disabled="@ActionsDisabled"
                            placeholder="Start of a device name or UPN, or a full serial number" />
                 </div>
                 @* The label above and this line say which kind of match each field gets, because the
@@ -71,7 +71,7 @@
                     </div>
                 </div>
                 <div class="col-md-4 order-1">
-                    <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@isSearching">
+                    <button class="btn btn-primary w-100" @onclick="SearchAsync" disabled="@ActionsDisabled">
                         @if (isSearching)
                         {
                             <span class="spinner-border spinner-border-sm me-1"></span>
@@ -201,7 +201,8 @@
                                     <td><span class="badge @ComplianceBadgeClass(device.ComplianceState)">@device.ComplianceState</span></td>
                                     <td class="text-nowrap">@(device.LastSyncDateTime?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "-")</td>
                                     <td>
-                                        <button class="btn btn-outline-secondary btn-sm" @onclick="() => ToggleDetailAsync(device)">
+                                        <button class="btn btn-outline-secondary btn-sm"
+                                                @onclick="() => ToggleDetailAsync(device)" disabled="@ActionsDisabled">
                                             @(expandedDeviceId == device.Id ? "Hide detail" : "Detail")
                                         </button>
                                     </td>
@@ -263,7 +264,7 @@
                                                     <div class="col-md-6">
                                                         <div class="form-check">
                                                             <input class="form-check-input" type="checkbox" id="wipeKeepUserData"
-                                                                   @bind="wipeKeepUserData" disabled="@(actingDeviceId != null)" />
+                                                                   @bind="wipeKeepUserData" disabled="@ActionsDisabled" />
                                                             <label class="form-check-label" for="wipeKeepUserData">Keep user data</label>
                                                             <div class="form-text">
                                                                 Ticking this contradicts the button's own label: the device is reset but
@@ -272,13 +273,13 @@
                                                         </div>
                                                         <div class="form-check">
                                                             <input class="form-check-input" type="checkbox" id="wipeKeepEnrollmentData"
-                                                                   @bind="wipeKeepEnrollmentData" disabled="@(actingDeviceId != null)" />
+                                                                   @bind="wipeKeepEnrollmentData" disabled="@ActionsDisabled" />
                                                             <label class="form-check-label" for="wipeKeepEnrollmentData">Keep enrollment state</label>
                                                             <div class="form-text">The device stays enrolled after the reset.</div>
                                                         </div>
                                                         <div class="form-check">
                                                             <input class="form-check-input" type="checkbox" id="wipePersistEsimDataPlan"
-                                                                   @bind="wipePersistEsimDataPlan" disabled="@(actingDeviceId != null)" />
+                                                                   @bind="wipePersistEsimDataPlan" disabled="@ActionsDisabled" />
                                                             <label class="form-check-label" for="wipePersistEsimDataPlan">Keep eSIM data plan</label>
                                                             <div class="form-text">iOS / iPadOS eSIM only.</div>
                                                         </div>
@@ -287,14 +288,14 @@
                                                         <label class="form-label mb-1" for="wipeMacOsUnlockCode">macOS recovery PIN (six digits)</label>
                                                         <input id="wipeMacOsUnlockCode" class="form-control form-control-sm" maxlength="6"
                                                                @bind="wipeMacOsUnlockCode" @bind:event="oninput"
-                                                               disabled="@(actingDeviceId != null)" placeholder="(none)" />
+                                                               disabled="@ActionsDisabled" placeholder="(none)" />
                                                         <div class="form-text">
                                                             macOS only. It is shown back to you once after the wipe is queued and cannot be
                                                             retrieved afterwards - you must give it to the device owner.
                                                         </div>
                                                         <label class="form-label mb-1 mt-2" for="wipeObliterationBehavior">macOS obliteration behaviour</label>
                                                         <select id="wipeObliterationBehavior" class="form-select form-select-sm"
-                                                                @bind="wipeObliterationBehavior" disabled="@(actingDeviceId != null)">
+                                                                @bind="wipeObliterationBehavior" disabled="@ActionsDisabled">
                                                             <option value="">(unset - Intune decides)</option>
                                                             <option value="default">default</option>
                                                             <option value="doNotObliterate">doNotObliterate</option>
@@ -326,7 +327,7 @@
                                                     {
                                                         <div class="form-check">
                                                             <input class="form-check-input" type="checkbox" id="notifyPrimaryUser"
-                                                                   @bind="notifyPrimaryUser" disabled="@(actingDeviceId != null)" />
+                                                                   @bind="notifyPrimaryUser" disabled="@ActionsDisabled" />
                                                             <label class="form-check-label" for="notifyPrimaryUser">
                                                                 Email the device's primary user (@device.UserPrincipalName)
                                                             </label>
@@ -359,7 +360,7 @@
                                                     {
                                                         <div class="form-check">
                                                             <input class="form-check-input" type="checkbox" id="alsoRemoveEntra"
-                                                                   @bind="alsoRemoveEntra" disabled="@(actingDeviceId != null)" />
+                                                                   @bind="alsoRemoveEntra" disabled="@ActionsDisabled" />
                                                             <label class="form-check-label" for="alsoRemoveEntra">
                                                                 Also remove this device's Entra ID device object
                                                             </label>
@@ -385,7 +386,7 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label mb-1" for="intuneDeviceTicket">Ticket number (required)</label>
                                                     <input id="intuneDeviceTicket" class="form-control form-control-sm" @bind="actionTicket"
-                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@(actingDeviceId != null)" />
+                                                           @bind:event="oninput" placeholder="INC0000000" disabled="@ActionsDisabled" />
                                                 </div>
                                                 @* Wipe alone requires typing the device name: retire is recoverable by
                                                    re-enrolling, a wipe destroys the machine's contents. *@
@@ -394,13 +395,13 @@
                                                     <div class="col-md-4">
                                                         <label class="form-label mb-1" for="wipeConfirmName">Type the device name to confirm</label>
                                                         <input id="wipeConfirmName" class="form-control form-control-sm" @bind="wipeConfirmName"
-                                                               @bind:event="oninput" placeholder="@DeviceLabel(device)" disabled="@(actingDeviceId != null)" />
+                                                               @bind:event="oninput" placeholder="@DeviceLabel(device)" disabled="@ActionsDisabled" />
                                                     </div>
                                                 }
                                                 <div class="col-md-4">
                                                     <button class="btn btn-danger btn-sm me-2"
                                                             @onclick="() => ExecuteActionAsync(device, confirmAction.Value)"
-                                                            disabled="@(actingDeviceId != null || string.IsNullOrWhiteSpace(actionTicket) || !WipeNameConfirmed(device, confirmAction.Value))">
+                                                            disabled="@(ActionsDisabled || string.IsNullOrWhiteSpace(actionTicket) || !WipeNameConfirmed(device, confirmAction.Value))">
                                                         @ActionLabel(confirmAction.Value)
                                                     </button>
                                                     <button class="btn btn-secondary btn-sm" @onclick="CancelAction"
@@ -654,7 +655,23 @@
     private DeviceOutcome? OutcomeFor(string deviceId) =>
         deviceOutcomes.TryGetValue(deviceId, out var outcome) ? outcome : null;
 
-    private bool ActionsDisabled => isSearching || actingDeviceId != null;
+    /// <summary>
+    /// The page-wide busy predicate (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 5). Every
+    /// in-flight flag on the page, so no control stays live while any operation runs.
+    /// </summary>
+    /// <remarks>
+    /// detailLoading was the missing third. Without it a detail read left every action button, the
+    /// search box and the whole confirm bar clickable for the length of a Graph round trip; and the
+    /// Search button it did not gate clears devices, deviceOutcomes and the open confirm bar, so a
+    /// search started during a queued wipe threw away the verdict for that wipe - the row it belongs
+    /// to is no longer in the list, so neither the spinner nor the outcome can render, while the
+    /// audit row and the admin email still say it happened.
+    ///
+    /// Named ActionsDisabled rather than IsBusy, unlike the four pages converted before it: the name
+    /// was already here and is referenced by docs/ClickGatingAudit-Plan.md and .agents/state.md,
+    /// neither of which this slice may edit. The registry records the name, so nothing is ambiguous.
+    /// </remarks>
+    private bool ActionsDisabled => isSearching || detailLoading || actingDeviceId != null;
 
     /// <summary>Column count for a full-width row; tracks the conditional Actions column.</summary>
     private int DetailColspan => CanActAtAll ? 7 : 6;
@@ -741,14 +758,25 @@
         authChecked = true;
     }
 
+    /// <summary>
+    /// Enter in the search box runs the same search the button beside it runs, so it is refused on
+    /// the same signal. The refusal that matters is the input's own disabled attribute naming
+    /// ActionsDisabled - a disabled form control fires no key events at all - and this condition is
+    /// belt and braces for the one round trip in which the browser's copy of it is stale.
+    /// </summary>
     private async Task OnSearchKeyDown(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter" && !isSearching)
+        if (e.Key == "Enter" && !ActionsDisabled)
             await SearchAsync();
     }
 
     private async Task SearchAsync()
     {
+        // The term the operator saw when the click was accepted. The box binds on oninput, so it
+        // writes searchTerm on every keystroke, and the Task.Yield below hands the circuit back to
+        // the renderer - so a keystroke landing in that gap would otherwise let the audit row name
+        // one term (DescribeSearch) and Graph be asked for another.
+        var term = searchTerm;
         isSearching = true;
         // Cleared at the start of every search, not only the first - otherwise a second search
         // would render the first search's now-stale verdict while it is in flight.
@@ -771,11 +799,11 @@
         deviceOutcomes.Clear();
         await Task.Yield();
 
-        var target = DescribeSearch(searchTerm);
+        var target = DescribeSearch(term);
 
         try
         {
-            var result = await IntuneDeviceService.SearchDevicesAsync(searchTerm);
+            var result = await IntuneDeviceService.SearchDevicesAsync(term);
             devices = [.. result.Devices];
             truncated = result.Truncated;
             searchedCount = result.SearchedCount;
