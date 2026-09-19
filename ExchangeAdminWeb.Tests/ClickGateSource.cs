@@ -166,9 +166,84 @@ public sealed class ClickGateSource
     /// as a page.
     /// </para>
     /// </remarks>
-    public static int IndexOfTagEnd(string text, int from)
+    public static int IndexOfTagEnd(string text, int from) => WalkTag(text, from, values: null);
+
+    /// <summary>
+    /// The value of a tag's <paramref name="name"/> attribute - "disabled" is the one this suite
+    /// asks for - without its quotes, or null when the tag carries no such attribute with a quoted
+    /// value. <paramref name="name"/> is matched case-insensitively, so it finds both the HTML
+    /// <c>disabled=</c> and a child component's <c>Disabled=</c> parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This exists because "the clause is somewhere in the tag" is not the same claim as "the clause
+    /// is in the gate", and the difference was measured, not imagined. GroupManagement's per-row
+    /// Remove carries a title that explains both of its refusals in prose NAMING THE SAME
+    /// EXPRESSIONS the disabled attribute tests. A clause registered in
+    /// <see cref="ClickGateRegistry"/> and checked by containment over the whole tag therefore kept
+    /// passing after it had been deleted from the gate, because the tooltip describing it still
+    /// matched. Two more controls on that page have the same shape (its lines 141 and 190, both a
+    /// disabled expression mirrored by a title that names its clauses). Anchoring each registered
+    /// string by hand closes one entry at a time and rots on the next whitespace change; reading the
+    /// attribute value closes the class.
+    /// </para>
+    /// <para>
+    /// Boundary rule: the name must be preceded by whitespace, so <c>aria-disabled=</c> and
+    /// <c>data-disabled=</c> are NOT read as <c>disabled=</c>. And the candidates come from
+    /// <see cref="WalkTag"/> rather than from a search of the tag text, so the word "disabled"
+    /// occurring inside some other attribute's value cannot be mistaken for an attribute.
+    /// </para>
+    /// <para>
+    /// Honest limitations, both of which fail LOUDLY - the caller finds no clause and its assertion
+    /// reports the control by name - rather than quietly passing. An unquoted value
+    /// (<c>disabled=@IsBusy</c>) is not returned at all, because WalkTag records only quoted spans;
+    /// no converted page has one, and that was checked rather than assumed. And a value containing a
+    /// nested C# string inherits IndexOfTagEnd's limitation above: the inner quote ends the recorded
+    /// span early. No disabled attribute on any converted page contains a quote, also checked.
+    /// </para>
+    /// </remarks>
+    public static string? AttributeValue(string tag, string name)
+    {
+        var values = new List<(int Start, int End)>();
+        WalkTag(tag, 0, values);
+
+        foreach (var (start, end) in values)
+        {
+            // WalkTag only opens a value directly after an "=", so what precedes the opening quote
+            // at start - 1 is that "=", and what precedes THAT is the attribute name.
+            var before = tag[..(start - 1)].TrimEnd();
+            if (!before.EndsWith('='))
+                continue;
+
+            before = before[..^1].TrimEnd();
+            if (!before.EndsWith(name, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // "aria-disabled" and "data-disabled" both end with "disabled" and are different
+            // attributes; only a whitespace boundary makes this the attribute that was asked for.
+            var nameStart = before.Length - name.Length;
+            if (nameStart == 0 || !char.IsWhiteSpace(before[nameStart - 1]))
+                continue;
+
+            return tag[start..end];
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The one tag walker. Returns the index of the "&gt;" that closes the tag whose attribute list
+    /// begins at <paramref name="from"/>, or -1; and, when <paramref name="values"/> is given,
+    /// records the span of every quoted attribute value it passes as (first character, closing
+    /// quote). The quote rule is documented on <see cref="IndexOfTagEnd"/>, which is this with no
+    /// recording; <see cref="AttributeValue"/> is this with it. Kept as one method on purpose - the
+    /// defect IndexOfTagEnd's remarks record was found in a THIRD copy of this walk that had drifted
+    /// from the other two.
+    /// </summary>
+    private static int WalkTag(string text, int from, List<(int Start, int End)>? values)
     {
         var quote = '\0';
+        var valueStart = 0;
         var afterEquals = false;
 
         for (var i = from; i < text.Length; i++)
@@ -177,13 +252,18 @@ public sealed class ClickGateSource
 
             if (quote != '\0')
             {
-                if (c == quote) quote = '\0';
+                if (c != quote)
+                    continue;
+
+                quote = '\0';
+                values?.Add((valueStart, i));
                 continue;
             }
 
             if (afterEquals && c is '"' or '\'')
             {
                 quote = c;
+                valueStart = i + 1;
                 afterEquals = false;
                 continue;
             }

@@ -2480,10 +2480,16 @@ public static class ClickGateRegistry
                 "only inside the bulk add panel, so only while showBulkAdd is true and the operator "
                 + "holds canManageOnPrem. The clause stops an empty paste being resolved"),
 
+            // Both clauses are anchored with "|| " for the same reason as 274 below: the title at
+            // 143 explains both refusals in prose naming the same two expressions - "@(string.
+            // IsNullOrWhiteSpace(ticketNumber) ? ..." and "(ResolvedCount == 0 ? ...". Registered
+            // bare, either would have kept passing after being deleted from the disabled attribute.
+            // The "|| " occurs only in the gate, and it says something the bare clause does not:
+            // this condition is OR-ed alongside the predicate, never the whole of the gate.
             new AnnotatedControl(141, "@onclick=\"AddResolvedAsync\"",
                 [
-                    "ResolvedCount == 0",
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "|| ResolvedCount == 0",
+                    "|| string.IsNullOrWhiteSpace(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "inside the bulk add panel, as Resolve above it. ResolvedCount == 0 is the only thing "
@@ -2491,10 +2497,13 @@ public static class ClickGateRegistry
                 + "AddResolvedAsync itself returns early on an empty row set, so the clause is what "
                 + "makes the refusal visible rather than silent"),
 
+            // Anchored on the same finding as 141 above and 274 below: the title at 192 names both
+            // of this gate's non-busy clauses in the prose that explains them, so bare registrations
+            // were satisfied by the tooltip and would have survived deletion from the gate.
             new AnnotatedControl(190, "@onclick=\"() => showRemoveConfirm = true\"",
                 [
-                    "SelectedCount == 0",
-                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "|| SelectedCount == 0",
+                    "|| string.IsNullOrWhiteSpace(ticketNumber)",
                 ],
                 RendersOnlyWhen:
                 "inside the manage card's member table region and only while canManageOnPrem. This "
@@ -2502,16 +2511,22 @@ public static class ClickGateRegistry
                 + "earliest point at which a batch with no ticket or no ticked rows is refused; the "
                 + "confirmation block it opens renders only while SelectedCount > 0 as well"),
 
-            // Two of these three clauses carry a "||" that the others here do not need. The clause
-            // check is containment over the whole tag text, and this tag's title at 276 explains
-            // both refusals to the operator in prose that names the same two expressions -
-            // "@(member.IsPrimaryMember ? ..." and "(string.IsNullOrEmpty(member.ObjectGuid) ? ...".
-            // Registered bare, both clauses would keep passing after being deleted from the
-            // disabled attribute, because the title alone would satisfy the containment. The "||"
-            // occurs only in the disabled expression, so it pins each clause to the gate rather
-            // than to the tooltip that describes it. ticketNumber appears once in the tag and needs
-            // no anchor. Proven by mutation: dropping "|| member.IsPrimaryMember" from 275 fails
-            // this assertion, and did not before the anchor was added.
+            // Two of these three clauses carry a "||" that the others here do not need. This tag's
+            // title at 276 explains both refusals to the operator in prose that names the same two
+            // expressions - "@(member.IsPrimaryMember ? ..." and "(string.IsNullOrEmpty(member.
+            // ObjectGuid) ? ...". When the clause check was containment over the whole tag text,
+            // both clauses registered bare kept passing after being deleted from the disabled
+            // attribute, because the title alone satisfied the containment. Proven by mutation:
+            // dropping "|| member.IsPrimaryMember" from 275 failed this assertion once the anchor
+            // was added and did not before.
+            //
+            // The assertion now reads the disabled attribute VALUE rather than the tag, which
+            // closes the class this entry only closed for itself - 141 and 190 above had the same
+            // shape and were never swept. The anchors stay: they are cheap, and "|| clause" says
+            // something the bare clause does not, that the condition is OR-ed alongside the
+            // predicate rather than being the whole of the gate. ticketNumber appears once in this
+            // tag and needs no anchor, which is left as the record that an anchor is a response to
+            // a duplicate and not a house style.
             new AnnotatedControl(274, "@onclick=\"() => RemoveMember(member)\"",
                 [
                     "string.IsNullOrWhiteSpace(ticketNumber)",
@@ -3011,6 +3026,10 @@ public sealed record ExactlyOneGuardOf(
 /// Non-busy clauses that must remain in the disabled expression, OR-ed with the predicate rather
 /// than replaced by it. IntuneDevices line 403 is why this exists: its typed-device-name clause is
 /// the only enforcement of that confirmation anywhere, and a mechanical rewrite would delete it.
+/// Each string is looked for in the control's disabled attribute VALUE, not anywhere in its tag, so
+/// a clause a tooltip also names is enforced against the gate and not against the tooltip. Writing
+/// the leading "|| " is optional and is the convention where a gate's clause is mirrored in prose;
+/// it additionally pins the clause as one term of an OR rather than the whole condition.
 /// </param>
 /// <param name="RendersOnlyWhen">Reachability the scanner cannot see, as prose for a reviewer.</param>
 public sealed record AnnotatedControl(

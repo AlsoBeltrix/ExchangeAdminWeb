@@ -1145,6 +1145,57 @@ public class ClickGateTests
         Assert.Empty(unterminated.Tags("button"));
     }
 
+    [Fact]
+    public void AttributeValueReadsOnlyTheAttributeItNames()
+    {
+        // The other half of the walker, against a fixture rather than a page, because
+        // AnnotatedControlsKeepTheirNonBusyClauses is only as tight as this is. Reading one
+        // character too much here re-opens exactly the hole that assertion was tightened to close:
+        // a clause deleted from the gate but still named in the tooltip beside it would pass.
+        //
+        // What is the cheapest broken implementation that still passes this? None of the four.
+        // "Return the whole tag" fails on Prose, which is the measured defect in miniature.
+        // "Return the first quoted value" fails on every case here, since class= comes first in all
+        // of them. "IndexOf the name" fails on Aria and on Mentioned. "Return null always" fails on
+        // the four that must find something. "Delete the feature" is not available: the feature is
+        // all this test calls. Each case below is load-bearing in a direction no other one covers.
+        const string Plain =            // the ordinary shape: the gate is not the first attribute
+            "<button class=\"a\" @onclick=\"Go\" disabled=\"@(IsBusy || x == 0)\">";
+        const string Prose =            // THE defect: the clause is in the title, not in the gate
+            "<button class=\"b\" @onclick=\"Go\" disabled=\"@(IsBusy)\" "
+            + "title=\"@(x == 0 ? \"Resolve the list first.\" : null)\">";
+        const string Aria =             // a different attribute that ENDS with the name
+            "<button class=\"c\" aria-disabled=\"true\" disabled=\"@(IsBusy || y)\">";
+        const string Mentioned =        // the name inside another attribute's VALUE
+            "<button class=\"d\" title=\"the disabled=x attribute\" disabled=\"@(IsBusy || z)\">";
+        const string Component =        // a child component's parameter, capitalised
+            "<CountryCodePicker @bind-Value=\"codes\" Disabled=\"@IsBusy\" />";
+        const string SingleQuoted =     // single-quoted values are valid HTML and used on this repo
+            "<button class='e' disabled='@(IsBusy || q)'>";
+        const string Ungated =          // no such attribute at all - null, not empty
+            "<button class=\"f\" @onclick=\"Go\">";
+        const string Unquoted =         // an unquoted value is NOT returned; the caller must fail
+            "<button class=\"g\" disabled=@IsBusy>";
+
+        Assert.Equal("@(IsBusy || x == 0)", ClickGateSource.AttributeValue(Plain, "disabled"));
+
+        // The whole point. The tag contains "x == 0"; the gate does not, and this must say so.
+        Assert.Equal("@(IsBusy)", ClickGateSource.AttributeValue(Prose, "disabled"));
+        Assert.Contains("x == 0", Prose, StringComparison.Ordinal);
+        Assert.DoesNotContain("x == 0",
+            ClickGateSource.AttributeValue(Prose, "disabled")!, StringComparison.Ordinal);
+
+        Assert.Equal("@(IsBusy || y)", ClickGateSource.AttributeValue(Aria, "disabled"));
+        Assert.Equal("@(IsBusy || z)", ClickGateSource.AttributeValue(Mentioned, "disabled"));
+        Assert.Equal("@IsBusy", ClickGateSource.AttributeValue(Component, "disabled"));
+        Assert.Equal("@(IsBusy || q)", ClickGateSource.AttributeValue(SingleQuoted, "disabled"));
+
+        // Absent and unreadable both come back null, so the caller reports the control by name
+        // rather than treating an unreadable gate as an intact one.
+        Assert.Null(ClickGateSource.AttributeValue(Ungated, "disabled"));
+        Assert.Null(ClickGateSource.AttributeValue(Unquoted, "disabled"));
+    }
+
     // ---- where the guard may not live --------------------------------------------------------
 
     [Theory]
@@ -1563,6 +1614,25 @@ public class ClickGateTests
         // something - a typed confirmation, a ticket number, form validity. Rewriting the
         // expression to the predicate deletes it, and on the most destructive action in this app
         // there is no server-side backstop to catch that.
+        //
+        // The clause is looked for in the DISABLED ATTRIBUTE VALUE, not in the tag text. That is
+        // this assertion's own measured fix and it closes a class rather than an instance. Checking
+        // the whole tag passes whenever the same expression appears twice in it, and the commonest
+        // second copy is the title that explains the refusal to the operator in prose - the gate and
+        // its tooltip name the same condition by construction. Three controls on GroupManagement
+        // have exactly that shape (274, 141, 190); on 274 it was proven by mutation that both
+        // eligibility clauses kept passing after being DELETED from the gate, because the tooltip
+        // still matched. The anchors those entries carry are now belt and braces rather than the
+        // only defence, and a new entry registered bare can no longer be silently unenforced.
+        //
+        // What is the cheapest broken implementation that still passes this? None of the four.
+        // "Delete the feature" - dropping the disabled attribute - fails on the null check below,
+        // which is why that check exists rather than letting an absent gate skip the loop.
+        // "Change nothing" is the correct page and must pass. "Hard-code one value" is the
+        // interesting one: an AttributeValue that returned the whole tag would restore exactly the
+        // weakness being fixed here, so it is pinned separately and against a fixture by
+        // AttributeValueReadsOnlyTheAttributeItNames. "Never call the thing under test" fails on the
+        // tag lookup, which requires a clickable button at the registered line.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
         var tags = source.ClickableButtons().ToDictionary(tag => tag.Line);
@@ -1574,11 +1644,22 @@ public class ClickGateTests
             Assert.True(tag!.Text.Contains(control.Snippet, StringComparison.Ordinal),
                 $"{page}:{control.Line} no longer contains '{control.Snippet}'");
 
+            if (control.PreserveClauses.Count == 0)
+                continue;
+
+            var gate = ClickGateSource.AttributeValue(tag.Text, "disabled");
+            Assert.True(gate != null,
+                $"{page}:{control.Line} registers {control.PreserveClauses.Count} clause(s) that "
+                + "must survive, but the control no longer carries a readable disabled attribute at "
+                + "all, so there is nothing left holding them.");
+
             foreach (var clause in control.PreserveClauses)
             {
-                Assert.True(tag.Text.Contains(clause, StringComparison.Ordinal),
-                    $"{page}:{control.Line} lost the clause '{clause}'. It is not a busy condition "
-                    + "and the predicate does not replace it; it must be OR-ed alongside.");
+                Assert.True(gate!.Contains(clause, StringComparison.Ordinal),
+                    $"{page}:{control.Line} lost the clause '{clause}' from its disabled expression, "
+                    + $"which now reads '{gate}'. It is not a busy condition and the predicate does "
+                    + "not replace it; it must be OR-ed alongside. A copy of the clause elsewhere in "
+                    + "the tag - in the title that explains the refusal, say - does not count.");
             }
         }
     }
