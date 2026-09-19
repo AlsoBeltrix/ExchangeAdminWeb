@@ -7,12 +7,14 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **THE WEEKEND BACKLOG RUN IS FINISHED (2026-09-18 to 2026-09-19). Read
+- **THE WEEKEND BACKLOG RUN IS AT ITS END STATE (2026-09-18 to 2026-09-19); tier 1 is complete
+  and only owner-blocked work remains. Read
   `.agents/decisions.md` 2026-09-18 "Weekend backlog run" for the authority it ran under - that
-  authority has now LAPSED and the standing rules are back in force.** Plans no longer
-  self-approve on codex consensus, pushes go back to ask-first per `.agents/push-policy.md`, and
-  the Token Budget one-slice-one-session rule applies again. 30 commits, both remotes level,
-  every gate green at every commit. Per-item outcome:
+  authority lapses when the owner's goal is cleared, not before** - while it stands, plans
+  self-approve on codex consensus, pushes go to both remotes, and implementation subagents are
+  authorized. Afterwards the standing rules resume: ask-first pushes per
+  `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, both
+  remotes level, every gate green at every commit. Per-item outcome:
   - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
   - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md`, **codex consensus
     after three rounds**, `Status: Draft`. **Blocked on the owner and cannot proceed without

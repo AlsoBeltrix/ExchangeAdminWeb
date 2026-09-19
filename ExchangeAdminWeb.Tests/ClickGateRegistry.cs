@@ -4295,16 +4295,21 @@ public static class ClickGateRegistry
                 + "Back is still in flight. This is the other half of the exemption at 205; neither "
                 + "can be changed without the other. The PreserveClause is the page predicate "
                 + "itself, which is off-label for a field documented as holding NON-busy clauses, "
-                + "and it is here because a mutation measured the hole rather than argued it: this "
-                + "conversion first carried a title=\"@(IsManageBusy ? ... : null)\" on this button "
-                + "to explain the greying, and stripping the disabled attribute outright then left "
-                + "the whole suite green, because EveryClickableButtonConsultsAPredicateOrIsRegistered"
-                + "Exempt matches the whole TAG text and the title still named the predicate. That "
-                + "is the same mirror defect AnnotatedControlsKeepTheirNonBusyClauses was tightened "
-                + "against, still open in the button sweep. The title is gone - the cue is now a "
-                + "browse-view banner, which a disabled control cannot suppress - and registering "
-                + "the clause here re-closes it from the attribute VALUE, which is the only place "
-                + "that cannot be mirrored."),
+                + "and it is kept deliberately now that the hole which produced it has been closed "
+                + "at source. It arrived as a workaround: this conversion first carried a "
+                + "title=\"@(IsManageBusy ? ... : null)\" on this button to explain the greying, "
+                + "and stripping the disabled attribute outright then left the whole suite green, "
+                + "because EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt matched the "
+                + "whole TAG text and the title still named the predicate. That sweep now reads the "
+                + "disabled attribute VALUE, so the workaround's own reason is gone. The entry "
+                + "stays because it pins what the sweep still cannot: this page registers TWO "
+                + "predicates and the sweep is satisfied by either one, while this button must be "
+                + "gated on the MANAGE predicate. IsBrowseBusy is the plausible wrong edit for a "
+                + "control that renders in the browse view. Measured rather than argued, as "
+                + "before: swapping this gate to IsBrowseBusy leaves the tightened sweep green and "
+                + "fails here alone, so this entry is the only record of WHICH predicate. The "
+                + "title is gone too - the cue is now a browse-view banner, which a disabled "
+                + "control cannot suppress."),
 
             new AnnotatedControl(151, "@onclick=\"SearchGroup\"",
                 ["string.IsNullOrWhiteSpace(searchName)"],

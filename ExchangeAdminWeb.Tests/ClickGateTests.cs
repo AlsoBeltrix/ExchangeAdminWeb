@@ -100,19 +100,53 @@ public class ClickGateTests
         // Walks the markup rather than a list of known buttons, so a button added later cannot
         // quietly skip the gate. A per-control guard only knows about its own operation, which is
         // exactly the blind spot the ruling outlaws.
+        //
+        // The predicate is looked for in the DISABLED ATTRIBUTE VALUE, not anywhere in the tag.
+        // That was the last measured hole in this suite, and it is the same one
+        // AnnotatedControlsKeepTheirNonBusyClauses was tightened against in 439cb2b: a gate and the
+        // tooltip explaining it name the same expression by construction, so a check over the whole
+        // tag is satisfied by the tooltip alone. Measured rather than argued. Rewriting
+        // DhcpAuthorization 51 from disabled="@IsBusy" to title="@(IsBusy ? "Refreshing" : null)" -
+        // the Refresh button ungated outright, its predicate now named only in prose - left this
+        // suite at 0 failed / 266 passed. The same shape arrived live during the SelfServiceGroups
+        // conversion, whose 128 and 179 carried exactly such a title while the gate was deleted.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "delete the feature" fails: that IS the mutation above. An absent, unquoted or
+        //     otherwise unreadable disabled attribute is REPORTED, not skipped - which is why the
+        //     null below is a failure rather than a continue, and is the whole difference between
+        //     this and a check that only inspects gates it can find.
+        //   - "hard-code one value" has nothing to hard-code: the predicate names come from the
+        //     page's registry entry and the gate comes from the file, and a bare identifier cannot
+        //     be smuggled in because what is read is one attribute rather than the tag.
+        //   - "never call the thing under test" fails: the buttons are enumerated from the markup,
+        //     so a control that has moved, been renamed or stopped being clickable changes the list
+        //     rather than being skipped silently.
+        //   - "change nothing" passes, correctly; this is a drift tripwire, not a proof.
+        // Said plainly rather than overclaimed, as everywhere else here: this is still text
+        // containment, now over one attribute instead of a tag. It proves the gate names a
+        // predicate, never that the predicate is load-bearing - disabled="@(IsBusy && false)"
+        // passes, as this suite's header warns.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
         var exemptLines = entry.ExemptControls.Select(exempt => exempt.Line).ToHashSet();
 
         var ungated = source.ClickableButtons()
-            .Where(tag => !NamesAnyPredicate(entry, tag.Text))
             .Where(tag => !exemptLines.Contains(tag.Line))
-            .Select(tag => $"{page}:{tag.Line} {ClickGateSource.HandlerOf(tag)}")
+            .Select(tag => (Tag: tag, Gate: ClickGateSource.AttributeValue(tag.Text, "disabled")))
+            .Where(found => found.Gate is null || !NamesAnyPredicate(entry, found.Gate))
+            .Select(found => $"{page}:{found.Tag.Line} {ClickGateSource.HandlerOf(found.Tag)} "
+                + (found.Gate is null
+                    ? "carries no readable disabled= attribute"
+                    : $"is gated on '{found.Gate}'"))
             .ToList();
 
         Assert.True(ungated.Count == 0,
-            "these buttons consult no busy predicate and are not registered as exempt. Either gate "
-            + "them or add an ExemptControl with the reason it is safe:\n  "
+            "these buttons consult no busy predicate IN THEIR DISABLED ATTRIBUTE and are not "
+            + "registered as exempt. Either gate them or add an ExemptControl with the reason it is "
+            + "safe. A predicate named elsewhere in the tag - in the title that explains the "
+            + "greying to the operator, say - does not count, because a tooltip refuses "
+            + "nothing:\n  "
             + string.Join("\n  ", ungated));
     }
 
@@ -381,18 +415,30 @@ public class ClickGateTests
 
             switch (target.Mechanism)
             {
+                // Both attribute mechanisms read the ATTRIBUTE VALUE, for the reason spelled out on
+                // EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt. These two branches
+                // carried the button sweep's defect in a sharper form: the old pair of conditions
+                // was satisfied by a predicate named anywhere in the tag plus the WORD "disabled"
+                // anywhere in it, so an aria-disabled, a css class or the prose "disabled while
+                // busy" in a title met the second half on its own. No page exercises either branch
+                // today - every registered NonButtonTarget on every converted page is a
+                // HandlerGuard - so this is preventive, and it is fixed here rather than when a
+                // page first needs it precisely because nothing would have failed to warn us.
                 case RefusalMechanism.DisabledAttribute:
-                    Assert.True(NamesAnyPredicate(entry, tag.Text) &&
-                                tag.Text.Contains("disabled", StringComparison.OrdinalIgnoreCase),
-                        $"{page}:{target.Line} declares DisabledAttribute but carries no disabled= "
-                        + "naming a predicate");
+                    var gate = ClickGateSource.AttributeValue(tag.Text, "disabled");
+                    Assert.True(gate != null && NamesAnyPredicate(entry, gate),
+                        $"{page}:{target.Line} declares DisabledAttribute but carries no readable "
+                        + "disabled= attribute whose VALUE names a predicate. A predicate named "
+                        + "elsewhere in the tag does not refuse anything.");
                     break;
 
                 case RefusalMechanism.ChildComponentParameter:
-                    Assert.True(NamesAnyPredicate(entry, tag.Text) &&
-                                tag.Text.Contains("Disabled=", StringComparison.Ordinal),
+                    var parameter = ClickGateSource.AttributeValue(tag.Text, "Disabled");
+                    Assert.True(
+                        tag.Text.Contains("Disabled=", StringComparison.Ordinal)
+                        && parameter != null && NamesAnyPredicate(entry, parameter),
                         $"{page}:{target.Line} declares ChildComponentParameter but passes no "
-                        + "Disabled= naming a predicate");
+                        + "Disabled= parameter whose VALUE names a predicate.");
                     break;
 
                 case RefusalMechanism.HandlerGuard:
@@ -872,11 +918,18 @@ public class ClickGateTests
                     + $"no longer the twin of the key path at {path.Line} and the pairing on record "
                     + "is describing two different operations.");
 
-                Assert.True(NamesAnyPredicate(entry, button!.Text),
-                    $"{page}:{twinLine} no longer names a busy predicate, and it is on record as the "
-                    + $"gated twin of the key path at {path.Line}. If that button is genuinely "
-                    + "exempt now, the key path's own refusal is the only thing left and this entry "
-                    + "needs re-checking by hand.");
+                // The twin's gate is read out of its disabled attribute, not out of its tag, for the
+                // reason on EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt. It matters
+                // more here than anywhere: this whole entry exists because 2eb8c15's defect was a
+                // gated button beside an ungated key path, so a twin that only LOOKS gated - the
+                // predicate in its tooltip, the attribute gone - restores the exact reading of the
+                // page that hid the original hole.
+                var twinGate = ClickGateSource.AttributeValue(button!.Text, "disabled");
+                Assert.True(twinGate != null && NamesAnyPredicate(entry, twinGate),
+                    $"{page}:{twinLine} no longer names a busy predicate in its disabled attribute, "
+                    + $"and it is on record as the gated twin of the key path at {path.Line}. If "
+                    + "that button is genuinely exempt now, the key path's own refusal is the only "
+                    + "thing left and this entry needs re-checking by hand.");
             }
         }
     }
@@ -1698,6 +1751,36 @@ public class ClickGateTests
 
     // ---- helpers -----------------------------------------------------------------------------
 
+    /// <summary>
+    /// True if <paramref name="text"/> names one of the page's busy predicates.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Pass an attribute VALUE, never a whole tag.</b> A gate and the tooltip that explains it
+    /// name the same expression by construction, so asking whether a TAG names a predicate is
+    /// answered by the tooltip and stays answered after the gate is deleted. Every caller here now
+    /// passes <see cref="ClickGateSource.AttributeValue"/>'s result, and each of the three that did
+    /// not was proved loose by mutation rather than by argument - see
+    /// <see cref="EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt"/> for the measurement.
+    /// </para>
+    /// <para>
+    /// The tag-level containment checks that remain were audited in the same pass and are left on
+    /// purpose, so the next reader does not have to re-derive why:
+    /// <see cref="EveryRegisteredExemptionStillPointsAtARealControl"/> (KeepsItsOwnGuard),
+    /// <see cref="EveryDomSyncedControlStillCarriesItsRegisteredGate"/> and the DisabledAttribute
+    /// branch of <see cref="EveryKeyboardPathIsRefusedByItsDeclaredMechanism"/> all register the
+    /// WHOLE attribute - <c>disabled="@isOperating"</c>, not a bare identifier - and two of them
+    /// assert that shape on the spot, so passing on a mirror would need another attribute's value to
+    /// reproduce the attribute spelling verbatim. That is the belt-and-braces bargain those entries
+    /// were written under, and it is a different bargain from matching a bare predicate name.
+    /// <see cref="NoControlRecordedUngatedHasQuietlyAcquiredAGate"/> is deliberately NOT tightened:
+    /// it is a negative, so looseness makes it over-trigger and ask for a human, while reading the
+    /// attribute value would let an unquoted <c>disabled=@IsBusy</c> - which AttributeValue cannot
+    /// read - pass as ungated. The enumerators (ClickableButtons, NonButtonClickTargets,
+    /// DomSyncedTags) match over the tag too, and a false match there only widens the set under
+    /// inspection, which adds work rather than removing a check.
+    /// </para>
+    /// </remarks>
     private static bool NamesAnyPredicate(PageGateEntry entry, string text) =>
         entry.Predicates.Any(predicate =>
             Regex.IsMatch(text, ClickGateSource.WholeWord(predicate.Name)));
