@@ -33,6 +33,7 @@ public static class ClickGateRegistry
         DhcpAuthorization,
         NamedLocations,
         MailboxPermissions,
+        CalendarPermissions,
     };
 
     /// <summary>
@@ -45,11 +46,9 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 3 of 9 - DhcpAuthorization.razor, NamedLocations.razor and
-            // MailboxPermissions.razor - are converted and live in Pages above.
-            ["CalendarPermissions.razor"] = "tier 1, page 4 of 9; the structural twin of "
-                + "MailboxPermissions.razor. Inherit that page's decisions rather than "
-                + "re-litigating them, and note it shares the RecipientAutocomplete gap",
+            // Pages 1 to 4 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // MailboxPermissions.razor and CalendarPermissions.razor - are converted and live in
+            // Pages above.
             ["IntuneDevices.razor"] = "tier 1, page 5 of 9; has a partial ActionsDisabled already",
             ["GroupManagement.razor"] = "tier 1, page 6 of 9; needs a flag and a finally created in SelectGroup",
             ["M365GroupManagement.razor"] = "tier 1, page 7 of 9",
@@ -1286,6 +1285,379 @@ public static class ClickGateRegistry
                 + "NullReferenceException, and the catch that would receive it audits the target, so "
                 + "the throw would land inside the catch and escape the handler. With no "
                 + "ErrorBoundary anywhere in this app that tears the circuit down mid-write"),
+        ],
+
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("ProcessBulk", "isLoading", "file is null",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isLoading is this page's only flag and the whole of IsBusy, so it would "
+                + "not grey one button - it would deaden every control on the page, permanently, the "
+                + "first time the operator hit Process CSV with no file chosen. The guard reads "
+                + "'file is null' rather than 'csvFile is null' because the file is captured at entry "
+                + "now; the capture sits above the guard and the raise below it."),
+        ],
+    };
+
+    /// <summary>
+    /// Calendar Permissions: tier 1, page 4 of 9, converted 2026-09-18 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The structural twin of MailboxPermissions.razor, whose decisions are inherited here rather
+    /// than re-litigated.</b> One flag, one page-wide predicate, the same tab strip over a
+    /// single-mailbox form and a bulk form, the same on-prem write staged by SubmitSingle and
+    /// executed by ExecuteOnPrem behind a Continue button, and the same two RecipientAutocomplete
+    /// write-target pickers. Every place this page differs from its twin is called out below, because
+    /// an inherited decision that quietly stopped applying is worse than one that was never made.
+    /// </para>
+    /// <para>
+    /// <b>The lead finding is on ExecuteOnPrem, and it is sharper than the twin's.</b> The handler
+    /// computed its audit action string and its level from tabIndex at entry, then re-read tabIndex
+    /// at the write three statements later and again at the notification direction. A tab flip
+    /// landing in that window made the audit row and BOTH emails say Set while the code performed a
+    /// Remove - on the destructive on-premises path, and with no gate able to help, because
+    /// ExecuteOnPrem re-enters after an operator confirmation and that is an unbounded pause. The
+    /// captures registered under PostAwaitLiveReads are the whole of the fix.
+    /// </para>
+    /// <para>
+    /// <b>DownloadSampleCsv is GATED here and not exempt, which is a real divergence from page 3.</b>
+    /// MailboxPermissions exempts its sample-CSV button at 135 on the grounds that the handler serves
+    /// a compile-time constant and reads no page field. The second half of that reason is false here:
+    /// this page's DownloadSampleCsv reads bulkIsSet twice, once to choose the header row and once to
+    /// choose the file name, so it does read live page state and the twin's grant does not transfer.
+    /// It carries disabled="@IsBusy" with the rest of the page and needs no entry below.
+    /// </para>
+    /// <para>
+    /// <b>The RecipientAutocomplete gap is inherited and still open.</b> Disabled= reaches the
+    /// component's inner input and its own Enter path; it does not reach its suggestion rows, which
+    /// are ungated li elements carrying an @onmousedown that consults the parameter nowhere. A
+    /// dropdown already open when the gate closed keeps clickable rows, and clicking one rewrites
+    /// targetMailbox or affectedUser while a write is in flight. What actually stops that retargeting
+    /// the write, the protected-principal check, the audit row and the two notification emails is the
+    /// entry capture in PostAwaitLiveReads - after which the worst a late suggestion click can do is
+    /// dirty the form for the NEXT submission. The contract change is scheduled for page 6; page 3's
+    /// entry records the blast radius and it is not re-counted here.
+    /// </para>
+    /// <para>
+    /// <b>Both write handlers gained a protecting try, by two different routes, and the difference is
+    /// recorded because it looks like an inconsistency and is not.</b> ProcessBulk's existing try was
+    /// extended upward over the re-authorization, exactly as on page 3. SubmitSingle could not be
+    /// done that way: its pre-try region declares action inside a nested audit try and ipAddress
+    /// inside the self-grant branch, and the existing try's own block declares both names directly,
+    /// so merging the two scopes is a CS0136 conflict on both. It therefore gained an OUTER try that
+    /// wraps the existing try/catch whole, closed by the finally that lowers the flag. That shape has
+    /// a second merit worth recording: the existing catch keeps exactly the reach it had, so this
+    /// conversion changed no exception semantics, only where the flag is lowered. Eight scattered
+    /// pre-return isLoading = false lines were traced one by one before deletion; seven are
+    /// immediately followed by return with nothing between, and the eighth sits after
+    /// onPremConfirmPending = true, where the finally preserves the relative order so Continue still
+    /// renders enabled.
+    /// </para>
+    /// <para>
+    /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
+    /// conversion, it reports "Predicate: -", eight of eleven buttons as GateNoFlag and an 11-of-11
+    /// gap on a fully converted page. That is the single-flag scanner limitation page 3 records - its
+    /// predicate detector requires an expression-bodied bool naming at least TWO in-flight flags -
+    /// and not work outstanding. It reports zero stuck flags, which is why ScannerFalsePositives is
+    /// empty here as it is on the twin, and the three controls it lists as ungated (161, 178, 211)
+    /// are exactly the three registered exemptions below.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry CalendarPermissions => new()
+    {
+        Page = "CalendarPermissions.razor",
+        ExpectedLineCount = 679,
+
+        // One flag, one page-wide predicate, on the twin's reasoning re-checked against this file
+        // rather than copied: the tab strip, the single-mailbox form, the bulk form, the on-prem
+        // confirmation and both result banners render off the same state at the same time, and every
+        // write handler replaces part of it - SubmitSingle can stage the on-prem panel, ProcessBulk
+        // replaces bulkResult, ExecuteOnPrem nulls onPremTarget. There is no control here that is
+        // safe to leave live while another is working, which is what made a single predicate wrong
+        // on SelfServiceGroups and ConferenceRooms and right here.
+        Predicates =
+        [
+            new PredicateScope("IsBusy", ["isLoading"], AppliesWhen: "the whole page"),
+        ],
+
+        // Empty on purpose and confirmed by running the scanner AFTER the conversion, not before:
+        // Get-ClickGateAudit.ps1 reports zero stuck flags here. result and bulkResult are both
+        // nullables nulled at handler entry and assigned later in the same awaiting method, which is
+        // the shape that made operationResult a reported false positive on pages 1 and 2, and
+        // neither is reported here. Nothing was suppressed to achieve that.
+        ScannerFalsePositives = [],
+
+        ExcludedFields =
+        [
+            new ExcludedField("onPremConfirmPending", "the Continue/Cancel pair at 157-161",
+                "means 'an on-premises calendar write is staged and waiting for the operator', not "
+                + "'the page is working'. The pair renders only while it is true, so folding it into "
+                + "IsBusy would disable Continue at the only moment it is ever shown and no on-prem "
+                + "calendar permission could be changed again - the regression a review of the "
+                + "Migration plan caught before any code was written. ConfirmOnPrem reads it as a "
+                + "staleness guard, which is a different job from the busy gate and belongs in the "
+                + "handler"),
+        ],
+
+        ExemptControls =
+        [
+            new ExemptControl(161, "@onclick=\"CancelOnPrem\"",
+                "backs out of a staged on-premises write, and the operator must always be able to do "
+                + "that. Continue beside it at 157 is gated and ConfirmOnPrem refuses a stale click, "
+                + "so nothing can be executed from this state while the page is busy; cancelling only "
+                + "resets the staged selection",
+                ConditionThatKeepsItTrue:
+                "ExecuteOnPrem must keep capturing onPremTarget at entry. This control nulls that "
+                + "field, and the handler's catch audits the target after several awaits, so a live "
+                + "read there would dereference null inside a catch - where, with no ErrorBoundary "
+                + "anywhere in this app, the escaping exception tears the circuit down. The "
+                + "obligation is registered under PostAwaitLiveReads; it is recorded here rather than "
+                + "as a PrerequisiteBeforeExemptionHolds because this snippet names a method rather "
+                + "than assigning a field, so there is nothing for that field to tie to"),
+
+            new ExemptControl(178, "@onclick=\"() => result = null\"",
+                "dismisses the single-operation result banner. Gating it on IsBusy would trap the "
+                + "previous operation's message on screen for the whole of the next one, the same "
+                + "reason Migration's dismiss at 442, DhcpAuthorization's at 40, NamedLocations' at "
+                + "45 and MailboxPermissions' at 179 are exempt",
+                ConditionThatKeepsItTrue:
+                "no handler may READ result back. Today none does: SubmitSingle and ExecuteOnPrem "
+                + "both hold their outcome in a local opResult and only ever assign to result, so "
+                + "this control cannot null the field out from under a dereference. That is why this "
+                + "exemption carries no PrerequisiteBeforeExemptionHolds and no PostAwaitLiveReads "
+                + "entry names result - there is no live read to close. The moment a handler reads "
+                + "result after an await, this exemption becomes the DhcpAuthorization 40 defect: a "
+                + "write that SUCCEEDED audited and emailed as failed"),
+
+            new ExemptControl(211, "@onclick=\"() => bulkResult = null\"",
+                "dismisses the bulk-operation summary, on the same footing as the banner above. The "
+                + "summary can still be on screen during an unrelated single-mailbox write, because "
+                + "SubmitSingle does not clear bulkResult",
+                ConditionThatKeepsItTrue:
+                "ProcessBulk must keep publishing its summary from a local rather than reading the "
+                + "field back",
+                PrerequisiteBeforeExemptionHolds:
+                "ProcessBulk must keep the CSV outcome in a local - var bulk = await ...; "
+                + "bulkResult = bulk; - and read that local for the audit row, the failure detail "
+                + "and the admin email. Before it did, this control could null bulkResult while the "
+                + "handler was suspended, and the following bulkResult.FailedCount read would throw "
+                + "a NullReferenceException into ProcessBulk's own catch, which reports a bulk run "
+                + "that SUCCEEDED as a bare exception message and skips the admin notification "
+                + "entirely. Reinstate the field reads and this exemption is a live defect again"),
+        ],
+
+        // Verified by exhaustive census rather than inherited from the twin: Get-ClickGateAudit.ps1
+        // finds no @onclick off a button on this page (OtherClick 0), and the hand census of what it
+        // cannot see finds no anchor, no div/span/td handler, no @onsubmit and no @onkeydown. What it
+        // does find is eight DOM-synced controls, which are below - absent from this list on purpose,
+        // on the DhcpAuthorization, NamedLocations and MailboxPermissions precedent: this list is
+        // keyed to what ClickGateSource can locate, and an input, a select, an InputFile and a child
+        // component are in neither Tags("a") nor NonButtonClickTargets(), so registering one here
+        // would fail EveryNonButtonTargetIsRefusedByItsDeclaredMechanism rather than document
+        // anything.
+        NonButtonTargets = [],
+
+        DomSyncedControls =
+        [
+            // The two write-target pickers. Disabled= reaches their inner input and their own Enter
+            // key path; it does NOT reach their suggestion rows. See the remarks on this entry.
+            new DomSyncedControl(46, "@bind-Value=\"targetMailbox\"", "RecipientAutocomplete",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(54, "@bind-Value=\"affectedUser\"", "RecipientAutocomplete",
+                "Disabled=\"@IsBusy\""),
+
+            new DomSyncedControl(62, "id=\"ticketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(72, "id=\"accessLevel\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(118, "id=\"radioSet\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(120, "id=\"radioRemove\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(126, "id=\"bulkTicket\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(133, "OnChange=\"HandleCsvUpload\"", "InputFile",
+                "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("ExecuteOnPrem", ["ConfirmOnPrem"],
+                "The exactly-one-guard constraint Revision 1 records for this page and its twin. "
+                + "ConfirmOnPrem owns the refusal and is ExecuteOnPrem's only caller. A guard here "
+                + "is redundant today only because ConfirmOnPrem raises no flag before calling: the "
+                + "moment it does - the obvious next improvement - this guard turns the entire "
+                + "on-prem calendar write into a silent no-op, and nothing says so. No banner, no "
+                + "audit row, no admin email, and the operator concludes Exchange refused the change "
+                + "and retries. Guarding neither instead leaves Continue open to a second dispatch "
+                + "in the round trip before its disabled attribute lands, which executes the "
+                + "destructive on-prem write twice."),
+
+            new ForbiddenGuardSite("ReauthorizeAsync", ["SubmitSingle", "ProcessBulk"],
+                "The shared pre-write authorization re-check, called by both write handlers AFTER "
+                + "they raise isLoading, so IsBusy is true at every call. A guard here makes the "
+                + "re-check return false on every single submission and every bulk run: the page "
+                + "would report 'Authorization denied.' for work the operator is entitled to do, "
+                + "and no calendar permission could be changed at all."),
+        ],
+
+        // The positive half of the exactly-one-guard constraint, inherited from the twin along with
+        // the reason it exists: the ForbiddenGuardSite above can only say where a guard may NOT be,
+        // so on its own, deleting ConfirmOnPrem's guard outright passes every other assertion here.
+        // Both halves together mean a size-preserving MOVE of the guard from one method to the other
+        // flips them at once.
+        ExactlyOneGuard =
+        [
+            new ExactlyOneGuardOf("ConfirmOnPrem", ["ExecuteOnPrem"],
+                "if (IsBusy || !onPremConfirmPending)",
+                "ConfirmOnPrem is the method the Continue click reaches and the method whose button "
+                + "carries disabled=\"@IsBusy\", so belt and braces sit on one control rather than "
+                + "being split across two methods. ExecuteOnPrem raises isLoading as its own first "
+                + "statement, so a guard above that raise would be a re-entrancy guard on itself, "
+                + "which the 2026-09-17 ruling says is not enough; and because ConfirmOnPrem is its "
+                + "only caller, a guard there becomes a silent no-op the moment ConfirmOnPrem raises "
+                + "the flag before calling, with no banner, no audit row and no admin email to say "
+                + "the on-prem write did not happen. The two clauses refuse two different things and "
+                + "both are load-bearing: IsBusy is the click gate, because the browser's copy of "
+                + "the Continue button's disabled attribute is one round trip stale and a second "
+                + "Continue would run the destructive write twice; !onPremConfirmPending is the "
+                + "staleness gate, because SetTab and CancelOnPrem both clear that field, so a "
+                + "Continue that left the browser before the confirmation panel unrendered would "
+                + "otherwise execute a staged Set against a tab the operator has since flipped to "
+                + "Remove"),
+        ],
+
+        AnnotatedControls =
+        [
+            new AnnotatedControl(88, "@onclick=\"SubmitSingle\"",
+                ["!IsFormValid"],
+                RendersOnlyWhen:
+                "only while tabIndex < 2 - it is the Set/Remove tab's submit, and the bulk tab "
+                + "renders its own at 137 instead. IsFormValid (target, user and ticket all present) "
+                + "is a form-validity precondition that IsBusy is OR-ed in front of, never "
+                + "substituted for. SubmitSingle re-checks none of it, so this clause is the only "
+                + "enforcement - the IntuneDevices 403 shape"),
+
+            new AnnotatedControl(137, "@onclick=\"ProcessBulk\"",
+                ["csvFile is null", "string.IsNullOrWhiteSpace(bulkTicketNumber)"],
+                RendersOnlyWhen:
+                "only while tabIndex == 2. ProcessBulk re-checks the file itself - that null check "
+                + "is what the registered RaiseAfterEarlyReturn below is about - but it does NOT "
+                + "re-check the ticket before validating it, so the emptiness clause is a real "
+                + "precondition and not decoration"),
+        ],
+
+        // Three per-button spinners, all reading the flag rather than the predicate, registered so a
+        // mechanical "simplify to the predicate" pass fails instead of quietly changing behaviour.
+        // Today isLoading and IsBusy are the same value, so this pins an intention rather than a
+        // difference: each spinner belongs to the operation its own button starts, and if a second
+        // flag ever joins IsBusy these must NOT start spinning for it. The short string is contained
+        // in the long one - that is text containment and cannot be helped - so the short entry
+        // covers 89 and 138 and the long entry pins 158, which is the inline form.
+        SpinnerExpressions =
+        [
+            "@if (isLoading)",
+            "@if (isLoading) { <span class=\"spinner-border spinner-border-sm me-1\"></span> }",
+        ],
+
+        // Falsification 6 for this page, and the larger half of the fix. tabIndex is the one the plan
+        // names and ExecuteOnPrem is where it bites hardest; see the remarks above.
+        //
+        // Everything else is CapturedAtEntry for the reason the three prior pages needed it,
+        // sharpened by the autocomplete gap: the browser's copy of a disabled attribute is one round
+        // trip stale, and on the two pickers the attribute never reaches the suggestion rows at all.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SubmitSingle", "tabIndex", "isSet",
+                SnapshotShape.CapturedAtEntry,
+                "tabIndex is the Set-versus-Remove choice, read live at the write itself, at the "
+                + "self-grant check that only applies to Set, at the audit action string, at whether "
+                + "the audit row records an access level AT ALL, and at the notification direction. "
+                + "A tab click during the authorization or ticket round trip therefore executed the "
+                + "opposite operation from the one the operator confirmed - a revocation where a "
+                + "grant was asked for - and audited and emailed it under the other name"),
+
+            new PostAwaitLiveRead("SubmitSingle", "targetMailbox", "target",
+                SnapshotShape.CapturedAtEntry,
+                "the mailbox whose calendar permissions are changed. A suggestion row clicked in an "
+                + "already open autocomplete dropdown rewrites this field while the handler is "
+                + "suspended, and the disabled attribute does not reach those rows, so the capture is "
+                + "the only thing stopping the write, the protected-principal check and the audit row "
+                + "from landing on three different mailboxes"),
+
+            new PostAwaitLiveRead("SubmitSingle", "affectedUser", "user",
+                SnapshotShape.CapturedAtEntry,
+                "the user being granted or removed, on the same footing as targetMailbox and "
+                + "reachable the same way. It is also the address the user notification email is "
+                + "sent to, so a late change would tell the wrong person their calendar access "
+                + "changed"),
+
+            new PostAwaitLiveRead("SubmitSingle", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket validated against ServiceNow must be the ticket recorded in the audit "
+                + "row and the admin email. Read live, a keystroke landing in the round trip before "
+                + "the disabled attribute reaches the browser desyncs the validated ticket from the "
+                + "recorded one"),
+
+            new PostAwaitLiveRead("SubmitSingle", "accessRight", "access",
+                SnapshotShape.CapturedAtEntry,
+                "which calendar permission level is granted - Reviewer, Editor, Owner and the rest. "
+                + "The select renders server state, so it carries the falsification 2 hazard: read "
+                + "live, the write grants a level the operator has since changed away from, and the "
+                + "same live read decides the level in the audit row, the admin email and the staged "
+                + "on-prem value. It is the difference between read-only free/busy and full control "
+                + "over someone else's calendar"),
+
+            new PostAwaitLiveRead("ProcessBulk", "csvFile", "file",
+                SnapshotShape.CapturedAtEntry,
+                "the uploaded file is opened, and its name is audited and emailed, after several "
+                + "awaits. A second file chosen mid-run put the NEW file's name in the audit row and "
+                + "the admin notification against the OLD file's results, so the record of a bulk "
+                + "calendar change named a file that was never processed"),
+
+            new PostAwaitLiveRead("ProcessBulk", "bulkIsSet", "isSet",
+                SnapshotShape.CapturedAtEntry,
+                "the radio pair chooses whether every row in the CSV is a grant or a revocation, and "
+                + "it was read live both at the call that processes the file and at the audit action "
+                + "string. A radio flipped during the authorization round trip sent the whole CSV "
+                + "through the opposite operation"),
+
+            new PostAwaitLiveRead("ProcessBulk", "bulkTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket for every row in the run, validated and then recorded. Same obligation "
+                + "as the single-mailbox ticket, over a batch"),
+
+            new PostAwaitLiveRead("ProcessBulk", "bulkResult", "bulk",
+                SnapshotShape.PublishedFromLocal,
+                "the dismiss control at 211 is exempt and can null bulkResult while this handler is "
+                + "suspended. Reading the field back for the audit row, the failure detail or the "
+                + "admin email would then throw a NullReferenceException into ProcessBulk's own "
+                + "catch, which reports a completed bulk run as a bare exception message and skips "
+                + "the admin notification"),
+
+            new PostAwaitLiveRead("ExecuteOnPrem", "tabIndex", "isSet",
+                SnapshotShape.CapturedAtEntry,
+                "this page's lead finding. The action string and the level were computed from "
+                + "tabIndex at entry, and then tabIndex was read AGAIN at the write three statements "
+                + "later and again at the notification direction, so a tab flip mid-write made the "
+                + "audit row and both emails say Set while the code performed a Remove - on the "
+                + "destructive on-premises path, and after a confirmation pause of unbounded length "
+                + "that no gate can shorten"),
+
+            new PostAwaitLiveRead("ExecuteOnPrem", "onPremTarget", "target",
+                SnapshotShape.CapturedAtEntry,
+                "Cancel at 161 is exempt and nulls onPremTarget, and this handler's own finally nulls "
+                + "it too. It is dereferenced with ! - a live read after an await would throw a "
+                + "NullReferenceException, and the catch that would receive it audits the target, so "
+                + "the throw would land inside the catch and escape the handler. With no "
+                + "ErrorBoundary anywhere in this app that tears the circuit down mid-write"),
+
+            new PostAwaitLiveRead("ExecuteOnPrem", "onPremAccessRight", "access",
+                SnapshotShape.CapturedAtEntry,
+                "the staged permission level, read live at the on-prem Set call itself. SubmitSingle "
+                + "restages this field on every run, so a second single-mailbox submission accepted "
+                + "while the operator sat on the confirmation panel would rewrite the level the "
+                + "on-prem write applies without touching the level already computed into the audit "
+                + "row"),
         ],
 
         RaiseMustFollowEarlyReturn =
