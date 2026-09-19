@@ -16,9 +16,21 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   `.agents/push-policy.md` and the Token Budget one-slice-one-session rule. 32 commits, both
   remotes level, every gate green at every commit. Per-item outcome:
   - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
-  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md`, **codex consensus
-    after three rounds**, `Status: Draft`. **Blocked on the owner and cannot proceed without
-    them:** the app registration is theirs to create, and open question 1 decides a slice.
+  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md`, codex consensus
+    after three rounds, `Status: Draft`. **SLICE S1 IS IMPLEMENTED** (`4835942`): the module-local
+    API client, the device service, the paging completion rule and 59 tests. It is call-free by
+    design - no descriptor, no page, no route, nothing user-reachable - which is exactly why it
+    could ship without the owner. `Program.cs` is the only shared file touched and the plan
+    pre-clears it as additive module registration, so no base app bump.
+    **S2 is blocked on open question 6, and it is a one-word answer:** the display name sets the
+    nav label, the **route** and the **section-access alias**, so it is not cosmetic and it is the
+    owner's to pick. S2 creates the config page, so until it exists there is nowhere to enter the
+    Secret ID even once the registration is made - answering Q6 unblocks the most.
+    **Revision 4 of the plan records a tension S1 surfaced:** R1(g) says no multi-page behaviour
+    ships that it has not observed, but that gate sits between S2 and S3 while S2 ships a reachable
+    page. Proposed resolution, not a ruling: S2 ships `EnabledByDefault = false`.
+    **Still blocked on the owner:** the app registration is theirs to create, and open question 1
+    decides whether slice S4 exists at all.
     Microsoft Graph has NO Defender device-inventory resource, so this uses the WindowsDefenderATP
     API. `Machine.Read.All` alone covers the device list; **discovery sources additionally need
     `ThreatHunting.Read.All`, which is tenant-wide - it reads every advanced-hunting table - and
@@ -38,13 +50,19 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
     why the csproj carries an OS-versioned TFM. Recommends hardening
     `tools/Install-ExchangeAdminWeb.ps1`; **that plan is NOT written** and needs an owner ruling.
   - **Queue 2, status.cloud.microsoft** - `docs/ServiceHealthPublicStatus-Plan.md`, `Status:
-    Draft`, **PARKED by judgement after three codex rounds, not blocked.** Each round found real
+    Draft`, **PARKED after FOUR codex rounds, by judgement rather than blockage.** Each round found real
     defects, but rounds 2 and 3 found them in the verification apparatus rather than the design,
     and that apparatus is now larger than the feature. **Open question 1 decides whether it is
     worth building at all:** the public page carries ONE SENTENCE per surface, not a second
     incident list, so it will never show an Exchange incident Graph missed. If the owner expected
     a second incident feed, the right deliverable is the ten-line link-out in section 16 and
-    nearly all of the plan evaporates.
+    nearly all of the plan evaporates. **Round 4 re-affirmed section 16 as honest scoping rather
+    than an escape hatch**, after three further rounds of growth - so the plan is trustworthy about
+    its own limits. It also caught a hazard this run created: the plan said the base app version
+    stays 2.21.0, which `3c21270` falsified, so a literal implementer would have DOWNGRADED three
+    version fields. Fixed. Three findings are recorded and deliberately unfixed as
+    pre-implementation work - they are cheap once the feature is known to be wanted and wasted
+    otherwise.
   - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft`.
     **May be ZERO work and it is the cheapest question on the board.** The cloud query passes no
     domain, organization or accepted-domain filter; the only scoping is the session's
@@ -451,8 +469,8 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-Last run 2026-09-19, the final click-gating slice: build Release (0 errors, the same 23
-pre-existing warnings), `dotnet test ExchangeAdminWeb.slnx` (**2791 passed / 0 failed /
+Last run 2026-09-19, the Defender S1 slice: build Release (0 errors, the same 23
+pre-existing warnings), `dotnet test ExchangeAdminWeb.slnx` (**2850 passed / 0 failed /
 3 skipped**), `dotnet format --verify-no-changes` exit 0, `git diff --check HEAD` exit 0,
 ASCII lint passed. PSScriptAnalyzer and Pester were run once during the run, for the one slice
 that touched PowerShell (`fab01c5`): 0 findings in the touched files, Pester 157 passed.
