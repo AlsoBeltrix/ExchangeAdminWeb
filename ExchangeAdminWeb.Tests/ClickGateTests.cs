@@ -1071,8 +1071,36 @@ public class ClickGateTests
         // A guard in that callee makes the post-write refresh a silent no-op and the operator
         // concludes the write failed.
         //
-        // Honest limitation: this proves the absence of the obvious guard shape, not the absence of
-        // refusal. A callee that refuses via a helper or a flag read mid-body passes.
+        // This used to match the literal "if (IsBusy) return;" and nothing else, and the hole that
+        // left was measured rather than argued. The MailboxPermissions conversion planted a matched
+        // pair in ExecuteOnPrem: the bare shape failed this assertion, and the COMPOUND shape that
+        // page's own guard is written in - if (IsBusy || !onPremConfirmPending) return; - left the
+        // suite fully green at 109/109. The registered consequence for that site is a destructive
+        // on-prem write silently not happening, so the one shape that slipped past was the one a
+        // reader would have copied from the page beside it. It now matches the guard SHAPE - an
+        // early return whose condition names a busy signal this page registers - rather than one
+        // spelling of it.
+        //
+        // Where the line is drawn, and what it may now wrongly catch. A busy guard is an if whose
+        // body is nothing but a return, with or without braces and with or without a value, and
+        // whose condition names a registered predicate or flag. Three consequences worth naming:
+        //   - the inverse, if (!isLoading) return;, is also caught, and the message will say
+        //     "refuses while busy" when it does not. That is the safe direction - an early return
+        //     keyed on the busy state of a method that must never be keyed on it needs a human
+        //     either way - but it is a false positive in the strict sense and is not a defect found.
+        //   - a condition that merely mentions a flag alongside something else is caught too.
+        //   - a refusal that reports before returning - if (isLoading) { result = Fail(...); return; }
+        //     - is still NOT caught, nor is one behind a helper or a mid-body flag read. This proves
+        //     the absence of the guard shapes, never the absence of refusal, exactly as before.
+        //
+        // What is the cheapest broken implementation that still passes this? A negative assertion
+        // has an honest answer and it is a bad one: break the matcher so it finds nothing and every
+        // page passes. That is not left hanging. BusyGuardScanFindsTheShapesItClaimsTo exercises the
+        // matcher against a fixture written here, so a dead matcher fails whatever the pages
+        // contain, and TheExactlyOneGuardSitsWhereItIsRegisteredAndNowhereElse uses the SAME matcher
+        // in the positive direction - the registered guard must be found - so a matcher that stops
+        // finding things fails there as well. "Change nothing" passes, correctly; this is a drift
+        // tripwire.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
 
@@ -1082,14 +1110,197 @@ public class ClickGateTests
             Assert.False(string.IsNullOrEmpty(body),
                 $"{page}: ForbiddenGuardSite names {site.Method}, which does not exist");
 
-            foreach (var predicate in entry.Predicates)
-            {
-                Assert.False(body.Contains($"if ({predicate.Name}) return;", StringComparison.Ordinal),
-                    $"{page}: {site.Method} must NOT refuse while busy - it is called from "
-                    + $"{string.Join(", ", site.CalledWhileBusyFrom)} while the page is already "
-                    + $"busy. {site.Consequence}");
-            }
+            var offset = source.Text.IndexOf(body, StringComparison.Ordinal);
+
+            var planted = BusyGuards(entry, body)
+                .Select(match => $"{page}:{source.LineAt(offset + match.Index)} {OneLine(match.Value)}")
+                .ToList();
+
+            Assert.True(planted.Count == 0,
+                $"{page}: {site.Method} must NOT refuse while busy - it is called from "
+                + $"{string.Join(", ", site.CalledWhileBusyFrom)} while the page is already busy. "
+                + $"{site.Consequence}\n  " + string.Join("\n  ", planted));
         }
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void TheExactlyOneGuardSitsWhereItIsRegisteredAndNowhereElse(string page)
+    {
+        // ForbiddenGuardSites says where a guard may not live. It cannot say where the guard that
+        // replaces it DOES live, so on a pair like MailboxPermissions' Continue path - ConfirmOnPrem
+        // guards, ExecuteOnPrem must not - deleting the guard outright satisfies every assertion in
+        // this suite: the forbidden site is still clean and no other rule requires a handler guard
+        // anywhere. That leaves the destructive on-prem write open to a second dispatch in the round
+        // trip before the Continue button's disabled attribute reaches the browser, which is the
+        // hazard the page's own comment describes. This is the positive half.
+        //
+        // Three checks, and the first alone would be decoration:
+        //   1. the registered guard is present verbatim in the method that owns it. On its own this
+        //      is "the text exists somewhere", which proves nothing about where;
+        //   2. it sits ABOVE that method's first await. A guard below the first await refuses after
+        //      the handler has already yielded, which is not a refusal;
+        //   3. no busy guard exists in any of the methods registered as the ones that must not carry
+        //      one. This is what makes it "exactly one" rather than "at least one somewhere".
+        // Checks 1 and 3 are what a size-preserving MOVE of the guard from the owner into the callee
+        // flips at once, and both halves are collected into a single failure so that mutation names
+        // both methods rather than stopping at the first.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "delete the feature" fails twice: the guard's absence trips check 1, and a matcher
+        //     that finds nothing trips check 1 as well, because the same matcher must locate the
+        //     registered guard as a real early return on a busy signal.
+        //   - "hard-code one value" fails: an empty Guard is contained in every string, so the shape
+        //     check rejects it, and an empty WhyThisOne is rejected outright.
+        //   - "never call the thing under test" fails: a renamed or deleted method fails rather than
+        //     being skipped, as does one that no longer awaits.
+        //   - "change nothing" passes, correctly.
+        // Said plainly rather than overclaimed, as everywhere else here: this is text containment
+        // plus ordering within one method body. It proves the guard is present, is shaped like an
+        // early return on a busy signal, and precedes the first await. It cannot prove the guard is
+        // reachable, and it cannot prove the caller relationship the reasoning rests on - that
+        // ExecuteOnPrem has exactly one caller is checked by a reader, not by this.
+        //
+        // Deliberate overlap, recorded rather than hidden: on MailboxPermissions check 3 covers the
+        // same ground as that page's ForbiddenGuardSite for ExecuteOnPrem, so the move mutation
+        // fails both assertions. They are kept separate because they are separate claims - one is
+        // "a busy caller calls this, so a guard here no-ops the refresh", the other is "the refusal
+        // for this pair lives there" - and either registry entry can be deleted without the other.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+
+        foreach (var rule in entry.ExactlyOneGuard)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(rule.WhyThisOne),
+                $"{page}: the ExactlyOneGuardOf on {rule.GuardedMethod} records no reason. Which of "
+                + "two methods owns a refusal is a decision, and an unrecorded decision is "
+                + "indistinguishable from an accident to the next reader.");
+
+            Assert.True(rule.Guard.StartsWith("if (", StringComparison.Ordinal),
+                $"{page}: '{rule.Guard}' is registered as {rule.GuardedMethod}'s guard but is not a "
+                + "whole if-condition. Register it exactly as the method writes it, up to the "
+                + "closing bracket: a bare identifier can be matched incidentally elsewhere in the "
+                + "body, so containment of one proves nothing.");
+
+            var body = source.MethodBody(rule.GuardedMethod);
+            Assert.False(string.IsNullOrEmpty(body),
+                $"{page}: ExactlyOneGuardOf names {rule.GuardedMethod} as the method that owns this "
+                + $"refusal, and the page does not declare it. {rule.WhyThisOne}");
+
+            var offset = source.Text.IndexOf(body, StringComparison.Ordinal);
+            var findings = new List<string>();
+
+            var at = body.IndexOf(rule.Guard, StringComparison.Ordinal);
+            if (at < 0)
+            {
+                findings.Add($"{rule.GuardedMethod} no longer carries '{rule.Guard}', so nothing "
+                    + "refuses this operation in the method on record as owning the refusal");
+            }
+            else
+            {
+                if (!BusyGuards(entry, body).Any(match => match.Index == at))
+                    findings.Add($"{rule.GuardedMethod} still contains the text '{rule.Guard}' at "
+                        + $"line {source.LineAt(offset + at)}, but it is no longer an early return "
+                        + "on a busy signal - it has stopped returning, or it now guards something "
+                        + "else and the refusal has quietly gone");
+
+                var firstAwait = body.IndexOf("await ", StringComparison.Ordinal);
+                if (firstAwait < 0)
+                    findings.Add($"{rule.GuardedMethod} no longer awaits anything, so it is either a "
+                        + "different method or a rewritten one and this entry needs a human rather "
+                        + "than an update");
+                else if (at > firstAwait)
+                    findings.Add($"{rule.GuardedMethod} carries '{rule.Guard}' at line "
+                        + $"{source.LineAt(offset + at)}, BELOW its first await. A refusal that runs "
+                        + "after the handler has already yielded is not a refusal");
+            }
+
+            foreach (var unguarded in rule.UnguardedMethods)
+            {
+                var calleeBody = source.MethodBody(unguarded);
+                Assert.False(string.IsNullOrEmpty(calleeBody),
+                    $"{page}: ExactlyOneGuardOf lists {unguarded} as a method that must carry no "
+                    + $"guard, and the page does not declare it. {rule.WhyThisOne}");
+
+                var calleeOffset = source.Text.IndexOf(calleeBody, StringComparison.Ordinal);
+
+                findings.AddRange(BusyGuards(entry, calleeBody)
+                    .Select(match => $"{unguarded} has grown a busy guard at line "
+                        + $"{source.LineAt(calleeOffset + match.Index)}: {OneLine(match.Value)}"));
+            }
+
+            Assert.True(findings.Count == 0,
+                $"{page}: the refusal for this pair must sit in {rule.GuardedMethod} and in none of "
+                + $"{string.Join(", ", rule.UnguardedMethods)}. {rule.WhyThisOne}\n  "
+                + string.Join("\n  ", findings));
+        }
+    }
+
+    [Fact]
+    public void BusyGuardScanFindsTheShapesItClaimsTo()
+    {
+        // ForbiddenGuardSitesCarryNoGuard is a negative assertion, so a matcher that finds nothing
+        // makes every page pass. That cannot be closed from the pages - it is the same hole
+        // KeyboardPathScanFindsTheShapesItClaimsTo exists for - so the matcher is exercised here
+        // against a fixture that depends on no page at all.
+        //
+        // What is the cheapest broken implementation that still passes this? None of the four. A
+        // matcher returning nothing fails the first assertion; one returning every if fails the
+        // negatives below it; one hard-coding the bare literal fails on the compound, braced and
+        // valued shapes; and "never call the thing under test" is not available, because the matcher
+        // is all this test calls.
+        var entry = new PageGateEntry
+        {
+            Page = "fixture",
+            ExpectedLineCount = 0,
+            Predicates = [new PredicateScope("IsBusy", ["isLoading"], AppliesWhen: "the fixture")],
+        };
+
+        // Four shapes that ARE busy guards, then four that are not. The compound shape on the second
+        // line is the one commit 426f3a1 measured slipping past the old literal match, and the
+        // nested call on the fifth is there because a condition one paren deep used to be all the
+        // scan could read.
+        const string body = """
+            if (IsBusy) return;
+            if (IsBusy || !onPremConfirmPending)
+                return;
+            if (isLoading)
+            {
+                return;
+            }
+            if (IsBusy) return false;
+            if (IsBusy || string.IsNullOrWhiteSpace(Trim(ticket))) return;
+            if (csvFile is null) return;
+            if (string.IsNullOrWhiteSpace(ticket)) return;
+            if (isLoading)
+            {
+                result = Fail("busy");
+                return;
+            }
+            """;
+
+        Assert.Equal(
+            new[]
+            {
+                "IsBusy",
+                "IsBusy || !onPremConfirmPending",
+                "isLoading",
+                "IsBusy",
+                "IsBusy || string.IsNullOrWhiteSpace(Trim(ticket))",
+            },
+            BusyGuards(entry, body)
+                .Select(match => OneLine(match.Groups["cond"].Value))
+                .ToArray());
+
+        // The two negatives that matter most: an early return on a form precondition is not a busy
+        // guard however many of them a handler has, and neither is one whose condition names nothing
+        // this page registers. Without these the widening would fail correct pages instead.
+        Assert.Empty(BusyGuards(entry, "if (csvFile is null) return;"));
+        Assert.Empty(BusyGuards(entry, "if (string.IsNullOrWhiteSpace(ticket)) return;"));
+
+        // The documented limit, asserted so it stays a known limit rather than becoming a surprise:
+        // a refusal that reports before returning is not matched.
+        Assert.Empty(BusyGuards(entry, "if (isLoading)\n{\n    result = Fail(\"busy\");\n    return;\n}"));
     }
 
     // ---- what a gate cannot close ------------------------------------------------------------
@@ -1339,6 +1550,35 @@ public class ClickGateTests
         || AllFlags(entry).Any(flag => Regex.IsMatch(text, ClickGateSource.WholeWord(flag)));
 
     /// <summary>
+    /// An early return keyed on a condition: <c>if (...) return;</c>, with or without braces around
+    /// the return and with or without a returned value.
+    /// </summary>
+    /// <remarks>
+    /// The condition pattern reads a bracketed expression two levels deep -
+    /// <c>if (IsBusy || string.IsNullOrWhiteSpace(Trim(x)))</c> - which covers every guard shape on
+    /// the converted pages. A third level is not read, and such an if is skipped rather than
+    /// half-matched. Deliberately not built on ClickGateSource.ExtractBlock, whose brace counting is
+    /// not quote-aware; this never counts a brace at all.
+    /// </remarks>
+    private static readonly Regex EarlyReturnGuard = new(
+        @"\bif\s*\((?<cond>[^()]*(?:\((?:[^()]|\([^()]*\))*\)[^()]*)*)\)\s*(?:\{\s*)?return\b[^;{}]*;",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Every early return in <paramref name="body"/> whose condition names a busy signal
+    /// <paramref name="entry"/> registers: the shapes a busy guard is written in, rather than one
+    /// spelling of it. See <see cref="ForbiddenGuardSitesCarryNoGuard"/> for where the line is drawn
+    /// and what it may wrongly catch, and <see cref="BusyGuardScanFindsTheShapesItClaimsTo"/> for
+    /// the fixture that keeps it from quietly matching nothing.
+    /// </summary>
+    private static IEnumerable<Match> BusyGuards(PageGateEntry entry, string body) =>
+        EarlyReturnGuard.Matches(body)
+            .Where(match => NamesAnyBusySignal(entry, match.Groups["cond"].Value));
+
+    /// <summary>A matched statement collapsed onto one line, for a readable failure message.</summary>
+    private static string OneLine(string text) => Regex.Replace(text, @"\s+", " ").Trim();
+
+    /// <summary>
     /// A disabled attribute or Disabled parameter that has a VALUE. A bare <c>disabled</c> with no
     /// "=" is a static, inert control, which is a different thing and is registered as ungated.
     /// </summary>
@@ -1425,13 +1665,55 @@ public class ClickGateTests
     }
 
     /// <summary>
-    /// A regex matching a READ of <paramref name="identifier"/>: a whole-word occurrence that is not
-    /// the left-hand side of an assignment. <c>x.Foo</c>, <c>f(x)</c> and <c>x == y</c> are reads;
-    /// <c>x = y</c> is not. The distinction is the whole point here - a handler clearing a form
-    /// field after a successful write is correct, while reading one back mid-flight is the defect.
+    /// A regex matching a READ of <paramref name="identifier"/>: a whole-word occurrence that is
+    /// neither the left-hand side of an assignment nor a named-argument label. <c>x.Foo</c>,
+    /// <c>f(x)</c> and <c>x == y</c> are reads; <c>x = y</c> is not, and neither is the <c>x:</c> of
+    /// <c>f(a, x: b)</c>. The distinction is the whole point here - a handler clearing a form field
+    /// after a successful write is correct, while reading one back mid-flight is the defect.
     /// </summary>
-    private static string ReadOf(string identifier) =>
-        ClickGateSource.WholeWord(identifier) + @"(?!\s*=(?!=))";
+    /// <remarks>
+    /// <para>
+    /// The label exclusion was forced by a real obligation that could not otherwise be written down,
+    /// not by tidiness. AuditService.LogMailboxPermission takes a parameter called autoMapping and
+    /// MailboxPermissions.SubmitSingle passes it by name at the success-path audit call, so the
+    /// label <c>autoMapping:</c> read as a live field read and the page's real autoMapping
+    /// obligation failed on it while the code it describes was already correct. The alternative -
+    /// making that the ninth positional bool of an audit call - was rejected: it deforms readable
+    /// code to satisfy a text matcher, and the matcher is what was wrong.
+    /// </para>
+    /// <para>
+    /// Where the line is drawn. A colon is treated as a label only when BOTH halves hold: the
+    /// identifier sits in argument-start position - immediately after a "(" or a "," with nothing
+    /// but whitespace between - AND a ":" follows it immediately, with no space and not a "::". In
+    /// C# that conjunction is a named argument and nothing else. Every other colon a @code block can
+    /// produce still counts as a read, which is what the conjunction buys: a ternary's
+    /// <c>cond ? live : other</c> (the middle operand follows "?", never "(" or ","), a
+    /// <c>case live:</c> label (follows "case"), a goto label (follows ";" or "{"), and an
+    /// interpolated string's format or alignment specifier, <c>{live:N2}</c> and
+    /// <c>{live,8:N2}</c> (both follow "{"). The razor colons - <c>@bind:event</c>,
+    /// <c>@onkeydown:preventDefault</c> - are markup, so they cannot reach a method body at all, and
+    /// they follow "@" rather than "(" or "," in any case.
+    /// </para>
+    /// <para>
+    /// What this might now wrongly miss, stated rather than left to be discovered: a genuine read
+    /// written as <c>f(live:</c> or <c>f(a, live:</c>. No C# expression has that shape except the
+    /// named argument, so what is given up is a future construct rather than a present one. The
+    /// spaced spelling <c>f(live : b)</c> is deliberately NOT excluded, so a named argument written
+    /// that way still fails as a live read - the safe direction, because it asks for a human instead
+    /// of going quiet.
+    /// </para>
+    /// </remarks>
+    private static string ReadOf(string identifier)
+    {
+        var read = ClickGateSource.WholeWord(identifier) + @"(?!\s*=(?!=))";
+
+        // "Not (argument-start position AND followed by a label colon)", written as the equivalent
+        // disjunction because a lookbehind placed after the identifier would look back at the
+        // identifier itself rather than at what precedes it. First alternative: not in
+        // argument-start position. Second: not followed by a label colon. Either makes it a read,
+        // and both alternatives match the identifier alone, so a position cannot be counted twice.
+        return $@"(?:(?<![(,]\s*){read}|{read}(?!:(?!:)))";
+    }
 
     /// <summary>
     /// The page field an inline handler snippet assigns to: "operationResult" for

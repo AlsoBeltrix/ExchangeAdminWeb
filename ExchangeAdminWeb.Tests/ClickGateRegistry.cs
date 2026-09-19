@@ -907,12 +907,16 @@ public static class ClickGateRegistry
     /// disabled="@IsBusy", so belt and braces sit on one control instead of being split across two
     /// methods; ExecuteOnPrem raises isLoading as its own first statement, so a guard above that
     /// raise would be a re-entrancy guard on itself, which is the shape the 2026-09-17 ruling says
-    /// is not enough. The ForbiddenGuardSite below is the enforced half. <b>Its enforcement is
-    /// partial and that is measured, not assumed:</b>
-    /// <see cref="ClickGateTests.ForbiddenGuardSitesCarryNoGuard"/> matches the literal
-    /// <c>if (IsBusy) return;</c>, so planting a COMPOUND guard in ExecuteOnPrem - the shape
-    /// ConfirmOnPrem itself uses - slips past it. Probe M6 of this conversion demonstrated exactly
-    /// that. Widening that assertion is queued with the ExactlyOneGuardOf work.
+    /// is not enough. Both halves are now enforced, and both were queued rather than shipped when
+    /// this entry was first written. The ForbiddenGuardSite below is the negative half - no guard in
+    /// ExecuteOnPrem - and <see cref="PageGateEntry.ExactlyOneGuard"/> is the positive half, which
+    /// nothing else here could state: without it, deleting ConfirmOnPrem's guard outright passed the
+    /// whole suite. <b>The negative half's enforcement used to be partial, and that was measured
+    /// rather than assumed:</b> <see cref="ClickGateTests.ForbiddenGuardSitesCarryNoGuard"/> matched
+    /// the literal <c>if (IsBusy) return;</c>, so planting a COMPOUND guard in ExecuteOnPrem - the
+    /// shape ConfirmOnPrem itself uses - slipped past it at 109 passed / 0 failed. Probe M6 of this
+    /// conversion demonstrated exactly that, and the assertion now matches the guard shape rather
+    /// than one spelling of it.
     /// </para>
     /// <para>
     /// ConfirmOnPrem's guard has two clauses and they refuse two different things. IsBusy is the
@@ -940,15 +944,16 @@ public static class ClickGateRegistry
     /// preserves the relative order so Continue still renders enabled.
     /// </para>
     /// <para>
-    /// <b>One obligation is deliberately absent, and its absence is the honest answer rather than a
-    /// gap.</b> autoMapping IS captured at entry into autoMap and every use below the first await
-    /// reads the local - the hazard falsification 2 describes is closed in the code. It is not
-    /// registered because AuditService.LogMailboxPermission takes a parameter of that name and the
-    /// success-path call site passes it by name, and ClickGateTests.ReadOf cannot tell the label
-    /// <c>autoMapping:</c> from a field read. The remedy is to teach ReadOf to exclude
-    /// <c>identifier:</c> in argument position, exactly as it already excludes assignment, not to
-    /// bend a readable call site into a ninth positional boolean. Queued with the ExactlyOneGuardOf
-    /// work; until then this obligation is enforced by a reader.
+    /// <b>The obligation this entry used to record as deliberately absent is now registered.</b>
+    /// autoMapping was always captured at entry into autoMap and every use below the first await
+    /// always read the local - the hazard falsification 2 describes was closed in the code - but the
+    /// obligation could not be written down, because AuditService.LogMailboxPermission takes a
+    /// parameter of that name and the success-path call site passes it by name, and
+    /// ClickGateTests.ReadOf could not tell the label <c>autoMapping:</c> from a field read. The
+    /// remedy taken is the one that entry named: ReadOf now excludes <c>identifier:</c> in argument
+    /// position, exactly as it already excluded assignment. The rejected alternative is recorded
+    /// because it is the tempting one - bending the call site into a ninth positional boolean would
+    /// have deformed readable code to satisfy a text matcher, and the matcher is what was wrong.
     /// </para>
     /// <para>
     /// <b>Note for whoever next reads Get-ClickGateAudit.ps1 output.</b> It reports this page as
@@ -1112,6 +1117,33 @@ public static class ClickGateRegistry
                 + "and no mailbox permission could be changed at all."),
         ],
 
+        // The positive half of the exactly-one-guard constraint the remarks above state as a rule.
+        // The ForbiddenGuardSite for ExecuteOnPrem is the negative half and was all this registry
+        // had: on its own, DELETING ConfirmOnPrem's guard passed the whole suite, because a page
+        // with no guard anywhere satisfies a rule that only says where a guard may not be. Both
+        // halves are now enforced, and a size-preserving move of the guard from one method to the
+        // other flips them together.
+        ExactlyOneGuard =
+        [
+            new ExactlyOneGuardOf("ConfirmOnPrem", ["ExecuteOnPrem"],
+                "if (IsBusy || !onPremConfirmPending)",
+                "ConfirmOnPrem is the method the Continue click reaches and the method whose button "
+                + "carries disabled=\"@IsBusy\", so belt and braces sit on one control rather than "
+                + "being split across two methods. ExecuteOnPrem raises isLoading as its own first "
+                + "statement, so a guard above that raise would be a re-entrancy guard on itself, "
+                + "which the 2026-09-17 ruling says is not enough; and because ConfirmOnPrem is its "
+                + "only caller, a guard there becomes a silent no-op the moment ConfirmOnPrem raises "
+                + "the flag before calling - the obvious next improvement - with no banner, no audit "
+                + "row and no admin email to say the on-prem write did not happen. The two clauses "
+                + "refuse two different things and both are load-bearing: IsBusy is the click gate, "
+                + "because the browser's copy of the Continue button's disabled attribute is one "
+                + "round trip stale and a second Continue would run the destructive write twice; "
+                + "!onPremConfirmPending is the staleness gate, and it closes a live defect found "
+                + "during the conversion rather than a hypothetical - SetTab and CancelOnPrem both "
+                + "clear that field, and ExecuteOnPrem reads the tab at its own entry, so a tab flip "
+                + "followed by a stale Continue ran a REMOVE against a staged ADD"),
+        ],
+
         AnnotatedControls =
         [
             new AnnotatedControl(90, "@onclick=\"SubmitSingle\"",
@@ -1155,8 +1187,10 @@ public static class ClickGateRegistry
         // disabled attribute is one round trip stale, and on the two pickers the attribute never
         // reaches the suggestion rows at all.
         //
-        // autoMapping is missing from this list deliberately and is closed in the code; see the
-        // remarks on this entry for why it cannot be registered yet.
+        // autoMapping is here now. It was closed in the code from the start and absent from this
+        // list only because ClickGateTests.ReadOf read the named-argument label autoMapping: at the
+        // success-path audit call as a live field read, so registering the real obligation failed on
+        // the label alone. ReadOf now excludes a label in argument position; see the remarks above.
         PostAwaitLiveReads =
         [
             new PostAwaitLiveRead("SubmitSingle", "tabIndex", "isAdd",
@@ -1201,6 +1235,16 @@ public static class ClickGateRegistry
                 "the Send As half of the same pair, with the same hazard. It also decides the "
                 + "permission string in the audit row and both notification emails, so a late "
                 + "toggle desyncs the record from the write"),
+
+            new PostAwaitLiveRead("SubmitSingle", "autoMapping", "autoMap",
+                SnapshotShape.CapturedAtEntry,
+                "whether a Full Access grant also auto-maps the mailbox into the user's Outlook "
+                + "profile. The checkbox renders server state, so it carries the same falsification 2 "
+                + "hazard as grantFullAccess - read live, the write applies an auto-mapping the "
+                + "operator visibly unticked. It is also the value the success audit records, and it "
+                + "is recorded by NAME (autoMapping:) at that call, which is why this obligation "
+                + "could not be registered until ReadOf learned to tell a named-argument label from "
+                + "a field read"),
 
             new PostAwaitLiveRead("ProcessBulk", "csvFile", "file",
                 SnapshotShape.CapturedAtEntry,
@@ -1325,6 +1369,21 @@ public sealed record PageGateEntry
     /// a guard there turns the confirming refresh into a silent no-op.
     /// </summary>
     public IReadOnlyList<ForbiddenGuardSite> ForbiddenGuardSites { get; init; } = [];
+
+    /// <summary>
+    /// Caller/callee pairs where the refusal must live in exactly one named method: the positive
+    /// counterpart of <see cref="ForbiddenGuardSites"/>, which can only say where a guard may not
+    /// go.
+    /// </summary>
+    /// <remarks>
+    /// Listed in docs/ClickGatingAudit-Plan.md Revision 1 and missing from the slice that shipped
+    /// the rest of this registry, which is how the gap was found rather than predicted. Without it,
+    /// deleting MailboxPermissions.ConfirmOnPrem's guard outright passes every other assertion here
+    /// - the forbidden site stays clean and nothing requires a handler guard anywhere - while the
+    /// destructive on-prem write is left open to a second dispatch in the round trip before the
+    /// Continue button's disabled attribute reaches the browser.
+    /// </remarks>
+    public IReadOnlyList<ExactlyOneGuardOf> ExactlyOneGuard { get; init; } = [];
 
     /// <summary>
     /// Gated controls needing annotation: a non-busy clause that must survive, or reachability the
@@ -1554,6 +1613,34 @@ public sealed record ForbiddenGuardSite(
     string Method,
     IReadOnlyList<string> CalledWhileBusyFrom,
     string Consequence);
+
+/// <summary>
+/// Where the one refusal for a caller/callee pair lives, and which methods must therefore carry
+/// none. Two guards on one path is not belt and braces: the second becomes a silent no-op the
+/// moment the first raises a flag before calling, and no guard at all leaves the click open.
+/// </summary>
+/// <param name="GuardedMethod">The single method that carries the refusal.</param>
+/// <param name="UnguardedMethods">
+/// Every method on the same path that must carry none. Named individually rather than inferred,
+/// because "the callee" is a fact about the code that this scan cannot establish and a reader can.
+/// </param>
+/// <param name="Guard">
+/// The guard's if-condition verbatim, up to the closing bracket - e.g.
+/// <c>if (IsBusy || !onPremConfirmPending)</c>. Verbatim rather than reconstructed, in the same
+/// spirit as <see cref="DomSyncedControl.DisabledExpression"/>: narrow the guard and the assertion
+/// fails instead of quietly accepting the narrower one. The condition rather than the whole
+/// statement, so a two-line guard does not put the page's indentation in the registry; that it
+/// actually RETURNS is checked against the file rather than taken from this string.
+/// </param>
+/// <param name="WhyThisOne">
+/// Why the refusal belongs on <paramref name="GuardedMethod"/> and nowhere else. Which of two
+/// methods owns a refusal is a decision, and an unrecorded decision cannot be told from an accident.
+/// </param>
+public sealed record ExactlyOneGuardOf(
+    string GuardedMethod,
+    IReadOnlyList<string> UnguardedMethods,
+    string Guard,
+    string WhyThisOne);
 
 /// <param name="PreserveClauses">
 /// Non-busy clauses that must remain in the disabled expression, OR-ed with the predicate rather
