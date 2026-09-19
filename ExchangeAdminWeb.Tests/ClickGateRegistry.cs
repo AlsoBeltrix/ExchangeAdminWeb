@@ -236,6 +236,42 @@ public static class ClickGateRegistry
                 + "nulls the result banner; it makes no call and awaits nothing"),
         ],
 
+        // The two paths commit 2eb8c15 closed, now data rather than a comment on the DomSyncedControl
+        // entries above. This is the only converted page with a keyboard handler of any kind: the
+        // hand census behind DhcpAuthorization and NamedLocations found none on either, and that
+        // claim is now enforced by the forward direction of
+        // EveryKeyboardPathIsRegisteredOrRecordedHarmless rather than resting on prose.
+        //
+        // Both take the disabled attribute rather than a handler guard. A disabled input fires no
+        // key events, so one attribute closes the key path and the typing path together; a handler
+        // guard would close only the key path, leave the operator pressing Enter into silence, and
+        // still need the attribute for the @bind. Neither input had a gate to widen or OR - both
+        // were bare - so both take the page predicate whole.
+        KeyboardPaths =
+        [
+            new KeyboardPath(390, "placeholder=\"Search batch or user email...\"", "input",
+                "keydown", "HandleSearchKeyDown", "SearchUser",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
+                "Enter runs the batch/user search that the Find button at 400 refuses while the page "
+                + "is busy. SearchUser raises isSearching, replaces the expanded batch's user rows "
+                + "and calls into Exchange twice, so a second one started from the keyboard during "
+                + "the first races it and the later reply wins",
+                GatedTwinButtonLine: 400),
+
+            new KeyboardPath(821, "placeholder=\"Ticket # (required)\"", "input",
+                "keydown", "HandleConfirmKeyDown", "ConfirmPendingAction",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
+                "Enter EXECUTES the staged action - a batch start, stop or remove, the destructive "
+                + "half of this page - which the Confirm button at 825 refuses while busy. It "
+                + "avoided double execution only by accident, and the accident is worth writing "
+                + "down: ConfirmPendingAction calls CancelPendingAction (1435) BEFORE awaiting the "
+                + "staged callback, which nulls pendingActionLabel and so unrenders the whole "
+                + "PendingActionConfirm fragment, and blanks pendingActionTicket so a second press "
+                + "fails the handler's own emptiness check. Nothing in that is a busy gate, and "
+                + "nothing in it survives a handler that stages differently",
+                GatedTwinButtonLine: 825),
+        ],
+
         ForbiddenGuardSites =
         [
             new ForbiddenGuardSite("LoadMigrationStatus", ["ExecuteBulkBatchAction"],
@@ -264,6 +300,13 @@ public static class ClickGateRegistry
     /// document anything. That much was right; the conclusion drawn from it - that nothing could
     /// check these - was not. They are in <see cref="PageGateEntry.DomSyncedControls"/> below, which
     /// is NonButtonTargets' counterpart for the controls the disabled attribute does reach.
+    /// </para>
+    /// <para>
+    /// The "no @onkeydown" half of that census is no longer prose either. This page registers no
+    /// <see cref="PageGateEntry.KeyboardPaths"/> and no
+    /// <see cref="PageGateEntry.HarmlessKeyboardPaths"/>, and the forward direction of
+    /// <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> is what keeps
+    /// that true: a keyboard handler added here later fails the suite and names itself.
     /// </para>
     /// <para>
     /// isDownloadingCsv is new. DownloadCsvAsync owned no in-flight flag at all, and its raise has
@@ -505,6 +548,15 @@ public static class ClickGateRegistry
     /// document anything. True, and the reason all seven were left in prose - but the prose was the
     /// only thing holding them, and a mutation that stripped 172's Disabled="@IsBusy" left the whole
     /// suite green. They are now in <see cref="PageGateEntry.DomSyncedControls"/> below.
+    /// </para>
+    /// <para>
+    /// The "no @onkeydown" half of that census is no longer prose either, on the same footing as
+    /// DhcpAuthorization: this page registers no <see cref="PageGateEntry.KeyboardPaths"/> and no
+    /// <see cref="PageGateEntry.HarmlessKeyboardPaths"/>, and the forward direction of
+    /// <see cref="ClickGateTests.EveryKeyboardPathIsRegisteredOrRecordedHarmless"/> fails if one
+    /// arrives. CountryCodePicker is worth a word here because it is the one child component on a
+    /// converted page: it carries no keyboard handler of its own either, so there is nothing this
+    /// page-level scan is failing to see through it today.
     /// </para>
     /// <para>
     /// CountryCodePicker was the hazard Revision 1 falsification 2 singled out as the worst in
@@ -904,6 +956,35 @@ public sealed record PageGateEntry
     /// than the one button it belongs to.
     /// </summary>
     public IReadOnlyList<RaiseAfterEarlyReturn> RaiseMustFollowEarlyReturn { get; init; } = [];
+
+    /// <summary>
+    /// Every keyboard handler bound in markup that reaches an operation, and how each is refused.
+    /// A key press that runs an operation is a click-equivalent, and the owner ruling of 2026-09-17
+    /// - a control is actionable only when its action will definitively execute - does not care
+    /// which key produced it.
+    /// </summary>
+    /// <remarks>
+    /// Forced by a measured defect, not by symmetry. Commit 2eb8c15 found two live holes on the
+    /// converted precedent page: Migration's search box and staged-ticket box carried no disabled
+    /// attribute and routed <c>@onkeydown</c> to handlers calling SearchUser and
+    /// ConfirmPendingAction with no busy guard, while the Search and Confirm buttons beside them
+    /// were gated on IsBusy. The button greyed out and Enter still fired the operation; on the
+    /// staged-ticket box that operation is destructive, and it avoided double execution only by
+    /// accident. Seven bespoke tripwires and a review missed it because nothing in this suite
+    /// matched a keyboard handler at all:
+    /// <see cref="ClickGateTests.EveryNonButtonClickTargetIsRegistered"/> finds <c>@onclick</c>
+    /// only, and the DOM-synced assertions key on the disabled attribute, so a keyboard path on an
+    /// element with no gate is invisible to both.
+    /// </remarks>
+    public IReadOnlyList<KeyboardPath> KeyboardPaths { get; init; } = [];
+
+    /// <summary>
+    /// Keyboard handlers that reach no operation - a filter, a panel close, an arrow-key move - each
+    /// with the recorded reason. Explicit for the same reason
+    /// <see cref="UngatedDomSyncedControls"/> is: an inferred exemption is an oversight that looks
+    /// like a decision.
+    /// </summary>
+    public IReadOnlyList<HarmlessKeyboardPath> HarmlessKeyboardPaths { get; init; } = [];
 }
 
 /// <summary>Where the local that replaces a live read gets its value.</summary>
@@ -1086,3 +1167,85 @@ public sealed record AnnotatedControl(
     string Snippet,
     IReadOnlyList<string> PreserveClauses,
     string? RendersOnlyWhen = null);
+
+/// <summary>How a keyboard path is stopped from reaching an operation while the page is busy.</summary>
+public enum KeyboardRefusal
+{
+    /// <summary>
+    /// The element carries a disabled=/Disabled= attribute naming a busy signal. A disabled form
+    /// control fires no key events at all, so one attribute closes the key path and the typing path
+    /// together - which is why it is the mechanism both of Migration's Enter paths took. It is only
+    /// a refusal on an element the attribute reaches: input, select, textarea, button. An anchor, a
+    /// div or a span ignores it entirely and keeps firing keydown, which is what
+    /// <see cref="ClickGateTests.NoKeyboardPathIsRefusedByADisabledAttributeAnElementIgnores"/>
+    /// exists to catch.
+    /// </summary>
+    DisabledAttribute,
+
+    /// <summary>
+    /// The handler refuses for itself, with an early return on a busy signal. Legitimate for a key
+    /// press - unlike a click on a DOM-synced control, a keydown changes no rendered server state,
+    /// so refusing it desyncs nothing - but weaker: the operator presses Enter into silence with no
+    /// visible cue, and the element still needs its own gate for whatever it is bound to.
+    /// </summary>
+    HandlerGuard,
+}
+
+/// <summary>
+/// A keyboard handler bound in markup that reaches an operation, with the refusal that stops it.
+/// </summary>
+/// <param name="Line">
+/// Where the ELEMENT carrying the handler starts - not where the @onkey attribute is written, which
+/// is often a continuation line. The tag's start line is the registry key everywhere else in this
+/// file, and keying on it is what lets a DisabledAttribute path be checked against the
+/// <see cref="DomSyncedControl"/> entry for the same control.
+/// </param>
+/// <param name="Snippet">A distinctive substring of the live tag, on the tag's first line.</param>
+/// <param name="Tag">The element name as written, asserted so an input becoming a div fails.</param>
+/// <param name="Event">The DOM event without the @on prefix: "keydown", "keyup" or "keypress".</param>
+/// <param name="Handler">The method the attribute binds to.</param>
+/// <param name="ReachesOperation">
+/// The operation a key press reaches, asserted to be named in <paramref name="Handler"/>'s body. It
+/// is what makes this entry a gating obligation rather than a note: repoint the handler at
+/// something else and the entry fails instead of quietly covering a different operation.
+/// </param>
+/// <param name="Gate">
+/// The refusal verbatim: the WHOLE disabled=/Disabled= attribute for
+/// <see cref="KeyboardRefusal.DisabledAttribute"/>, or the guard statement - e.g.
+/// <c>if (IsBusy) return;</c> - for <see cref="KeyboardRefusal.HandlerGuard"/>. Verbatim rather
+/// than reconstructed, in the same spirit as <see cref="DomSyncedControl.DisabledExpression"/>:
+/// narrow the gate and the assertion fails instead of quietly accepting the narrower one.
+/// </param>
+/// <param name="Why">What a key press does if the refusal goes, in operator-visible terms.</param>
+/// <param name="GatedTwinButtonLine">
+/// The button that reaches the same operation and is gated, if there is one. This is the 2eb8c15
+/// defect made checkable: the hole was not that the keyboard path was ungated in the abstract, it
+/// was that the button beside it WAS gated, so the page read as correct while Enter still fired.
+/// Setting this asserts the button is still there, still reaches
+/// <paramref name="ReachesOperation"/>, and still names a busy predicate. Null means no such button
+/// exists, and then <paramref name="Why"/> is the only record of that - the honest escape hatch.
+/// </param>
+public sealed record KeyboardPath(
+    int Line,
+    string Snippet,
+    string Tag,
+    string Event,
+    string Handler,
+    string ReachesOperation,
+    KeyboardRefusal Refusal,
+    string Gate,
+    string Why,
+    int? GatedTwinButtonLine = null);
+
+/// <param name="WhyHarmless">
+/// Why this key press reaches no operation. Two honest kinds of answer: it only filters, sorts,
+/// moves a highlight or closes a panel, or it is guarded somewhere this scan can see. Both are
+/// fine; silence is not.
+/// </param>
+public sealed record HarmlessKeyboardPath(
+    int Line,
+    string Snippet,
+    string Tag,
+    string Event,
+    string Handler,
+    string WhyHarmless);

@@ -22,6 +22,17 @@ namespace ExchangeAdminWeb.Tests;
 /// docs/ClickGatingAudit-Plan.md is what actually establishes the operator sees the fix.
 /// </para>
 /// <para>
+/// <b>The keyboard section is preventive, and should not be read as a bug hunt that found one.</b>
+/// It was added 2026-09-18, after commit 2eb8c15 had already fixed two live Enter-key holes on
+/// Migration by hand. The census behind it was then run against all three converted pages:
+/// Migration's two @onkeydown paths are the only keyboard handlers on any converted page and both
+/// are gated, the other two pages have none, and neither instantiates a component carrying one. So
+/// every keyboard assertion below passes today by being true of correct code, not by finding
+/// anything. The value is in the seven tier-1 pages still to come, four of which - IntuneDevices,
+/// GroupManagement, M365GroupManagement and SelfServiceGroups - already carry an @onkeydown search
+/// box. A future reader should expect this section to have caught nothing yet.
+/// </para>
+/// <para>
 /// A second limit worth naming: with no ErrorBoundary anywhere in the app (verified during the
 /// Revision 1 reconnaissance), an exception escaping a handler tears the circuit down rather than
 /// leaving a live page with a stuck flag. <see cref="EveryRegisteredFlagIsLoweredInAFinally"/>
@@ -328,7 +339,15 @@ public class ClickGateTests
         // NamedLocations conversion stripped Disabled="@IsBusy" from CountryCodePicker and the suite
         // stayed at 0 failed / 63 passed. EveryDomSyncedControlIsRegisteredOrRecordedUngated below
         // now enumerates the inputs, selects, textareas and Disabled-bearing child components that
-        // this assertion cannot see. The @onkeydown Enter path is still uncovered by either.
+        // this assertion cannot see, and EveryKeyboardPathIsRegisteredOrRecordedHarmless enumerates
+        // the @onkeydown / @onkeyup / @onkeypress handlers neither of those two can see - the last
+        // demonstrated blind spot, and the one commit 2eb8c15 measured rather than argued.
+        //
+        // What is still uncovered by all three, stated so nobody over-reads a green run: @onchange
+        // and @onsubmit have no enumerator of their own, and neither does a keyboard handler that
+        // lives inside a child component rather than on this page. The DOM-synced sweep reaches an
+        // @onchange control only if it is an input, select or textarea, which is most of them but
+        // not a rule.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
         var registered = entry.NonButtonTargets.Select(target => target.Line).ToHashSet();
@@ -613,6 +632,432 @@ public class ClickGateTests
                 + "naming a busy signal. If it was gated on purpose, move it to DomSyncedControls "
                 + $"with the expression registered verbatim. Recorded reason: {control.WhyUngated}");
         }
+    }
+
+    // ---- the paths that reach an operation without a click -----------------------------------
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryKeyboardPathIsRegisteredOrRecordedHarmless(string page)
+    {
+        // The completeness half of the keyboard section, and the reason the section exists.
+        //
+        // Commit 2eb8c15 found two live gating holes on the converted precedent page. Migration's
+        // search box and staged-ticket box carried no disabled attribute and routed @onkeydown to
+        // handlers calling SearchUser and ConfirmPendingAction with no busy guard, while the Search
+        // and Confirm buttons beside them were gated on IsBusy. The button greyed out and Enter
+        // still fired the operation; on the staged-ticket box that operation is destructive, and it
+        // avoided double execution only by accident. Seven bespoke tripwires and a review missed it
+        // because no assertion here matched a keyboard handler at all: the non-button sweep finds
+        // @onclick only, and the DOM-synced assertions key on the disabled attribute, so a keyboard
+        // path on an element with no gate was invisible to both.
+        //
+        // A key press that reaches an operation is a click-equivalent, and the owner ruling of
+        // 2026-09-17 - a control is actionable only when its action will definitively execute - does
+        // not care which key produced it.
+        //
+        // Three directions, which is what makes this worth having rather than decorative:
+        //   forward  - a keyboard handler on the page in neither list fails and names itself;
+        //   backward - a registered path the scan no longer finds fails, so deleting the markup or
+        //              breaking the scanner fails here instead of going quiet;
+        //   sentinel - an @onkey... attribute in a shape the scanner cannot read fails, rather than
+        //              being counted as absent. Without it, "make the regex stop matching" empties
+        //              the forward direction and every page reads as clean.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "delete the feature" (the scan returns nothing) fails: every registered path on
+        //     Migration is then unfound and the backward direction names all of them.
+        //   - "never call the thing under test" is that same failure.
+        //   - "hard-code one value" has nothing to hard-code; both sides are computed sets.
+        //   - "change nothing" passes, correctly - this is a drift tripwire, not a proof.
+        // Stated rather than hidden: on a page with no keyboard handler and no registered path -
+        // DhcpAuthorization and NamedLocations today - this is vacuous in both directions, and a
+        // broken scanner would pass it. That is exactly why the scanner has a fixture test of its
+        // own, KeyboardPathScanFindsTheShapesItClaimsTo, which depends on no page.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+
+        var unreadable = UnparsedKeyboardAttributes(source.Text)
+            .Select(index => $"{page}:{source.LineAt(index)}")
+            .ToList();
+        Assert.True(unreadable.Count == 0,
+            "these @onkey... attributes are not in a shape this scan can read, so nothing below can "
+            + "see what they are bound to. Write the handler as @onkeydown=\"Handler\", or extend "
+            + "the scanner in the same commit:\n  " + string.Join("\n  ", unreadable));
+
+        var found = KeyboardHandlerSites(source.Text);
+
+        var untagged = found
+            .Where(site => site.TagText.Length == 0)
+            .Select(site => $"{page}:{source.LineAt(site.AttributeIndex)} @on{site.Event}")
+            .ToList();
+        Assert.True(untagged.Count == 0,
+            "these keyboard handlers sit in no element this scan can delimit, so nothing can check "
+            + "which element refuses them:\n  " + string.Join("\n  ", untagged));
+
+        // Line plus event is the registry key, so two handlers for one event on one element's line
+        // would hide one of them from both directions below.
+        var collisions = found
+            .GroupBy(site => KeyOf(source, site), StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{page}:{group.Key} ({group.Count()} handlers)")
+            .ToList();
+        Assert.True(collisions.Count == 0,
+            "two or more handlers for the same key event start on one line, and line plus event is "
+            + "what the registry keys on, so one of them cannot be registered or checked. Put them "
+            + "on separate lines:\n  " + string.Join("\n  ", collisions));
+
+        var gated = entry.KeyboardPaths.Select(path => $"{path.Line}:{path.Event}").ToList();
+        var harmless = entry.HarmlessKeyboardPaths
+            .Select(path => $"{path.Line}:{path.Event}").ToList();
+
+        var both = gated.Intersect(harmless, StringComparer.Ordinal)
+            .OrderBy(key => key, StringComparer.Ordinal).ToList();
+        Assert.True(both.Count == 0,
+            $"{page}: {string.Join(", ", both)} are registered as gated keyboard paths AND as "
+            + "harmless. One of the two entries is stale.");
+
+        var accounted = gated.Concat(harmless).ToHashSet(StringComparer.Ordinal);
+
+        var unregistered = found
+            .Where(site => !accounted.Contains(KeyOf(source, site)))
+            .Select(site => $"{page}:{KeyOf(source, site)} -> {site.Handler}")
+            .ToList();
+        Assert.True(unregistered.Count == 0,
+            "these keyboard handlers are in neither KeyboardPaths nor HarmlessKeyboardPaths. A key "
+            + "press that reaches an operation is a click-equivalent and needs a declared refusal; "
+            + "one that reaches nothing needs a written reason. Neither can be inferred, which is "
+            + "the whole lesson of 2eb8c15:\n  " + string.Join("\n  ", unregistered));
+
+        var onDisk = found.Select(site => KeyOf(source, site)).ToHashSet(StringComparer.Ordinal);
+        var phantom = accounted.Except(onDisk).OrderBy(key => key, StringComparer.Ordinal).ToList();
+        Assert.True(phantom.Count == 0,
+            $"{page}: {string.Join(", ", phantom)} are registered keyboard paths that the scan no "
+            + "longer finds. Either the element moved, or it lost the handler - and if the handler "
+            + "really is gone the entry goes in the same commit, so the removal is visible rather "
+            + "than leaving a registry that describes a page that no longer exists.");
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryKeyboardPathIsRefusedByItsDeclaredMechanism(string page)
+    {
+        // The refusal half. Two legitimate answers, both checked against the file: the element
+        // carries a gate consulting a registered busy signal, or the handler carries its own guard.
+        //
+        // The GatedTwinButtonLine check is 2eb8c15's defect stated as an invariant. The hole was not
+        // that the key path was ungated in the abstract - it was that the button beside it WAS
+        // gated, so every reading of the page said "this operation is refused while busy" and Enter
+        // fired it anyway. Tying the two together means neither half can be changed alone.
+        //
+        // What is the cheapest broken implementation that still passes this? Worked through:
+        //   - "delete the feature" fails: strip the disabled attribute from the element and the
+        //     verbatim containment check fails naming the page, the line and the operation. That is
+        //     the headline probe, and it is the 2eb8c15 defect restored.
+        //   - "hard-code one value" fails twice over. Gate = "" is contained in every string, so the
+        //     containment check alone would be decoration; the whole-attribute shape check and the
+        //     names-a-busy-signal check reject it, and reject a bare "IsBusy" that could match
+        //     incidentally elsewhere in the tag.
+        //   - "never call the thing under test" fails: a path whose element moved, changed type, or
+        //     lost its handler fails at the locate step rather than being skipped.
+        //   - "change nothing" passes, correctly.
+        // The one that does pass, said plainly rather than overclaimed: this is text containment. It
+        // proves the attribute is present and unchanged, never that it is load-bearing - a page
+        // whose gate is disabled="@(IsBusy && false)" passes, as this suite's header warns. What it
+        // does add over the DOM-synced assertion covering the same element is the reason: that one
+        // says the control must not accept typing, this one says the key press must not run
+        // SearchUser, and the two can be narrowed apart by anyone who only reads one of them.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = KeyboardHandlerSites(source.Text);
+
+        foreach (var path in entry.KeyboardPaths)
+        {
+            var site = LocateKeyboardPath(
+                page, source, found, path.Line, path.Event, path.Snippet, path.Tag);
+
+            Assert.True(
+                string.Equals(
+                    ClickGateSource.CalledMethod(site.Handler), path.Handler, StringComparison.Ordinal),
+                $"{page}:{path.Line} @on{path.Event} now binds '{site.Handler}', registered as "
+                + $"'{path.Handler}'. The refusal on record was granted against the old handler.");
+
+            var handlerBody = source.MethodBody(path.Handler);
+            Assert.False(string.IsNullOrEmpty(handlerBody),
+                $"{page}:{path.Line} binds @on{path.Event} to {path.Handler}, which this page does "
+                + "not declare.");
+
+            Assert.True(Regex.IsMatch(handlerBody, ClickGateSource.WholeWord(path.ReachesOperation)),
+                $"{page}: {path.Handler} no longer reaches {path.ReachesOperation}, the operation "
+                + "this entry's refusal was granted against. Re-check by hand what a key press runs "
+                + $"now rather than updating the name to match. Recorded hazard: {path.Why}");
+
+            switch (path.Refusal)
+            {
+                case KeyboardRefusal.DisabledAttribute:
+                    Assert.True(
+                        path.Gate.StartsWith("disabled=", StringComparison.Ordinal)
+                        || path.Gate.StartsWith("Disabled=", StringComparison.Ordinal),
+                        $"{page}:{path.Line} registers '{path.Gate}' as its gate, which is not a "
+                        + "whole disabled=/Disabled= attribute. Register it exactly as the markup "
+                        + "writes it: a bare identifier can be matched incidentally elsewhere in the "
+                        + "same tag, so containment of one proves nothing.");
+
+                    Assert.True(NamesAnyBusySignal(entry, path.Gate),
+                        $"{page}:{path.Line} registers the gate '{path.Gate}', which names no "
+                        + "predicate and no flag this page registers. A key path greyed by something "
+                        + "that is not a busy signal is not gated at all.");
+
+                    Assert.True(site.TagText.Contains(path.Gate, StringComparison.Ordinal),
+                        $"{page}:{path.Line} no longer carries {path.Gate}, so @on{path.Event} fires "
+                        + $"during an operation and {path.ReachesOperation} runs from the keyboard "
+                        + "while the button beside it is refusing clicks. A disabled form control "
+                        + $"fires no key events; nothing else on this element does. {path.Why}");
+
+                    // Same element, same attribute, two registry halves. Without this they can drift
+                    // into saying different things - or opposite things, if the element is sitting in
+                    // UngatedDomSyncedControls while a keyboard path calls it gated.
+                    if (FormElementTags.Contains(site.TagName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        var domSynced = entry.DomSyncedControls
+                            .FirstOrDefault(control => control.Line == path.Line);
+
+                        Assert.True(domSynced is not null,
+                            $"{page}:{path.Line} declares a disabled-attribute refusal on a control "
+                            + "that renders server state into the DOM, but it is not in "
+                            + "DomSyncedControls. Either it is unregistered there, or it is recorded "
+                            + "as ungated - and the two halves of the registry cannot say opposite "
+                            + "things about one element.");
+
+                        Assert.True(
+                            string.Equals(
+                                domSynced!.DisabledExpression, path.Gate, StringComparison.Ordinal),
+                            $"{page}:{path.Line} registers the gate as '{path.Gate}' here and as "
+                            + $"'{domSynced.DisabledExpression}' in DomSyncedControls. The element "
+                            + "has one attribute; one of the two entries is stale.");
+                    }
+
+                    break;
+
+                case KeyboardRefusal.HandlerGuard:
+                    Assert.True(NamesAnyBusySignal(entry, path.Gate),
+                        $"{page}:{path.Line} registers the guard '{path.Gate}', which names no "
+                        + "predicate and no flag this page registers, so it does not refuse a busy "
+                        + "page.");
+
+                    var guard = handlerBody.IndexOf(path.Gate, StringComparison.Ordinal);
+                    Assert.True(guard >= 0,
+                        $"{page}: {path.Handler} no longer carries '{path.Gate}'. The handler was "
+                        + $"this path's only refusal, so {path.ReachesOperation} now runs on every "
+                        + $"key press. {path.Why}");
+
+                    var firstAwait = handlerBody.IndexOf("await ", StringComparison.Ordinal);
+                    Assert.True(firstAwait < 0 || guard < firstAwait,
+                        $"{page}: {path.Handler} carries '{path.Gate}' BELOW its first await, so the "
+                        + "key press has already started work before anything refuses it.");
+                    break;
+            }
+
+            if (path.GatedTwinButtonLine is { } twinLine)
+            {
+                var button = source.ClickableButtons().FirstOrDefault(tag => tag.Line == twinLine);
+                Assert.True(button is not null,
+                    $"{page}:{path.Line} records the button at {twinLine} as the gated twin of this "
+                    + "key path, and there is no clickable button there any more.");
+
+                var twinReaches = ClickGateSource.CalledMethod(ClickGateSource.HandlerOf(button!));
+                Assert.True(
+                    string.Equals(twinReaches, path.ReachesOperation, StringComparison.Ordinal),
+                    $"{page}:{twinLine} reaches {twinReaches}, not {path.ReachesOperation}, so it is "
+                    + $"no longer the twin of the key path at {path.Line} and the pairing on record "
+                    + "is describing two different operations.");
+
+                Assert.True(NamesAnyPredicate(entry, button!.Text),
+                    $"{page}:{twinLine} no longer names a busy predicate, and it is on record as the "
+                    + $"gated twin of the key path at {path.Line}. If that button is genuinely "
+                    + "exempt now, the key path's own refusal is the only thing left and this entry "
+                    + "needs re-checking by hand.");
+            }
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void NoKeyboardPathIsRefusedByADisabledAttributeAnElementIgnores(string page)
+    {
+        // The keyboard counterpart of NoHandlerGuardOnADomSyncedControl: a design tripwire against
+        // the wrong remedy rather than against a missing one. The disabled attribute is inert on an
+        // anchor, a div, a span or a td - the browser renders it and carries on dispatching keydown
+        // - so a key path "refused" that way is not refused at all, while the markup reads exactly
+        // like the two that are. Both of Migration's are on inputs, so this passes today by being
+        // true, not by being unreachable.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "hard-code one value" is the live risk and is refused: the element name is read off
+        //     the file by the locate step, not off the registry, so writing Tag = "input" on a div
+        //     fails the locate step rather than satisfying this one.
+        //   - "delete the feature" and "never call the thing under test" are the same failure - a
+        //     path whose element is gone fails at the locate step.
+        //   - "change nothing" passes, correctly.
+        // Honest limitation: a child component could legitimately honour a Disabled parameter on its
+        // own inner elements, and this refuses that shape outright rather than trying to judge it.
+        // No converted page has one - a keyboard handler written on a component tag is a parameter,
+        // not a DOM event - and forcing a human to look is the right failure direction if one
+        // appears.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = KeyboardHandlerSites(source.Text);
+
+        foreach (var path in entry.KeyboardPaths
+                     .Where(path => path.Refusal == KeyboardRefusal.DisabledAttribute))
+        {
+            var site = LocateKeyboardPath(
+                page, source, found, path.Line, path.Event, path.Snippet, path.Tag);
+
+            Assert.True(HonoursDisabled.Contains(site.TagName),
+                $"{page}:{path.Line} is a <{site.TagName}> and declares a disabled-attribute "
+                + "refusal. Only input, select, textarea and button honour disabled; every other "
+                + $"element ignores it and keeps firing @on{path.Event}, so {path.ReachesOperation} "
+                + "still runs and the greying is styling rather than refusal. Move the handler onto "
+                + "a control the attribute reaches, or declare KeyboardRefusal.HandlerGuard and put "
+                + "the guard in the handler.");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryHarmlessKeyboardPathStillReachesNoOperation(string page)
+    {
+        // Without this, HarmlessKeyboardPaths is a free pass out of the completeness assertion:
+        // anything awkward goes in the list with a plausible sentence and stays there, including a
+        // handler that was later wired to an operation and now sits in the half of the registry that
+        // tells the next reader a key press does nothing.
+        //
+        // "Reaches no operation" is made checkable rather than left as prose: the handler must not
+        // name any method on this page that raises a flag the page registers as in-flight. A handler
+        // that raises one itself is caught by the same test, because a method body includes its own
+        // signature.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "hard-code one value" - an empty reason - fails on the WhyHarmless check.
+        //   - "delete the feature" and "never call the thing under test" fail at the locate step: a
+        //     recorded handler that is gone, moved, or on a different element fails rather than
+        //     being skipped.
+        //   - "change nothing" passes, correctly.
+        // Two limits, both stated rather than papered over. This is one call deep: a handler calling
+        // a helper that calls a busy operation passes, and only a reader catches that. And it cannot
+        // judge a reason - a plausible sentence attached to a real gap passes, which is the most any
+        // registry-driven assertion in this suite can do. The list is empty on all three converted
+        // pages today, so this assertion is vacuous until one needs it; it was proved to bite by
+        // moving Migration 390 into the list and watching it fail on SearchUser.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = KeyboardHandlerSites(source.Text);
+
+        var raisers = AllFlags(entry)
+            .SelectMany(source.NonClearingSetters)
+            .Select(setter => source.EnclosingMethodName(setter.Index))
+            .Where(name => name.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var path in entry.HarmlessKeyboardPaths)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(path.WhyHarmless),
+                $"{page}:{path.Line} is recorded as a harmless keyboard path with no reason. An "
+                + "inferred exemption is an oversight that looks like a decision.");
+
+            var site = LocateKeyboardPath(
+                page, source, found, path.Line, path.Event, path.Snippet, path.Tag);
+
+            Assert.True(
+                string.Equals(
+                    ClickGateSource.CalledMethod(site.Handler), path.Handler, StringComparison.Ordinal),
+                $"{page}:{path.Line} @on{path.Event} now binds '{site.Handler}', recorded as "
+                + $"'{path.Handler}'. The harmlessness on record is about the old handler.");
+
+            var body = source.MethodBody(path.Handler);
+            Assert.False(string.IsNullOrEmpty(body),
+                $"{page}:{path.Line} binds @on{path.Event} to {path.Handler}, which this page does "
+                + "not declare.");
+
+            var reaches = raisers
+                .Where(raiser => Regex.IsMatch(body, ClickGateSource.WholeWord(raiser)))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.True(reaches.Count == 0,
+                $"{page}:{path.Line} is recorded as reaching no operation, but {path.Handler} names "
+                + $"{string.Join(", ", reaches)}, which raise a busy flag this page registers. A key "
+                + "press that reaches an operation is a click-equivalent: move it to KeyboardPaths "
+                + $"with the refusal that stops it. Recorded reason: {path.WhyHarmless}");
+        }
+    }
+
+    [Fact]
+    public void KeyboardPathScanFindsTheShapesItClaimsTo()
+    {
+        // The completeness assertion above is vacuous on a page with no keyboard handler, and two of
+        // the three converted pages are exactly that. A broken scanner would be green on both and
+        // the third page would be the only thing holding the rule up. This exercises the scanner
+        // against a fixture written here, so "delete the feature" fails whatever the pages contain.
+        //
+        // What is the cheapest broken implementation that still passes this? None of the four. A
+        // scanner returning nothing fails the first assertion; one returning everything fails the
+        // negatives; one hard-coding a single shape fails the others; and "never call the thing
+        // under test" is not available, because the thing under test is all this test calls.
+        // Every stray ">" below is inside a quoted attribute value and is load-bearing, in two
+        // different positions, because a fixture that only put one AFTER the handler would not catch
+        // a walker that stopped being quote-aware. On the textarea the ">" comes BEFORE the handler,
+        // so losing quote-awareness ends the element early and the handler falls outside every
+        // element - TagName goes empty and the tuple assertion below fails. On the first input it
+        // comes AFTER the handler but BEFORE the gate, so the element is still matched but its text
+        // is truncated - which the TagText assertion below catches and the tuple assertion does not.
+        // Both directions matter: TagText is what every verbatim gate check is read out of.
+        var fixture = string.Join("\n",
+            "<div class=\"wrap\">",
+            "    <input type=\"text\" @bind=\"q\" @onkeydown=\"OnSearchKey\" title=\"a > b\" "
+            + "disabled=\"@IsBusy\" />",
+            "    <textarea title=\"b > c\" @onkeyup=\"OnNotesKey\"></textarea>",
+            "    <span @onkeypress=\"OnSpanKey\">x</span>",
+            "    <a href=\"#\" @onkeydown=\"() => Pick(row)\" @onkeydown:preventDefault>go</a>",
+            "    <input title=\"no handler\" @bind:event=\"oninput\" />",
+            "</div>",
+            "@* a comment carrying @onkeydown=\"Ghost\" *@");
+
+        var text = ClickGateSource.BlankComments(fixture);
+
+        // Proves four things at once that the pages cannot: keyup and keypress are found as well as
+        // keydown; a ">" inside a quoted attribute value does not end the element; the element name
+        // is read off the file rather than guessed; and a handler named only inside a razor comment
+        // is not found, because the scan runs on comment-blanked text.
+        Assert.Equal(
+            new[]
+            {
+                "keydown/OnSearchKey/input",
+                "keyup/OnNotesKey/textarea",
+                "keypress/OnSpanKey/span",
+                "keydown/() => Pick(row)/a",
+            },
+            KeyboardHandlerSites(text)
+                .Select(site => $"{site.Event}/{site.Handler}/{site.TagName}")
+                .ToArray());
+
+        // The gate checks are all containment tests over TagText, so a walker that ends an element
+        // early would report every gate as missing - or, worse, report a narrowed one as intact.
+        Assert.Contains("disabled=\"@IsBusy\"",
+            KeyboardHandlerSites(text)
+                .Single(site => site.Handler == "OnSearchKey").TagText,
+            StringComparison.Ordinal);
+
+        // @onkeydown:preventDefault binds nothing, so it must not be reported as unreadable either.
+        Assert.Empty(UnparsedKeyboardAttributes(text));
+
+        // The shape the sentinel exists for: a handler bound without quotes, which the attribute
+        // pattern cannot read. It must be REPORTED, not silently counted as absent - otherwise
+        // narrowing the pattern is a way to make every page look clean.
+        var unquoted = ClickGateSource.BlankComments("<input @onkeydown=@(() => Go()) />");
+        Assert.Empty(KeyboardHandlerSites(unquoted));
+        Assert.Single(UnparsedKeyboardAttributes(unquoted));
     }
 
     // ---- where the guard may not live --------------------------------------------------------
@@ -1068,5 +1513,199 @@ public class ClickGateTests
                     + "operator just ran.");
                 break;
         }
+    }
+
+    // ---- keyboard-path machinery ---------------------------------------------------------------
+    //
+    // Placed below FormElementTags on purpose: static field initialisers run in textual order, and
+    // HonoursDisabled reads that array.
+
+    /// <summary>One markup element, from its "&lt;" to the "&gt;" that closes its attribute list.</summary>
+    /// <param name="End">The index of the closing "&gt;" itself, not one past it.</param>
+    private sealed record MarkupTag(int Start, int End, string Name);
+
+    /// <summary>
+    /// A keyboard handler bound in markup, with the element it sits on. <see cref="TagText"/> is
+    /// empty when no element could be delimited around it, which the completeness assertion treats
+    /// as a failure rather than a skip.
+    /// </summary>
+    private sealed record KeyboardHandlerSite(
+        string Event,
+        string Handler,
+        int AttributeIndex,
+        string TagName,
+        string TagText,
+        int TagIndex);
+
+    /// <summary>A keyboard handler bound to a quoted expression: <c>@onkeydown="Foo"</c>.</summary>
+    private static readonly Regex KeyboardHandlerAttribute = new(
+        @"@on(?<event>keydown|keyup|keypress)\s*=\s*""(?<handler>[^""]*)""", RegexOptions.Compiled);
+
+    /// <summary>
+    /// A Blazor event modifier, which binds no handler: <c>@onkeydown:preventDefault</c>. Matched
+    /// only so the sentinel below does not report it as a shape it cannot read.
+    /// </summary>
+    private static readonly Regex KeyboardEventModifier = new(
+        @"@on(?:keydown|keyup|keypress):[A-Za-z]+", RegexOptions.Compiled);
+
+    /// <summary>Anything that looks like a keyboard attribute at all, including both shapes above.</summary>
+    private static readonly Regex AnyKeyboardAttribute = new(@"@onkey[A-Za-z]*", RegexOptions.Compiled);
+
+    /// <summary>
+    /// The elements the disabled attribute actually reaches. Everything else renders it as an inert
+    /// attribute and carries on dispatching key events.
+    /// </summary>
+    private static readonly HashSet<string> HonoursDisabled =
+        new(FormElementTags.Append("button"), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Every element in <paramref name="text"/>, walked quote-aware.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same shape as <see cref="ClickGateSource.Tags"/>, and deliberately NOT
+    /// ClickGateSource.ExtractBlock, whose brace counting is not quote-aware. Tags() itself cannot
+    /// be used here because it needs a tag name up front and a keyboard handler can sit on any
+    /// element; this walk is generic for exactly that reason. It skips past each element's closing
+    /// "&gt;", so a "&lt;" inside a quoted attribute value cannot open a second element inside the
+    /// first, and the elements it returns never overlap.
+    /// </para>
+    /// <para>
+    /// Honest limitation: outside an element, a "&lt;" immediately followed by a letter opens a
+    /// candidate, which C# generics in the @code block do - <c>Func&lt;string, Task&gt;</c>. Those
+    /// are harmless because a keyboard attribute is never inside one, and if a stray candidate ever
+    /// did swallow a real element the registered Tag name would no longer match, so the entry fails
+    /// loudly rather than passing.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<MarkupTag> MarkupTags(string text)
+    {
+        var tags = new List<MarkupTag>();
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (text[i] != '<' || i + 1 >= text.Length || !char.IsLetter(text[i + 1]))
+                continue;
+
+            var nameEnd = i + 1;
+            while (nameEnd < text.Length
+                   && (char.IsLetterOrDigit(text[nameEnd]) || text[nameEnd] == '_'))
+                nameEnd++;
+
+            var quote = '\0';
+            for (var j = nameEnd; j < text.Length; j++)
+            {
+                var c = text[j];
+                if (quote != '\0')
+                {
+                    if (c == quote) quote = '\0';
+                }
+                else if (c is '"' or '\'')
+                {
+                    quote = c;
+                }
+                else if (c == '>')
+                {
+                    tags.Add(new MarkupTag(i, j, text[(i + 1)..nameEnd]));
+                    i = j;
+                    break;
+                }
+            }
+        }
+
+        return tags;
+    }
+
+    /// <summary>
+    /// Every keyboard handler bound in markup, with the element it sits on. Pass comment-blanked
+    /// text (<see cref="ClickGateSource.Text"/>), or a handler named only in a comment is found.
+    /// </summary>
+    private static IReadOnlyList<KeyboardHandlerSite> KeyboardHandlerSites(string text)
+    {
+        var tags = MarkupTags(text);
+
+        return KeyboardHandlerAttribute.Matches(text)
+            .Select(match =>
+            {
+                var tag = tags.FirstOrDefault(
+                    candidate => candidate.Start < match.Index && match.Index < candidate.End);
+
+                return new KeyboardHandlerSite(
+                    match.Groups["event"].Value,
+                    match.Groups["handler"].Value,
+                    match.Index,
+                    tag?.Name ?? "",
+                    tag is null ? "" : text[tag.Start..(tag.End + 1)],
+                    tag?.Start ?? match.Index);
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// The offset of every keyboard attribute that is neither a readable handler nor a modifier.
+    /// </summary>
+    /// <remarks>
+    /// All three patterns anchor at the same "@onkey", so a set difference on the match offset is
+    /// exact. This is what stops "narrow the pattern until it matches nothing" from emptying the
+    /// completeness sweep: an unreadable shape is reported, never counted as absent.
+    /// </remarks>
+    private static IReadOnlyList<int> UnparsedKeyboardAttributes(string text)
+    {
+        var readable = KeyboardHandlerAttribute.Matches(text).Select(match => match.Index)
+            .Concat(KeyboardEventModifier.Matches(text).Select(match => match.Index))
+            .ToHashSet();
+
+        return AnyKeyboardAttribute.Matches(text)
+            .Select(match => match.Index)
+            .Where(index => !readable.Contains(index))
+            .ToList();
+    }
+
+    /// <summary>
+    /// The registry key for a keyboard path: the line the ELEMENT starts on, plus the event. The
+    /// element's line rather than the attribute's, which is often a continuation line - 390 and not
+    /// 392 for Migration's search box - so a gated path can be checked against the
+    /// <see cref="DomSyncedControl"/> entry for the same control.
+    /// </summary>
+    private static string KeyOf(ClickGateSource source, KeyboardHandlerSite site) =>
+        $"{source.LineAt(site.TagIndex)}:{site.Event}";
+
+    /// <summary>
+    /// The live handler a registered keyboard path points at. Located by line and event,
+    /// disambiguated by snippet, and checked for element type - so an entry cannot silently start
+    /// covering whatever drifted onto its line, and cannot claim a refusal that depends on the
+    /// element being something it is not.
+    /// </summary>
+    private static KeyboardHandlerSite LocateKeyboardPath(
+        string page,
+        ClickGateSource source,
+        IReadOnlyList<KeyboardHandlerSite> found,
+        int line,
+        string keyEvent,
+        string snippet,
+        string tagName)
+    {
+        var onLine = found
+            .Where(site => source.LineAt(site.TagIndex) == line
+                           && string.Equals(site.Event, keyEvent, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(onLine.Count > 0,
+            $"{page}: no @on{keyEvent} on an element starting at line {line}, where a keyboard path "
+            + "is registered.");
+
+        var match = onLine.FirstOrDefault(
+            site => site.TagText.Contains(snippet, StringComparison.Ordinal));
+        Assert.True(match is not null,
+            $"{page}:{line} no @on{keyEvent} element there contains '{snippet}'. The entry may now "
+            + "be covering a different control; re-check it against the file rather than updating "
+            + "the snippet to whatever is there.");
+
+        Assert.True(string.Equals(match!.TagName, tagName, StringComparison.Ordinal),
+            $"{page}:{line} is registered as <{tagName}> but is now <{match.TagName}>. Which element "
+            + "this is decides whether the disabled attribute refuses anything at all, so re-check "
+            + "the entry.");
+
+        return match;
     }
 }
