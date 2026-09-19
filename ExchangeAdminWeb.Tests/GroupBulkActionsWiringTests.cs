@@ -302,7 +302,7 @@ public class GroupBulkActionsWiringTests
     {
         var page = SelfServicePage();
 
-        Assert.Contains("disabled=\"@(isChanging || !CanRemove(member))\"", page, StringComparison.Ordinal);
+        Assert.Contains("disabled=\"@(IsManageBusy || !CanRemove(member))\"", page, StringComparison.Ordinal);
         Assert.Contains("private List<GroupMember> SelectableMembers() => groupMembers.Where(CanRemove).ToList();", page, StringComparison.Ordinal);
         Assert.Contains("foreach (var m in SelectableMembers())", Body(page, "private void ToggleSelectAll(bool on)"), StringComparison.Ordinal);
         Assert.Contains("private static bool CanRemove(GroupMember m) => m.IsRemovable && !string.IsNullOrEmpty(m.ObjectGuid);", page, StringComparison.Ordinal);
@@ -451,7 +451,8 @@ public class GroupBulkActionsWiringTests
         var page = SelfServicePage();
         var body = Body(page, "private async Task ResolvePasteAsync()");
 
-        Assert.Contains("BulkIdentityList.Parse(pasteText)", body, StringComparison.Ordinal);
+        Assert.Contains("var text = pasteText;", body, StringComparison.Ordinal);
+        Assert.Contains("BulkIdentityList.Parse(text)", body, StringComparison.Ordinal);
         Assert.Contains("await GroupService.ResolveBatchAsync(callerSid, parsed.Kept)", body, StringComparison.Ordinal);
         Assert.Contains("parsed.Duplicates.Select(", body, StringComparison.Ordinal);
         Assert.Contains("parsed.OverCap.Select(", body, StringComparison.Ordinal);

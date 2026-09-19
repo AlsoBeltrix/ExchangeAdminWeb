@@ -38,6 +38,7 @@ public static class ClickGateRegistry
         GroupManagement,
         M365GroupManagement,
         ConferenceRooms,
+        SelfServiceGroups,
     };
 
     /// <summary>
@@ -50,11 +51,11 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 8 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // All nine tier-1 pages - DhcpAuthorization.razor, NamedLocations.razor,
             // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor,
-            // GroupManagement.razor, M365GroupManagement.razor and ConferenceRooms.razor - are
-            // converted and live in Pages above.
-            ["SelfServiceGroups.razor"] = "tier 1, page 9 of 9; needs view-scoped predicates",
+            // GroupManagement.razor, M365GroupManagement.razor, ConferenceRooms.razor and
+            // SelfServiceGroups.razor - are converted and live in Pages above. Nothing below this
+            // line is approved for conversion without an owner go.
 
             // Prerequisite fixes (slice 1), converted after their flags are made safe.
             ["BlockedSenders.razor"] = "tier 3, not approved; slice 1 prerequisite done - ConfirmUnblock's "
@@ -3913,6 +3914,569 @@ public static class ClickGateRegistry
         // handler added here later fails the suite and names itself.
         KeyboardPaths = [],
 
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// Self-Service Groups: tier 1, page 9 of 9, converted 2026-09-19 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1 (owner-approved scope, .agents/decisions.md
+    /// 2026-09-18, option A). The only page whose adversarial verdict came back "unsound" rather
+    /// than "sound with corrections", and the reason it was sequenced last.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The view-switch dilemma, and why both obvious answers are wrong.</b> The page renders two
+    /// mutually exclusive views - browse while <c>selected == null</c> (31-186), manage otherwise
+    /// (189-451) - with disjoint in-flight flag sets. Gate "Back to groups"
+    /// and the operator is trapped in the manage view: <c>ChangeMember</c>,
+    /// <c>RemoveListedMember</c>, <c>RemoveSelectedAsync</c> and <c>AddResolvedAsync</c> all end
+    /// with <c>await LoadMembers()</c>, which raises isLoadingMembers, so EVERY successful
+    /// membership change closes with a window the operator cannot leave - and a bulk remove of
+    /// fifty members holds that window open for the whole batch, one authorization round trip,
+    /// write, read-back, audit and email per row. Exempt it under a single page-wide predicate and
+    /// the manage flags leak into a browse view that renders no spinner for any of them: Load and
+    /// Search grey out with nothing on screen saying why.
+    /// </para>
+    /// <para>
+    /// <b>The third answer, in two halves.</b> First, the flags are scoped so there is nothing to
+    /// leak: <c>IsBrowseBusy</c> (isLoading, isSearching) and <c>IsManageBusy</c> (isChanging,
+    /// isLoadingMembers, isResolving) are disjoint, so no browse control consults a manage flag and
+    /// no manage control consults a browse flag. Each scope has real flags and real controls, which
+    /// is the bar ConferenceRooms set: neither is an always-false member invented to make a list
+    /// look symmetrical. Second, the exit is exempt and the ENTRANCE is gated. "Back to groups"
+    /// carries no gate at all, and the two "Manage members" buttons (128 and 179) - the only way
+    /// back into the manage view - are gated on IsManageBusy. A manage flag that survives the
+    /// switch therefore greys exactly one control, the door back into the scope that owns it, and
+    /// a browse-view banner says so, because the browse view has no spinner to explain it.
+    /// </para>
+    /// <para>
+    /// <b>What makes the exemption safe is a snapshot, not a flag reset.</b> The tempting fix -
+    /// having BackToGroups lower isChanging, isLoadingMembers and isResolving - is the hazard the
+    /// brief warned about and was rejected: those three are lowered in the finallys of operations
+    /// still in flight, so clearing them from outside means the in-flight operation's own finally
+    /// later lowers a flag a NEW view has raised. What actually makes leaving mid-flight safe is
+    /// that no handler outliving the switch reads <c>selected</c> for anything but the
+    /// <c>ReferenceEquals(selected, group)</c> still-looking-at-it test. That was true of the four
+    /// mutating handlers and NOT of LoadMembers, which is the live defect this slice found: its
+    /// catch logged <c>selected.Name</c> after the await, so a Back click landing while a member
+    /// read failed raised a NullReferenceException INSIDE a catch block. With no ErrorBoundary
+    /// anywhere in the app that escapes the handler and tears the circuit down. LoadMembers now
+    /// snapshots its group at entry, and the obligation is registered below.
+    /// </para>
+    /// <para>
+    /// <b>The tie between the exemption and the snapshot is prose, and that is a limitation, not a
+    /// choice.</b> <see cref="ExemptControl.PrerequisiteBeforeExemptionHolds"/> is exactly the
+    /// field this wants - the BackToGroups exemption is safe only because
+    /// <c>PostAwaitLiveRead("LoadMembers", "selected", "group")</c> holds - but
+    /// <see cref="ClickGateTests.EveryExemptionPrerequisiteIsEnforcedAndNotJustDescribed"/> reads
+    /// the tied field out of the exemption's own SNIPPET, via a regex that only matches an inline
+    /// <c>() =&gt; field = null</c> handler. BackToGroups is a method reference, so the snippet
+    /// names no field and setting the prerequisite would fail the assertion rather than enforce
+    /// anything. The obligation is registered on its own, so
+    /// <see cref="ClickGateTests.NoHandlerReadsARegisteredFieldLiveAfterItsFirstAwait"/> holds the
+    /// snapshot; what is unenforced is only the LINK saying the exemption depends on it, and this
+    /// paragraph plus ConditionThatKeepsItTrue at 205 is the whole of that record.
+    /// </para>
+    /// <para>
+    /// <b>Thirty-one staged fields, censused by hand.</b> Six are the two view-scoped predicates'
+    /// members; twenty-two are registered as ExcludedFields below. Four shapes on this page would
+    /// each have compiled and looked plausible: <c>loaded</c> and <c>authChecked</c> are set once
+    /// and never cleared, so either would deaden its scope permanently; <c>showBulkAdd</c> and
+    /// <c>showRemoveConfirm</c> are plain bools that RENDER the controls they would disable, so
+    /// folding either in disables a destructive confirmation at the only moment it is ever shown;
+    /// <c>pendingOp</c> is raised and nulled in the same four finallys as isChanging and so reads
+    /// exactly like a second in-flight flag, when it is a which-spinner selector; and
+    /// <c>pendingGroupRemoval</c> is the nullable staged-confirmation shape that would make
+    /// "Remove group" unclickable at the only moment it renders. Precedent for not trusting the
+    /// prediction: page 5 predicted seven and found twelve, page 7 predicted three and found
+    /// twenty-two, page 8 predicted "two triples" and found forty.
+    /// </para>
+    /// <para>
+    /// <b>One keyboard path, and it was already correct.</b> The search box at 148 routes
+    /// <c>@onkeydown</c> to OnSearchKeyDown, which reaches SearchGroup - the 2eb8c15 shape exactly,
+    /// and the box already carried a disabled attribute, so widening it from isSearching to
+    /// IsBrowseBusy closes the typing path and the Enter path together. It is registered as a
+    /// KeyboardPath with its gated twin at 151, so neither half can be narrowed alone. Nothing else
+    /// on the page binds a key event: no other @onkeydown, no @onkeyup, no @onkeypress, no
+    /// &lt;form&gt; and no @onsubmit, censused by hand rather than inherited. The
+    /// ADIdentityAutocomplete at 226 carries the component's own Enter path, closed inside the
+    /// component by 3c21270 for all of its call sites; this page passes Disabled and registers the
+    /// call site, and reaches into nothing.
+    /// </para>
+    /// <para>
+    /// <b>Two post-await live reads fixed, two deliberate ones kept, and three that cannot be
+    /// registered.</b> Fixed: LoadMembers' <c>selected</c> (above) and ResolvePasteAsync's
+    /// <c>pasteText</c>, which was parsed AFTER await Task.Yield() on a textarea bound with
+    /// <c>@bind:event="oninput"</c> - a keystroke landing in the round trip before the disabled
+    /// attribute reached the browser had the operator approve a preview of text that was never on
+    /// screen when the click was accepted. Kept deliberately: the
+    /// <c>ReferenceEquals(selected, group)</c> tests in all four mutating handlers, which MUST read
+    /// the field live - that is the whole point of the test - and would fail this suite if
+    /// registered. Cannot be registered, and so unenforced: RemoveSelectedAsync's
+    /// <c>selectedGuids</c> and AddResolvedAsync's <c>resolution</c> are already snapshotted
+    /// through <c>SelectedMembers()</c> and a Where, and the CapturedAtEntry matcher requires the
+    /// capture line to name the live field textually, which <c>var rows = SelectedMembers();</c>
+    /// does not (the resolution half does, and IS registered). And <c>changeResult</c> is read
+    /// after an await in ChangeMember and RemoveListedMember, at the still-looking-at-it test - but
+    /// unreachably so: no await separates the assignment from the read, so the browser never sees
+    /// the banner, and its dismiss button cannot be clicked, in that window. That is why the
+    /// dismiss at 300 needs no prerequisite; the day an await appears between them it does.
+    /// </para>
+    /// <para>
+    /// <b>Not fixed, and not a gating problem.</b> Re-entering the manage view for a DIFFERENT
+    /// group while a previous group's operation is still in flight lets that operation publish its
+    /// <c>changeResult</c> banner and its <c>bulkOutcome</c> table into the new group's view - the
+    /// text names the old group, so it is misleading rather than wrong, and the gate on 128/179
+    /// narrows the window to one round trip but cannot close it. Closing it means stamping the
+    /// group onto the result and discarding a result whose group is no longer selected, which is a
+    /// change to what those two fields are rather than to how a control refuses a click, and it is
+    /// out of this slice's scope. Recorded here rather than left to be rediscovered.
+    /// </para>
+    /// <para>
+    /// <b>The standing exemption is untouched.</b> Self-Service Groups does not consult Protected
+    /// Group Targets (owner ruling 2026-08-31, .agents/decisions.md, carried in the Constitution);
+    /// its member-protection check stays, inside the service. Nothing in this conversion goes near
+    /// either.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry SelfServiceGroups => new()
+    {
+        Page = "SelfServiceGroups.razor",
+        ExpectedLineCount = 1155,
+
+        // Two, and the list field exists for exactly this. Both scopes have real flags and real
+        // controls; see the remarks for why a single page-wide predicate cannot work here and why
+        // the control that crosses between them is gated by neither.
+        Predicates =
+        [
+            new PredicateScope("IsBrowseBusy",
+                ["isLoading", "isSearching"],
+                AppliesWhen:
+                "the BROWSE view only (selected == null, markup 31-186): the owned-groups load, the "
+                + "in-list filter and its Clear, and the single-group search box and button. Not "
+                + "the two Manage members buttons at 128 and 179, which open the other view "
+                + "and are gated on IsManageBusy instead"),
+
+            new PredicateScope("IsManageBusy",
+                ["isChanging", "isLoadingMembers", "isResolving"],
+                AppliesWhen:
+                "the MANAGE view (selected != null, markup 189-451), plus the two Manage members "
+                + "buttons that open it. Explicitly NOT Back to groups at 205, which "
+                + "is the exit and must stay clickable - see the remarks on this entry, which are "
+                + "the only record of that reasoning"),
+        ],
+
+        // The hand census. Twenty-two, over four groups: the session/view state that would deaden a
+        // scope permanently, the two staged confirmations, the two banner models, and the form and
+        // selection values every gated control already refuses typing into.
+        ExcludedFields =
+        [
+            new ExcludedField("authChecked", "the whole page body; 18-28 returns early while unset",
+                "means 'authorization has been resolved'. Set true once in OnInitializedAsync and "
+                + "never cleared, so in either predicate the page would be permanently and "
+                + "irrecoverably dead from the first render onward"),
+            new ExcludedField("selected", "the view switch itself at 31 and 189",
+                "THE view selector, and the most dangerous wrong answer on this page. 'selected is "
+                + "not null' reads like state that is happening; it means 'the manage view is the "
+                + "one on screen'. In IsManageBusy every control in the manage view would be "
+                + "disabled at the only moment any of them renders"),
+            new ExcludedField("loaded", "the owned-groups card at 77-138",
+                "means 'the last load succeeded'. It renders the list, so in IsBrowseBusy the "
+                + "browse view would go dead the moment a load succeeded and stay dead"),
+            new ExcludedField("loadError", "the failure alert at 72-76",
+                "the load-failure banner's model. It is non-null for as long as the error is on "
+                + "screen, which is until the next load - so it would deaden the Load button that "
+                + "is the only way to clear it"),
+            new ExcludedField("searchMessage", "the not-found alert at 158-161",
+                "as loadError, on the search half"),
+            new ExcludedField("searchResult", "the result row at 162-184, and Manage members at 179",
+                "the found group. The Manage members button renders ONLY while it is set, so "
+                + "folding it in disables that button at the only moment it is ever shown"),
+            new ExcludedField("changeResult", "the shared result banner at 296-302",
+                "the banner's model, non-null for the whole time an outcome is on screen. In "
+                + "IsManageBusy the manage view would be dead after every operation until the "
+                + "operator dismissed it - and the dismiss at 300 is the one control that would "
+                + "still work"),
+            new ExcludedField("bulkOutcome", "the per-row outcome table at 356-377",
+                "as changeResult, for the two batch paths"),
+            new ExcludedField("memberLoadError", "the member-read failure alert at 312-315",
+                "as loadError, on the member list"),
+            new ExcludedField("pendingOp", "the four spinners at 234, 239, 266 and 343",
+                "a nullable raised and nulled in the same four finallys as isChanging, which is the "
+                + "whole of the in-flight shape and is why a structural scan reports it. It is a "
+                + "WHICH-SPINNER selector: isChanging says the page is working, pendingOp says "
+                + "which button to put the spinner on. Folding it in changes no behaviour today and "
+                + "would silently become a second, unowned busy flag the first time it is set "
+                + "anywhere else"),
+            new ExcludedField("pendingGroupRemoval", "the inline D2 warning row at 425-444",
+                "staged confirmation for a nested-group removal. The warning row, its Remove group "
+                + "button at 437 and its Cancel at 439 render ONLY while it is set, so folding it "
+                + "in disables the confirmation of the page's most destructive action at the only "
+                + "moment it renders - and its Cancel too, so the row could never be dismissed"),
+            new ExcludedField("showRemoveConfirm", "the bulk-remove confirmation at 334-354",
+                "a BOOL staged confirmation, which is the shape that compiles and looks plausible. "
+                + "It renders the confirm block containing Remove N member(s) at 342 and Cancel at "
+                + "346, so in IsManageBusy a confirmed batch removal could never be executed again "
+                + "and the panel could never be closed"),
+            new ExcludedField("showBulkAdd", "the whole bulk-add card at 251-293",
+                "a BOOL view toggle with the same shape and the same consequence: it renders the "
+                + "paste box, Resolve and Add resolved, so folding it in kills the bulk add path at "
+                + "the only moment it exists. It means 'the operator opened the panel', not 'the "
+                + "page is working'"),
+            new ExcludedField("resolution", "the resolution table at 274-290 and Add resolved at 263",
+                "the staged batch preview. ResolvedCount derives from it and is Add resolved's own "
+                + "emptiness clause; the table renders only while it is non-null. Same consequence "
+                + "as the two confirmations above"),
+            new ExcludedField("selectedGuids", "the row checkboxes at 398 and Remove selected at 329",
+                "which members are ticked. SelectedCount derives from it and is Remove selected's "
+                + "own clause; it is a selection, not an operation"),
+            new ExcludedField("groupMembers", "the member table at 379-447",
+                "the loaded members. Data, replaced wholesale by every LoadMembers"),
+            new ExcludedField("ownedGroups", "the owned-groups table at 110-134", "as groupMembers"),
+            new ExcludedField("filterTerm", "the filter input at 91 and its Clear at 95",
+                "a client-side filter value, and the Clear button's own render condition"),
+            new ExcludedField("searchName", "the search input at 148 and Search at 151",
+                "a form value; also the Search button's emptiness clause, which is OR-ed with "
+                + "IsBrowseBusy and must never be folded into it"),
+            new ExcludedField("memberIdentity", "the autocomplete at 226, Add at 232, Remove at 237",
+                "a form value; also the emptiness clause on both single-member buttons"),
+            new ExcludedField("pasteText", "the textarea at 256 and Resolve at 259",
+                "a form value; also Resolve's emptiness clause"),
+            new ExcludedField("callerSid", "nothing; it is the identity every service call is made as",
+                "the caller's Windows SID, read once in OnInitializedAsync and never nulled. A "
+                + "nullable that is only ever raised is the inverse of an in-flight flag, and every "
+                + "handler already treats a blank one as a hard failure"),
+        ],
+
+        // Three, and the first is this page's whole decision. The other two are banner dismisses,
+        // the same shape as ConferenceRooms 452 and DhcpAuthorization 40.
+        ExemptControls =
+        [
+            new ExemptControl(205, "@onclick=\"BackToGroups\"",
+                "the view switch out of the manage view, and the control the adversarial review "
+                + "called this page unsound over. Gating it on IsManageBusy traps the operator: all "
+                + "four mutating handlers end with await LoadMembers(), so every successful "
+                + "membership change closes with an isLoadingMembers window the operator cannot "
+                + "leave, and a fifty-member bulk remove holds that window open for the whole "
+                + "batch. Exempting it is safe because the flags it leaves raised are consulted by "
+                + "NOTHING in the browse view - the two predicates are disjoint - and the only way "
+                + "back into the scope that owns them, Manage members at 128 and 179, is gated on "
+                + "IsManageBusy. A flag reset here was considered and rejected: isChanging, "
+                + "isLoadingMembers and isResolving are lowered in the finallys of operations still "
+                + "in flight, so clearing them from outside means an old operation's finally later "
+                + "lowers a flag a new view has raised",
+                ConditionThatKeepsItTrue:
+                "BackToGroups stays a synchronous state reset with no await and no service call, "
+                + "and every handler that can outlive the switch keeps reading its own entry "
+                + "snapshot rather than `selected`. LoadMembers is the one that did not, and its "
+                + "catch dereferenced the nulled field: the registered PostAwaitLiveRead for "
+                + "LoadMembers/selected is this exemption's real precondition. It cannot be "
+                + "declared as PrerequisiteBeforeExemptionHolds - that field reads the tied field "
+                + "out of this snippet and only works for an inline `() => field = null` handler - "
+                + "so the link is prose and the remarks say so"),
+
+            new ExemptControl(300, "@onclick=\"() => changeResult = null\"",
+                "dismisses the shared result banner. Gating it would trap the previous operation's "
+                + "message on screen for the whole of the next one, the same reason Migration's "
+                + "dismiss at 442, DhcpAuthorization's at 40 and ConferenceRooms' at 452 are exempt",
+                ConditionThatKeepsItTrue:
+                "no await appears between a handler ASSIGNING changeResult and reading it back at "
+                + "its ReferenceEquals(selected, group) refresh test. ChangeMember and "
+                + "RemoveListedMember both read it there, so the read exists - it is unreachable "
+                + "only because the browser never renders the banner, and so cannot dispatch this "
+                + "dismiss, inside that synchronous stretch. Put an await between them and this "
+                + "control can null the result under them: the refresh is then silently skipped and "
+                + "the member list stays stale after a successful write"),
+
+            new ExemptControl(361, "@onclick=\"() => bulkOutcome = null\"",
+                "dismisses the per-row outcome table of the last batch, on the same reasoning as "
+                + "300 and with a cleaner case: no handler on this page reads bulkOutcome at all, "
+                + "every one of them only assigns it",
+                ConditionThatKeepsItTrue:
+                "no handler starts reading bulkOutcome back. The moment one does it needs the same "
+                + "analysis as 300"),
+        ],
+
+        // Verified by hand against the file: all twenty @onclick attributes on this page are on a
+        // <button>. No anchor, no div/span/td handler, no <form> and no @onsubmit. The two
+        // @onchange attributes are on <input type="checkbox"> elements, which the DOM-synced sweep
+        // below covers and this list structurally cannot.
+        NonButtonTargets = [],
+
+        // Six, censused by hand. Four inputs, one textarea and one child component; two of the
+        // inputs are the bulk-selection checkboxes, which render server state into the DOM through
+        // checked= and are the controls a handler guard would corrupt rather than refuse.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(91, "@bind=\"filterTerm\"", "input", "disabled=\"@IsBrowseBusy\""),
+            new DomSyncedControl(148, "@bind=\"searchName\"", "input", "disabled=\"@IsBrowseBusy\""),
+            new DomSyncedControl(226, "ObjectKind=\"User\"", "ADIdentityAutocomplete",
+                "Disabled=\"IsManageBusy\""),
+            new DomSyncedControl(256, "@bind=\"pasteText\"", "textarea", "disabled=\"@IsManageBusy\""),
+            new DomSyncedControl(383, "checked=\"@AllSelectableSelected\"", "input",
+                "disabled=\"@(IsManageBusy || SelectableMembers().Count == 0)\""),
+            new DomSyncedControl(398, "@onchange=\"e => ToggleSelected(member, e.Value is true)\"",
+                "input", "disabled=\"@(IsManageBusy || !CanRemove(member))\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        // Three, and all three are shared per-member or per-batch helpers that a busy handler calls
+        // while it is busy. A guard in any of them is silent by construction: the caller carries on
+        // and reports the outcome it thinks it got.
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("ChangeOneAsync", ["ChangeMember", "AddResolvedAsync"],
+                "The ONE per-member typed path, called with isChanging already true by both the "
+                + "single Add/Remove and every row of the bulk add. It returns a BulkRowOutcome and "
+                + "the callers render it, so a guard here would report whatever the early return "
+                + "produced as the row's outcome while no authorization re-check, no write, no "
+                + "audit and no notification happened - and the batch summary would aggregate it. "
+                + "The Constitution makes the per-row audit and the affected-user notification "
+                + "non-negotiable; a guard here drops both silently."),
+
+            new ForbiddenGuardSite("RemoveOneAsync", ["RemoveListedMember", "RemoveSelectedAsync"],
+                "The removal half of the same shape, reached by the single Remove, by the D2 "
+                + "nested-group confirmation and by every row of the bulk remove. Same consequence, "
+                + "on the destructive direction."),
+
+            new ForbiddenGuardSite("AuditBatch", ["RemoveSelectedAsync", "AddResolvedAsync"],
+                "Both batch handlers call it while isChanging is true, on the success path AND on "
+                + "both early-failure paths. It writes the one summary audit record for the batch; "
+                + "a guard here destroys the record of a bulk membership change while the operator "
+                + "is told it ran."),
+        ],
+
+        // Four. Each mutating entry point owns a single-flight refusal above its first await, and
+        // the shared per-member handler it calls must carry none - two guards on one path is not
+        // belt and braces here, because the caller raises isChanging before calling and the callee
+        // guard would then refuse every row of every batch.
+        ExactlyOneGuard =
+        [
+            new ExactlyOneGuardOf("ChangeMember", ["ChangeOneAsync"],
+                "if (selected == null || isChanging || string.IsNullOrWhiteSpace(identity))",
+                "The typed Add/Remove pair at 232 and 237 dispatch into ChangeMember, and the "
+                + "browser's copy of their disabled attribute is one round trip stale, so the "
+                + "refusal has to exist in code as well as in markup. It belongs in ChangeMember "
+                + "because that is where isChanging is raised; in ChangeOneAsync it would refuse "
+                + "every row of AddResolvedAsync's batch, which runs with isChanging already true."),
+
+            new ExactlyOneGuardOf("AddResolvedAsync", ["ChangeOneAsync"],
+                "if (group is null || rows.Count == 0 || isChanging)",
+                "The bulk-add entry point, guarding the same callee for the same reason. Its guard "
+                + "also sits below the snapshots of group and rows, deliberately: the refusal has "
+                + "to test the rows this click was accepted for."),
+
+            new ExactlyOneGuardOf("RemoveListedMember", ["RemoveOneAsync"],
+                "if (selected == null || isChanging)",
+                "The single Remove and the D2 confirmed nested-group removal both land here, and "
+                + "this is the page's most destructive single action. The guard belongs here rather "
+                + "than in RemoveOneAsync, which RemoveSelectedAsync calls once per row with "
+                + "isChanging already true."),
+
+            new ExactlyOneGuardOf("RemoveSelectedAsync", ["RemoveOneAsync"],
+                "if (group is null || rows.Count == 0 || isChanging)",
+                "The bulk-remove entry point, guarding the same callee for the same reason as "
+                + "AddResolvedAsync guards ChangeOneAsync."),
+        ],
+
+        // Eight. Six carry a non-busy clause the predicate must be OR-ed in front of and must never
+        // replace; two carry no clause and are here for their reachability, because they are the
+        // browse-view controls gated on the MANAGE predicate and a reader who has not read the
+        // remarks will take that for a mistake.
+        AnnotatedControls =
+        [
+            new AnnotatedControl(128, "@onclick=\"() => SelectGroup(group)\"",
+                ["IsManageBusy"],
+                RendersOnlyWhen:
+                "only in the browse view, and gated on IsManageBusy rather than IsBrowseBusy on "
+                + "purpose. It is the door back into the manage view, so it is the one control that "
+                + "must refuse while a manage-scope operation started before the operator pressed "
+                + "Back is still in flight. This is the other half of the exemption at 205; neither "
+                + "can be changed without the other. The PreserveClause is the page predicate "
+                + "itself, which is off-label for a field documented as holding NON-busy clauses, "
+                + "and it is here because a mutation measured the hole rather than argued it: this "
+                + "conversion first carried a title=\"@(IsManageBusy ? ... : null)\" on this button "
+                + "to explain the greying, and stripping the disabled attribute outright then left "
+                + "the whole suite green, because EveryClickableButtonConsultsAPredicateOrIsRegistered"
+                + "Exempt matches the whole TAG text and the title still named the predicate. That "
+                + "is the same mirror defect AnnotatedControlsKeepTheirNonBusyClauses was tightened "
+                + "against, still open in the button sweep. The title is gone - the cue is now a "
+                + "browse-view banner, which a disabled control cannot suppress - and registering "
+                + "the clause here re-closes it from the attribute VALUE, which is the only place "
+                + "that cannot be mirrored."),
+
+            new AnnotatedControl(151, "@onclick=\"SearchGroup\"",
+                ["string.IsNullOrWhiteSpace(searchName)"],
+                RendersOnlyWhen:
+                "always, while the browse view is open. The emptiness clause is re-checked by "
+                + "SearchGroup's own guard, so it is belt and braces rather than sole enforcement - "
+                + "but it is a precondition and not a busy condition, and a mechanical rewrite to "
+                + "the bare predicate would delete it."),
+
+            new AnnotatedControl(179, "@onclick=\"() => SelectGroup(searchResult)\"",
+                ["IsManageBusy"],
+                RendersOnlyWhen:
+                "only while searchResult is non-null, which is why searchResult is a registered "
+                + "ExcludedField. Gated on IsManageBusy, and its clause registered, for the same "
+                + "reasons as 128."),
+
+            new AnnotatedControl(232, "@onclick=\"() => ChangeMember(MembershipOperation.Add)\"",
+                ["string.IsNullOrWhiteSpace(memberIdentity)"],
+                RendersOnlyWhen:
+                "always, while the manage view is open. Re-checked by ChangeMember's own guard."),
+
+            new AnnotatedControl(237, "@onclick=\"() => ChangeMember(MembershipOperation.Remove)\"",
+                ["string.IsNullOrWhiteSpace(memberIdentity)"],
+                RendersOnlyWhen: "as 232, on the remove direction."),
+
+            new AnnotatedControl(259, "@onclick=\"ResolvePasteAsync\"",
+                ["string.IsNullOrWhiteSpace(pasteText)"],
+                RendersOnlyWhen:
+                "only while showBulkAdd is set. THE sole enforcement of its clause: ResolvePasteAsync "
+                + "carries no emptiness guard at all, so deleting this clause makes every click on "
+                + "an empty box a live AD batch query. That is the IntuneDevices 403 shape."),
+
+            new AnnotatedControl(263, "@onclick=\"AddResolvedAsync\"",
+                ["ResolvedCount == 0"],
+                RendersOnlyWhen:
+                "only while showBulkAdd is set. The clause is re-checked by AddResolvedAsync's "
+                + "rows.Count == 0 guard, and the title beside it names the same condition in prose "
+                + "- which is exactly why AnnotatedControlsKeepTheirNonBusyClauses reads the "
+                + "disabled attribute value rather than the tag."),
+
+            new AnnotatedControl(329, "@onclick=\"() => showRemoveConfirm = true\"",
+                ["SelectedCount == 0"],
+                RendersOnlyWhen:
+                "only while the member list is non-empty. THE sole enforcement of its clause on the "
+                + "staging step: nothing stops showRemoveConfirm being set with no rows ticked, and "
+                + "the confirm block's own `&& SelectedCount > 0` is what then hides it - so "
+                + "deleting this clause does not run a removal, it makes the button do nothing "
+                + "visible. Its title names the same condition in prose."),
+        ],
+
+        // Eight distinct spinner conditions, none of which is either predicate and none of which
+        // may be collapsed into one. The first is the pair that matters most: the Load spinner is
+        // on isLoading alone so a single-group search does not put a spinner on the Load button,
+        // and the Search spinner is on isSearching alone for the mirror reason. In the manage view
+        // the three isChanging spinners are split by pendingOp so exactly one button spins, and the
+        // fourth adds `resolution != null` so a single Add does not spin the bulk Add resolved.
+        // Containment cannot tell two copies of one string apart, so deleting exactly one of the
+        // two `@if (isLoading)` occurrences (62 and 65) passes - this comment is the only record
+        // that there are two.
+        SpinnerExpressions =
+        [
+            "@if (isLoading)",
+            "@if (isSearching)",
+            "@if (isLoadingMembers)",
+            "@if (isChanging)",
+            "@if (isChanging && pendingOp == MembershipOperation.Add)",
+            "@if (isChanging && pendingOp == MembershipOperation.Remove)",
+            "@if (isChanging && pendingOp == MembershipOperation.Add && resolution != null)",
+            "@if (isResolving)",
+        ],
+
+        // Four. Two were found and fixed by this slice; two were already correct and are pinned so
+        // they stay that way. See the remarks for the three obligations that exist in the page and
+        // cannot be written here, and for the two live reads that are deliberate.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("LoadMembers", "selected", "group",
+                SnapshotShape.CapturedAtEntry,
+                "THE defect this slice found, and the precondition the exemption at 205 rests on. "
+                + "The catch logged selected.Name after the await. Back to groups is ungated and "
+                + "nulls selected, so a Back click landing while the member read failed raised a "
+                + "NullReferenceException INSIDE a catch block; with no ErrorBoundary anywhere in "
+                + "the app that escapes the handler and tears the circuit down, and the operator "
+                + "loses the page rather than seeing an error. The load must also report the group "
+                + "it was started for, not whatever is selected when it finishes"),
+
+            new PostAwaitLiveRead("ResolvePasteAsync", "pasteText", "text",
+                SnapshotShape.CapturedAtEntry,
+                "the pasted identity list. It was parsed AFTER await Task.Yield() from a textarea "
+                + "bound with @bind:event=\"oninput\", so a keystroke landing in the round trip "
+                + "before the disabled attribute reached the browser had the operator approve a "
+                + "resolution preview built from text that was never on screen when the click was "
+                + "accepted - and Add resolved then writes that preview to AD"),
+
+            new PostAwaitLiveRead("ChangeMember", "memberIdentity", "identity",
+                SnapshotShape.CapturedAtEntry,
+                "the user being added to or removed from the group: the value written to AD, "
+                + "audited, and named in both the admin email and the affected-member "
+                + "notification. Already captured at entry; pinned here because the autocomplete "
+                + "at 226 writes this field and a suggestion click queued behind the button click "
+                + "would otherwise retarget the write"),
+
+            new PostAwaitLiveRead("AddResolvedAsync", "resolution", "rows",
+                SnapshotShape.CapturedAtEntry,
+                "the resolved lines this click commits. ResolvePasteAsync REPLACES the list, so a "
+                + "Resolve dispatched in the round trip before the disabled attributes reach the "
+                + "browser would have this handler write rows from a parse the operator never "
+                + "approved. Already snapshotted; pinned so it stays that way"),
+        ],
+
+        // Seven, one per handler that raises a flag, and every one of them matters more here than
+        // on a single-predicate page: each flag is a member of a predicate that gates a whole VIEW,
+        // so a raise moved above its early return does not grey one button, it deadens every
+        // control in that view permanently the first time the guard fires.
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("LoadMembers", "isLoadingMembers", "group == null",
+                "Nothing lowers isLoadingMembers on the no-group path. Raised above it, the whole "
+                + "manage view dies the first time LoadMembers is reached with nothing selected - "
+                + "including Back to groups' destination, so the operator sees a dead page."),
+
+            new RaiseAfterEarlyReturn("ChangeMember", "isChanging",
+                "selected == null || isChanging || string.IsNullOrWhiteSpace(identity)",
+                "The guard fires on every click with an empty identity box, which is the ordinary "
+                + "mistake rather than an edge case. Raised above it, the manage view is dead from "
+                + "that click onward and the only escape is Back to groups."),
+
+            new RaiseAfterEarlyReturn("RemoveListedMember", "isChanging",
+                "selected == null || isChanging",
+                "As ChangeMember, on the list-driven removal."),
+
+            new RaiseAfterEarlyReturn("RemoveSelectedAsync", "isChanging",
+                "group is null || rows.Count == 0 || isChanging",
+                "The rows.Count == 0 arm is reachable whenever the selection is emptied between "
+                + "render and click. Raised above it, the manage view dies."),
+
+            new RaiseAfterEarlyReturn("AddResolvedAsync", "isChanging",
+                "group is null || rows.Count == 0 || isChanging",
+                "As RemoveSelectedAsync, on the bulk add."),
+
+            new RaiseAfterEarlyReturn("LoadOwnedGroups", "isLoading", "isLoading",
+                "Nothing lowers isLoading on the already-running path. Raised above the guard, the "
+                + "browse view is dead on the second dispatch of a double click - and the browse "
+                + "view is where the page opens, so the operator cannot reach anything at all."),
+
+            new RaiseAfterEarlyReturn("SearchGroup", "isSearching",
+                "isSearching || string.IsNullOrWhiteSpace(searchName)",
+                "Reached by the Enter key as well as the button, and the empty-box arm is the "
+                + "ordinary mistake. Raised above it, the browse view dies."),
+        ],
+
+        // One, and it is the 2eb8c15 shape: an @onkeydown reaching an operation on an element whose
+        // gated twin button sits beside it. The element already carried a disabled attribute, so
+        // this conversion widened it from isSearching to IsBrowseBusy rather than adding one - a
+        // disabled input fires no key events, which closes the typing path and the Enter path
+        // together. Registered with its twin at 151 so neither half can be narrowed alone.
+        KeyboardPaths =
+        [
+            new KeyboardPath(148, "@bind=\"searchName\"", "input", "keydown", "OnSearchKeyDown",
+                "SearchGroup", KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBrowseBusy\"",
+                "Enter in the search box runs a live directory search under the module credential "
+                + "while the Search button beside it is refusing clicks. Not destructive, but it is "
+                + "the exact reading-as-correct-while-firing shape 2eb8c15 measured on Migration, "
+                + "and OnSearchKeyDown's own !isSearching test would not survive a rename of the "
+                + "flag the way the registered gate does.",
+                GatedTwinButtonLine: 151),
+        ],
+
+        // Empty, and censused by hand rather than inherited: the search box is the page's only
+        // keyboard handler of any kind. The forward direction of
+        // EveryKeyboardPathIsRegisteredOrRecordedHarmless is what keeps that true - a handler added
+        // here later fails the suite and names itself.
         HarmlessKeyboardPaths = [],
     };
 }

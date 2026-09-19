@@ -480,7 +480,17 @@ public sealed class ModuleCatalog
             // 1.10.1: the bulk-remove confirmation is compact - buttons on the heading line, names
             // inline, one warning line for all group rows (a per-row warning scrolled the confirm
             // button off the screen; owner, 2026-09-04).
-            Version = "1.10.1",
+            // 1.11.0: click gating (tier 1 page 9 of 9). Two view-scoped busy predicates - the
+            // browse view and the manage view have disjoint in-flight flags - gate every control
+            // in the view that owns them; "Back to groups" stays clickable on purpose so a
+            // post-write member reload cannot trap the operator, and the two "Manage members"
+            // buttons are gated on the MANAGE predicate so a change still finishing on the group
+            // just left cannot be walked back into. Two mid-flight reads fixed with entry
+            // snapshots: the member load dereferenced the selected group in its catch after
+            // "Back to groups" had nulled it (a throw inside a catch, which took the circuit
+            // down), and the bulk-add paste was parsed after a yield from a box still accepting
+            // keystrokes.
+            Version = "1.11.0",
             MainPermission = new(
                 "Access",
                 "SelfServiceGroups",

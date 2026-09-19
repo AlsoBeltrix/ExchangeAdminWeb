@@ -39,11 +39,26 @@
         </div>
         <h1 class="mb-4">Self-Service Groups<ModuleVersion /></h1>
 
+        @if (IsManageBusy)
+        {
+            <!-- The browse view consults none of the manage-view flags, so nothing here greys or
+                 spins while one is raised - except the two "Manage members" buttons, which are the
+                 way back into the scope that owns them. This is the cue that explains them. It is a
+                 banner rather than a title on those buttons because a disabled control does not
+                 reliably raise the events a tooltip needs, and because a title naming the predicate
+                 would satisfy the button sweep on its own and hollow out the gate beside it. -->
+            <div class="alert alert-info py-2 mb-3">
+                <small><span class="spinner-border spinner-border-sm me-1"></span> Finishing a change
+                on the group you just left. You can load, filter and search now; opening a group to
+                manage waits until it is done.</small>
+            </div>
+        }
+
         <!-- Load the groups I can manage. Nothing loads on page open (AC2); the load runs a per-group
              ACL read, so the button is disabled and a spinner shown while it runs (plan section 6.4). -->
         <div class="card mb-3">
             <div class="card-body">
-                <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@isLoading">
+                <button class="btn btn-primary" @onclick="LoadOwnedGroups" disabled="@IsBrowseBusy">
                     @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     Load the groups I can manage
                 </button>
@@ -74,10 +89,10 @@
                         <div class="input-group input-group-sm mb-3">
                             <span class="input-group-text"><i class="bi bi-funnel"></i></span>
                             <input type="text" class="form-control" @bind="filterTerm" @bind:event="oninput"
-                                   placeholder="Filter loaded groups by name or description" />
+                                   placeholder="Filter loaded groups by name or description" disabled="@IsBrowseBusy" />
                             @if (!string.IsNullOrWhiteSpace(filterTerm))
                             {
-                                <button class="btn btn-outline-secondary" @onclick="() => filterTerm = string.Empty">Clear</button>
+                                <button class="btn btn-outline-secondary" @onclick="() => filterTerm = string.Empty" disabled="@IsBrowseBusy">Clear</button>
                             }
                         </div>
 
@@ -110,7 +125,8 @@
                                             <td>@group.GroupType</td>
                                             <td>@(group.OtherOwners.Count == 0 ? "-" : string.Join(", ", group.OtherOwners))</td>
                                             <td class="text-end">
-                                                <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(group)">Manage members</button>
+                                                <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(group)"
+                                                        disabled="@IsManageBusy">Manage members</button>
                                             </td>
                                         </tr>
                                     }
@@ -131,9 +147,9 @@
                 <div class="input-group">
                     <input type="text" class="form-control" @bind="searchName" @bind:event="oninput"
                            @onkeydown="OnSearchKeyDown"
-                           placeholder="Exact group name or sAMAccountName" disabled="@isSearching" />
+                           placeholder="Exact group name or sAMAccountName" disabled="@IsBrowseBusy" />
                     <button class="btn btn-outline-primary" @onclick="SearchGroup"
-                            disabled="@(isSearching || string.IsNullOrWhiteSpace(searchName))">
+                            disabled="@(IsBrowseBusy || string.IsNullOrWhiteSpace(searchName))">
                         @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
                         Search
                     </button>
@@ -160,7 +176,8 @@
                                 <td>@searchResult.GroupType</td>
                                 <td>@(searchResult.OtherOwners.Count == 0 ? "-" : string.Join(", ", searchResult.OtherOwners))</td>
                                 <td class="text-end">
-                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(searchResult)">Manage members</button>
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(searchResult)"
+                                            disabled="@IsManageBusy">Manage members</button>
                                 </td>
                             </tr>
                         </tbody>
@@ -178,6 +195,13 @@
              (defense in depth) and the service re-checks group/eligibility/ownership/protection
              immediately before the write (AC5). -->
         <div class="d-flex align-items-center mb-3">
+            <!-- Deliberately ungated (click-gating sweep, tier 1 page 9). This is the only control that
+                 crosses the two view scopes. Gating it on IsManageBusy would trap the operator in the
+                 manage view for the whole of every post-write member reload and every bulk batch; what
+                 makes leaving mid-flight safe is not a gate but the entry snapshots - LoadMembers holds
+                 its own group, and all four mutating handlers re-check ReferenceEquals(selected, group)
+                 before refreshing. Nothing in the browse view consults a manage flag, and the one
+                 control that carries one back in ("Manage members") is gated on IsManageBusy. -->
             <button class="btn btn-outline-secondary btn-sm me-3" @onclick="BackToGroups">
                 <i class="bi bi-arrow-left"></i> Back to groups
             </button>
@@ -202,16 +226,16 @@
                         <ADIdentityAutocomplete ObjectKind="User" ReturnValueKind="UPN"
                                                 @bind-Value="memberIdentity"
                                                 Placeholder="Search for a user by name, username, or email"
-                                                Disabled="isChanging" />
+                                                Disabled="IsManageBusy" />
                     </div>
                     <div class="col-auto">
                         <button class="btn btn-success" @onclick="() => ChangeMember(MembershipOperation.Add)"
-                                disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                                disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(memberIdentity))">
                             @if (isChanging && pendingOp == MembershipOperation.Add) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Add
                         </button>
                         <button class="btn btn-outline-danger" @onclick="() => ChangeMember(MembershipOperation.Remove)"
-                                disabled="@(isChanging || string.IsNullOrWhiteSpace(memberIdentity))">
+                                disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(memberIdentity))">
                             @if (isChanging && pendingOp == MembershipOperation.Remove) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Remove
                         </button>
@@ -223,21 +247,21 @@
                      binding); only lines resolving to exactly one user are committable, and each is then
                      written through the SAME per-member handler as the single Add (ChangeOneAsync). -->
                 <div class="mb-3">
-                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => showBulkAdd = !showBulkAdd" disabled="@isChanging">@(showBulkAdd ? "Hide bulk add" : "Bulk add...")</button>
+                    <button class="btn btn-outline-secondary btn-sm" @onclick="() => showBulkAdd = !showBulkAdd" disabled="@IsManageBusy">@(showBulkAdd ? "Hide bulk add" : "Bulk add...")</button>
                     @if (showBulkAdd)
                     {
                         <div class="card mt-2">
                             <div class="card-body">
                                 <p class="text-muted mb-2"><small>Paste usernames, email addresses or UPNs - one per line, or comma-separated. Users only: a line that names a group is reported, not added. <strong>Resolve</strong> checks every line against AD in one pass; only lines that resolve to exactly one user can be added, the rest stay listed with the reason. Up to @BulkIdentityList.MaxBatch per batch.</small></p>
                                 <textarea class="form-control form-control-sm mb-2" rows="5" @bind="pasteText" @bind:event="oninput"
-                                          disabled="@(isChanging || isResolving)" placeholder="jdoe&#10;jane.doe@contoso.com"></textarea>
+                                          disabled="@IsManageBusy" placeholder="jdoe&#10;jane.doe@contoso.com"></textarea>
                                 <div class="d-flex align-items-center gap-2">
-                                    <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(isChanging || isResolving || string.IsNullOrWhiteSpace(pasteText))">
+                                    <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(IsManageBusy || string.IsNullOrWhiteSpace(pasteText))">
                                         @if (isResolving) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                         Resolve
                                     </button>
                                     <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
-                                            disabled="@(isChanging || isResolving || ResolvedCount == 0)"
+                                            disabled="@(IsManageBusy || ResolvedCount == 0)"
                                             title="@(ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null)">
                                         @if (isChanging && pendingOp == MembershipOperation.Add && resolution != null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                         Add resolved (@ResolvedCount)
@@ -303,7 +327,7 @@
                          one-way warning inside the single confirmation. -->
                     <div class="d-flex align-items-center gap-2 mb-2">
                         <button class="btn btn-outline-danger btn-sm" @onclick="() => showRemoveConfirm = true"
-                                disabled="@(isChanging || SelectedCount == 0)"
+                                disabled="@(IsManageBusy || SelectedCount == 0)"
                                 title="@(SelectedCount == 0 ? "Tick one or more members first." : null)">Remove selected (@SelectedCount)</button>
                         <small class="text-muted">Tick members below and remove them in one confirmed batch. Each member is checked and written on its own, so one refusal never hides another.</small>
                     </div>
@@ -315,11 +339,11 @@
                         <div class="alert alert-warning py-2">
                             <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
                                 <strong>Remove @SelectedCount member(s) from @selected.Name?</strong>
-                                <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@isChanging">
+                                <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@IsManageBusy">
                                     @if (isChanging) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                     Remove @SelectedCount member(s)
                                 </button>
-                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@isChanging">Cancel</button>
+                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => showRemoveConfirm = false" disabled="@IsManageBusy">Cancel</button>
                             </div>
                             <div class="small">@string.Join(", ", SelectedMembers().Select(m => m.Kind == "Group" ? $"{m.DisplayName} (Group)" : m.DisplayName))</div>
                             @if (SelectedGroupCount > 0)
@@ -358,7 +382,7 @@
                                 <!-- Select-all covers only rows whose single Remove renders (CanRemove). -->
                                 <th style="width: 2rem;"><input type="checkbox" class="form-check-input" checked="@AllSelectableSelected"
                                                                 @onchange="e => ToggleSelectAll(e.Value is true)"
-                                                                disabled="@(isChanging || SelectableMembers().Count == 0)"
+                                                                disabled="@(IsManageBusy || SelectableMembers().Count == 0)"
                                                                 title="Select all removable members" /></th>
                                 <th>Name</th>
                                 <th>Identity</th>
@@ -373,7 +397,7 @@
                                 <tr>
                                     <td><input type="checkbox" class="form-check-input" checked="@selectedGuids.Contains(member.ObjectGuid)"
                                                @onchange="e => ToggleSelected(member, e.Value is true)"
-                                               disabled="@(isChanging || !CanRemove(member))"
+                                               disabled="@(IsManageBusy || !CanRemove(member))"
                                                title="@(CanRemove(member) ? null : "This member cannot be removed here.")" /></td>
                                     <td>@member.DisplayName</td>
                                     <td>@member.Identity</td>
@@ -384,14 +408,14 @@
                                             @if (member.Kind == "Group")
                                             {
                                                 <button class="btn btn-outline-danger btn-sm" @onclick="() => BeginGroupRemoval(member)"
-                                                        disabled="@isChanging">
+                                                        disabled="@IsManageBusy">
                                                     Remove
                                                 </button>
                                             }
                                             else
                                             {
                                                 <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
-                                                        disabled="@isChanging">
+                                                        disabled="@IsManageBusy">
                                                     Remove
                                                 </button>
                                             }
@@ -410,9 +434,9 @@
                                                 from its members, and re-adding it will require an IT Support Desk ticket.</small>
                                                 <span class="text-nowrap ms-2">
                                                     <button class="btn btn-danger btn-sm me-1" @onclick="() => ConfirmGroupRemoval(member)"
-                                                            disabled="@isChanging">Remove group</button>
+                                                            disabled="@IsManageBusy">Remove group</button>
                                                     <button class="btn btn-outline-secondary btn-sm" @onclick="() => pendingGroupRemoval = null"
-                                                            disabled="@isChanging">Cancel</button>
+                                                            disabled="@IsManageBusy">Cancel</button>
                                                 </span>
                                             </div>
                                         </td>
@@ -428,6 +452,16 @@
 </div>
 
 @code {
+    // Two view-scoped busy predicates, not one page-wide predicate (click-gating sweep, tier 1
+    // page 9). The page renders two mutually exclusive views - browse while selected == null,
+    // manage otherwise - and their in-flight flags are disjoint. A single predicate would grey the
+    // browse view's Load and Search on a manage-view flag that no browse spinner explains, and
+    // grey the manage view on a browse flag that cannot be raised from it. Each scope owns real
+    // flags and real controls; neither is a decoration.
+    private bool IsBrowseBusy => isLoading || isSearching;
+
+    private bool IsManageBusy => isChanging || isLoadingMembers || isResolving;
+
     private bool authChecked;
     private string? callerSid;
     private string currentUser = "Unknown";
@@ -519,7 +553,14 @@
     // (AC-M3, Known Failure Class #2).
     private async Task LoadMembers()
     {
-        if (selected == null)
+        // Snapshot before the first await. "Back to groups" is deliberately ungated, so `selected`
+        // can be nulled while this is suspended - and the catch below dereferences it. Read live,
+        // that was a NullReferenceException raised INSIDE a catch, which escapes the handler; with
+        // no ErrorBoundary anywhere in the app it takes the circuit down and the operator loses the
+        // page. The load also has to report the group it was started for, not whatever is selected
+        // when it finishes.
+        var group = selected;
+        if (group == null)
             return;
 
         isLoadingMembers = true;
@@ -537,11 +578,11 @@
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
-            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, selected.ObjectGuid);
+            groupMembers = await GroupService.GetGroupMembersAsync(callerSid, group.ObjectGuid);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Self-service member load failed for {User} on {Group}", callerSid, selected.Name);
+            Logger.LogError(ex, "Self-service member load failed for {User} on {Group}", callerSid, group.Name);
             memberLoadError = "The group's members could not be loaded right now. Please try again; if the problem persists, contact the IT Support Desk.";
         }
         finally
@@ -945,6 +986,11 @@
     /// </summary>
     private async Task ResolvePasteAsync()
     {
+        // Snapshot before the first await: the textarea is bound on oninput and the browser's copy
+        // of its disabled attribute is one round trip stale, so a keystroke landing in that window
+        // would have this parse - and then the operator approve - text that was never on screen
+        // when the click was accepted.
+        var text = pasteText;
         isResolving = true;
         resolution = null;
         changeResult = null;
@@ -954,7 +1000,7 @@
             if (string.IsNullOrWhiteSpace(callerSid))
                 throw new InvalidOperationException("Your Windows identity could not be determined. Sign out and back in, then try again.");
 
-            var parsed = BulkIdentityList.Parse(pasteText);
+            var parsed = BulkIdentityList.Parse(text);
             var rows = new List<BulkIdentityList.Resolution>();
             rows.AddRange(await GroupService.ResolveBatchAsync(callerSid, parsed.Kept));
             rows.AddRange(parsed.Duplicates.Select(d => new BulkIdentityList.Resolution(d.Line, BulkIdentityList.Status.Duplicate, null, $"Duplicate of line {d.DuplicateOf}.")));
