@@ -39,7 +39,14 @@ public sealed class ClickGateSource
     public string Text { get; }
 
     public static ClickGateSource Load(string pageFile) =>
-        new(pageFile, System.IO.File.ReadAllText(Path.Combine(PagesDirectory(), pageFile)));
+        FromText(pageFile, System.IO.File.ReadAllText(Path.Combine(PagesDirectory(), pageFile)));
+
+    /// <summary>
+    /// A source over <paramref name="raw"/> instead of a file on disk, so the scanning mechanics can
+    /// be exercised against a fixture that depends on no page. <paramref name="file"/> is only the
+    /// name assertion messages report.
+    /// </summary>
+    public static ClickGateSource FromText(string file, string raw) => new(file, raw);
 
     /// <summary>
     /// <paramref name="source"/> with the body of every comment replaced by spaces.
@@ -89,7 +96,8 @@ public sealed class ClickGateSource
     /// A naive "&lt;button.*?&gt;" stops at the first "&gt;" it meets, and many handlers in this app
     /// are lambdas - @onclick="() =&gt; Delete(...)" - whose arrow ends the match inside the
     /// attribute list, hiding every attribute after it, including the disabled one this suite is
-    /// looking for. This walks the tag and ignores any "&gt;" inside a quoted attribute value.
+    /// looking for. This walks the tag with <see cref="IndexOfTagEnd"/> and ignores any "&gt;"
+    /// inside a quoted attribute value.
     /// </remarks>
     public IReadOnlyList<Tag> Tags(string tagName)
     {
@@ -104,27 +112,90 @@ public sealed class ClickGateSource
             if (after < Text.Length && !char.IsWhiteSpace(Text[after]) && Text[after] is not ('>' or '/'))
                 continue;
 
-            var quote = '\0';
-            for (var i = after; i < Text.Length; i++)
-            {
-                var c = Text[i];
-                if (quote != '\0')
-                {
-                    if (c == quote) quote = '\0';
-                }
-                else if (c is '"' or '\'')
-                {
-                    quote = c;
-                }
-                else if (c == '>')
-                {
-                    tags.Add(new Tag(Text[start..(i + 1)], LineAt(start), start));
-                    break;
-                }
-            }
+            var end = IndexOfTagEnd(Text, after);
+            if (end < 0)
+                continue;
+
+            tags.Add(new Tag(Text[start..(end + 1)], LineAt(start), start));
         }
 
         return tags;
+    }
+
+    /// <summary>
+    /// The index of the "&gt;" that closes the tag whose attribute list begins at
+    /// <paramref name="from"/>, or -1 if <paramref name="text"/> ends first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The quote rule is the whole of this method, and it is narrower than it looks: a quote
+    /// character opens an attribute value ONLY where it directly follows the "=" that introduces
+    /// that value, whitespace allowed between. Anywhere else a quote is just a character.
+    /// </para>
+    /// <para>
+    /// Opening on any quote at all is what this replaces, and it was a measured defect, not a
+    /// theoretical one. GroupManagement's per-row Remove carries
+    /// title="@(member.IsPrimaryMember ? "This is the member's primary group; ..." : ...)". The
+    /// inner C# string closes the attribute value, and the apostrophe in "member's" then opened a
+    /// single-quote state in the middle of the tag, after which the tag's real "&gt;" was never
+    /// seen: the most destructive per-row control on that page was invisible to every button
+    /// assertion in this suite, and to tools/Get-ClickGateAudit.ps1, which lost a different button
+    /// to the same cause. Requiring the "=" fixes the class, because an apostrophe inside prose
+    /// never follows one.
+    /// </para>
+    /// <para>
+    /// Four shapes this has to get right, all of which occur in Components/Pages: a "&gt;" inside a
+    /// value (title="a &gt; b"), a Razor lambda (@onclick="() =&gt; Pick(row)"), a single-quoted
+    /// value (@onclick='() =&gt; activeTab = "finder"', ConferenceRooms 48), and the apostrophe
+    /// above. TagWalkFindsTheTagBoundariesItClaimsTo in ClickGateTests pins all four plus an
+    /// unquoted value, against a fixture rather than a page.
+    /// </para>
+    /// <para>
+    /// Honest limitation. A "&gt;" inside a C# string nested in a Razor expression inside an
+    /// attribute value - title="@(x ? "a &gt; b" : null)" - would still end the tag early, because
+    /// the nested string's opening quote does not follow an "=" and so does not re-open a value.
+    /// No page has that shape today; it was swept for when this was fixed. Closing it properly
+    /// means parsing the Razor transition, which is more machinery than a text tripwire earns.
+    /// </para>
+    /// <para>
+    /// A tag that never closes is DROPPED, by returning -1, and both this and the PowerShell
+    /// scanner do the same thing with it. Returning the rest of the file instead would be worse
+    /// than dropping it: every gate check in this suite is a containment test over the tag text, so
+    /// a tag running to EOF passes all of them for the wrong reason. With the "=" rule an
+    /// unterminated tag means a file with no "&gt;" after the tag name at all, which cannot compile
+    /// as a page.
+    /// </para>
+    /// </remarks>
+    public static int IndexOfTagEnd(string text, int from)
+    {
+        var quote = '\0';
+        var afterEquals = false;
+
+        for (var i = from; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (quote != '\0')
+            {
+                if (c == quote) quote = '\0';
+                continue;
+            }
+
+            if (afterEquals && c is '"' or '\'')
+            {
+                quote = c;
+                afterEquals = false;
+                continue;
+            }
+
+            if (c == '>')
+                return i;
+
+            if (!char.IsWhiteSpace(c))
+                afterEquals = c == '=';
+        }
+
+        return -1;
     }
 
     /// <summary>Every &lt;button&gt; that is actually clickable: it has a handler or submits.</summary>

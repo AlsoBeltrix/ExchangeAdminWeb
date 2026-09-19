@@ -2131,43 +2131,54 @@ public static class ClickGateRegistry
     /// nothing is lost by the move.
     /// </para>
     /// <para>
-    /// <b>The per-row Remove button at 274 is INVISIBLE to this whole assertion suite. That is a
-    /// harness defect found by this slice, not a gating gap, and it is recorded rather than
-    /// fixed.</b> The file has 14 clickable buttons. Get-ClickGateAudit.ps1 reports 13 and
-    /// ClickGateSource.ClickableButtons() also returns 13 - but not the same 13, which is what makes
-    /// the disagreement worth writing down. Both tag walkers are quote-aware and both treat an
-    /// apostrophe as an opening single quote, so the title attribute at 276 - "This is the member's
-    /// primary group; ..." - opens a quote state in the middle of the button that starts at 274. In
-    /// the PowerShell scanner that state closes at the next apostrophe in the RAW text, "the
-    /// forest's domains" in the comment at 345, so the 274 tag runs to 348 and swallows the Manage
-    /// button at 307 whole: the scanner misses 307. ClickGateSource blanks comments before scanning,
-    /// so that apostrophe is gone and the state closes instead at 740, after which no unquoted
-    /// "&gt;" is ever reached - and ClickGateSource.Tags adds a tag only inside the branch that
-    /// finds one, so the 274 tag is dropped outright. ClickGateSource therefore misses 274 and finds
-    /// 307. The hand census of 14 is the correct number; neither walker has it.
+    /// <b>The per-row Remove button at 274 was INVISIBLE to this whole assertion suite, and is
+    /// registered below now that it is not.</b> That was a harness defect found by the page-6
+    /// conversion, not a gating gap; it was recorded here rather than fixed, and the follow-up
+    /// slice that added ClickGateSource.IndexOfTagEnd fixed it. The measurement is kept because it
+    /// is what justifies the fixture now guarding the walker. The file has 14 clickable buttons.
+    /// Get-ClickGateAudit.ps1 reported 13 and ClickGateSource.ClickableButtons() also returned 13 -
+    /// but not the same 13, which is what made the disagreement worth writing down. Both tag
+    /// walkers were quote-aware and both treated an apostrophe as an opening single quote, so the
+    /// title attribute at 276 - "This is the member's primary group; ..." - opened a quote state in
+    /// the middle of the button that starts at 274, after which that tag's real "&gt;" was never
+    /// reached. ClickGateSource.Tags added a tag only inside the branch that finds an unquoted
+    /// "&gt;", so it dropped the 274 tag outright and found 307. The PowerShell scanner emitted the
+    /// tag anyway once the walk ran out of text, so its 274 tag ran from 274 to the end of the file
+    /// and swallowed the Manage button at 307 whole. Each walker lost a different button and both
+    /// still said 13, which is why the count alone never looked wrong. (An earlier revision of this
+    /// note had the PowerShell mechanism slightly wrong - it assumed that scanner reads raw text,
+    /// but it blanks comments too, so the state never re-closed and the tag reached EOF rather than
+    /// line 348. The net effect, 307 swallowed, was right.)
     /// </para>
     /// <para>
-    /// The fix belongs in ClickGateSource.Tags, which this slice may not touch, so the consequence is
-    /// written down here instead. Every button assertion in this suite silently skips the per-row
-    /// Remove - the most destructive control on the page - and an AnnotatedControl entry for it fails
-    /// outright with "no clickable button at annotated line 274", which is how this was found. Its
-    /// three non-busy clauses are therefore recorded here rather than asserted below:
+    /// The fix was the second of the two candidates recorded here: a quote character opens an
+    /// attribute value only where it directly follows the "=" that introduces it. The first -
+    /// emit the tag when the walk ends without an unquoted "&gt;" - is exactly what the PowerShell
+    /// scanner already did, and its runaway 274 tag is what that candidate buys: every gate check
+    /// in this suite is a containment test over the tag text, so a tag holding the rest of the file
+    /// passes all of them for the wrong reason. Three consequences landed on this entry. The
+    /// per-row Remove is registered under AnnotatedControls with its three non-busy clauses -
     /// string.IsNullOrWhiteSpace(ticketNumber), string.IsNullOrEmpty(member.ObjectGuid) and
-    /// member.IsPrimaryMember. The last two are lst-1 and the primary-group rule; they are the same
-    /// predicate as CanRemove at 737, and the select-all and per-row checkboxes registered under
-    /// DomSyncedControls both depend on that predicate agreeing with this button - so a rewrite that
-    /// dropped them here would leave a row's checkbox and its Remove button disagreeing about which
-    /// members can be acted on, with nothing in the suite to catch it. Two candidate fixes, both
-    /// outside this slice: add the tag when the walk ends without finding an unquoted "&gt;", or
-    /// treat a quote character as an attribute delimiter only where it directly follows "=".
+    /// member.IsPrimaryMember. The last two are lst-1 and the primary-group rule, and together they
+    /// are CanRemove at 737, which the select-all and per-row checkboxes registered under
+    /// DomSyncedControls both depend on; a rewrite dropping them here would leave a row's checkbox
+    /// and its Remove button disagreeing about which members can be acted on. Second, NO assertion
+    /// in this suite failed when the walker was fixed: the button carries IsBusy, so the predicate
+    /// sweep was satisfied by it the moment it became visible, and only the AnnotatedControls entry
+    /// makes the three clauses asserted - being seen and being protected are different things.
+    /// Third, the scanner's StuckFlags for this page fell from 4 to 1; see the note below.
     /// </para>
     /// <para>
-    /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
-    /// conversion it reports 13 buttons (see above), Ungated 2 (179, 219), GateNoFlag 0, GatePart 1
-    /// (206), Flags 3, Predicate IsBusy, OtherClick 0 and StuckFlags 4. The three control lines it
-    /// names are exactly the three registered exemptions below, and the four stuck names are exactly
-    /// the four registered false positives. Unlike pages 3 and 4 the predicate detector DOES see
-    /// this page, because IsBusy is an expression-bodied bool naming three flags rather than one.
+    /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page with the
+    /// walker fixed it reports 14 buttons, Ungated 2 (179, 219), GateNoFlag 0, GatePart 1 (206),
+    /// Flags 3, Predicate IsBusy, OtherClick 0 and StuckFlags 1 (targetProtection). The three
+    /// control lines it names are exactly the three registered exemptions below. StuckFlags was 4
+    /// before the walker fix and three of those four were artifacts of the runaway 274 tag, not
+    /// findings: the stuck test asks whether a GATED BUTTON'S TEXT names the field, and a tag
+    /// holding the rest of the file names every field in the code block. Only targetProtection is
+    /// real, and only because the Close button at 55 nulls it inside its own inline handler.
+    /// Unlike pages 3 and 4 the predicate detector DOES see this page, because IsBusy is an
+    /// expression-bodied bool naming three flags rather than one.
     /// </para>
     /// </remarks>
     private static PageGateEntry GroupManagement => new()
@@ -2188,10 +2199,14 @@ public static class ClickGateRegistry
                 AppliesWhen: "the whole page"),
         ],
 
-        // Four, and confirmed by running Get-ClickGateAudit.ps1 AFTER the conversion rather than
-        // reasoning about it. All four are nullable fields nulled and re-assigned inside the same
-        // awaiting method with no finally, which is the scanner's in-flight shape; none of them is
-        // an operation.
+        // Four fields carrying the scanner's in-flight shape - nullable, nulled and re-assigned
+        // inside the same awaiting method with no finally - and not one of them an operation. The
+        // scanner reported all four as stuck when this page was converted; with the tag walker
+        // fixed it reports only targetProtection, because the other three were named by the runaway
+        // 274 tag's text rather than by any real gated button. All four are kept: the shape is what
+        // makes a field a candidate, and the next reader needs the reason whether or not a given
+        // run of the scanner happens to name it. Nothing asserts this list - it is the reasoning
+        // record, and the remarks above explain the count change.
         ScannerFalsePositives =
         [
             new ScannerFalsePositive("bulkOutcome",
@@ -2429,16 +2444,15 @@ public static class ClickGateRegistry
         // the 2026-09-17 ruling rejects.
         ExactlyOneGuard = [],
 
-        // Five gated buttons whose disabled expression keeps a non-busy clause that must survive a
-        // mechanical rewrite. None of the five is equivalent to the predicate: each is a precondition
-        // the operator has to satisfy before the action is meaningful, and three of them are the only
+        // Six gated buttons whose disabled expression keeps a non-busy clause that must survive a
+        // mechanical rewrite. None of the six is equivalent to the predicate: each is a precondition
+        // the operator has to satisfy before the action is meaningful, and four of them are the only
         // thing requiring a ticket number before a write.
         //
-        // SIX controls need this and only five can have it. The per-row Remove at 274 carries three
-        // such clauses and cannot be registered: ClickGateSource cannot see that tag at all, so the
-        // entry fails with "no clickable button at annotated line 274" rather than protecting
-        // anything. Cause, consequence and the two candidate fixes are in this entry's remarks, and
-        // the three clauses are written out there so they are not lost with the assertion.
+        // The sixth is the per-row Remove at 274, and it could not be registered when this page was
+        // converted: the tag walkers could not see that tag, so the entry failed outright with "no
+        // clickable button at annotated line 274". That failure is how the walker defect was found.
+        // The entry is live now that the walker is fixed; see this entry's remarks.
         AnnotatedControls =
         [
             new AnnotatedControl(39, "@onclick=\"Search\"",
@@ -2487,6 +2501,37 @@ public static class ClickGateRegistry
                 + "button stages the confirmation rather than writing, so its clauses are the "
                 + "earliest point at which a batch with no ticket or no ticked rows is refused; the "
                 + "confirmation block it opens renders only while SelectedCount > 0 as well"),
+
+            // Two of these three clauses carry a "||" that the others here do not need. The clause
+            // check is containment over the whole tag text, and this tag's title at 276 explains
+            // both refusals to the operator in prose that names the same two expressions -
+            // "@(member.IsPrimaryMember ? ..." and "(string.IsNullOrEmpty(member.ObjectGuid) ? ...".
+            // Registered bare, both clauses would keep passing after being deleted from the
+            // disabled attribute, because the title alone would satisfy the containment. The "||"
+            // occurs only in the disabled expression, so it pins each clause to the gate rather
+            // than to the tooltip that describes it. ticketNumber appears once in the tag and needs
+            // no anchor. Proven by mutation: dropping "|| member.IsPrimaryMember" from 275 fails
+            // this assertion, and did not before the anchor was added.
+            new AnnotatedControl(274, "@onclick=\"() => RemoveMember(member)\"",
+                [
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                    "|| string.IsNullOrEmpty(member.ObjectGuid)",
+                    "|| member.IsPrimaryMember",
+                ],
+                RendersOnlyWhen:
+                "once per member row, inside the manage card, inside the answered-and-allowed "
+                + "protection branch, inside memberList != null with no Error, and then only while "
+                + "canManageOnPrem. The ticket clause is the same precondition the other three "
+                + "write buttons carry. The other two are the row's own eligibility and they are "
+                + "NOT belt and braces: an empty ObjectGuid means the row could not be resolved in "
+                + "its own domain and the service refuses it too (lst-1), and IsPrimaryMember means "
+                + "primary-group membership, which cannot be removed by rewriting a member list at "
+                + "all. Together they are exactly CanRemove at 737, which the per-row checkbox at "
+                + "260 gates on as !CanRemove(member) and the select-all at 245 reaches through "
+                + "SelectableMembers(). Drop either clause here and a row stays tickable for a "
+                + "batch removal whose own per-row button refuses it, or becomes individually "
+                + "removable while the batch path skips it - the two disagreeing about which "
+                + "members may be removed, which is the state this entry exists to prevent"),
         ],
 
         // Five spinner and panel conditions, every one reading a single flag or a flag paired with a

@@ -208,6 +208,104 @@ Describe 'Get-ClickGateAudit' {
             $row.Buttons | Should -Be 1
             $row.Ungated | Should -Be 0
         }
+
+        It 'does not treat a prose apostrophe inside a value as an opening quote' {
+            # The measured defect. GroupManagement's per-row Remove carries a title whose Razor
+            # expression holds a C# string reading "This is the member's primary group". The inner
+            # string closes the attribute value and the apostrophe then opened a quote state in the
+            # middle of the tag, so this scanner never found that tag's real ">", ran it to the end
+            # of the file and swallowed the Manage button below it: 13 buttons reported on a page
+            # with 14, and nothing said anything was wrong.
+            #
+            # Cheapest broken implementation that still passes? None. Returning no tags fails
+            # Buttons; returning the old runaway tag fails Buttons AND Ungated AND UngatedLines,
+            # since a tag holding the rest of the file contains the word "disabled"; dropping
+            # quote-awareness entirely fails on the lambda in the first handler. Hard-coding a
+            # count fails UngatedLines, which names the line the SECOND button is on.
+            $root = Get-FixtureRepo -Pages @{
+                Sample = @(
+                    '<button @onclick="() => Remove(m)" title="@(x ? "This is the member''s primary group." : null)" disabled="@isWorking">Remove</button>'
+                    '<button @onclick="Manage">Manage</button>'
+                    '@code {'
+                    '    private bool isWorking = false;'
+                    '    private string? report;'
+                    ''
+                    '    private async Task Go()'
+                    '    {'
+                    '        isWorking = true;'
+                    '        try { await Svc.RunAsync(); }'
+                    '        finally { isWorking = false; }'
+                    '    }'
+                    ''
+                    '    private async Task Show()'
+                    '    {'
+                    '        report = null;'
+                    '        report = await Svc.FetchAsync();'
+                    '    }'
+                    '}'
+                )
+            }
+
+            $row = Invoke-Audit -Root $root
+            $row.Buttons | Should -Be 2
+            $row.Ungated | Should -Be 1
+            $row.UngatedLines | Should -Be '2'
+
+            # The second, quieter half of the same defect, and the reason StuckFlags on the real
+            # page fell from 4 to 1 when this was fixed. The stuck-flag test asks whether a GATED
+            # BUTTON'S TEXT names a field raised with no finally to lower it. A runaway tag holding
+            # the rest of the file names every field in the code block, so it manufactured hazards:
+            # "report" here is exactly that shape and must NOT be reported.
+            $row.StuckFlags | Should -Be 0
+            $row.StuckNames | Should -Be ''
+        }
+
+        It 'treats a single-quoted attribute value as a delimiter' {
+            # Valid HTML and used in this repo - ConferenceRooms 48 binds
+            # @onclick='() => activeTab = "finder"'. A fix that honoured only the double quote
+            # would end this tag at the arrow and hide the gate behind it, so the button would read
+            # as ungated. The title carries a ">" as well, in a single-quoted value this time.
+            #
+            # Cheapest broken implementation that still passes? Not "ignore single quotes": that
+            # ends the tag at the "=>" and reports Ungated 1. Not "ignore quotes entirely", same
+            # reason. Not "return everything" or "return nothing": both fail Buttons.
+            $root = Get-FixtureRepo -Pages @{
+                Sample = @(
+                    '@code {'
+                    '    private bool isWorking = false;'
+                    ''
+                    '    private async Task Go()'
+                    '    {'
+                    '        isWorking = true;'
+                    '        try { await Svc.RunAsync(); }'
+                    '        finally { isWorking = false; }'
+                    '    }'
+                    '}'
+                    '<button @onclick=''() => activeTab = "finder"'' title=''a > b'' disabled="@isWorking">Finder</button>'
+                )
+            }
+
+            $row = Invoke-Audit -Root $root
+            $row.Buttons | Should -Be 1
+            $row.Ungated | Should -Be 0
+        }
+
+        It 'drops a tag that never closes instead of running it to the end of the file' {
+            # Pins the behaviour to ClickGateSource.Tags in ExchangeAdminWeb.Tests, which drops it.
+            # The two scanners disagreeing is what made the original defect hard to see: each lost
+            # a different button and both still reported 13. Emitting an unterminated tag is also
+            # actively worse than dropping it, because every gate check in the C# suite is a
+            # containment test over the tag text and a tag holding the rest of the file passes all
+            # of them.
+            #
+            # Cheapest broken implementation that still passes? "Return nothing, ever" - which
+            # every other It in this Context rejects, so it is not available.
+            $root = Get-FixtureRepo -Pages @{
+                Sample = @('<button @onclick="Go" disabled="@isWorking"')
+            }
+
+            (Invoke-Audit -Root $root).Buttons | Should -Be 0
+        }
     }
 
     Context 'button classification' {

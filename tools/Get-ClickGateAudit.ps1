@@ -82,11 +82,70 @@ function Clear-RazorComment {
 
 <#
 .SYNOPSIS
+    Returns the index of the > that closes a tag, or -1 if the text ends first.
+.DESCRIPTION
+    The quote rule is the whole of this function, and it is narrower than it looks: a quote
+    character opens an attribute value ONLY where it directly follows the = that introduces that
+    value, whitespace allowed between. Anywhere else a quote is just a character.
+
+    Opening on any quote at all is what this replaces, and it was a measured defect. The per-row
+    Remove on GroupManagement carries a title attribute whose Razor expression holds a C# string
+    reading "This is the member's primary group". The inner string closes the attribute value, and
+    the apostrophe in "member's" then opened a single-quote state in the middle of the tag. This
+    scanner never found that tag's real >, ran it to the end of the file, and swallowed the Manage
+    button 33 lines below it whole - so the page reported 13 clickable buttons when it has 14.
+    Requiring the = fixes the class, because an apostrophe inside prose never follows one.
+
+    Mirror of ClickGateSource.IndexOfTagEnd in ExchangeAdminWeb.Tests, deliberately: the two
+    scanners disagreeing about a page is what made this defect hard to see, because each lost a
+    DIFFERENT button and both still reported 13. The known limitation is recorded there too - a >
+    inside a C# string nested in a Razor expression inside an attribute value would still end the
+    tag early. No page has that shape; it was swept for when this was fixed.
+#>
+function Get-TagEndIndex {
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string] $Text,
+        [Parameter(Mandatory)][int] $From
+    )
+
+    $quote = [char]0
+    $afterEquals = $false
+
+    for ($i = $From; $i -lt $Text.Length; $i++) {
+        $c = $Text[$i]
+
+        if ($quote -ne [char]0) {
+            if ($c -eq $quote) { $quote = [char]0 }
+            continue
+        }
+
+        if ($afterEquals -and ($c -eq '"' -or $c -eq "'")) {
+            $quote = $c
+            $afterEquals = $false
+            continue
+        }
+
+        if ($c -eq '>') { return $i }
+
+        if (-not [char]::IsWhiteSpace($c)) { $afterEquals = ($c -eq '=') }
+    }
+
+    return -1
+}
+
+<#
+.SYNOPSIS
     Returns every tag of the given name, quote-aware.
 .DESCRIPTION
     A naive <button.*?> stops at the first > it meets, and many handlers in this app are lambdas
     - @onclick="() => Delete(...)" - whose arrow ends the match inside the attribute list, hiding
     every attribute after it, including the disabled one being looked for.
+
+    A tag that never closes is DROPPED, matching ClickGateSource.Tags. This function used to emit
+    it anyway, running to the end of the file, which is how one unterminated tag came to swallow
+    every control below it and still be counted as one clickable button.
 #>
 function Get-TagText {
     [CmdletBinding()]
@@ -111,25 +170,15 @@ function Get-TagText {
             continue
         }
 
-        $j = $i + $needle.Length
-        $quote = [char]0
-        while ($j -lt $Text.Length) {
-            $c = $Text[$j]
-            if ($quote -ne [char]0) {
-                if ($c -eq $quote) { $quote = [char]0 }
-            }
-            elseif ($c -eq '"' -or $c -eq "'") { $quote = $c }
-            elseif ($c -eq '>') { break }
-            $j++
-        }
+        $end = Get-TagEndIndex -Text $Text -From ($i + $needle.Length)
+        if ($end -lt 0) { break }
 
         $tags.Add([pscustomobject]@{
                 Line = ($Text.Substring(0, $i) -split "`n").Count
-                Text = $Text.Substring($i, [Math]::Min($j - $i + 1, $Text.Length - $i))
+                Text = $Text.Substring($i, $end - $i + 1)
             })
 
-        if ($j -ge $Text.Length) { break }
-        $i = $j + 1
+        $i = $end + 1
     }
 
     return $tags.ToArray()

@@ -1013,6 +1013,9 @@ public class ClickGateTests
         // comes AFTER the handler but BEFORE the gate, so the element is still matched but its text
         // is truncated - which the TagText assertion below catches and the tuple assertion does not.
         // Both directions matter: TagText is what every verbatim gate check is read out of.
+        // The apostrophe element is the third direction, added when the shared walk was fixed: an
+        // ordinary prose apostrophe inside a double-quoted value used to open a quote state that
+        // never closed, losing that element and every keyboard path on it.
         var fixture = string.Join("\n",
             "<div class=\"wrap\">",
             "    <input type=\"text\" @bind=\"q\" @onkeydown=\"OnSearchKey\" title=\"a > b\" "
@@ -1020,16 +1023,19 @@ public class ClickGateTests
             "    <textarea title=\"b > c\" @onkeyup=\"OnNotesKey\"></textarea>",
             "    <span @onkeypress=\"OnSpanKey\">x</span>",
             "    <a href=\"#\" @onkeydown=\"() => Pick(row)\" @onkeydown:preventDefault>go</a>",
+            "    <input title=\"@(x ? \"the member's row\" : null)\" @onkeydown=\"OnAposKey\" "
+            + "disabled=\"@IsBusy\" />",
             "    <input title=\"no handler\" @bind:event=\"oninput\" />",
             "</div>",
             "@* a comment carrying @onkeydown=\"Ghost\" *@");
 
         var text = ClickGateSource.BlankComments(fixture);
 
-        // Proves four things at once that the pages cannot: keyup and keypress are found as well as
-        // keydown; a ">" inside a quoted attribute value does not end the element; the element name
-        // is read off the file rather than guessed; and a handler named only inside a razor comment
-        // is not found, because the scan runs on comment-blanked text.
+        // Proves five things at once that the pages cannot: keyup and keypress are found as well as
+        // keydown; a ">" inside a quoted attribute value does not end the element; an apostrophe
+        // inside one does not open a quote state and lose the element; the element name is read off
+        // the file rather than guessed; and a handler named only inside a razor comment is not
+        // found, because the scan runs on comment-blanked text.
         Assert.Equal(
             new[]
             {
@@ -1037,6 +1043,7 @@ public class ClickGateTests
                 "keyup/OnNotesKey/textarea",
                 "keypress/OnSpanKey/span",
                 "keydown/() => Pick(row)/a",
+                "keydown/OnAposKey/input",
             },
             KeyboardHandlerSites(text)
                 .Select(site => $"{site.Event}/{site.Handler}/{site.TagName}")
@@ -1049,6 +1056,14 @@ public class ClickGateTests
                 .Single(site => site.Handler == "OnSearchKey").TagText,
             StringComparison.Ordinal);
 
+        // The same check on the apostrophe element, which is the one MarkupTags used to lose whole.
+        // Losing it is visible in the tuple assertion above (TagName goes empty); truncating it is
+        // not, and truncation is what silently reports a gated key path as ungated.
+        Assert.Contains("disabled=\"@IsBusy\"",
+            KeyboardHandlerSites(text)
+                .Single(site => site.Handler == "OnAposKey").TagText,
+            StringComparison.Ordinal);
+
         // @onkeydown:preventDefault binds nothing, so it must not be reported as unreadable either.
         Assert.Empty(UnparsedKeyboardAttributes(text));
 
@@ -1058,6 +1073,76 @@ public class ClickGateTests
         var unquoted = ClickGateSource.BlankComments("<input @onkeydown=@(() => Go()) />");
         Assert.Empty(KeyboardHandlerSites(unquoted));
         Assert.Single(UnparsedKeyboardAttributes(unquoted));
+    }
+
+    [Fact]
+    public void TagWalkFindsTheTagBoundariesItClaimsTo()
+    {
+        // The scan every button assertion in this file is built on, exercised against a fixture
+        // rather than a page - because a walker that loses a tag loses it SILENTLY, and did. It
+        // dropped GroupManagement's per-row Remove, the most destructive control on that page, and
+        // tools/Get-ClickGateAudit.ps1 lost a DIFFERENT button on the same page to the same cause;
+        // both reported 13 buttons on a page with 14 and neither reported anything wrong. The
+        // GroupManagement entry's remarks carry the measurement. Nothing here had a fixture before,
+        // which is why a defect this size survived six page conversions.
+        //
+        // What is the cheapest broken implementation that still passes this? None of them. A walker
+        // returning nothing, or returning every tag, fails the sequence equality; one hard-coding a
+        // single tag fails on the other five; "change nothing" is what this test was written
+        // against and fails on the apostrophe; and "delete the feature" is not available, because
+        // the feature is all this test calls. Each fixture tag below is load-bearing in a direction
+        // no other one covers.
+        //
+        // A quote opens a value only where it directly follows the "=" that introduces that value.
+        // That one rule is the fix; see ClickGateSource.IndexOfTagEnd for why and for its limit.
+        const string Lambda =                       // a Razor lambda: the arrow is not the tag end
+            "<button class=\"a\" @onclick=\"() => Pick(row)\" disabled=\"@IsBusy\">";
+        const string SingleQuoted =                 // single-quoted values are valid HTML and used
+            "<button class='b' @onclick='() => activeTab = \"finder\"' disabled='@IsBusy'>";
+        const string AngleInValue =                 // a ">" inside a value is not the tag end
+            "<button class=\"c\" @onclick=\"Go\" title=\"a > b\" disabled=\"@IsBusy\">";
+        const string Apostrophe =                   // THE defect: prose apostrophe in a value
+            "<button class=\"d\" @onclick=\"Go\" "
+            + "title=\"@(x ? \"the member's primary group\" : null)\" disabled=\"@IsBusy\">";
+        const string Unquoted =                     // an unquoted value must not swallow the ">"
+            "<button class=\"e\" @onclick=\"Go\" disabled=@IsBusy>";
+        const string Following =                    // the control AFTER the defect, which the
+            "<button class=\"f\" @onclick=\"Go\" disabled=\"@IsBusy\">";   // PowerShell walker ate
+
+        var fixture = string.Join("\n",
+            "<div class=\"wrap\">",
+            "    " + Lambda + "lambda</button>",
+            "    " + SingleQuoted + "single</button>",
+            "    " + AngleInValue + "angle</button>",
+            "    " + Apostrophe + "apostrophe</button>",
+            "    " + Unquoted + "unquoted</button>",
+            "    " + Following + "following</button>",
+            "</div>");
+
+        var source = ClickGateSource.FromText("Fixture.razor", fixture);
+
+        // Exact texts, not a count. A count alone would pass a walker that found six tags and
+        // truncated four of them, and truncation is the worse failure: every gate check in this
+        // file is a containment test over this text, so a tag cut short reports an intact gate as
+        // missing, and a tag run long reports a missing gate as intact.
+        Assert.Equal(
+            new[] { Lambda, SingleQuoted, AngleInValue, Apostrophe, Unquoted, Following },
+            source.Tags("button").Select(tag => tag.Text).ToArray());
+
+        // Offsets too: every registry entry is keyed by line, so a walker that finds the right
+        // tags at the wrong places would point every assertion message at innocent code.
+        Assert.Equal(
+            new[] { 2, 3, 4, 5, 6, 7 },
+            source.Tags("button").Select(tag => tag.Line).ToArray());
+
+        // A tag that never closes is DROPPED, and the PowerShell scanner now agrees. It used to
+        // emit the tag anyway, running it to the end of the file - which is how one unterminated
+        // tag came to swallow every control below it and still be counted as one clickable button.
+        // On its own this assertion is passed by a walker that returns nothing; it is not on its
+        // own, because everything above requires the walker to find tags.
+        var unterminated = ClickGateSource.FromText(
+            "Fixture.razor", "<div>\n    <button class=\"a\" @onclick=\"Go\"\n");
+        Assert.Empty(unterminated.Tags("button"));
     }
 
     // ---- where the guard may not live --------------------------------------------------------
@@ -1853,6 +1938,14 @@ public class ClickGateTests
     /// first, and the elements it returns never overlap.
     /// </para>
     /// <para>
+    /// Only the element-finding is local: the attribute walk itself is
+    /// <see cref="ClickGateSource.IndexOfTagEnd"/>, shared with Tags() rather than copied. This
+    /// walk had its own copy of that loop and therefore its own copy of the apostrophe defect
+    /// described there - an element carrying title="...member's..." was lost whole, taking any
+    /// keyboard handler on it out of the completeness sweep. Two walkers that must agree should not
+    /// be two pieces of code.
+    /// </para>
+    /// <para>
     /// Honest limitation: outside an element, a "&lt;" immediately followed by a letter opens a
     /// candidate, which C# generics in the @code block do - <c>Func&lt;string, Task&gt;</c>. Those
     /// are harmless because a keyboard attribute is never inside one, and if a stray candidate ever
@@ -1874,25 +1967,12 @@ public class ClickGateTests
                    && (char.IsLetterOrDigit(text[nameEnd]) || text[nameEnd] == '_'))
                 nameEnd++;
 
-            var quote = '\0';
-            for (var j = nameEnd; j < text.Length; j++)
-            {
-                var c = text[j];
-                if (quote != '\0')
-                {
-                    if (c == quote) quote = '\0';
-                }
-                else if (c is '"' or '\'')
-                {
-                    quote = c;
-                }
-                else if (c == '>')
-                {
-                    tags.Add(new MarkupTag(i, j, text[(i + 1)..nameEnd]));
-                    i = j;
-                    break;
-                }
-            }
+            var end = ClickGateSource.IndexOfTagEnd(text, nameEnd);
+            if (end < 0)
+                continue;
+
+            tags.Add(new MarkupTag(i, end, text[(i + 1)..nameEnd]));
+            i = end;
         }
 
         return tags;
