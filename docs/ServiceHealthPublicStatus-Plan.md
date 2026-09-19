@@ -20,7 +20,7 @@ in the cases someone wrote down and wrong in the one they did not.
 Owner: Michael
 Repository base: `337e07b`; Revision 0 at `16ebdf4`, Revision 1 at `f6530e3`,
 Revision 2 at `09699b9`
-Base app version at drafting: 2.21.0 (no base bump proposed)
+Base app version: **leave it unchanged, whatever it currently is** (2.21.1 as of 2026-09-19; it was 2.21.0 when this was drafted and moved under `3c21270`). No base bump is proposed or permitted by this plan - bump ServiceHealth's module version only.
 ServiceHealth module version: 1.3.2 at drafting; 1.4.0 after slice 1, 1.4.1 after
 slice 2
 Research performed live against `status.cloud.microsoft` on 2026-09-18; every URL,
@@ -1000,7 +1000,7 @@ because a new source is a new capability) and **1.4.0 -> 1.4.1 in slice 2** (the
 becomes visible - patch, because it renders data the module already had). Each bump
 ships in the same commit as the behaviour it describes and as the assertion that pins
 it, per codex finding 2. **No base app bump** at any point; `ExchangeAdminWeb.csproj`
-`<VersionPrefix>` stays 2.21.0.
+`<VersionPrefix>` is left **untouched**. Do not write a literal here: it was 2.21.0 at drafting and is 2.21.1 as of 2026-09-19, and an implementer following a stale literal would DOWNGRADE it.
 
 The one judgement call is the new named `HttpClient` registration in `Program.cs`.
 Position taken: that is module plumbing, not shared infrastructure - it is consumed
@@ -1782,3 +1782,44 @@ this revision:
   mac-fallback-counter-zero assertion to test 6's existing mixed case.
 
 **Nothing was rejected this round either.**
+# Revision 4 - codex round 4, 2026-09-19. NOT consensus; re-parked.
+
+Reviewer: codex / `@azure-openai-eus2-global/gpt-5.5-dzs` / xhigh / standard. Capability proof
+passed. Verdict **unsound**, four findings (2 MEDIUM, 2 LOW).
+
+**Round 3's two findings are closed for response-shaped failures**, and the `Reachable =
+Any(IsHealthy)` mutation is closed by test 6b and probe J. No Constitution or module-contract
+deviation, no unrecoverable first-deploy state, versioning module-scoped only.
+
+**Section 16 was re-affirmed as honest scoping, not an escape hatch** - which is the answer to the
+proportionality question put to this round after three more rounds of apparatus growth. But the
+same paragraph carries the condition: **open question 1 must be answered before implementation,
+and if the owner wanted a second incident list this should collapse to the link-out.**
+
+**One finding fixed immediately, because it is a hazard this run created.** The plan said the base
+app version is and stays 2.21.0. It is **2.21.1** since `3c21270`, the shared autocomplete fix - so
+an implementer following the literal would have DOWNGRADED `VersionPrefix`, `AssemblyVersion` and
+`FileVersion`. Both places now say leave it untouched and name the reason rather than a number.
+
+**Three findings recorded and NOT fixed, because the plan is parked and they are pre-implementation
+work:**
+
+1. **MEDIUM - the fallback proof still omits no-response primary failures.** Test 4's theory covers
+   only response-shaped failures: non-200, wrong content type, unparseable, absent status, empty
+   status. A thrown request or an immediate cancellation is not covered, so an implementation could
+   fall back on all five response shapes and treat a throw as terminal Unknown while passing the
+   suite. Needs theory rows where the primary throws and where it is cancelled with budget
+   remaining, each asserting the fallback fired.
+2. **MEDIUM - `Reachable` still does not prove a fallback-sourced answer counts.** No test asserts
+   `Reachable == true` in the quadrant where the primary failed, the fallback answered, and the
+   other surface also failed - so `Reachable` could be computed before the fallback and the page
+   would render "could not read" while holding a healthy fallback row.
+3. **LOW - present-but-empty status is closed for RSS but not for JSON.** No case proves an empty
+   JSON status is `!Answered`; the existing empty-string case is a token-mapping test that would
+   also pass if empty were treated as answered-but-unhealthy.
+
+**Status: still `Draft`, still parked, and four rounds is where it stops.** Each round has found
+real defects, but rounds 2, 3 and 4 found them in the verification apparatus rather than the
+design, and the apparatus is now roughly 1800 lines specifying two status tokens - one of which
+carries the value. The three findings above are cheap **once it is known the feature is wanted**,
+and wasted otherwise. **Answer open question 1 first.**
