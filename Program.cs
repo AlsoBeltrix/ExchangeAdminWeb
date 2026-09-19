@@ -131,6 +131,16 @@ try
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
+    // Defender for Endpoint device inventory (docs/DefenderEndpointDevices-Plan.md S1). Its own
+    // named client rather than the "MicrosoftGraph" one: this module calls
+    // api.security.microsoft.com with a DIFFERENT token audience, and a separate registration keeps
+    // that separation visible here rather than buried in the service.
+    builder.Services.AddHttpClient(DefenderEndpointDeviceService.HttpClientName)
+        .ConfigureHttpClient(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
     builder.Services.AddSingleton<ModuleConfigService>();
     builder.Services.AddSingleton<ModuleCredentialService>();
     builder.Services.AddSingleton<ModuleAdminService>();
@@ -158,6 +168,11 @@ try
     // services, and deliberately so here: the 10-minute status cache lives on the instance, so a
     // scoped registration would give every operator their own cache and defeat it.
     builder.Services.AddSingleton<ServiceHealthService>();
+    // Defender for Endpoint device inventory read path (docs/DefenderEndpointDevices-Plan.md S1).
+    // Singleton like the other API-backed read services: no per-request state, and the API client is
+    // constructed per operation from the named client above. Nothing is user-reachable yet - the
+    // module descriptor and page arrive in S2.
+    builder.Services.AddSingleton<DefenderEndpointDeviceService>();
     builder.Services.AddSingleton<DhcpAuthorizationService>();
     // BitLocker recovery. Scoped: the service opens a short-lived SQLite connection per query and
     // holds no state between them. Needs no HttpClient, no Graph registration and no Exchange

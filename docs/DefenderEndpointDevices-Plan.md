@@ -1255,3 +1255,43 @@ code.
 same as approval here: the owner still has to answer the six open questions - question 1 above all,
 since it decides whether S4 exists and who must grant consent - and create the app registration,
 which is theirs to do and which no amount of planning can substitute for.
+# Revision 4 - S1 implemented, and a tension S1 surfaced, 2026-09-19
+
+S1 landed call-free as designed. Four corrections and one open tension, all found by implementing
+it rather than by reading it.
+
+**The tension, and S2's author must read this before starting.** R1(g) states that **no multi-page
+behaviour ships that R1(g) has not observed**, and R1 is gated between S2 and S3. But S1's own
+bullet list mandates the cursor-chain code and its tests, and **S2 ships a reachable page** - so
+cursor-following becomes reachable one slice before the gate meant to authorise it. S1's section is
+the more specific instruction and the ambiguous-state refusal bounds the risk either way, so the
+code shipped; but the ordering is genuinely inconsistent as written. The likely resolution is to
+state in S2 that the module ships `EnabledByDefault = false`, so "reachable" means "reachable by
+the owner on dev" - which is where R1 runs anyway. **That is a proposal, not a ruling.**
+
+**T6.1 asks for escaping tests over "the device name box", which does not exist** anywhere in the
+design - S2's control list has only two filters, onboarding status and Windows-only. The escaping
+tests were written against the onboarding-status value, the only operator-supplied string that
+reaches a filter.
+
+**Two additions beyond the plan text, made by the implementer and flagged as theirs.** First,
+`GetWithStatusAsync` refuses an absolute continuation URL on a different host or over plain HTTP,
+and refuses it **before acquiring a token** - the absolute-URL path exists to follow a link out of
+a response body, and following an arbitrary host would hand this registration's bearer token to
+whatever that body named. Second, a run stops after 100 requests, derived from the documented
+per-minute limit, and **refuses** rather than returning what it has. Both are tested.
+
+**One pinned shape was deviated from, additively.** The plan pins `(JsonDocument?, HttpStatusCode,
+string?)`. The implementation returns that plus a `TimedOut` flag, because a 3-tuple's only free
+slot is the status, and mapping a client-side timeout onto 408 makes it indistinguishable from a
+service-issued 408 - the collapse T7 forbids. `ServiceIssued408_IsNotReportedAsAClientSideTimeout`
+pins the distinction.
+
+**Confirmed against the plan:** `Program.cs` is in S1 and the plan pre-clears it as additive module
+registration, so no base app bump - `ExchangeAdminWeb.csproj`, `Modules/ModuleCatalog.cs` and
+`Services/GraphTokenClient.cs` are all unchanged. `DiscoveryEnrichment` state ships in S1 as
+`NotAttempted`; S4's five per-device enrichment properties deliberately do **not**, because S4 is
+droppable on the owner's question 1 and they would be dead code.
+
+Everything downstream still needs the owner: the app registration, question 1, and R1(g) - which
+cannot run before the registration exists, as Revision 3 upheld.
