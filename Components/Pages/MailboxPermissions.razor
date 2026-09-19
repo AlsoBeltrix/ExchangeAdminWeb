@@ -25,13 +25,13 @@
 
     <ul class="nav nav-tabs mb-4">
         <li class="nav-item">
-            <button class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => SetTab(0)">Add</button>
+            <button class="nav-link @(tabIndex == 0 ? "active" : "")" @onclick="() => SetTab(0)" disabled="@IsBusy">Add</button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => SetTab(1)">Remove</button>
+            <button class="nav-link @(tabIndex == 1 ? "active" : "")" @onclick="() => SetTab(1)" disabled="@IsBusy">Remove</button>
         </li>
         <li class="nav-item">
-            <button class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="() => SetTab(2)">Bulk Upload</button>
+            <button class="nav-link @(tabIndex == 2 ? "active" : "")" @onclick="() => SetTab(2)" disabled="@IsBusy">Bulk Upload</button>
         </li>
     </ul>
 
@@ -44,11 +44,11 @@
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Permissions</label>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="chkFullAccess" @bind="grantFullAccess" />
+                                <input class="form-check-input" type="checkbox" id="chkFullAccess" @bind="grantFullAccess" disabled="@IsBusy" />
                                 <label class="form-check-label" for="chkFullAccess">Full Access</label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" id="chkSendAs" @bind="grantSendAs" />
+                                <input class="form-check-input" type="checkbox" id="chkSendAs" @bind="grantSendAs" disabled="@IsBusy" />
                                 <label class="form-check-label" for="chkSendAs">Send As</label>
                             </div>
                         </div>
@@ -56,14 +56,16 @@
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Target Mailbox</label>
                             <RecipientAutocomplete @bind-Value="targetMailbox"
-                                                   Placeholder="mailbox@domain.com or SamAccountName" />
+                                                   Placeholder="mailbox@domain.com or SamAccountName"
+                                                   Disabled="@IsBusy" />
                             <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
                         </div>
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">User</label>
                             <RecipientAutocomplete @bind-Value="affectedUser"
-                                                   Placeholder="user@domain.com or SamAccountName" />
+                                                   Placeholder="user@domain.com or SamAccountName"
+                                                   Disabled="@IsBusy" />
                             <div class="form-text">SMTP, UPN, or SamAccountName accepted</div>
                         </div>
 
@@ -71,21 +73,21 @@
                             <label class="form-label fw-semibold" for="ticketNumber">Ticket Number <span class="text-danger">*</span></label>
                             <input id="ticketNumber" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="ticketNumber" @bind:event="oninput" />
+                                   @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" />
                             <div class="form-text">Service request or incident ticket number</div>
                         </div>
 
                         @if (tabIndex == 0 && grantFullAccess)
                         {
                             <div class="mb-3 form-check">
-                                <input class="form-check-input" type="checkbox" id="chkAutoMap" @bind="autoMapping" />
+                                <input class="form-check-input" type="checkbox" id="chkAutoMap" @bind="autoMapping" disabled="@IsBusy" />
                                 <label class="form-check-label" for="chkAutoMap">
                                     AutoMapping <span class="text-muted">(auto-add to Outlook)</span>
                                 </label>
                             </div>
                         }
 
-                        <button class="btn btn-primary" @onclick="SubmitSingle" disabled="@(isLoading || !IsFormValid)">
+                        <button class="btn btn-primary" @onclick="SubmitSingle" disabled="@(IsBusy || !IsFormValid)">
                             @if (isLoading)
                             {
                                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
@@ -114,9 +116,9 @@
                         </ul>
 
                         <div class="mb-3 btn-group" role="group">
-                            <input type="radio" class="btn-check" name="bulkAction" id="radioAdd" checked="@bulkIsAdd" @onchange="() => bulkIsAdd = true" />
+                            <input type="radio" class="btn-check" name="bulkAction" id="radioAdd" checked="@bulkIsAdd" @onchange="() => bulkIsAdd = true" disabled="@IsBusy" />
                             <label class="btn btn-outline-primary" for="radioAdd">Add</label>
-                            <input type="radio" class="btn-check" name="bulkAction" id="radioRemove" checked="@(!bulkIsAdd)" @onchange="() => bulkIsAdd = false" />
+                            <input type="radio" class="btn-check" name="bulkAction" id="radioRemove" checked="@(!bulkIsAdd)" @onchange="() => bulkIsAdd = false" disabled="@IsBusy" />
                             <label class="btn btn-outline-primary" for="radioRemove">Remove</label>
                         </div>
 
@@ -124,16 +126,16 @@
                             <label class="form-label fw-semibold" for="bulkTicket">Ticket Number (applies to all rows) <span class="text-danger">*</span></label>
                             <input id="bulkTicket" class="form-control" type="text"
                                    placeholder="INC0001234 or REQ0005678"
-                                   @bind="bulkTicketNumber" @bind:event="oninput" />
+                                   @bind="bulkTicketNumber" @bind:event="oninput" disabled="@IsBusy" />
                         </div>
 
                         <div class="mb-3">
                             <label for="csvFile" class="form-label fw-semibold">CSV File</label>
-                            <InputFile id="csvFile" class="form-control" OnChange="HandleCsvUpload" accept=".csv" />
+                            <InputFile id="csvFile" class="form-control" OnChange="HandleCsvUpload" accept=".csv" disabled="@IsBusy" />
                             <button type="button" class="btn btn-outline-secondary btn-sm mt-1" @onclick="DownloadSampleCsv">Sample CSV</button>
                         </div>
 
-                        <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(isLoading || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
+                        <button class="btn btn-primary" @onclick="ProcessBulk" disabled="@(IsBusy || csvFile is null || string.IsNullOrWhiteSpace(bulkTicketNumber))">
                             @if (isLoading)
                             {
                                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
@@ -153,7 +155,7 @@
                 <div class="alert alert-warning" role="alert">
                     <strong>@onPremTarget</strong> is an on-premises mailbox. This will execute against the on-prem Exchange server.
                     <div class="mt-2">
-                        <button class="btn btn-warning btn-sm me-2" @onclick="ConfirmOnPrem" disabled="@isLoading">
+                        <button class="btn btn-warning btn-sm me-2" @onclick="ConfirmOnPrem" disabled="@IsBusy">
                             @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                             Continue
                         </button>
@@ -188,7 +190,7 @@
                     <h5 class="alert-heading">Bulk Operation Complete</h5>
                     <p><strong>@bulkResult.Summary</strong></p>
                     <div class="mb-2">
-                        <button class="btn btn-sm btn-primary" @onclick="DownloadCsvReport">
+                        <button class="btn btn-sm btn-primary" @onclick="DownloadCsvReport" disabled="@IsBusy">
                             Download Full Report (CSV)
                         </button>
                     </div>
@@ -231,6 +233,19 @@
     private string bulkTicketNumber = string.Empty;
     private IBrowserFile? csvFile;
     private BulkOperationResult? bulkResult;
+
+    // The page-wide busy predicate (owner ruling 2026-09-17; docs/ClickGatingAudit-Plan.md
+    // Revision 1). One flag is all this page owns, and one predicate is right for it: the tab
+    // strip, the single-mailbox form, the bulk form and the on-prem confirmation all render off
+    // the same state at the same time, and every write handler replaces part of that state. There
+    // is no view here that is safe to leave live while another is working, which is what made a
+    // single predicate wrong on SelfServiceGroups and ConferenceRooms and right here.
+    //
+    // Every control reads IsBusy rather than isLoading so that a second flag - a future lookup, a
+    // background refresh - reaches every control by editing one line. The per-button spinners
+    // deliberately keep reading isLoading; see the SpinnerExpressions note on this page's
+    // ClickGateRegistry entry.
+    private bool IsBusy => isLoading;
 
     private bool IsFormValid =>
         !string.IsNullOrWhiteSpace(targetMailbox) &&
@@ -275,6 +290,26 @@
 
     private async Task ConfirmOnPrem()
     {
+        // This method owns the on-prem refusal, and ExecuteOnPrem - the worker it calls - must
+        // never grow one of its own. Exactly one guard, here, for the reason recorded on this
+        // page's ClickGateRegistry entry: a second guard in ExecuteOnPrem is redundant today and
+        // becomes a silent no-op the moment this method raises the flag before calling, which is
+        // the obvious next "improvement". The on-prem write would simply not happen and nothing -
+        // banner, audit row, admin email - would say so.
+        //
+        // Two conditions, refusing two different things.
+        //   IsBusy is the click gate. The Continue button carries disabled="@IsBusy", but the
+        //   browser's copy of that attribute is one round trip stale, so a second Continue can
+        //   still be dispatched while the first on-prem write is in flight - and that runs the
+        //   destructive write twice.
+        //   !onPremConfirmPending is the staleness gate. SetTab and CancelOnPrem both clear it, so
+        //   a Continue that left the browser before the confirmation panel unrendered is refused
+        //   rather than executing a staged Add against a tab the operator has since flipped to
+        //   Remove. ExecuteOnPrem reads tabIndex at its own entry, so without this the direction
+        //   could differ from the one the operator confirmed.
+        if (IsBusy || !onPremConfirmPending)
+            return;
+
         onPremConfirmPending = false;
         await ExecuteOnPrem();
     }
@@ -309,161 +344,172 @@
 
     private async Task SubmitSingle()
     {
+        // Captured above the first await, and above the try, because every one of these fields has
+        // a live control behind it. The controls now carry disabled on IsBusy, but the browser's
+        // copy of that attribute is one round trip stale, and on the two autocompletes it does not
+        // reach the suggestion rows at all - see this page's ClickGateRegistry entry.
+        //
+        // tabIndex is the sharp one, and the reason falsification 6 names this page. It chose
+        // between Add and Remove AFTER the awaits, so a tab click landing mid-write revoked the
+        // permission the operator had asked to grant, and mislabelled the audit row and both
+        // notification emails on the way past.
+        var isAdd = tabIndex == 0;
+        var target = targetMailbox.Trim();
+        var user = affectedUser.Trim();
+        var ticket = ticketNumber.Trim();
+        var fullAccess = grantFullAccess;
+        var sendAs = grantSendAs;
+        var autoMap = autoMapping;
+
         isLoading = true;
         result = null;
         await Task.Yield();
 
-        if (!await ReauthorizeAsync())
+        // The try opens here, immediately below the raise, rather than below the preflight. An
+        // await between a raise and its try has no finally behind it: a throw or an unbounded stall
+        // in the re-authorization, the ticket validation or the protected-principal check used to
+        // leave isLoading true, and under a page-wide predicate that is a dead page rather than one
+        // dead button. The early returns below therefore no longer clear the flag themselves.
+        try
         {
-            isLoading = false;
-            return;
-        }
+            if (!await ReauthorizeAsync())
+                return;
 
-        var target = targetMailbox.Trim();
-        var user = affectedUser.Trim();
-        var ticket = ticketNumber.Trim();
-
-        var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
-        if (!ticketValidation.IsValid)
-        {
-            result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-            isLoading = false;
-            return;
-        }
-
-        // ServicerModuleId is passed explicitly. This validator also serves Calendar and Out of
-        // Office, so a shared or borrowed id would let a grant in one module authorise the others.
-        // Read here: this check runs before the authorization re-check that creates `authState`,
-        // and the servicer decision must be made against the current token wherever it is asked.
-        var validationAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
-        var validation = await Validator.ValidateTargetMailboxAsync(target, validationAuthState.User, ServicerModuleId);
-        servicedNote = validation.ServicedNote;
-        var validationError = validation.Error;
-        if (validationError is not null)
-        {
-            result = PermissionResult.Fail(validationError);
-            try
+            var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
+            if (!ticketValidation.IsValid)
             {
-                var perms = new List<string>();
-                if (grantFullAccess) perms.Add("FullAccess");
-                if (grantSendAs) perms.Add("SendAs");
-                Audit.LogMailboxPermission(
-                    currentUser, clientIpAddress, $"{(tabIndex == 0 ? "Add" : "Remove")}_Denied", target, user,
-                    string.Join("+", perms), false, ticket, errorDetail: validationError);
+                result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
+                return;
             }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target);
-            }
-            isLoading = false;
-            return;
-        }
 
-        // Validate self-grant (only for Add operations)
-        if (tabIndex == 0)
-        {
-            var selfGrantError = await Validator.ValidateSelfGrantAsync(currentUser, user);
-            if (selfGrantError is not null)
+            // ServicerModuleId is passed explicitly. This validator also serves Calendar and Out of
+            // Office, so a shared or borrowed id would let a grant in one module authorise the others.
+            // Read here: this check runs before the authorization re-check that creates `authState`,
+            // and the servicer decision must be made against the current token wherever it is asked.
+            var validationAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
+            var validation = await Validator.ValidateTargetMailboxAsync(target, validationAuthState.User, ServicerModuleId);
+            servicedNote = validation.ServicedNote;
+            var validationError = validation.Error;
+            if (validationError is not null)
             {
-                // Log self-grant attempt to audit log
-                var perms = new List<string>();
-                if (grantFullAccess) perms.Add("FullAccess");
-                if (grantSendAs) perms.Add("SendAs");
-                var permType = string.Join("+", perms);
-                var ipAddress = clientIpAddress;
-
+                result = PermissionResult.Fail(validationError);
                 try
                 {
+                    var perms = new List<string>();
+                    if (fullAccess) perms.Add("FullAccess");
+                    if (sendAs) perms.Add("SendAs");
                     Audit.LogMailboxPermission(
-                        currentUser, ipAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType,
-                        false, ticket, autoMapping,
-                        errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                        currentUser, clientIpAddress, $"{(isAdd ? "Add" : "Remove")}_Denied", target, user,
+                        string.Join("+", perms), false, ticket, errorDetail: validationError);
                 }
                 catch (Exception ex)
                 {
-                    result = PermissionResult.Fail($"Self-grant blocked, but audit logging failed: {ex.Message}");
-                    isLoading = false;
-                    return;
+                    Logger.LogWarning(ex, "Failed to write audit for protected-target denial on {Target}", target);
                 }
-
-                result = PermissionResult.Fail(selfGrantError);
-                isLoading = false;
-                return;
-            }
-        }
-
-        try
-        {
-            var location = await MailboxService.GetMailboxLocationAsync(target);
-            if (location == "Unknown")
-            {
-                result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
-                isLoading = false;
                 return;
             }
 
-            if (location == "OnPrem")
+            // Validate self-grant (only for Add operations)
+            if (isAdd)
             {
-                var onPremAuth = await AuthorizationService.AuthorizeAsync(
-                    (await AuthStateProvider.GetAuthenticationStateAsync()).User, "MailboxPermissionsOnPrem");
-                if (!onPremAuth.Succeeded)
+                var selfGrantError = await Validator.ValidateSelfGrantAsync(currentUser, user);
+                if (selfGrantError is not null)
                 {
-                    result = PermissionResult.Fail($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team.");
-                    isLoading = false;
+                    // Log self-grant attempt to audit log
+                    var perms = new List<string>();
+                    if (fullAccess) perms.Add("FullAccess");
+                    if (sendAs) perms.Add("SendAs");
+                    var permType = string.Join("+", perms);
+                    var ipAddress = clientIpAddress;
+
+                    try
+                    {
+                        Audit.LogMailboxPermission(
+                            currentUser, ipAddress, $"Add{permType}_SelfGrantAttempt", target, user, permType,
+                            false, ticket, autoMap,
+                            errorDetail: "Self-grant blocked: User attempted to grant permissions to themselves");
+                    }
+                    catch (Exception ex)
+                    {
+                        result = PermissionResult.Fail($"Self-grant blocked, but audit logging failed: {ex.Message}");
+                        return;
+                    }
+
+                    result = PermissionResult.Fail(selfGrantError);
+                    return;
+                }
+            }
+
+            try
+            {
+                var location = await MailboxService.GetMailboxLocationAsync(target);
+                if (location == "Unknown")
+                {
+                    result = PermissionResult.Fail($"Could not determine mailbox location for {target}. No cloud mailbox, on-prem mailbox, or on-prem remote mailbox was found.");
                     return;
                 }
 
-                onPremTarget = target;
-                onPremUser = user;
-                onPremTicket = ticket;
-                onPremFullAccess = grantFullAccess;
-                onPremSendAs = grantSendAs;
-                onPremConfirmPending = true;
-                isLoading = false;
-                return;
+                if (location == "OnPrem")
+                {
+                    var onPremAuth = await AuthorizationService.AuthorizeAsync(
+                        (await AuthStateProvider.GetAuthenticationStateAsync()).User, "MailboxPermissionsOnPrem");
+                    if (!onPremAuth.Succeeded)
+                    {
+                        result = PermissionResult.Fail($"{target} is an on-premises mailbox. Please escalate this ticket to the Exchange team.");
+                        return;
+                    }
+
+                    onPremTarget = target;
+                    onPremUser = user;
+                    onPremTicket = ticket;
+                    onPremFullAccess = fullAccess;
+                    onPremSendAs = sendAs;
+                    onPremConfirmPending = true;
+                    return;
+                }
+
+                var opResult = isAdd
+                    ? await MailboxService.AddMailboxPermissionsAsync(target, user, fullAccess, sendAs, autoMap)
+                    : await MailboxService.RemoveMailboxPermissionsAsync(target, user, fullAccess, sendAs);
+
+                var perms = new List<string>();
+                if (fullAccess) perms.Add("FullAccess");
+                if (sendAs) perms.Add("SendAs");
+                var permType = string.Join("+", perms);
+                var action = $"{(isAdd ? "Add" : "Remove")}{permType}";
+                var ipAddress = clientIpAddress;
+
+                // The serviced note rides `extra`: this is the SUCCESS path, and LogMailboxPermission
+                // drops errorDetail on success, so the field explaining why a protected mailbox could
+                // be modified would vanish exactly when it matters.
+                Audit.LogMailboxPermission(
+                    currentUser, ipAddress, action, target, user, permType,
+                    opResult.Success, ticket,
+                    autoMapping: isAdd && fullAccess ? autoMap : null,
+                    errorDetail: opResult.Success ? null : opResult.Message,
+                    extra: ProtectedPrincipalServicing.Extra(servicedNote));
+
+                // Send admin notification
+                await Email.SendAdminNotificationAsync(
+                    currentUser, ipAddress, action, target, user, permType,
+                    opResult.Success, ticket, opResult.Success ? null : opResult.Message);
+
+                // Send notifications to both the user being granted access and the mailbox owner
+                if (opResult.Success)
+                {
+                    var isGrant = isAdd;
+                    // Notify the user being granted/removed access
+                    await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
+                    // Notify the mailbox owner
+                    await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+                }
+
+                result = opResult;
             }
-
-            var opResult = tabIndex == 0
-                ? await MailboxService.AddMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs, autoMapping)
-                : await MailboxService.RemoveMailboxPermissionsAsync(target, user, grantFullAccess, grantSendAs);
-
-            var perms = new List<string>();
-            if (grantFullAccess) perms.Add("FullAccess");
-            if (grantSendAs) perms.Add("SendAs");
-            var permType = string.Join("+", perms);
-            var action = $"{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
-            var ipAddress = clientIpAddress;
-
-            // The serviced note rides `extra`: this is the SUCCESS path, and LogMailboxPermission
-            // drops errorDetail on success, so the field explaining why a protected mailbox could
-            // be modified would vanish exactly when it matters.
-            Audit.LogMailboxPermission(
-                currentUser, ipAddress, action, target, user, permType,
-                opResult.Success, ticket,
-                autoMapping: tabIndex == 0 && grantFullAccess ? autoMapping : null,
-                errorDetail: opResult.Success ? null : opResult.Message,
-                extra: ProtectedPrincipalServicing.Extra(servicedNote));
-
-            // Send admin notification
-            await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, action, target, user, permType,
-                opResult.Success, ticket, opResult.Success ? null : opResult.Message);
-
-            // Send notifications to both the user being granted access and the mailbox owner
-            if (opResult.Success)
+            catch (Exception ex)
             {
-                var isGrant = tabIndex == 0;
-                // Notify the user being granted/removed access
-                await Email.SendUserNotificationAsync(user, target, currentUser, permType, isGrant);
-                // Notify the mailbox owner
-                await Email.SendOwnerNotificationAsync(target, user, currentUser, permType, isGrant);
+                result = PermissionResult.Fail($"Operation may have succeeded but audit logging failed: {ex.Message}");
             }
-
-            result = opResult;
-        }
-        catch (Exception ex)
-        {
-            result = PermissionResult.Fail($"Operation may have succeeded but audit logging failed: {ex.Message}");
         }
         finally
         {
@@ -480,55 +526,71 @@
 
     private async Task ProcessBulk()
     {
-        if (csvFile is null) return;
+        // Two separate reasons for the shape of this opening, and they pull in opposite directions.
+        //
+        // The captures: csvFile, bulkIsAdd and bulkTicketNumber each have a live control behind them
+        // - the file picker, the two radios and the ticket box - and each was read back after the
+        // awaits. A file picked mid-run put the NEW file's name in the audit row and the admin email
+        // against the OLD file's results; a radio flipped mid-run sent the CSV through the opposite
+        // operation entirely.
+        //
+        // The ordering: the raise must stay BELOW the empty-file return. isLoading is a member of a
+        // page-wide predicate, so a raise above that guard is never lowered and would deaden every
+        // control on the page, permanently, rather than greying one button.
+        var file = csvFile;
+        if (file is null) return;
+
+        var isAdd = bulkIsAdd;
+        var ticket = bulkTicketNumber.Trim();
+        var ipAddress = clientIpAddress;
 
         isLoading = true;
         bulkResult = null;
         await Task.Yield();
 
-        if (!await ReauthorizeAsync())
-        {
-            isLoading = false;
-            return;
-        }
-
+        // The try opens above the re-authorization for the reason given on SubmitSingle: an await
+        // between the raise and the try has no finally behind it.
         try
         {
-            var ipAddress = clientIpAddress;
-            var ticket = bulkTicketNumber.Trim();
+            if (!await ReauthorizeAsync())
+                return;
 
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
                 result = PermissionResult.Fail($"Ticket validation failed: {ticketValidation.Message}");
-                isLoading = false;
                 return;
             }
 
-            await using var stream = csvFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            await using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
             // The re-authorised principal, so a servicer's CSV row is serviced exactly as their
             // single-target submit would be (pps-1).
             var bulkAuthState = await AuthStateProvider.GetAuthenticationStateAsync();
-            bulkResult = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, bulkIsAdd, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
+            // Held in a local and published to the field, never read back off it: the banner dismiss
+            // is exempt from the gate and can null bulkResult while this handler is suspended, and
+            // every read below would then throw into the catch and report a bulk run that succeeded
+            // as a failure.
+            var bulk = await MailboxService.ProcessMailboxPermissionsCsvAsync(stream, isAdd, Validator, currentUser, Audit, ipAddress, ticket, bulkAuthState.User);
+            bulkResult = bulk;
 
-            var action = bulkIsAdd ? "BulkAdd" : "BulkRemove";
+            var action = isAdd ? "BulkAdd" : "BulkRemove";
 
             try
             {
                 Audit.LogMailboxPermission(
-                    currentUser, ipAddress, action, "Bulk", csvFile.Name,
-                    "Multiple", bulkResult.FailedCount == 0, ticket,
-                    errorDetail: bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+                    currentUser, ipAddress, action, "Bulk", file.Name,
+                    "Multiple", bulk.FailedCount == 0, ticket,
+                    errorDetail: bulk.FailedCount > 0 ? $"{bulk.FailedCount} failures" : null);
             }
             catch (Exception ex)
             {
-                result = PermissionResult.Fail($"Bulk operations completed ({bulkResult.Summary}) but summary audit logging failed: {ex.Message}");
+                result = PermissionResult.Fail($"Bulk operations completed ({bulk.Summary}) but summary audit logging failed: {ex.Message}");
             }
 
             await Email.SendAdminNotificationAsync(
-                currentUser, ipAddress, action, "Bulk Operation", csvFile.Name,
-                $"{bulkResult.TotalRows} rows", bulkResult.FailedCount == 0, ticket,
-                bulkResult.FailedCount > 0 ? $"{bulkResult.FailedCount} failures" : null);
+                currentUser, ipAddress, action, "Bulk Operation", file.Name,
+                $"{bulk.TotalRows} rows", bulk.FailedCount == 0, ticket,
+                bulk.FailedCount > 0 ? $"{bulk.FailedCount} failures" : null);
         }
         catch (Exception ex)
         {
@@ -542,6 +604,10 @@
 
     private async Task ExecuteOnPrem()
     {
+        // No busy guard here, and there must never be one. ConfirmOnPrem owns the refusal for this
+        // pair and is the only caller; a second guard here is redundant today and becomes a silent
+        // no-op the moment ConfirmOnPrem raises the flag before calling. Registered as a
+        // ForbiddenGuardSite on this page's ClickGateRegistry entry.
         isLoading = true;
         result = null;
 
@@ -551,11 +617,18 @@
         var fullAccess = onPremFullAccess;
         var sendAs = onPremSendAs;
 
+        // tabIndex captured once rather than read at each use. It was read three more times below,
+        // all after awaits, and it chooses between Add and Remove: a tab click landing mid-write
+        // reversed the on-prem operation and desynced the audit rows from the action string
+        // computed here at entry. target is the other half of the same problem - Cancel nulls
+        // onPremTarget while this handler is suspended, and the catch below audits it.
+        var isAdd = tabIndex == 0;
+
         var perms = new List<string>();
         if (fullAccess) perms.Add("FullAccess");
         if (sendAs) perms.Add("SendAs");
         var permType = string.Join("+", perms);
-        var action = $"OnPrem_{(tabIndex == 0 ? "Add" : "Remove")}{permType}";
+        var action = $"OnPrem_{(isAdd ? "Add" : "Remove")}{permType}";
         await Task.Yield();
 
         try
@@ -587,11 +660,11 @@
 
             var onPremExtra = ProtectedPrincipalServicing.Extra(onPremValidation.ServicedNote);
 
-            var opResult = tabIndex == 0
+            var opResult = isAdd
                 ? await MailboxService.AddMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs)
                 : await MailboxService.RemoveMailboxPermissionsOnPremAsync(target, user, fullAccess, sendAs);
 
-            var actionVerb = tabIndex == 0 ? "Add" : "Remove";
+            var actionVerb = isAdd ? "Add" : "Remove";
             var succeeded = opResult.Detail?.Split(',', StringSplitOptions.TrimEntries) ?? Array.Empty<string>();
 
             if (fullAccess)
@@ -614,7 +687,7 @@
 
             if (opResult.Success || succeeded.Length > 0)
             {
-                var isGrant = tabIndex == 0;
+                var isGrant = isAdd;
                 var notifyPerm = string.Join("+", succeeded.Length > 0 ? succeeded : new[] { permType });
                 await Email.SendUserNotificationAsync(user, target, currentUser, notifyPerm, isGrant);
                 await Email.SendOwnerNotificationAsync(target, user, currentUser, notifyPerm, isGrant);
