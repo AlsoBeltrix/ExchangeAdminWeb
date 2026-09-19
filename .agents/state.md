@@ -293,10 +293,12 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
   **Known limits of the harness, all measured rather than argued, all recorded on their entries:**
   - **Over-gating is undetectable.** Nothing distinguishes a correct exemption from a control gated
     into a trap. `SelfServiceGroups` M11 proves it.
-  - **`EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt` matches the whole TAG**, so a
-    `title` naming the predicate satisfies it with the `disabled` attribute deleted. Measured on
-    page 9. It needs the same `AttributeValue` fix `AnnotatedControlsKeepTheirNonBusyClauses` got
-    in `439cb2b`. **This is the single most valuable follow-up.**
+  - **CLOSED in `ddb0f83`:** the button sweep matched the whole TAG, so a `title` naming the
+    predicate satisfied it with the `disabled` attribute deleted - measured on page 9. It now
+    reads the attribute value via `AttributeValue`. Two siblings shared the hole and were fixed
+    with it, one worse than the original: the non-button refusal check tested for the bare WORD
+    "disabled" anywhere in the tag, and **Migration's tab anchor carries a CSS class named
+    "disabled"**, so a class name was satisfying a gating assertion.
   - A **token-guarded lowering** cannot be enforced (`GroupManagement`); reverting it to the shape
     that sticks the flag true and deadens the page fails nothing.
   - `ConferenceRooms`' **background-callback hazard** is structurally unreachable - the snapshot

@@ -1,6 +1,6 @@
 # App-wide click gating: audit and remediation plan
 
-Status: **Approved, in progress.** Design is Revision 1; the original design below is superseded.
+Status: **Slice 0, slice 1, tier 1 and the shared harness are Implemented (2026-09-19). Tiers 2, 3 and 4 remain unapproved and not started; the manual acceptance checklist is outstanding and only the owner can run it.** Design is Revision 1 as corrected by Revision 2; the original design below is superseded.
 Queue item 9. Drafted 2026-09-18 against `3e19aef`.
 
 **Approved scope, owner 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and shared
@@ -635,3 +635,294 @@ Both are live defects today, neither is caused by this work, and neither is fixe
    `CancellationToken`, no timeout. An Exchange Online stall deadens the Blocked Senders page
    with no recovery but a reload, and this is the one confirmed live instance of the hazard the
    whole sweep is about.
+
+---
+
+# Revision 2 - tier 1 outcomes, 2026-09-19
+
+Tier 1 is complete. All nine approved pages are converted, in the Revision 1 order, each landing
+as its own commit with its own guard proof: DhcpAuthorization (`2bfb3fa`), NamedLocations
+(`e5555a2`), MailboxPermissions (`426f3a1`), CalendarPermissions (`588f950`), IntuneDevices
+(`0220426`), GroupManagement (`ea83650`), M365GroupManagement (`1a807a4`), ConferenceRooms
+(`76567e2`), SelfServiceGroups (`7920754`). Slice 0A is `f0658c0`, slice 0B `8c6596b`, slice 1
+`e915476` and `1daf247`, and the shared-component contract change `3c21270`. Tiers 2, 3 and 4
+were not touched.
+
+Revision 1 and the original audit above are left exactly as written, including where the
+conversions falsified them. The drift between prediction and outcome is part of what this
+document is now for, so this revision annotates and supersedes rather than edits. Per-slice
+detail - every guard proof, and every probe that did not bite - is in `.agents/token-log.md`, in
+the entries from "click-gating slice 0A" to "the button sweep's mirror hole";
+`.agents/state.md` carries the condensed outcome.
+
+## 1. Every per-page prediction of a count was low
+
+Not one page held fewer of anything than predicted, and no prediction was high. That held across
+three independent kinds of count, and across both the original audit and Revision 1.
+
+| measure | predicted | found | predicted at |
+| --- | --- | --- | --- |
+| IntuneDevices excluded staged fields | 7 | **12** | lines 520, 568 |
+| M365GroupManagement staged fields | 3 | **22** | lines 520, 571 |
+| ConferenceRooms staged fields | "two triples", so 6 | **40**, of which the triples are 6 | line 520 |
+| MailboxPermissions DOM-synced controls | 6 | **10** | line 562 |
+| CalendarPermissions DOM-synced controls | 6, as "structurally the twin" | **8** | lines 564-565 |
+| non-button controls, 11 pages | "roughly thirty-five" | **88 on the nine tier-1 pages alone** | line 410 |
+| GroupManagement clickable buttons | 13 | **14** | lines 155, 569 |
+| shared autocomplete instantiations | 9 sites, 4 pages, 1 component | **18 sites, 8 pages, 3 components** | lines 550-551 |
+| IntuneDevices file length | 1600 lines | 1628 | line 566 |
+
+The 88 is the registry's own count across the nine converted pages: 82 gated DOM-synced controls,
+2 recorded ungated with written reasons, 4 keyboard paths, and zero `@onclick` non-button targets.
+The two pages with no prediction at all came in at 15 (GroupManagement) and 22 (SelfServiceGroups)
+staged fields.
+
+**What this means for anyone sizing tiers 2-4 from the same audit.** The audit's *button* columns
+are trustworthy: the committed scanner reproduces them, and the only correction in nine pages was
+GroupManagement 13 -> 14, caused by a scanner defect since fixed (`fab01c5`). Every count of
+something the scanner could not see is a floor, low by a factor of roughly two to seven. Staged
+fields and DOM-synced controls have to be censused by hand, per page, before a tier-2-to-4
+estimate means anything. Revision 1's "roughly thirty-five" was the single largest correction it
+made to the tier-1 estimate, and it was still short by a factor of two and a half.
+
+**A second inconsistency, in the tier headings themselves, that the token log does not record.**
+The four tier lines do not count the same thing. Tier 1's "~102 buttons" (line 237) is the sum of
+the *gap* column, and so is tier 4's "~35" (line 249); but tier 2's "~45" (line 242) is the sum of
+the *buttons* column, whose gap is 42, and tier 3's "~36" (line 246) is near its buttons total of
+37, whose gap is 20. Tier 1's nine pages hold 115 buttons, not 102. Anyone comparing tier sizes
+from those four numbers is comparing two different measures, and tier 3 in particular reads as
+almost twice the work it is.
+
+## 2. Five defects in already-shipped, already-reviewed code
+
+These matter more than the gating work itself. Each was found while converting a page, none was
+predicted by the audit, and all five are fixed.
+
+1. **`Migration`** (`2eb8c15`) - the converted precedent page. Two `@onkeydown` paths, the search
+   box at 390 and the staged-ticket box at 821, reached `SearchUser()` and `ConfirmPendingAction()`
+   while the Search and Confirm buttons beside them were gated on `IsBusy`. One reaches a
+   destructive action and avoided double-execution only by accident. Seven bespoke tripwires and a
+   codex review had both missed it, because nothing in the repo could see a keyboard path.
+2. **`MailboxPermissions`** (`426f3a1`) - `tabIndex` was read after the awaits at the write itself,
+   at the Add-only self-grant check, in the audit action string, in the AutoMapping argument and in
+   the notification direction, so a tab click landing mid-write **revoked the permission the
+   operator asked to grant** and mislabelled the audit row and both emails on the way past.
+3. **`CalendarPermissions`** (`588f950`) - `ExecuteOnPrem` computed its audit action and recorded
+   access level from `tabIndex` at entry, then re-read `tabIndex` at the write three statements
+   later. A tab flip in that window left **the audit row and both emails saying Set while the code
+   performed a Remove**: not a stale value a reader would spot, but a self-consistent record of a
+   change that never happened, next to one that did and was never recorded.
+4. **`ConferenceRooms`** (`76567e2`) - `RemoveJob` took `job.Id` and then re-looked the row up in
+   the live, windowed `recentJobs` that a background callback replaces, so a job finishing
+   elsewhere could push the operator's row out between render and click. The lookup missed,
+   `DeleteJob` still succeeded by id, and a durable record was hard-deleted with an audit row
+   carrying no ticket and no old values. No gate could have closed it.
+5. **`SelfServiceGroups`** (`7920754`) - `LoadMembers`' catch logged `selected.Name` after the
+   await while the ungated `BackToGroups` nulls `selected`, so a Back click landing on a failed
+   member read raised a null dereference **inside a catch block**, which with no `ErrorBoundary`
+   tears the circuit down.
+
+Two more live defects were closed inside a conversion rather than counted separately:
+`GroupManagement.LoadMembers` had the same throw-from-inside-the-catch shape as 5, and
+`IntuneDevices.SearchAsync` read `searchTerm` twice below `await Task.Yield()` on a box that binds
+on `oninput`, so the page's only record that someone's devices were looked up could name a term
+Graph was never asked for.
+
+## 3. What the harness cannot catch
+
+All measured rather than argued, and each recorded on its own registry entry. They are here
+because a reader should not infer from "tier 1 complete, suite green" that the class is closed.
+
+- **Over-gating is undetectable.** Nothing distinguishes a control correctly left exempt from one
+  gated into a trap the operator cannot leave. SelfServiceGroups probe M11 put a gate back on
+  `BackToGroups` - the exact trap that page's whole design exists to avoid - and the suite stayed
+  green.
+- **A token-guarded lowering cannot be enforced.** Reverting GroupManagement's monotonic
+  `selectToken` to the shape that sticks the flag true and deadens the entire page fails nothing:
+  run twice against the ClickGate filter and once against the full suite, with on-disk proof the
+  mutation was live.
+- **ConferenceRooms' background-callback hazard is structurally unreachable.** `PostAwaitLiveReads`
+  is defined over a first await and `RemoveJob` has none - which is exactly why the defect existed.
+  Probe M6 reverted the handler fix and left the suite fully green.
+- **`SpinnerExpressions` cannot see a duplicated condition.** Both ConferenceRooms conditions are
+  written twice, and containment passes so long as one copy survives; probe M10 collapsed one and
+  it did not bite.
+- **`ScannerFalsePositives` is populated on every entry and read by no assertion at all.** It is
+  documentation, and the comment now says so.
+- **`ExemptControl.ConditionThatKeepsItTrue` is prose, and `BecauseOfControl` does not exist in the
+  record.** ConferenceRooms' "the Bulk Jobs tab is exempt only because Cancel lives behind it" is
+  therefore a sentence; partial enforcement was bought by registering Cancel exempt as well, so
+  removing it fails a different assertion.
+- **`ExemptControl.PrerequisiteBeforeExemptionHolds` cannot express a method-reference exemption.**
+  It reads the tied field out of the exemption's own snippet with a regex matching only an inline
+  `() => field = null`, so `BackToGroups` would fail it rather than be enforced by it.
+
+Two further limits are structural and have been true since slice 0B: there is no bUnit harness, so
+nothing renders and every assertion proves a shape and never a behaviour; and text containment
+proves an identifier appears, never that it is load-bearing.
+
+**One limit still listed in `.agents/state.md` has since been closed, and that entry is one commit
+stale.** The button sweep matched the whole tag, so a `title` naming the predicate satisfied
+`EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt` with the `disabled` attribute deleted.
+`ddb0f83` redirected that assertion and two siblings through `ClickGateSource.AttributeValue`, and
+made an unreadable gate a reported failure rather than a skip. It also found that Migration's tab
+anchor carries `class="... @(IsBusy ? "disabled" : "")"`, so a CSS class literally named "disabled"
+had been satisfying a gating assertion.
+
+## 4. Claims in the body above that the conversions falsified
+
+Annotated here rather than edited in place, on the principle Revision 1 applied to the original
+design. Line numbers are this file's numbering as of Revision 1, which is why the `Status` header
+above was kept to a single line: adding lines at the top would silently invalidate every line
+reference in Revision 1, `.agents/state.md` and `.agents/token-log.md`.
+
+- **Lines 106-107** - "IntuneDevices leaves `detailLoading` out of the predicate and 5 of its 9
+  buttons outside the gate" is history: `0220426` widened `ActionsDisabled` to name `detailLoading`
+  and gated every control, which closed a live defect (a search started while a wipe was queued
+  discarded that wipe's on-screen verdict). The RiskyUsers half of the same sentence still stands;
+  that page is tier 3 and untouched. **Lines 105, 156 and 566 name `ActionsDisabled`, and are the
+  reason the member kept that name rather than being renamed to `IsBusy`.**
+- **Line 520** - "IntuneDevices' seven" excluded fields is wrong against a hand census of twelve;
+  "M365GroupManagement's three staged fields" against twenty-two; "ConferenceRooms' two triples"
+  against forty, of which the triples are six.
+- **Lines 566-568** - "seven excluded staged fields" repeats the same error, and "1600 lines" is
+  1628.
+- **Lines 113-128, "Confirmed stuck-flag hazards"** - both are fixed, and neither by the remedy
+  this section implied. BlockedSenders `ConfirmUnblock` took a preflight catch converting the throw
+  into a `PermissionResult.Fail` plus an audited denial row (`e915476`), because the try/finally
+  would have moved the lowering after the confirming refresh; MessageTrace `ToggleDetail` took a
+  token-guarded finally (`1daf247`).
+- **Line 222** - slice 0B was seeded with **Migration only**, not "Migration, IntuneDevices and
+  RiskyUsers". Registering the two partial predicates would have shipped a red suite on day one.
+- **Lines 200-206, the six shared assertions** - slice 0B shipped fourteen, and the suite now has
+  31 assertions plus 3 page-independent fixtures, 266 instantiated cases. Assertion 3 was already
+  falsified by Revision 1 and is kept for a narrower reason than it was written for.
+- **Lines 148-180, the per-page detail table** - a pre-conversion snapshot; the nine tier-1 rows no
+  longer describe the pages. `GroupManagement.razor` reads 13 buttons and the true count is 14: an
+  apostrophe in a `title` opened a quote state mid-tag and hid the most destructive per-row control
+  on the page from every assertion in the suite (`fab01c5`, which fixed all three tag walkers).
+- **Line 237** - "~102 buttons" is the gap column and not the button count, which is 115; see the
+  tier-heading inconsistency in section 1.
+- **Lines 294-298, Versioning** - the stated conditional fired. `3c21270` was genuinely shared UI
+  infrastructure, so the base app went 2.21.0 -> 2.21.1 with no module bump, on the
+  `docs/ProtectedPrincipalInputValidation-Plan.md` precedent. Twelve module versions were bumped
+  across the sweep, one per converted or repaired page.
+- **Revision 1, line 410** - "roughly thirty-five" non-button controls across eleven pages, against
+  88 registered on nine.
+- **Revision 1, lines 422-426** - ConferenceRooms does have two scopes, but it takes **one
+  predicate, not a list**. The Bulk Jobs panel's three handlers are synchronous, await nothing and
+  raise no flag, so a second predicate could only have been an always-false decoration; scope B's
+  refusal is identity, not busyness, and reframing it that way is what found the `RemoveJob` defect
+  in section 2. SelfServiceGroups is the only page in the converted set with two predicates.
+- **Revision 1, lines 395-397** - the NamedLocations `CountryCodePicker` hazard was real and the
+  prescribed mechanism was right, but the cost was not. The component already declared
+  `[Parameter] public bool Disabled` and already applied it to all four interactive elements, and a
+  repo-wide grep found exactly one instantiation. The fix was one word and reached nothing outside
+  tier 1.
+- **Revision 1, lines 546-552** - the shared-component census was short. Three components carry the
+  ungated-suggestion-row defect, not one: `ADIdentityAutocomplete`, `RecipientAutocomplete` (8 sites
+  across 4 pages, and the one MailboxPermissions actually instantiates, not `ADIdentityAutocomplete`
+  as the ordering assumed) and `ADGroupAutocomplete`. 18 sites across 8 pages. `3c21270` closed all
+  three with **both** mechanisms - withholding the suggestion rows while `Disabled`, and a
+  first-statement refusal in `SelectResult` - because withholding alone loses a render round trip
+  and a handler guard alone leaves rows visibly clickable through the whole write. The fix is
+  invisible to `ClickGateTests`, which inspects the call site; no assertion added there could see
+  inside a component.
+- **Revision 1, lines 562-565** - MailboxPermissions has ten DOM-synced controls, not six, the
+  extras being its two ticket inputs and both `RecipientAutocomplete` instances. CalendarPermissions
+  has eight rather than its twin's ten, because one `<select>` over eleven access rights replaces
+  three checkboxes, and it **gates** `DownloadSampleCsv` where page 3 exempts it - the exemption was
+  not inheritable, because this page's handler reads a page field.
+- **Revision 1, lines 487-508, the interleaving question** - still unsettled, and still only
+  settleable on a dev deploy. Every page was built belt-and-braces as that section recommends. One
+  concrete residual is recorded on IntuneDevices: the browser's copy of a `disabled` attribute is
+  one round trip stale and `ExecuteActionAsync` is itself the click target, so there is no calling
+  method to guard without silently swallowing a legitimate click.
+
+## 5. The estimate against actuals
+
+Revision 1 estimated **20-29 agent sessions plus 2-3 owner passes** for the approved scope. The
+durable unit is the commit; sessions were not recorded per slice once implementation subagents were
+authorised, so this compares commits to that session estimate rather than pretending otherwise.
+
+| slice | Revision 1 estimate | actual |
+| --- | --- | --- |
+| 0A scanner + Pester | landed before Revision 1 | 1 commit (`f0658c0`) |
+| 0B shared reader, registry, assertions | 3-4 | 1 commit, 14 assertions not 11 (`8c6596b`) |
+| 1 prerequisites | 2 | 2 commits (`e915476`, `1daf247`) |
+| tier 1, 9 pages | 12-18 | 9 commits, one per page |
+| shared component contract | 1-2 | 1 commit, 3 components not 1 (`3c21270`) |
+| snapshot-at-entry obligations, 6 pages | 2-3 | absorbed into the page slices; 90 obligations registered across 9 |
+| harness slices | not costed | **7 commits** |
+| shipped-code defects and registry corrections | not costed | 2 commits (`2eb8c15`, `d7ced99`) |
+| **approved scope total** | **20-29 sessions + 2-3 owner passes** | **23 implementation commits, 0 owner passes run** |
+
+Two things the estimate had no row for.
+
+**The harness was not front-loaded, and could not have been.** Seven harness slices landed
+*between* page slices, and five of them closed a gap a page slice had **measured** with a probe
+that passed when it should have failed: page 1's M3c (the snapshot obligation, `c4fc09d`), page 2's
+M6 (DOM-synced controls, `017adb8`), page 3's M3a (the guard matcher, plus `ExactlyOneGuardOf` and
+the named-argument fix, `c394120`), page 6's invisible Remove button (the apostrophe-blind tag
+walkers, `fab01c5`) and page 9's M1 (the button sweep's mirror hole, `ddb0f83`). The remaining two
+closed gaps a harness slice had found in itself (`f89779f`, keyboard paths; `439cb2b`, the
+clause-echo sweep). None of the five was findable by design review: each was a hole that became
+visible only when a real page's mutation probe failed to bite. A tier-2-to-4 estimate should carry
+a harness line of roughly one slice per two pages and expect it to arrive as interruptions rather
+than as a phase.
+
+**The per-page cost was flat once 0B existed, but the gating was not where the work was.** Every
+page from the fourth onward cost exactly one registry entry, zero new test methods and +25
+instantiated cases; the full suite went 2510 -> 2791 and ClickGate 14 -> 266 cases. That is slice
+0B's economic claim holding for nine pages. What actually consumed the slices was 90
+snapshot-at-entry obligations and 116 excluded staged fields - the two counts section 1 says the
+audit cannot see.
+
+So the tier-1 actual does not transfer to tiers 2-4 as a per-page rate until each page's
+non-button and staged-field census exists. What does transfer is that the harness is built and
+self-enforcing: a tier-2-to-4 page costs one registry entry and no new test method, and the
+remaining variable is entirely how much hidden state each page carries.
+
+## 6. What remains
+
+**Not approved and not started: tiers 2, 3 and 4** - 19 pages, subject to the caveats in section 1
+about what those tier button counts measure. `AccountLockoutRemediation` stays skipped as a parked
+module.
+
+**Outstanding, and only the owner can run it: the manual acceptance checklist above.** Nothing in
+this repo reaches the rendered page, there is no bUnit harness, and all 266 assertions prove a
+shape rather than a behaviour. Two checklist items carry most of the weight. The third - a staged
+confirmation's Confirm button must still be enabled while the confirmation is staged - is what the
+116 registered excluded staged fields exist to protect, and four shapes on SelfServiceGroups alone
+would have compiled and looked plausible while breaking it. The fourth - force a failure
+mid-operation - is the only test of the no-`ErrorBoundary` behaviour the whole design reasons
+about.
+
+**Found and deliberately not fixed. Each needs an owner go; none is re-argued here.**
+
+| finding | what it needs |
+| --- | --- |
+| `IntuneDevices` typed device-name confirmation is markup-only; `ExecuteActionAsync` never re-reads `wipeConfirmName` | a server-side re-check; a concrete shape is in the page-5 token-log entry |
+| `M365GroupManagement` validates no ticket anywhere, so four markup clauses are the entire enforcement; same shape on `NamedLocations` delete and twice on `ConferenceRooms` | a ruling on whether markup-only ticket enforcement is acceptable, then a service-side check if not |
+| `ConferenceRooms.CancelJob` audits nothing while `RemoveJob` audits | an audit row; Constitution-shaped |
+| `SelfServiceGroups` cross-group result bleed | stamping the group onto the result fields, which changes what those fields are rather than how a control refuses a click |
+| `RiskyUsers.razor` carries IntuneDevices' old partial shape | one page slice; tier 3, unapproved, and the fix is now a known pattern |
+| `BlockedSenderService.UnblockSenderAsync` takes no `CancellationToken` and the file has no timeout | a service change plus tests; the one confirmed live instance of the page-deadening hazard this sweep is about |
+
+**Harness and tooling debt. No owner decision needed, and nothing depends on it today.**
+
+- `Get-ClickGateAudit.ps1` misreports MailboxPermissions and CalendarPermissions as fully ungated
+  with no predicate, because its detector requires an expression-bodied bool naming at least two
+  flags and those pages have one. No test consumes the scanner's output, and the pages must not be
+  changed to satisfy it.
+- The same script classifies gated versus ungated with `-notmatch '\bdisabled\b'` over the whole
+  tag text - the PowerShell-side survivor of the looseness `439cb2b` and `ddb0f83` closed on the C#
+  side.
+- `Migration` cannot take a `PostAwaitLiveReads` entry as written: its deliberate null-safe
+  save-and-restore across a refresh reads as a live read after a first await. Registering it needs
+  a per-entry allow-list or a narrower dereference-only rule, and the idiom may recur.
+- Three classes of obligation are correct in the pages and unregisterable: ConferenceRooms' five
+  old-value audit keys (the matcher is textual and the keys are field-name literals),
+  M365GroupManagement's two closure reads in methods containing no await, and its
+  `selectedGroup = details;` stale-continuation write, which is a write rather than a read and
+  needs GroupManagement's monotonic-token treatment.
