@@ -113,7 +113,7 @@ public class GroupBulkActionsWiringTests
 
         // The row checkbox disables on CanRemove; select-all iterates SelectableMembers, which
         // filters on the same CanRemove predicate - the single Remove button's enablement.
-        Assert.Contains("disabled=\"@(isLoading || !CanRemove(member))\"", page, StringComparison.Ordinal);
+        Assert.Contains("disabled=\"@(IsBusy || !CanRemove(member))\"", page, StringComparison.Ordinal);
         Assert.Contains("private List<GroupMemberInfo> SelectableMembers() => memberList?.Members.Where(CanRemove).ToList()", page, StringComparison.Ordinal);
         Assert.Contains("foreach (var m in SelectableMembers())", Body(page, "private void ToggleSelectAll(bool on)"), StringComparison.Ordinal);
         Assert.Contains("private static bool CanRemove(GroupMemberInfo m) => !string.IsNullOrEmpty(m.ObjectGuid) && !m.IsPrimaryMember;", page, StringComparison.Ordinal);
@@ -218,7 +218,7 @@ public class GroupBulkActionsWiringTests
     {
         var body = Body(AdminPage(), "private async Task ResolvePasteAsync()");
 
-        Assert.Contains("BulkIdentityList.Parse(pasteText)", body, StringComparison.Ordinal);
+        Assert.Contains("BulkIdentityList.Parse(paste)", body, StringComparison.Ordinal);
         Assert.Contains("await GroupService.ResolveBatchAsync(parsed.Kept)", body, StringComparison.Ordinal);
         // Duplicates and over-cap lines are shown with their reasons, never silently dropped.
         Assert.Contains("parsed.Duplicates.Select(", body, StringComparison.Ordinal);

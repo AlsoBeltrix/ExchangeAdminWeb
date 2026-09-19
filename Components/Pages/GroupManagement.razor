@@ -35,8 +35,8 @@
                 <input type="text" class="form-control" placeholder="Search groups by name or email..."
                        value="@searchTerm"
                        @oninput="(e) => searchTerm = e.Value?.ToString() ?? string.Empty"
-                       @onkeydown="HandleSearchKey" disabled="@isLoading" />
-                <button class="btn btn-primary" @onclick="Search" disabled="@(isLoading || string.IsNullOrWhiteSpace(searchTerm))">
+                       @onkeydown="HandleSearchKey" disabled="@IsBusy" />
+                <button class="btn btn-primary" @onclick="Search" disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchTerm))">
                     @if (isLoading && selectedGroup == null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                     Search
                 </button>
@@ -52,7 +52,7 @@
                     <strong>@selectedGroup.Name</strong>
                     <small class="text-muted ms-2">@selectedGroup.Email</small>
                 </div>
-                <button class="btn btn-outline-secondary btn-sm" @onclick="() => { selectedGroup = null; memberList = null; targetProtection = null; ClearBulkState(); }">Close</button>
+                <button class="btn btn-outline-secondary btn-sm" disabled="@IsBusy" @onclick="() => { selectedGroup = null; memberList = null; targetProtection = null; ClearBulkState(); }">Close</button>
             </div>
             <div class="card-body">
                 @if (!canManageOnPrem)
@@ -81,7 +81,7 @@
 
                 @if (memberList == null)
                 {
-                    <button class="btn btn-primary btn-sm" @onclick="LoadMembers" disabled="@isLoading">
+                    <button class="btn btn-primary btn-sm" @onclick="LoadMembers" disabled="@IsBusy">
                         @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                         Load Members
                     </button>
@@ -98,7 +98,7 @@
                     {
                         <div class="row g-2 mb-3">
                             <div class="col-auto">
-                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" @bind:event="oninput" disabled="@isLoading" style="width: 140px;" />
+                                <input type="text" class="form-control form-control-sm" placeholder="Ticket #" @bind="ticketNumber" @bind:event="oninput" disabled="@IsBusy" style="width: 140px;" />
                             </div>
                             <div class="col">
                                 <div class="input-group input-group-sm">
@@ -113,9 +113,9 @@
                                                                 ValueChanged="OnNewMemberChanged"
                                                                 OnResultSelected="OnNewMemberSelected"
                                                                 Placeholder="Search for a user or group"
-                                                                Disabled="@isLoading" />
+                                                                Disabled="@IsBusy" />
                                     </div>
-                                    <button class="btn btn-success" @onclick="AddMember" disabled="@(isLoading || string.IsNullOrWhiteSpace(newMember) || string.IsNullOrWhiteSpace(ticketNumber))">Add</button>
+                                    <button class="btn btn-success" @onclick="AddMember" disabled="@(IsBusy || string.IsNullOrWhiteSpace(newMember) || string.IsNullOrWhiteSpace(ticketNumber))">Add</button>
                                 </div>
                             </div>
                         </div>
@@ -125,21 +125,21 @@
                            one user or group are committable, and each is then written through the SAME
                            per-member handler as the single Add button (AddOneAsync). *@
                         <div class="mb-3">
-                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => showBulkAdd = !showBulkAdd" disabled="@isLoading">@(showBulkAdd ? "Hide bulk add" : "Bulk add...")</button>
+                            <button class="btn btn-outline-secondary btn-sm" @onclick="() => showBulkAdd = !showBulkAdd" disabled="@IsBusy">@(showBulkAdd ? "Hide bulk add" : "Bulk add...")</button>
                             @if (showBulkAdd)
                             {
                                 <div class="card mt-2">
                                     <div class="card-body">
                                         <p class="text-muted mb-2"><small>Paste usernames, email addresses, UPNs or group names - one per line, or comma-separated. <strong>Resolve</strong> checks every line against AD in one pass; only lines that resolve to exactly one user or group can be added, the rest stay listed with the reason. Up to @BulkIdentityList.MaxBatch per batch.</small></p>
                                         <textarea class="form-control form-control-sm mb-2" rows="5" @bind="pasteText" @bind:event="oninput"
-                                                  disabled="@(isLoading || isResolving)" placeholder="jdoe&#10;jane.doe@contoso.com&#10;Some Group"></textarea>
+                                                  disabled="@IsBusy" placeholder="jdoe&#10;jane.doe@contoso.com&#10;Some Group"></textarea>
                                         <div class="d-flex align-items-center gap-2">
-                                            <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(isLoading || isResolving || string.IsNullOrWhiteSpace(pasteText))">
+                                            <button class="btn btn-outline-primary btn-sm" @onclick="ResolvePasteAsync" disabled="@(IsBusy || string.IsNullOrWhiteSpace(pasteText))">
                                                 @if (isResolving) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                                 Resolve
                                             </button>
                                             <button class="btn btn-success btn-sm" @onclick="AddResolvedAsync"
-                                                    disabled="@(isLoading || isResolving || ResolvedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
+                                                    disabled="@(IsBusy || ResolvedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
                                                     title="@(string.IsNullOrWhiteSpace(ticketNumber) ? "Enter a ticket number first." : (ResolvedCount == 0 ? "Resolve the list first; only resolved lines can be added." : null))">
                                                 @if (isLoading && resolution != null) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                                 Add resolved (@ResolvedCount)
@@ -188,7 +188,7 @@
                            audit are per row; one refusal never hides another (Known Failure Class 2). *@
                         <div class="d-flex align-items-center gap-2 mb-2">
                             <button class="btn btn-outline-danger btn-sm" @onclick="() => showRemoveConfirm = true"
-                                    disabled="@(isLoading || SelectedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
+                                    disabled="@(IsBusy || SelectedCount == 0 || string.IsNullOrWhiteSpace(ticketNumber))"
                                     title="@(string.IsNullOrWhiteSpace(ticketNumber) ? "Enter a ticket number first." : (SelectedCount == 0 ? "Tick one or more members first." : null))">Remove selected (@SelectedCount)</button>
                             <small class="text-muted">Tick members below and remove them in one confirmed batch. Each member is checked and written on its own, so one refusal never hides another.</small>
                         </div>
@@ -199,7 +199,7 @@
                             <div class="alert alert-warning py-2">
                                 <div class="d-flex align-items-center flex-wrap gap-2 mb-1">
                                     <strong>Remove @SelectedCount member(s) from @selectedGroup.Name?</strong>
-                                    <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@isLoading">
+                                    <button class="btn btn-danger btn-sm" @onclick="RemoveSelectedAsync" disabled="@IsBusy">
                                         @if (isLoading) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                         Remove @SelectedCount member(s)
                                     </button>
@@ -244,7 +244,7 @@
                                            a primary-group or unresolved row can never be selected. *@
                                         <th style="width: 2rem;"><input type="checkbox" class="form-check-input" checked="@AllSelectableSelected"
                                                                         @onchange="e => ToggleSelectAll(e.Value is true)"
-                                                                        disabled="@(isLoading || SelectableMembers().Count == 0)"
+                                                                        disabled="@(IsBusy || SelectableMembers().Count == 0)"
                                                                         title="Select all removable members" /></th>
                                     }
                                     <th>Name</th><th>Email</th><th>Kind</th><th></th>
@@ -259,7 +259,7 @@
                                         {
                                             <td><input type="checkbox" class="form-check-input" checked="@selectedGuids.Contains(member.ObjectGuid)"
                                                        @onchange="e => ToggleSelected(member, e.Value is true)"
-                                                       disabled="@(isLoading || !CanRemove(member))"
+                                                       disabled="@(IsBusy || !CanRemove(member))"
                                                        title="@RemoveDisabledReason(member)" /></td>
                                         }
                                         <td>@member.DisplayName</td>
@@ -272,7 +272,7 @@
                                                    domain and is INERT - the service refuses it too; this removes the
                                                    affordance so the refusal is not the operator's first hint. *@
                                                 <button class="btn btn-outline-danger btn-sm" @onclick="() => RemoveMember(member)"
-                                                        disabled="@(isLoading || string.IsNullOrWhiteSpace(ticketNumber) || string.IsNullOrEmpty(member.ObjectGuid) || member.IsPrimaryMember)"
+                                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(ticketNumber) || string.IsNullOrEmpty(member.ObjectGuid) || member.IsPrimaryMember)"
                                                         title="@(member.IsPrimaryMember ? "This is the member's primary group; primary-group membership cannot be removed here." : (string.IsNullOrEmpty(member.ObjectGuid) ? "This member could not be resolved in its own domain, so it cannot be removed here." : null))">Remove</button>
                                             }
                                         </td>
@@ -304,7 +304,7 @@
                                     <td><span class="badge bg-light text-dark border">@g.DomainLabel</span></td>
                                     <td><small>@g.Email</small></td>
                                     <td><span class="badge bg-light text-dark border">@g.GroupType</span></td>
-                                    <td><button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(g)">Manage</button></td>
+                                    <td><button class="btn btn-outline-primary btn-sm" @onclick="() => SelectGroup(g)" disabled="@IsBusy">Manage</button></td>
                                 </tr>
                             }
                         </tbody>
@@ -320,6 +320,24 @@
     private string clientIpAddress = "Unknown";
     private bool authChecked;
     private bool isLoading;
+
+    // The flag SelectGroup did not have (docs/ClickGatingAudit-Plan.md Revision 1,
+    // falsification 7). It is raised and lowered in SelectGroup alone; the lowering is
+    // token-guarded and the reason is written at the raise, because the obvious placement is
+    // the one that deadens the page.
+    private bool isSelecting;
+    private int selectToken;
+
+    /// <summary>
+    /// The page-wide busy predicate every control on this page consults. One predicate is right
+    /// here and it was tested rather than assumed: this page has a single view. Search replaces
+    /// searchResults and nulls the selection; SelectGroup replaces the selection, the member
+    /// list, the protection answer and all bulk state; every write handler ends by replacing the
+    /// member list. There is no control on this page that is safe to leave live while another is
+    /// working.
+    /// </summary>
+    private bool IsBusy => isLoading || isResolving || isSelecting;
+
     private bool canManageOnPrem;
     private string searchTerm = "";
     private string newMember = "";
@@ -380,6 +398,11 @@
 
     private async Task Search()
     {
+        // The term the operator submitted, captured before the yield below. The box binds on
+        // oninput and the browser's copy of its disabled attribute is one round trip stale, so a
+        // keystroke landing in the gap would otherwise run a search the operator never asked for
+        // and leave the results table labelled with the text they can see in the box.
+        var term = searchTerm.Trim();
         isLoading = true;
         selectedGroup = null;
         memberList = null;
@@ -389,7 +412,7 @@
 
         try
         {
-            searchResults = await GroupService.SearchGroupsAsync(searchTerm.Trim());
+            searchResults = await GroupService.SearchGroupsAsync(term);
         }
         catch (Exception ex)
         {
@@ -400,6 +423,23 @@
 
     private async Task SelectGroup(GroupInfo group)
     {
+        // SelectGroup owned no in-flight flag at all before the click-gating conversion: it
+        // awaits twice and every control on the page stayed live for the whole of the protection
+        // check (docs/ClickGatingAudit-Plan.md Revision 1, falsification 7). isSelecting is that
+        // flag, and the lowering below is a token-guarded finally rather than the
+        // ReferenceEquals(selectedGroup, group) style the rest of this method is written in.
+        //
+        // That distinction is the trap, and it is load-bearing: a lowering conditional on this
+        // group still being the selection never runs once the operator has switched groups, and
+        // isSelecting is a member of a page-wide predicate, so the flag would stick true and
+        // deaden EVERY control on this page permanently - the exact failure the sweep exists to
+        // prevent, introduced by the sweep itself. The token is monotonic, so the newest
+        // invocation always owns the lowering and always reaches its finally, while a superseded
+        // one lowers nothing and so cannot open the gate under the selection that replaced it.
+        // Same shape as MessageTrace.ToggleDetail; do not "simplify" it to a bare clear either.
+        var token = ++selectToken;
+        isSelecting = true;
+
         selectedGroup = group;
         memberList = null;
         opResult = null;
@@ -426,10 +466,27 @@
             if (ReferenceEquals(selectedGroup, group))
                 targetProtection = new TargetProtectionCheck(true, ex.Message, null);
         }
+        finally
+        {
+            // Never ReferenceEquals(selectedGroup, group) here - see the note at the raise.
+            if (token == selectToken)
+                isSelecting = false;
+        }
     }
 
     private async Task LoadMembers()
     {
+        // gmn-7: snapshot the group BEFORE the first await, like every write handler below. This
+        // one used to read selectedGroup live at all three sites - twice for the load and once in
+        // the catch - and dereference it with "!". The Close button, Search and a second Manage
+        // click all null or replace it while this handler is suspended, so the live read threw a
+        // NullReferenceException into the catch, whose own selectedGroup! then threw again and
+        // escaped the handler; with no ErrorBoundary anywhere in this app that tears the circuit
+        // down and the operator loses the page rather than seeing an error.
+        var group = selectedGroup;
+        if (group is null)
+            return;
+
         isLoading = true;
         // A reload invalidates every GUID the selection held (rows may be gone).
         selectedGuids.Clear();
@@ -438,11 +495,11 @@
         try
         {
             var authState = await AuthStateProvider.GetAuthenticationStateAsync();
-            memberList = await GroupService.GetMembersAsync(selectedGroup!.Identity, authState.User, selectedGroup.SamAccountName);
+            memberList = await GroupService.GetMembersAsync(group.Identity, authState.User, group.SamAccountName);
         }
         catch (Exception ex)
         {
-            memberList = new GroupMemberList { GroupName = selectedGroup!.Name, Error = ex.Message };
+            memberList = new GroupMemberList { GroupName = group.Name, Error = ex.Message };
         }
         finally { isLoading = false; }
     }
@@ -472,6 +529,11 @@
         var group = selectedGroup;
         var memberLabel = newMember.Trim();
         var selection = newMemberSelection;
+        // The ticket is on the same footing and used to be read live inside the try, below the
+        // yield: the box binds on oninput, so a keystroke landing before the disabled attribute
+        // reached the browser desynced the ticket validated against ServiceNow from the ticket
+        // written into the audit row and the administrator email.
+        var ticket = ticketNumber.Trim();
         if (group is null || string.IsNullOrWhiteSpace(memberLabel))
             return;
 
@@ -480,7 +542,6 @@
         await Task.Yield();
         try
         {
-            var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
@@ -579,6 +640,9 @@
         // gmn-7: snapshot the group BEFORE the first await - group navigation stays live while
         // awaits run, and the removal must execute against the group whose list showed the row.
         var group = selectedGroup;
+        // As AddMember: the ticket validated must be the ticket recorded, so it is captured here
+        // rather than read live inside the try below the yield.
+        var ticket = ticketNumber.Trim();
         if (group is null)
             return;
 
@@ -587,7 +651,6 @@
         await Task.Yield();
         try
         {
-            var ticket = ticketNumber.Trim();
             var ticketValidation = await ServiceNow.ValidateTicketAsync(ticket);
             if (!ticketValidation.IsValid)
             {
@@ -738,6 +801,11 @@
         // gmn-7: snapshot the group AND the rows before the first await.
         var group = selectedGroup;
         var rows = SelectedMembers();
+        // And the ticket, which is validated once for the batch and then recorded against every
+        // row: read live below the yield, a keystroke in the stale-attribute window put one
+        // ticket through ServiceNow and a different one into every audit row and the summary
+        // email for the whole batch.
+        var ticket = ticketNumber.Trim();
         showRemoveConfirm = false;
         if (group is null || rows.Count == 0)
             return;
@@ -748,7 +816,6 @@
         await Task.Yield();
 
         const string action = "GroupManagement_BulkRemoveMembers";
-        var ticket = ticketNumber.Trim();
         var notAttempted = rows.Select(r => $"{r.DisplayName}: Not attempted").ToList();
         try
         {
@@ -815,13 +882,18 @@
     /// </summary>
     private async Task ResolvePasteAsync()
     {
+        // The pasted lines the operator submitted, captured before the yield. The textarea binds
+        // on oninput, so a keystroke landing in the gap would otherwise build the preview table -
+        // and therefore the batch AddResolvedAsync writes to AD - out of lines that were never
+        // submitted, under a header saying how many of them resolved.
+        var paste = pasteText;
         isResolving = true;
         resolution = null;
         opResult = null;
         await Task.Yield();
         try
         {
-            var parsed = BulkIdentityList.Parse(pasteText);
+            var parsed = BulkIdentityList.Parse(paste);
             var rows = new List<BulkIdentityList.Resolution>();
             rows.AddRange(await GroupService.ResolveBatchAsync(parsed.Kept));
             rows.AddRange(parsed.Duplicates.Select(d => new BulkIdentityList.Resolution(d.Line, BulkIdentityList.Status.Duplicate, null, $"Duplicate of line {d.DuplicateOf}.")));
@@ -850,6 +922,9 @@
         // gmn-7: snapshot the group AND the rows before the first await.
         var group = selectedGroup;
         var rows = resolution?.Where(r => r.Status == BulkIdentityList.Status.Resolved && r.Match != null).ToList() ?? new();
+        // As RemoveSelectedAsync: one ticket for the batch, captured at entry so the ticket
+        // validated is the ticket every row's audit record and the summary email carry.
+        var ticket = ticketNumber.Trim();
         if (group is null || rows.Count == 0)
             return;
 
@@ -859,7 +934,6 @@
         await Task.Yield();
 
         const string action = "GroupManagement_BulkAddMembers";
-        var ticket = ticketNumber.Trim();
         var notAttempted = rows.Select(r => $"{r.Line.Text}: Not attempted").ToList();
         try
         {

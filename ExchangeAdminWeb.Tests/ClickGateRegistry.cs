@@ -35,6 +35,7 @@ public static class ClickGateRegistry
         MailboxPermissions,
         CalendarPermissions,
         IntuneDevices,
+        GroupManagement,
     };
 
     /// <summary>
@@ -47,10 +48,9 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 5 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
-            // MailboxPermissions.razor, CalendarPermissions.razor and IntuneDevices.razor - are
-            // converted and live in Pages above.
-            ["GroupManagement.razor"] = "tier 1, page 6 of 9; needs a flag and a finally created in SelectGroup",
+            // Pages 1 to 6 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor and
+            // GroupManagement.razor - are converted and live in Pages above.
             ["M365GroupManagement.razor"] = "tier 1, page 7 of 9",
             ["ConferenceRooms.razor"] = "tier 1, page 8 of 9",
             ["SelfServiceGroups.razor"] = "tier 1, page 9 of 9; needs view-scoped predicates",
@@ -2078,6 +2078,539 @@ public static class ClickGateRegistry
                 + "outcome alert can render - while the audit row and the administrator email still "
                 + "say the wipe was queued",
                 GatedTwinButtonLine: 74),
+        ],
+
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// Group Management: tier 1, page 6 of 9, converted 2026-09-18 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>LoadMembers was tearing the circuit down, and that is the sharpest thing found on this
+    /// page.</b> It read selectedGroup live at all three sites below its await - twice for the load
+    /// and once in the catch - and dereferenced it with "!". Three controls null or replace that
+    /// field while the handler is suspended: the Close button at 55 sets it to null outright, Search
+    /// nulls it before its own await, and a second Manage click at 307 replaces it. So the live read
+    /// threw a NullReferenceException INTO the catch, and the catch's own selectedGroup!.Name threw
+    /// again and escaped the handler. With no ErrorBoundary anywhere in this app that does not show
+    /// an error - it tears the circuit down and the operator loses the page. The fix is the gmn-7
+    /// snapshot every write handler on this page already used: capture the group at entry, return
+    /// early when it is null, and read the local everywhere below.
+    /// </para>
+    /// <para>
+    /// <b>SelectGroup's new flag is lowered by a monotonic token, and NOT by the
+    /// ReferenceEquals(selectedGroup, group) test the rest of that method is written in.</b> That
+    /// looks like an inconsistency and is the opposite: a lowering conditional on this group still
+    /// being the selection never runs once the operator has switched groups, and isSelecting is a
+    /// member of a page-wide predicate, so the flag would stick true and deaden EVERY control on
+    /// this page permanently - the exact failure the sweep exists to prevent, introduced by the
+    /// sweep itself. The token is monotonic, so the newest invocation always owns the lowering and
+    /// always reaches its finally, while a superseded one lowers nothing and therefore cannot open
+    /// the gate under the selection that replaced it. Same shape as MessageTrace.ToggleDetail.
+    /// </para>
+    /// <para>
+    /// <b>The four surviving ReferenceEquals(selectedGroup, group) checks are NOT registered under
+    /// PostAwaitLiveReads, on purpose.</b> AddMember, RemoveMember, RemoveSelectedAsync and
+    /// AddResolvedAsync each re-read selectedGroup live after their awaits to decide whether to
+    /// refresh the member list. Those live reads are the gmn-7 supersession contract - the question
+    /// they ask is precisely "is the operator still looking at the group we wrote to?", and a
+    /// snapshot cannot answer it, because the snapshot is the thing being compared against. Register
+    /// selectedGroup for those handlers and the assertion would demand the one change that breaks
+    /// them: a refresh that overwrites the new group's member list with the old group's.
+    /// </para>
+    /// <para>
+    /// <b>Deviation from Revision 1, recorded rather than quietly taken.</b> Revision 1 predicted
+    /// lines 179 and 219 as AnnotatedControls carrying RendersOnlyWhen prose. They are not
+    /// annotations: both are banner dismisses - "() =&gt; opResult = null" and
+    /// "() =&gt; bulkOutcome = null" - with no disabled attribute at all, which makes them
+    /// exemptions, and the scanner agrees (Ungated 179 219). They are registered under
+    /// ExemptControls with the reachability the prediction wanted written into each Reason, so
+    /// nothing is lost by the move.
+    /// </para>
+    /// <para>
+    /// <b>The per-row Remove button at 274 is INVISIBLE to this whole assertion suite. That is a
+    /// harness defect found by this slice, not a gating gap, and it is recorded rather than
+    /// fixed.</b> The file has 14 clickable buttons. Get-ClickGateAudit.ps1 reports 13 and
+    /// ClickGateSource.ClickableButtons() also returns 13 - but not the same 13, which is what makes
+    /// the disagreement worth writing down. Both tag walkers are quote-aware and both treat an
+    /// apostrophe as an opening single quote, so the title attribute at 276 - "This is the member's
+    /// primary group; ..." - opens a quote state in the middle of the button that starts at 274. In
+    /// the PowerShell scanner that state closes at the next apostrophe in the RAW text, "the
+    /// forest's domains" in the comment at 345, so the 274 tag runs to 348 and swallows the Manage
+    /// button at 307 whole: the scanner misses 307. ClickGateSource blanks comments before scanning,
+    /// so that apostrophe is gone and the state closes instead at 740, after which no unquoted
+    /// "&gt;" is ever reached - and ClickGateSource.Tags adds a tag only inside the branch that
+    /// finds one, so the 274 tag is dropped outright. ClickGateSource therefore misses 274 and finds
+    /// 307. The hand census of 14 is the correct number; neither walker has it.
+    /// </para>
+    /// <para>
+    /// The fix belongs in ClickGateSource.Tags, which this slice may not touch, so the consequence is
+    /// written down here instead. Every button assertion in this suite silently skips the per-row
+    /// Remove - the most destructive control on the page - and an AnnotatedControl entry for it fails
+    /// outright with "no clickable button at annotated line 274", which is how this was found. Its
+    /// three non-busy clauses are therefore recorded here rather than asserted below:
+    /// string.IsNullOrWhiteSpace(ticketNumber), string.IsNullOrEmpty(member.ObjectGuid) and
+    /// member.IsPrimaryMember. The last two are lst-1 and the primary-group rule; they are the same
+    /// predicate as CanRemove at 737, and the select-all and per-row checkboxes registered under
+    /// DomSyncedControls both depend on that predicate agreeing with this button - so a rewrite that
+    /// dropped them here would leave a row's checkbox and its Remove button disagreeing about which
+    /// members can be acted on, with nothing in the suite to catch it. Two candidate fixes, both
+    /// outside this slice: add the tag when the walk ends without finding an unquoted "&gt;", or
+    /// treat a quote character as an attribute delimiter only where it directly follows "=".
+    /// </para>
+    /// <para>
+    /// Note for whoever next reads Get-ClickGateAudit.ps1 output. Re-run against this page AFTER the
+    /// conversion it reports 13 buttons (see above), Ungated 2 (179, 219), GateNoFlag 0, GatePart 1
+    /// (206), Flags 3, Predicate IsBusy, OtherClick 0 and StuckFlags 4. The three control lines it
+    /// names are exactly the three registered exemptions below, and the four stuck names are exactly
+    /// the four registered false positives. Unlike pages 3 and 4 the predicate detector DOES see
+    /// this page, because IsBusy is an expression-bodied bool naming three flags rather than one.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry GroupManagement => new()
+    {
+        Page = "GroupManagement.razor",
+        ExpectedLineCount = 985,
+
+        // One page-wide predicate, tested against this file rather than assumed. This page has a
+        // single view: Search replaces searchResults and nulls the selection, SelectGroup replaces
+        // the selection, the member list, the protection answer and all bulk state, and every write
+        // handler ends by replacing the member list. There is no control here that is safe to leave
+        // live while another is working. isSelecting is new in this slice - SelectGroup owned no
+        // in-flight flag at all and awaits twice - and its lowering is token-guarded; see this
+        // entry's remarks for why the obvious placement is the one that deadens the page.
+        Predicates =
+        [
+            new PredicateScope("IsBusy", ["isLoading", "isResolving", "isSelecting"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        // Four, and confirmed by running Get-ClickGateAudit.ps1 AFTER the conversion rather than
+        // reasoning about it. All four are nullable fields nulled and re-assigned inside the same
+        // awaiting method with no finally, which is the scanner's in-flight shape; none of them is
+        // an operation.
+        ScannerFalsePositives =
+        [
+            new ScannerFalsePositive("bulkOutcome",
+                "the per-row verdict table for a batch that has already finished. RemoveSelectedAsync "
+                + "and AddResolvedAsync both null it at entry and assign the outcome list after their "
+                + "awaits, which is the reported shape, but it means 'here is what happened', not "
+                + "'something is happening'"),
+
+            new ScannerFalsePositive("opResult",
+                "the single-operation result banner, on the same footing as bulkOutcome and reported "
+                + "for the same reason on pages 1 and 2. Four handlers null it at entry and assign a "
+                + "PermissionResult later; it outlives the operation that wrote it and is dismissed "
+                + "by the operator"),
+
+            new ScannerFalsePositive("resolution",
+                "the resolved preview table for a batch not yet written. ResolvePasteAsync nulls it "
+                + "at entry and assigns the rows after the batched AD lookup. The flag that actually "
+                + "tracks that lookup is isResolving, which IS in the predicate"),
+
+            new ScannerFalsePositive("targetProtection",
+                "the query-time protection answer, and the one that matters. SelectGroup nulls it at "
+                + "entry and sets it after the await, so it looks exactly like an in-flight flag - "
+                + "but it is also null before any group is selected and stays null forever if none "
+                + "ever is, so a predicate naming it would deaden the page at rest. That is why this "
+                + "conversion had to CREATE isSelecting rather than promote the field the scanner "
+                + "pointed at"),
+        ],
+
+        // Fifteen, by hand census of this file. Every one of them sits on a control that renders
+        // only while the operator is deciding or reading, so folding any into the predicate disables
+        // the control at the only moment it exists.
+        ExcludedFields =
+        [
+            new ExcludedField("selectedGroup", "the whole manage card at 47-288",
+                "the group the operator is looking at, not an operation. The card renders only while "
+                + "it is non-null, so folding it in would disable every control inside the card at "
+                + "the only moment any of them is shown - Load Members, Add, Remove and the entire "
+                + "bulk apparatus. SelectGroup also assigns it before its first await, so the "
+                + "predicate would latch the instant a group was picked and never clear"),
+
+            new ExcludedField("targetProtection", "the protection panel at 65-74 and the card body",
+                "the query-time protection answer. Null means 'not answered yet', which is also its "
+                + "value before any group is selected and forever after if none is; see "
+                + "ScannerFalsePositives, where this is the field the scanner mistakes for a flag"),
+
+            new ExcludedField("memberList", "the Load Members button at 84 and the table at 237-283",
+                "the loaded membership. The button renders only while it is null and the table only "
+                + "while it is not, so a predicate naming it would either disable the button that "
+                + "loads the list or every control that acts on the rows it loaded"),
+
+            new ExcludedField("opResult", "the result banner at 175-181",
+                "the previous operation's verdict, held on screen until the next handler nulls it or "
+                + "the operator dismisses it at 179. Fold it in and the page stays dead for as long "
+                + "as the banner is up - which, since nothing auto-dismisses it, is indefinitely"),
+
+            new ExcludedField("bulkOutcome", "the per-row outcome table at 214-235",
+                "the finished batch's per-row verdicts, on the same footing as opResult: a report of "
+                + "work already done, held until dismissed at 219"),
+
+            new ExcludedField("showRemoveConfirm", "the confirmation block at 195-211",
+                "means 'a bulk removal is staged and waiting for the operator', not 'the page is "
+                + "working'. The block renders only while it is true, so folding it in would disable "
+                + "Remove at 202 at the only moment it is ever shown and no batch removal could be "
+                + "confirmed again - the CalendarPermissions onPremConfirmPending regression"),
+
+            new ExcludedField("selectedGuids", "the checkboxes at 245 and 260, Remove selected at 190",
+                "which rows are ticked. Ticking a row would disable the checkboxes ticking is done "
+                + "with and the button that ticking exists to enable"),
+
+            new ExcludedField("showBulkAdd", "the panel toggle at 128 and the panel at 129-171",
+                "whether the bulk add panel is open. A page-level bool with no operation behind it - "
+                + "the IntuneDevices showActionHelp case - so a predicate naming it would deaden "
+                + "every control on the page for as long as the operator left the panel open, and "
+                + "the panel is what they open in order to act"),
+
+            new ExcludedField("pasteText", "the textarea at 134 and Resolve at 137",
+                "the pasted identity list. A form value the operator is mid-way through typing "
+                + "exactly when the predicate would be consulted: fold it in and pasting the list "
+                + "would disable the textarea it went into and the Resolve button that reads it"),
+
+            new ExcludedField("resolution", "the preview table at 152-168 and Add resolved at 141",
+                "the resolved preview for a batch not yet written. Resolving is what enables Add "
+                + "resolved, through ResolvedCount, so a predicate naming it would disable that "
+                + "button at the only moment it can be used"),
+
+            new ExcludedField("ticketNumber", "the ticket input at 101; read by 118, 141, 190 and 274",
+                "the staged ticket. Four buttons read it as an emptiness precondition, registered "
+                + "under AnnotatedControls; that is a different job from a busy gate. Fold it in and "
+                + "typing the ticket that unlocks those four buttons would disable all four"),
+
+            new ExcludedField("newMember", "the ADIdentityAutocomplete at 111 and Add at 118",
+                "the member being typed or picked. Same shape as ticketNumber: it is the precondition "
+                + "Add reads, so folding it in disables Add the instant a member is chosen, and "
+                + "disables the picker the operator is still typing into"),
+
+            new ExcludedField("newMemberSelection", "the ADIdentityAutocomplete at 111",
+                "the whole picker result held beside the visible text (gmn-3), because only the DN "
+                + "distinguishes same-named groups across the forest's domains. Staged identity, not "
+                + "an operation - and it is written by the picker's own callback, so a predicate "
+                + "naming it would disable the control that had just been used"),
+
+            new ExcludedField("searchTerm", "the search box at 35 and Search at 39",
+                "the search text. Search reads it as an emptiness precondition (AnnotatedControls "
+                + "39); folding it in would disable the box being typed into and, with it, the Enter "
+                + "path registered under KeyboardPaths"),
+
+            new ExcludedField("searchResults", "the results card at 290-315 and Manage at 307",
+                "the groups found. The card renders only while the list is non-empty, so a predicate "
+                + "naming it would disable every Manage button at the only moment any of them is on "
+                + "screen, and no group could be selected after a search"),
+        ],
+
+        // Three, exactly the three the scanner names (Ungated 179 219, GatePart 206). Two dismisses
+        // and one Cancel; see this entry's remarks for why the two dismisses are here rather than
+        // under AnnotatedControls, where Revision 1 predicted them.
+        ExemptControls =
+        [
+            new ExemptControl(179, "@onclick=\"() => opResult = null\"",
+                "dismisses the single-operation result banner. Gating it on IsBusy would trap the "
+                + "previous operation's message on screen for the whole of the next one, the same "
+                + "reason Migration's dismiss at 442, DhcpAuthorization's at 40, NamedLocations' at "
+                + "45, MailboxPermissions' at 179 and CalendarPermissions' at 178 are exempt. "
+                + "Reachability, which is what Revision 1 wanted recorded when it predicted this as "
+                + "an annotation: it renders four conditions deep - inside the manage card "
+                + "(selectedGroup != null), inside the answered-and-allowed branch of "
+                + "targetProtection, inside memberList != null with no Error, and then only while "
+                + "opResult != null",
+                ConditionThatKeepsItTrue:
+                "no handler may READ opResult back. Today none does: every handler that touches it "
+                + "only assigns, and each holds its own verdict in a local outcome or summary. That "
+                + "is why this exemption carries no PrerequisiteBeforeExemptionHolds and no "
+                + "PostAwaitLiveReads entry names opResult - there is no live read to close. The "
+                + "moment a handler reads it after an await this becomes the DhcpAuthorization 40 "
+                + "defect: a write that SUCCEEDED audited and reported as failed"),
+
+            new ExemptControl(219, "@onclick=\"() => bulkOutcome = null\"",
+                "dismisses the batch outcome table, on the same footing as the banner above. The "
+                + "table can still be on screen during an unrelated single-member write, because "
+                + "neither AddMember nor RemoveMember clears bulkOutcome. Reachability, again as the "
+                + "prediction wanted it: the same four-deep chain as 179, and then only while "
+                + "bulkOutcome != null",
+                ConditionThatKeepsItTrue:
+                "RemoveSelectedAsync and AddResolvedAsync must keep building their outcome list in a "
+                + "local and only assigning it to bulkOutcome. Both do: outcomes is the local, "
+                + "BulkOutcomeSummary.Of(outcomes) reads the local, and the audit row, the summary "
+                + "email and the banner text are all computed from the summary. Nothing reads the "
+                + "field back, so this control cannot null it out from under a dereference"),
+
+            new ExemptControl(206, "@onclick=\"() => showRemoveConfirm = false\"",
+                "backs out of a staged bulk removal, and the operator must always be able to do "
+                + "that. Remove beside it at 202 is gated on IsBusy, so nothing can be executed from "
+                + "this state while the page is busy; cancelling only clears one bool and makes no "
+                + "call. Reachability: inside the manage card, inside canManageOnPrem, and then only "
+                + "while showRemoveConfirm && SelectedCount > 0",
+                KeepsItsOwnGuard: "disabled=\"@isLoading\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads showRemoveConfirm after an await. It is kept narrow rather than "
+                + "widened to IsBusy because a cancel must not be refused during a protection check "
+                + "or a paste resolution, and kept rather than deleted because - unlike the "
+                + "IntuneDevices 407 twin, whose bar cannot render while its flag is set - this "
+                + "block really can be on screen while the page is busy: neither AddMember nor "
+                + "RemoveMember clears showRemoveConfirm, so a single-member write started with the "
+                + "confirmation open leaves it open and isLoading true at the same time"),
+        ],
+
+        // Verified by exhaustive census rather than inherited: Get-ClickGateAudit.ps1 reports
+        // OtherClick 0, and the hand census of what it cannot see finds no anchor, no div/span/td
+        // handler, no @onsubmit and no InputFile. The two @onchange checkboxes and the one @onkeydown
+        // input it does find are registered under DomSyncedControls and KeyboardPaths instead, on the
+        // precedent of the five pages before it: this list is keyed to what ClickGateSource can
+        // locate, which is @onclick only, so an input registered here would fail the assertion rather
+        // than protect anything.
+        NonButtonTargets = [],
+
+        // Six, all naming the page predicate. The two checkboxes keep a non-busy clause OR-ed with
+        // it: select-all is meaningless with nothing selectable, and a per-row box must stay refused
+        // for a primary-group or unresolved member whatever the page is doing.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(35, "placeholder=\"Search groups by name or email...\"", "input",
+                "disabled=\"@IsBusy\""),
+            new DomSyncedControl(101, "placeholder=\"Ticket #\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(111, "ObjectKind=\"Any\"", "ADIdentityAutocomplete",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(134, "@bind=\"pasteText\"", "textarea", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(245, "checked=\"@AllSelectableSelected\"", "input",
+                "disabled=\"@(IsBusy || SelectableMembers().Count == 0)\""),
+            new DomSyncedControl(260, "checked=\"@selectedGuids.Contains(member.ObjectGuid)\"", "input",
+                "disabled=\"@(IsBusy || !CanRemove(member))\""),
+        ],
+
+        UngatedDomSyncedControls = [],
+
+        // Four callees, every one of them reached from a handler that has already raised a flag in
+        // the predicate. Two of them are the shared per-member paths the bulk loops and the single
+        // buttons both go through, which is what makes a guard there so expensive: it would fire once
+        // per row.
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("AddOneAsync", ["AddMember", "AddResolvedAsync"],
+                "The ONE per-member add path - authorization re-check, protection-gated write, audit "
+                + "and admin email - shared byte-for-byte by the single Add button and the bulk add "
+                + "loop, and both callers raise isLoading before reaching it. A busy guard here makes "
+                + "every add a silent no-op that still audits, still emails administrators and still "
+                + "tells the operator the member was added. In the bulk loop it would do that once "
+                + "per row, so a whole pasted batch reports Done for members that were never written."),
+
+            new ForbiddenGuardSite("RemoveOneAsync", ["RemoveMember", "RemoveSelectedAsync"],
+                "The ONE per-member remove path, on the same footing as AddOneAsync and reached from "
+                + "both callers after isLoading is raised. A guard here leaves members in a group the "
+                + "audit record says they were removed from - and in the batch it does so silently "
+                + "for every ticked row at once, which is precisely the per-item aggregation this "
+                + "page was built to make honest."),
+
+            new ForbiddenGuardSite("AuditBatch", ["RemoveSelectedAsync", "AddResolvedAsync"],
+                "The only writer of the batch summary audit record, called from inside both batch "
+                + "handlers below their raise - on the ticket-refusal path, the authorization-refusal "
+                + "path and the completed path. A guard here drops the Constitution-required record "
+                + "for exactly the runs that matter, and drops it without even the log line the catch "
+                + "would have written, because the guard returns before the try."),
+
+            new ForbiddenGuardSite("ClearBulkState", ["Search", "SelectGroup"],
+                "Clears the ticked rows, the pending confirmation and both outcome tables when the "
+                + "view changes. Search calls it after raising isLoading and SelectGroup after "
+                + "raising isSelecting, so a guard there leaves a previous group's ticked GUIDs, its "
+                + "staged confirmation and its outcome table on screen under a different group. The "
+                + "ticked GUIDs are what Remove selected acts on, so the next confirmed batch would "
+                + "attempt removals against the group the operator has just navigated away from."),
+        ],
+
+        // Empty for the same structural reason as pages 1, 2 and 5: no handler on this page is called
+        // by another handler that could carry the refusal instead. Every click target here is its own
+        // entry point, and SelectGroup, Search, LoadMembers and the four write handlers each raise
+        // their flag as their own first work, so a guard inside one would be the re-entrancy shape
+        // the 2026-09-17 ruling rejects.
+        ExactlyOneGuard = [],
+
+        // Five gated buttons whose disabled expression keeps a non-busy clause that must survive a
+        // mechanical rewrite. None of the five is equivalent to the predicate: each is a precondition
+        // the operator has to satisfy before the action is meaningful, and three of them are the only
+        // thing requiring a ticket number before a write.
+        //
+        // SIX controls need this and only five can have it. The per-row Remove at 274 carries three
+        // such clauses and cannot be registered: ClickGateSource cannot see that tag at all, so the
+        // entry fails with "no clickable button at annotated line 274" rather than protecting
+        // anything. Cause, consequence and the two candidate fixes are in this entry's remarks, and
+        // the three clauses are written out there so they are not lost with the assertion.
+        AnnotatedControls =
+        [
+            new AnnotatedControl(39, "@onclick=\"Search\"",
+                ["string.IsNullOrWhiteSpace(searchTerm)"],
+                RendersOnlyWhen:
+                "always, once the authorization check has completed. The clause stops an empty search "
+                + "being submitted; HandleSearchKey applies the same emptiness test to the Enter path "
+                + "beside it, which is registered under KeyboardPaths"),
+
+            new AnnotatedControl(118, "@onclick=\"AddMember\"",
+                [
+                    "string.IsNullOrWhiteSpace(newMember)",
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                ],
+                RendersOnlyWhen:
+                "inside the manage card, inside the answered-and-allowed protection branch, inside "
+                + "memberList != null with no Error, and then only while canManageOnPrem. AddMember "
+                + "re-checks the member label itself and ServiceNow re-checks the ticket, so both "
+                + "clauses are belt and braces here - but they are what keeps the operator from "
+                + "submitting a write that can only be refused"),
+
+            new AnnotatedControl(137, "@onclick=\"ResolvePasteAsync\"",
+                ["string.IsNullOrWhiteSpace(pasteText)"],
+                RendersOnlyWhen:
+                "only inside the bulk add panel, so only while showBulkAdd is true and the operator "
+                + "holds canManageOnPrem. The clause stops an empty paste being resolved"),
+
+            new AnnotatedControl(141, "@onclick=\"AddResolvedAsync\"",
+                [
+                    "ResolvedCount == 0",
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                ],
+                RendersOnlyWhen:
+                "inside the bulk add panel, as Resolve above it. ResolvedCount == 0 is the only thing "
+                + "in the markup requiring the list to be resolved before it is written; "
+                + "AddResolvedAsync itself returns early on an empty row set, so the clause is what "
+                + "makes the refusal visible rather than silent"),
+
+            new AnnotatedControl(190, "@onclick=\"() => showRemoveConfirm = true\"",
+                [
+                    "SelectedCount == 0",
+                    "string.IsNullOrWhiteSpace(ticketNumber)",
+                ],
+                RendersOnlyWhen:
+                "inside the manage card's member table region and only while canManageOnPrem. This "
+                + "button stages the confirmation rather than writing, so its clauses are the "
+                + "earliest point at which a batch with no ticket or no ticked rows is refused; the "
+                + "confirmation block it opens renders only while SelectedCount > 0 as well"),
+        ],
+
+        // Five spinner and panel conditions, every one reading a single flag or a flag paired with a
+        // state field rather than the predicate, registered verbatim so a mechanical "simplify to the
+        // predicate" pass fails instead of quietly changing what the operator sees. 40 is the Search
+        // button's spinner, narrowed by selectedGroup == null so it does not also spin during a
+        // member load; 85 belongs to Load Members and 203 to the batch Remove, both plain isLoading;
+        // 138 is Resolve's, on the resolve flag alone; 144 keys Add resolved's spinner to a batch
+        // that has a resolution behind it. 65 is not a spinner but the same hazard: it gates the
+        // whole card body on the protection answer, and folding it into IsBusy would blank the panel
+        // during every unrelated operation.
+        SpinnerExpressions =
+        [
+            "@if (isLoading && selectedGroup == null)",
+            "@if (isLoading)",
+            "@if (isResolving)",
+            "@if (isLoading && resolution != null)",
+            "@if (targetProtection is null)",
+        ],
+
+        // Ten. Falsification 6 bit harder on this page than on any converted so far: seven of these
+        // are new in this slice and one of them - LoadMembers reading selectedGroup - was not a
+        // desync but a circuit teardown; see this entry's remarks. The three that predate the slice
+        // are registered rather than assumed, so a later edit cannot quietly reinstate the live read.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("Search", "searchTerm", "term",
+                SnapshotShape.CapturedAtEntry,
+                "the term the operator submitted must be the term searched for. The box binds on "
+                + "oninput and the browser's copy of its disabled attribute is one round trip stale, "
+                + "so a keystroke landing in the gap would run a search nobody asked for and leave "
+                + "the results table labelled with text that is still visible in the box"),
+
+            new PostAwaitLiveRead("LoadMembers", "selectedGroup", "group",
+                SnapshotShape.CapturedAtEntry,
+                "the sharpest defect on the page, and not a gating defect at all. This handler read "
+                + "the field live at all three sites below its await - twice for the load and once "
+                + "in the catch - and dereferenced it with '!'. Close at 55 nulls it, Search nulls "
+                + "it, a second Manage at 307 replaces it, so the live read threw a "
+                + "NullReferenceException INTO the catch, whose own selectedGroup!.Name threw again "
+                + "and escaped the handler. With no ErrorBoundary anywhere in this app the operator "
+                + "does not see an error, they lose the page"),
+
+            new PostAwaitLiveRead("AddMember", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket validated against ServiceNow must be the ticket written into the audit "
+                + "row and the administrator email. Read live below the yield, a keystroke landing "
+                + "in the stale-attribute window desynced the two, so the record names a ticket "
+                + "nobody validated"),
+
+            new PostAwaitLiveRead("RemoveMember", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "as AddMember, on the destructive half: the removal's audit row and notification "
+                + "must carry the ticket that was actually validated for it"),
+
+            new PostAwaitLiveRead("RemoveSelectedAsync", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "worse in a batch, because the ticket is validated ONCE and then recorded against "
+                + "every row. Read live, a single keystroke in the gap put one ticket through "
+                + "ServiceNow and a different one into every audit row and the summary email for the "
+                + "whole batch"),
+
+            new PostAwaitLiveRead("AddResolvedAsync", "ticketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "as RemoveSelectedAsync: one validation, many records, so the capture is what keeps "
+                + "them describing the same ticket"),
+
+            new PostAwaitLiveRead("ResolvePasteAsync", "pasteText", "paste",
+                SnapshotShape.CapturedAtEntry,
+                "the textarea binds on oninput, so a keystroke landing in the gap would build the "
+                + "preview table - and therefore the batch AddResolvedAsync writes to AD - out of "
+                + "lines that were never submitted, under a header saying how many of them resolved"),
+
+            new PostAwaitLiveRead("AddMember", "newMember", "memberLabel",
+                SnapshotShape.CapturedAtEntry,
+                "the member the operator typed is what is written, audited and emailed. The picker "
+                + "stays live for the one round trip in which its Disabled parameter is stale, and "
+                + "the handler clears the box itself on success, so a live read below the await "
+                + "could act on a different identity from the one the click was accepted for"),
+
+            new PostAwaitLiveRead("AddMember", "newMemberSelection", "selection",
+                SnapshotShape.CapturedAtEntry,
+                "the held picker result, and the gmn-3 half that actually matters: only the DN "
+                + "distinguishes same-named groups across the forest's domains, so a stale or "
+                + "replaced selection read below the await would write to a group in the wrong "
+                + "domain while the audit row named the label the operator saw"),
+
+            new PostAwaitLiveRead("AddResolvedAsync", "resolution", "rows",
+                SnapshotShape.CapturedAtEntry,
+                "the resolved rows are the batch. Resolve can complete while this handler is "
+                + "suspended - isResolving is in the predicate now, but the browser's copy of the "
+                + "attribute is still one round trip stale - and a live read would then write a "
+                + "different set of members from the one the summary audit and email describe"),
+        ],
+
+        // One, and it is new in this slice. The capture sits above the guard and the raise below it.
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("LoadMembers", "isLoading", "group is null",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isLoading is a member of the page-wide predicate, so it would not grey "
+                + "one button - it would deaden every control on the page permanently, the first "
+                + "time Load Members was clicked with no group selected. The guard itself is new "
+                + "here: before this slice the handler had no null check at all and dereferenced "
+                + "selectedGroup with '!' instead."),
+        ],
+
+        // The page's one keyboard handler. Before this conversion the box carried no disabled
+        // attribute at all, so Enter reached Search while the Search button beside it was already
+        // gated on isLoading - the 2eb8c15 shape exactly. The disabled attribute rather than a
+        // handler guard, on the Migration precedent: a disabled input fires no key events, so one
+        // attribute closes the key path and the typing path together.
+        KeyboardPaths =
+        [
+            new KeyboardPath(35, "placeholder=\"Search groups by name or email...\"", "input",
+                "keydown", "HandleSearchKey", "Search",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
+                "Enter runs the group search that the Search button at 39 refuses while the page is "
+                + "busy. Search is not a read-only refresh: it nulls selectedGroup and memberList "
+                + "and calls ClearBulkState, so started from the keyboard during a protection check "
+                + "or a queued batch it throws away the selection those operations are acting on - "
+                + "and LoadMembers used to dereference the field it nulls, which is how this page's "
+                + "circuit-teardown defect was reachable from the keyboard as well as the mouse",
+                GatedTwinButtonLine: 39),
         ],
 
         HarmlessKeyboardPaths = [],

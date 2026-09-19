@@ -378,7 +378,12 @@ public sealed class ModuleCatalog
             // (docs/GroupBulkActions-Plan.md S3).
             // 2.10.1: the bulk-remove confirmation is compact - buttons on the heading line, names
             // inline (owner, 2026-09-04).
-            Version = "2.10.1",
+            // 2.11.0: every control on the page now consults one busy predicate
+            // (docs/ClickGatingAudit-Plan.md Revision 1, tier 1 page 6). Selecting a group is part
+            // of it for the first time - the protection check owned no in-flight flag at all - and
+            // Load Members no longer reads the selection back after its await, which used to tear
+            // the circuit down if the operator closed the panel or picked another group mid-load.
+            Version = "2.11.0",
             MainPermission = new(
                 "Access",
                 "GroupManagement",
