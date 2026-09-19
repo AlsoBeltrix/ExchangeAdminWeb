@@ -7,70 +7,49 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Now
 
-- **A WEEKEND BACKLOG RUN IS IN PROGRESS (started 2026-09-18). Read
-  `.agents/decisions.md` 2026-09-18 "Weekend backlog run" before doing anything here.**
-  The owner set the goal "work through as much of the queue.txt backlog as you can over the
-  weekend... only stop if you cannot proceed without me" and settled three gates: plans
-  self-approve after a **codex review loop to consensus** instead of an owner gate; priority
-  across queue items is the working agent's call ("I don't give a fuck" - do not ask again);
-  and pushes to both remotes are standing. Implementation subagents are authorized, which
-  overrules the Token Budget one-slice-one-session rule **for this run only**. All of that
-  scopes down when the run ends; the underlying subagent guidance conflict in Blockers is
-  still unsettled for normal operation.
-  Per-item state, all plans `Status: Draft` and none implemented:
-  - **Queue 2, `status.cloud.microsoft`** - `docs/ServiceHealthPublicStatus-Plan.md` (`16ebdf4`).
-    A machine-readable JSON API exists and answers unauthenticated; an iframe is impossible,
-    not merely fragile (live response sends `X-Frame-Options: DENY`). **Codex round 1 returned
-    `unsound`**: the endpoints come out of a minified SPA bundle and are undocumented, so they
-    cannot be the primary source; also a deferred version bump, an unproven 5-second budget, a
-    test seam that would make the guards vacuous, and a totality claim the catch does not
-    prove. Revision in flight. **The owner's premise is confirmed but sharper than expected:**
-    the public page carries one sentence per surface, not a second incident list, so it will
-    never show an Exchange incident Graph is missing - it answers "are Microsoft's own admin
-    surfaces up". That reframing is its open question 1 and may change whether it is worth
-    building at all.
-  - **Queue 4, message trace vs header analysis permissions** -
-    `docs/MessageTracePermissionSplit-Plan.md` (`155eaf7`). Header analysis touches no Exchange,
-    Graph or directory call (`HeaderAnalysisService.cs:1-3`, `:123`), so it is the low-privilege
-    half; main permission keeps it, a new fail-closed granular gates trace. **Deploy hazard,
-    stated first in the plan on purpose: a new alias denies EVERY operator including the owner
-    until a group is stored against it, and the alias cannot be granted before the descriptor
-    is deployed** - hence three commits with a mandatory deploy boundary. Codex review in
-    flight.
-  - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md` (`50e1724`).
-    **May be zero work.** The cloud query passes no domain, organization or accepted-domain
-    filter (`MessageTraceService.cs:434-450`); the only scoping is the session's `-Organization`
-    (`ExoConnectionPool.cs:440-445`), which names a tenant, so extra accepted domains on the
-    existing tenant are already covered. Slice 0 is one read-only search to turn that inference
-    into a measurement. Separate tenants are real work whose hardest blocker is that per-tenant
-    authorization has no expression in the current model: policies register once at startup
-    from a static list, there is no `IAuthorizationPolicyProvider` anywhere, and invariant 7
-    forbids naming a tenant in source. **Blocked on the owner:** which domains, and are they
-    accepted domains or separate tenants.
-  - **Queue 6, containerize** - `docs/Containerization-Feasibility.md` (`e45dc50`).
-    **Answered: do not.** 13-17 sessions to reach what the existing installer reaches in 3-4.
-    The blocker is the Delinea bootstrap credential living in the Windows **per-user**
-    credential locker (`CredentialManagerService.cs:1,11-12`), which is also why the csproj
-    carries an OS-versioned TFM and why both deploy paths set `loadUserProfile`. A container
-    has no profile and the credential cannot be baked into an image without breaking credential
-    isolation. Recommends hardening `tools/Install-ExchangeAdminWeb.ps1` instead; that plan is
-    NOT written. **Needs an owner ruling.**
-  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md` (`b12a7b1`).
-    The deliverable the owner asked for by name is the app-registration requirement list.
-    Microsoft Graph has **no** Defender device-inventory resource, so this uses the
-    WindowsDefenderATP API. `Machine.Read.All` alone covers the list; discovery sources
-    additionally need `ThreatHunting.Read.All`, which is tenant-wide and needs a **Privileged
-    Role Administrator** to consent - that trade is its open question 1. "Can be onboarded" is
-    the portal label; the API literal is `CanBeOnboarded`. **"Domain" is only partly
-    obtainable** - no domain property on the machine resource, so AD domain/OU membership
-    cannot be exported. Codex round 1 closed (3 findings); **round 2 returned `unsound`** on one
-    surviving defect worth remembering: de-duplicating a `$skip` page sequence on device id
-    removes overlaps but **cannot detect a gap**, so a short page reads as "collection ended"
-    and a partial export looks complete. Round 3 revision in flight, replacing `$skip` with a
-    positive-proof completion rule.
-  - **Queue 9, click-gating** - slice 1 complete (see below); tier 1 page 1
-    (`DhcpAuthorization`) in progress. Eight pages remain after it.
-
+- **THE WEEKEND BACKLOG RUN IS FINISHED (2026-09-18 to 2026-09-19). Read
+  `.agents/decisions.md` 2026-09-18 "Weekend backlog run" for the authority it ran under - that
+  authority has now LAPSED and the standing rules are back in force.** Plans no longer
+  self-approve on codex consensus, pushes go back to ask-first per `.agents/push-policy.md`, and
+  the Token Budget one-slice-one-session rule applies again. 30 commits, both remotes level,
+  every gate green at every commit. Per-item outcome:
+  - **Queue 9, click-gating: TIER 1 IS COMPLETE, all nine pages.** See the entry below.
+  - **Queue 8, Defender for Endpoint** - `docs/DefenderEndpointDevices-Plan.md`, **codex consensus
+    after three rounds**, `Status: Draft`. **Blocked on the owner and cannot proceed without
+    them:** the app registration is theirs to create, and open question 1 decides a slice.
+    Microsoft Graph has NO Defender device-inventory resource, so this uses the WindowsDefenderATP
+    API. `Machine.Read.All` alone covers the device list; **discovery sources additionally need
+    `ThreatHunting.Read.All`, which is tenant-wide - it reads every advanced-hunting table - and
+    needs a Privileged Role Administrator to consent.** "Can be onboarded" is the portal label;
+    the API literal is `CanBeOnboarded`. **AD domain and OU membership are NOT obtainable** - the
+    machines resource has no domain property, only the FQDN.
+  - **Queue 4, trace vs header-analysis permissions** - `docs/MessageTracePermissionSplit-Plan.md`,
+    **codex consensus after three rounds**, `Status: Draft`. Blocked on the owner's question 1:
+    copy today's `MessageTrace` groups onto the new alias, or re-grant deliberately. **Deploy
+    hazard, stated first in the plan on purpose:** a new fail-closed alias denies EVERY operator
+    including the owner until a group is stored against it, and the alias cannot be granted before
+    the descriptor deploys - hence three commits with a mandatory deploy boundary. Recovery needs
+    a GLOBAL admin, not a module admin.
+  - **Queue 6, containerize** - `docs/Containerization-Feasibility.md`, **answered: do not.**
+    13-17 sessions to reach what the existing installer reaches in 3-4. The blocker is the
+    Delinea bootstrap credential living in the Windows per-user credential locker, which is also
+    why the csproj carries an OS-versioned TFM. Recommends hardening
+    `tools/Install-ExchangeAdminWeb.ps1`; **that plan is NOT written** and needs an owner ruling.
+  - **Queue 2, status.cloud.microsoft** - `docs/ServiceHealthPublicStatus-Plan.md`, `Status:
+    Draft`, **PARKED by judgement after three codex rounds, not blocked.** Each round found real
+    defects, but rounds 2 and 3 found them in the verification apparatus rather than the design,
+    and that apparatus is now larger than the feature. **Open question 1 decides whether it is
+    worth building at all:** the public page carries ONE SENTENCE per surface, not a second
+    incident list, so it will never show an Exchange incident Graph missed. If the owner expected
+    a second incident feed, the right deliverable is the ten-line link-out in section 16 and
+    nearly all of the plan evaporates.
+  - **Queue 5, other tenants/domains** - `docs/MessageTraceMultiTenant-Plan.md`, `Status: Draft`.
+    **May be ZERO work and it is the cheapest question on the board.** The cloud query passes no
+    domain, organization or accepted-domain filter; the only scoping is the session's
+    `-Organization`, which names a TENANT. So extra accepted domains on the existing tenant are
+    already covered, and slice 0 is one read-only search to turn that inference into a
+    measurement. Separate tenants are real work whose hardest blocker is that per-tenant
+    authorization has no expression in the current model.
 - **A live defect was found while scoping queue 4 and is NOT fixed. It needs its own commit.**
   `Components/Pages/MessageTraceReports.razor` carries only the main `MessageTrace` policy
   (`:4`, `:126`), and `Exports.GetExports()` (`:143`) calls
@@ -286,109 +265,62 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 
 ## Next
 
-- **Queue 9's click-gating sweep is APPROVED IN PART and in progress.**
-  `docs/ClickGatingAudit-Plan.md` owns the findings, tiering, effort estimate and acceptance
-  checklist. **Owner approved 2026-09-18: slice 0 + slice 1 + tier 1 only** - the scanner and
-  shared test harness, the two prerequisite stuck-flag fixes, and the nine pages that can execute
-  a destructive AD/Exchange/Graph write. **Tiers 2, 3 and 4 are NOT approved**; they are
-  re-decided once the shared harness makes the per-page cost a measurement rather than an
-  estimate. Do not exceed that scope.
-  Audit headline: 273 clickable buttons across 33 pages, **205 across 30 pages not gated against
-  concurrent work**, and only 3 pages have any page-level busy predicate (Migration's `IsBusy`,
-  done; `IntuneDevices` and `RiskyUsers` have `ActionsDisabled`, both incomplete).
-  **Slice 0 is COMPLETE.** Part A (`f0658c0`): `tools/Get-ClickGateAudit.ps1` + 14 Pester tests;
-  the tool reproduces the plan's published totals exactly and is calibrated against Migration
-  (8 flags, `IsBusy`, exemptions at 223/442/784/836, anchors at 30/33/36). Part B (`8c6596b`):
-  `ClickGateSource.cs`, `ClickGateRegistry.cs`, `ClickGateTests.cs` - 14 shared assertions over a
-  per-page registry, seeded with **Migration only** (the one page whose gating is known-good;
-  registering the partial IntuneDevices/RiskyUsers predicates would have shipped a red suite).
-  The self-enforcing property is `EveryPageIsRegisteredOrDeclaredUnconverted`: a new page is in
-  neither `Pages` nor `NotYetConverted`, so the suite fails and names it.
-  **The owner enabled ultracode for that session**, which supersedes the Token Budget rule
-  against orchestrating subagents for its duration; recon ran as a read-only workflow.
-
-- **SLICE 1 IS COMPLETE. Tier 1 is unblocked; the next item is page 1, `DhcpAuthorization`.**
-  Both prerequisite stuck flags are fixed. Neither page was converted - slice 1 only removed the
-  hazard that would have turned a dead button into a dead page - and both stay in
-  `NotYetConverted`, BlockedSenders as tier 3 and MessageTrace as tier 4, neither approved.
-  - **`BlockedSenders.razor` `ConfirmUnblock`** - landed 2026-09-18 in `e915476`; module
-    1.4.0 -> 1.4.1. The preflight (authorization round trip, protection gate, `BeginOperation`)
-    now runs inside one try whose catch converts the throw into a `PermissionResult.Fail`,
-    audits an `UnblockSender_Denied` row and **returns** - fail closed, so an unreadable
-    authorization answer can never become an unauthorized Exchange write. Six tripwires; three
-    mutations, each failing exactly its named assertion. **The `return` is additionally
-    compiler-enforced:** dropping it is CS0165 on the unassigned `gate`/`scope` locals.
-    **It is deliberately NOT a try/finally** - that moves the `isLoading` clear after the
-    `LoadBlockedSenders` refresh, which a busy guard in that callee would then silently no-op.
-    Note for whoever converts this page: `OnAfterRenderAsync` calls `LoadBlockedSenders` at 180
-    while `isLoading` is ALREADY true from 170, so a guard inside `LoadBlockedSenders` kills the
-    initial load outright - `loadStarted` is latched at 179 and never retries.
-  - **`MessageTrace.razor` `ToggleDetail`** - landed 2026-09-18; module 1.4.1 -> 1.4.2. Now a
-    **token-guarded finally**. The guard inside the finally is load-bearing: a bare clear would
-    let a superseded fetch lower the NEWER request's flag and re-enable the button mid-flight.
-    Four tripwires, the negative one per occurrence per the msr-1 lesson (every
-    `detailLoading = false;` in the method must fall inside the finally block; no ordering
-    assertion). Four mutations, all real test failures rather than build failures.
-  - **Open, not fixed, and a separate finding needing its own commit:** the unwrapped
-    `Audit.LogLookupAction` calls inside catch blocks are the house idiom on `MessageTrace`
-    (six sites) and on `AnalyzeHeadersAsync`. The new finally lowers the flag on the way out,
-    but the throw still escapes the handler and, with no `ErrorBoundary` in this app, takes the
-    circuit. Same class as the `BlockedSenderService.UnblockSenderAsync` timeout gap.
-
-- **The click-gating design was falsified by reconnaissance and re-scoped; work is unblocked.**
-  An 11-page read-only recon (34 agents, no errors) over slice 1 + tier 1 landed 2026-09-18 and
-  is recorded as **Revision 1 in `docs/ClickGatingAudit-Plan.md`** - read that before touching
-  any page. The audit's counts stand; its design and estimate do not. **Owner settled the
-  re-scope on 2026-09-18: option A, all nine pages at full depth, 20-29 sessions plus 2-3
-  dev-deploy passes** (`.agents/decisions.md` 2026-09-18, which also amends points 1 and 4 of
-  the 2026-09-17 rule). Tiers 2-4 remain unapproved. Work order: slice 0B, slice 1, then the
-  nine pages in Revision 1's revised order.
-  The four falsifications that matter most, all verified against source:
-  1. **There is no `ErrorBoundary` anywhere in the app** (zero matches in `Components/`,
-     `Services/`, `Program.cs`). A throw from a handler tears the circuit down, so it does not
-     leave a live page with a stuck flag - which means the planned "lower every flag in a
-     `finally`" assertion **does not close the risk it was written for**. The real page-deadener
-     is a call with no timeout or cancellation token; `BlockedSenderService.UnblockSenderAsync`
-     (`Services/BlockedSenderService.cs:48`) is the confirmed live example.
-  2. **A handler guard on a DOM-synced control corrupts data** - the plan prescribed exactly
-     that for non-button targets. The field is unchanged, the render diff emits no correction,
-     the browser keeps the operator's action. On `NamedLocations` it writes the OLD country set
-     to Graph permanently, because `CountryCodePicker` latches `_initialized` (45, 49-56).
-     Three refusal mechanisms are needed where the plan had one.
-  3. **The scanner cannot see the controls that matter.** Its "7 non-button targets app-wide" is
-     an `@onclick`-only count; `@onchange`, `InputFile`, `@onkeydown`, `@bind` and child
-     `Disabled=` are invisible. Across these 11 pages alone the real number is about **35**, all
-     needing hand enumeration with nothing detecting an omission.
-  4. **A page-wide predicate is provably wrong on `SelfServiceGroups`** (two mutually exclusive
-     views; the only adversarial verdict that came back "unsound") **and `ConferenceRooms`**
-     (background `OnJobChanged` callback owns the jobs panel). The registry needs a list of
-     scoped predicates, not one name.
-  Revised estimate for the approved scope: **20-29 sessions + 2-3 owner passes**, up from 8-11.
-  Unsettled and worth an empirical check on a dev deploy: whether Blazor Server can interleave
-  event callbacks across an `await`. The plan proceeds on the labelled assumption that it can,
-  and stays robust either way (attribute plus in-handler guard).
-
-- **Two live defects found by that recon, neither caused nor fixed by the gating work. Not
-  scheduled; they need an owner go.**
-  1. **`IntuneDevices.razor:403`** - the `WipeNameConfirmed` clause is the **only** enforcement
-     of the typed device-name confirmation on a factory wipe anywhere in the codebase.
-     `ExecuteActionAsync` re-checks authorization, ticket and protected principal but never
-     re-reads `wipeConfirmName`, so the second key on the app's most destructive action is UI
-     only. A mechanical predicate rewrite of that line would delete it outright.
-  2. **`Services/BlockedSenderService.cs:48`** - `UnblockSenderAsync` takes no
-     `CancellationToken` and the file has no timeout, so an Exchange Online stall deadens the
-     Blocked Senders page with no recovery but a reload.
-  **Two live stuck-flag defects were found and confirmed by reading the source, independent of
-  the sweep:** `BlockedSenders.razor:278` (`isLoading` raised, cleared only post-await at :305,
-  :336, :406, never in a `finally`; the exposure is the uncaught `AuthorizeAsync` at :290-291,
-  since the service and notification calls are individually caught) and
-  `MessageTrace.razor:976` (`detailLoading`, same shape). These are prerequisites: widening a
-  flag that can stick into a page-wide gate turns a dead button into a dead page.
-  The audit scanner is **not yet in the repo** - it lives only in a temp file, so its algorithm
-  is written into the plan and committing it as `tools/Get-ClickGateAudit.ps1` with Pester
-  coverage is slice 0. Known false positives are disclosed there too. Nothing here reaches the
-  rendered page; no bUnit harness exists.
-
+- **QUEUE 9 CLICK-GATING: TIER 1 IS COMPLETE. All nine approved pages converted, plus the
+  harness, plus five defects fixed in already-shipped code. Tiers 2, 3 and 4 remain UNAPPROVED.**
+  `docs/ClickGatingAudit-Plan.md` owns the findings and Revision 1 owns the design; read Revision 1
+  before touching any page. **The plan's own acceptance checklist is the outstanding work and only
+  the owner can run it** - nothing in this repo reaches the rendered page, there is no bUnit
+  harness, and every assertion is a source-level scan that proves a shape, never a behaviour.
+  Pages, in the order converted: DhcpAuthorization, NamedLocations, MailboxPermissions,
+  CalendarPermissions, IntuneDevices, GroupManagement, M365GroupManagement, ConferenceRooms,
+  SelfServiceGroups. Harness grew 14 -> 31 assertions + 3 fixtures, 266 instantiated cases;
+  full suite 2510 -> 2791. Base app 2.21.0 -> 2.21.1 once, for the shared-component change only.
+  **Defects found in code that had already shipped and been reviewed, all fixed:**
+  1. `Migration` - two `@onkeydown` paths reached operations their buttons refused; one destructive,
+     and it avoided double-execution only by accident. Seven bespoke tripwires and a codex review
+     had missed them because nothing could see a keyboard path.
+  2. `MailboxPermissions` - a tab click mid-write **revoked the permission the operator asked to
+     grant**, and mislabelled the audit row and both emails on the way past.
+  3. `CalendarPermissions` - the audit row and both emails said *Set* while the code performed a
+     *Remove*, from one handler in one run.
+  4. `ConferenceRooms` - `RemoveJob` re-looked its row up in a live windowed collection a
+     background callback replaces, so a durable record could be hard-deleted with an audit row
+     carrying no ticket and no old values.
+  5. `SelfServiceGroups` - a null dereference **inside a catch block**, reachable today, which with
+     no `ErrorBoundary` tears the circuit down.
+  **Known limits of the harness, all measured rather than argued, all recorded on their entries:**
+  - **Over-gating is undetectable.** Nothing distinguishes a correct exemption from a control gated
+    into a trap. `SelfServiceGroups` M11 proves it.
+  - **`EveryClickableButtonConsultsAPredicateOrIsRegisteredExempt` matches the whole TAG**, so a
+    `title` naming the predicate satisfies it with the `disabled` attribute deleted. Measured on
+    page 9. It needs the same `AttributeValue` fix `AnnotatedControlsKeepTheirNonBusyClauses` got
+    in `439cb2b`. **This is the single most valuable follow-up.**
+  - A **token-guarded lowering** cannot be enforced (`GroupManagement`); reverting it to the shape
+    that sticks the flag true and deadens the page fails nothing.
+  - `ConferenceRooms`' **background-callback hazard** is structurally unreachable - the snapshot
+    assertion is defined over a first await and the handler has none, which is the point.
+  - `SpinnerExpressions` cannot see a duplicated condition; `ScannerFalsePositives` is read by no
+    assertion at all; `ExemptControl.ConditionThatKeepsItTrue` and `BecauseOfControl` are prose.
+  - `ExemptControl.PrerequisiteBeforeExemptionHolds` cannot express a **method-reference**
+    exemption - it reads the tied field out of the snippet via a regex matching only an inline
+    `() => field = null`.
+  **Found and deliberately NOT fixed - each needs an owner go:**
+  - **`IntuneDevices` typed device-name confirmation is markup-only.** `ExecuteActionAsync` never
+    re-reads `wipeConfirmName`, so the only enforcement of the second key on a factory wipe is one
+    clause in a disabled expression. A concrete server-side shape is proposed in the token log.
+  - **`M365GroupManagement` validates no ticket anywhere** - no ServiceNow check, no handler
+    re-check, so four markup clauses are the entire enforcement. Same shape on `NamedLocations`
+    delete and twice on `ConferenceRooms`.
+  - **`ConferenceRooms.CancelJob` audits nothing** while `RemoveJob` audits - cancelling a running
+    bulk job mid-write to Exchange leaves no record. Constitution-shaped.
+  - **`SelfServiceGroups` cross-group result bleed** - a previous group's operation can publish its
+    banner into a different group's view. Misleading rather than wrong; closing it changes what
+    those fields *are*.
+  - **`RiskyUsers.razor` has `IntuneDevices`' old partial shape** (`ActionsDisabled` missing
+    `historyLoading`, 4 of 7 buttons outside the gate). Tier 3, unapproved, untouched.
+  - **`BlockedSenderService.UnblockSenderAsync` still takes no `CancellationToken`** and the file
+    has no timeout - the one confirmed live instance of the page-deadening hazard the whole sweep
+    was about.
 - **Superseded by the entry above: next agreed item was queue 9, the app-wide click-gating audit.** Picked 2026-09-18 when the
   owner closed item 7 and said "pick next item from the updated list"; they did not name one,
   so this is the working agent's pick and the owner may override it. Reasons it was chosen
@@ -515,10 +447,12 @@ Superseded descriptions are verbatim in `docs/history/state-archive.md` (Archive
 ## Verification
 
 Commands and mandatory guards are owned by `.agents/repo-guidance.md` and `AGENTS.md`.
-Last run 2026-09-18 for the Service Health load-feedback slice: build Release (0 errors),
-`dotnet test ExchangeAdminWeb.slnx` (2510 passed / 0 failed / 3 skipped), `dotnet format
---verify-no-changes` and `git diff --check HEAD`, all clean. No PowerShell was touched, so
-PSScriptAnalyzer and Pester were not run. Browser acceptance, AD/Graph queries and reviewer
+Last run 2026-09-19, the final click-gating slice: build Release (0 errors, the same 23
+pre-existing warnings), `dotnet test ExchangeAdminWeb.slnx` (**2791 passed / 0 failed /
+3 skipped**), `dotnet format --verify-no-changes` exit 0, `git diff --check HEAD` exit 0,
+ASCII lint passed. PSScriptAnalyzer and Pester were run once during the run, for the one slice
+that touched PowerShell (`fab01c5`): 0 findings in the touched files, Pester 157 passed.
+Every commit of the weekend run passed these gates before it landed. Browser acceptance, AD/Graph queries and reviewer
 dispatches were not run. Current CI status/test counts do not
 belong here. Per-finding status is owned by `.agents/review/index.md`.
 
