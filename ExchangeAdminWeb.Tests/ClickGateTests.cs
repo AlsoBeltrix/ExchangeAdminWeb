@@ -319,10 +319,16 @@ public class ClickGateTests
         // An <a> or <div> ignores the disabled attribute entirely, so the button sweep cannot see
         // these and their refusal has to be arranged deliberately.
         //
-        // Honest limitation, and it is a large one: this only finds @onclick. Every @onchange
-        // checkbox and radio, every InputFile, every @onkeydown Enter path, every @bind select and
-        // every child-component Disabled= parameter is invisible to it. Those must be enumerated
-        // into the registry by hand and nothing here detects one that was missed.
+        // Honest limitation: this only finds @onclick. Every @onchange checkbox and radio, every
+        // InputFile, every @onkeydown Enter path, every @bind select and every child-component
+        // Disabled= parameter is invisible to it.
+        //
+        // The second half of that sentence used to read "and nothing here detects one that was
+        // missed". That is no longer true and was measured false rather than argued away: the
+        // NamedLocations conversion stripped Disabled="@IsBusy" from CountryCodePicker and the suite
+        // stayed at 0 failed / 63 passed. EveryDomSyncedControlIsRegisteredOrRecordedUngated below
+        // now enumerates the inputs, selects, textareas and Disabled-bearing child components that
+        // this assertion cannot see. The @onkeydown Enter path is still uncovered by either.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
         var registered = entry.NonButtonTargets.Select(target => target.Line).ToHashSet();
@@ -417,6 +423,193 @@ public class ClickGateTests
             target.Snippet.Contains("@bind", StringComparison.Ordinal)
             || target.Snippet.Contains("checked", StringComparison.OrdinalIgnoreCase)
             || target.Tag.Equals("InputFile", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ---- controls the disabled attribute is the ONLY thing that can reach -------------------
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryDomSyncedControlStillCarriesItsRegisteredGate(string page)
+    {
+        // The headline assertion of this section, and the one a measurement asked for. On the
+        // NamedLocations conversion, mutation M6 deleted Disabled="@IsBusy" from the
+        // CountryCodePicker at 172 and the suite stayed at 0 failed / 63 passed. That control
+        // latches _initialized on its first parameter push (Components/Shared/CountryCodePicker.razor
+        // 45, 49-56) and Apply is its sole ValueChanged path (79-85), so a click the server does not
+        // take desyncs it permanently and the NEXT save writes the old country set to Graph. For a
+        // control that renders server state into the DOM the disabled attribute is not the
+        // convenient refusal, it is the only safe one: a handler guard leaves the backing field
+        // unchanged, the render diff emits no correction, and the browser keeps an action the server
+        // never took. See RefusalMechanism and docs/ClickGatingAudit-Plan.md Revision 1
+        // falsification 2.
+        //
+        // What is the cheapest broken implementation that still passes this? Worked through:
+        //   - "delete the feature" fails: that IS M6, and it is what this exists to catch.
+        //   - "hard-code one value" fails twice over. DisabledExpression = "" is contained in every
+        //     string, so the verbatim check alone would be decoration; the two registry self-checks
+        //     below reject it, and reject a bare "IsBusy" that could match incidentally elsewhere in
+        //     the tag, and reject an expression naming nothing this page calls a busy signal.
+        //   - "never call the thing under test" fails: a control that has moved, been renamed, or
+        //     changed element type fails rather than being skipped, because the tag is located from
+        //     the live enumeration and its name is compared.
+        //   - "change nothing" passes, and that is correct - this is a drift tripwire, not a proof.
+        // The one that does pass, said plainly rather than overclaimed: this is text containment. It
+        // proves the attribute is present and unchanged, never that it is load-bearing. A page whose
+        // registered gate is Disabled="@(IsBusy && false)" passes, as the suite's own header warns.
+        //
+        // Why "names a busy signal" and not "names the page predicate": Migration's form controls
+        // are gated on isLoading or isCreating, not IsBusy, because that page was converted before
+        // the page-wide ruling. Both are members of its predicate. Requiring the predicate here
+        // would fail a converted page, and that is a decision about Migration.razor rather than
+        // something a test should force. Recorded on the Migration registry entry.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = DomSyncedTags(source);
+
+        foreach (var control in entry.DomSyncedControls)
+        {
+            Assert.True(
+                control.DisabledExpression.StartsWith("disabled=", StringComparison.Ordinal)
+                || control.DisabledExpression.StartsWith("Disabled=", StringComparison.Ordinal),
+                $"{page}:{control.Line} registers '{control.DisabledExpression}' as its gate, which "
+                + "is not a whole disabled=/Disabled= attribute. Register the attribute exactly as "
+                + "the markup writes it: a bare identifier can be matched incidentally elsewhere in "
+                + "the same tag, so containment of one proves nothing.");
+
+            Assert.True(NamesAnyBusySignal(entry, control.DisabledExpression),
+                $"{page}:{control.Line} registers the gate '{control.DisabledExpression}', which "
+                + "names no predicate and no flag this page registers. A DOM-synced control greyed "
+                + "by something that is not a busy signal is not gated at all.");
+
+            var tag = LocateDomSyncedControl(page, found, control.Line, control.Snippet, control.Tag);
+
+            Assert.True(tag.Text.Contains(control.DisabledExpression, StringComparison.Ordinal),
+                $"{page}:{control.Line} no longer carries {control.DisabledExpression}. This control "
+                + "renders server state into the DOM, so that attribute is the only safe refusal it "
+                + "has: refuse in the handler instead and the field is unchanged, the render diff "
+                + "emits no correction, and the browser keeps an action the server never took. If "
+                + "the gate was deliberately narrowed, narrow the registered expression in the same "
+                + "commit so the change is visible.");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void EveryDomSyncedControlIsRegisteredOrRecordedUngated(string page)
+    {
+        // The completeness half, and the half that makes the section worth having. An assertion that
+        // only checked registered controls would leave the blind spot wide open: a new ungated
+        // <input> added next month is simply never registered and nothing notices. This mirrors
+        // EveryPageIsRegisteredOrDeclaredUnconverted - the page enumerates itself, so a new control
+        // fails the suite and names itself.
+        //
+        // Asserted in BOTH directions, which is what keeps the enumerator honest as well as the
+        // registry. Forward: a control on disk in neither list fails. Backward: a registered line
+        // the enumeration no longer finds fails - so breaking DomSyncedTags, or stripping the
+        // Disabled= that makes a child component visible to it, fails here too. M6 therefore trips
+        // this assertion as well as the one above: with its parameter gone, CountryCodePicker stops
+        // being a child component the scan can see at all.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "delete the feature" fails: if DomSyncedTags returns nothing, every registered line is
+        //     unfound and the backward direction names them all.
+        //   - "never call the thing under test" is the same failure - the enumeration is the thing
+        //     under test in one direction and the registry in the other.
+        //   - "hard-code one value" has nothing to hard-code; both sides are computed sets.
+        //   - "change nothing" passes, correctly.
+        // The escape hatch that does exist, stated rather than hidden: a genuinely ungated control
+        // can be silenced by adding it to UngatedDomSyncedControls with a reason. That is a
+        // deliberate, reviewable registry edit with prose attached - the same bargain
+        // NotYetConverted strikes at page granularity - and it is the most a source-level scan can
+        // ask for. NoControlRecordedUngatedHasQuietlyAcquiredAGate stops that list being used for a
+        // control that IS gated.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = DomSyncedTags(source);
+
+        // The line is the registry key, here as everywhere else in this file, so two DOM-synced
+        // controls starting on one line would hide one of them from both directions below.
+        var collisions = found.GroupBy(tag => tag.Line)
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{page}:{group.Key} ({group.Count()} controls)")
+            .ToList();
+        Assert.True(collisions.Count == 0,
+            "two or more DOM-synced controls start on one line, and the line is what the registry "
+            + "keys on, so one of them cannot be registered or checked. Put them on separate "
+            + "lines:\n  " + string.Join("\n  ", collisions));
+
+        var gated = entry.DomSyncedControls.Select(control => control.Line).ToList();
+        var ungated = entry.UngatedDomSyncedControls.Select(control => control.Line).ToList();
+
+        var both = gated.Intersect(ungated).OrderBy(line => line).ToList();
+        Assert.True(both.Count == 0,
+            $"{page}: line(s) {string.Join(", ", both)} are registered as gated AND as ungated. One "
+            + "of the two entries is stale.");
+
+        var accounted = gated.Concat(ungated).ToHashSet();
+
+        var unregistered = found
+            .Where(tag => !accounted.Contains(tag.Line))
+            .Select(tag => $"{page}:{tag.Line} {FirstLineOf(tag.Text)}")
+            .ToList();
+        Assert.True(unregistered.Count == 0,
+            "these controls render server state into the DOM and are in neither DomSyncedControls "
+            + "nor UngatedDomSyncedControls. The disabled attribute is the only safe refusal for "
+            + "such a control - a handler guard corrupts data - so each needs its gate registered, "
+            + "or a written reason it has none:\n  " + string.Join("\n  ", unregistered));
+
+        var onDisk = found.Select(tag => tag.Line).ToHashSet();
+        var phantom = accounted.Except(onDisk).OrderBy(line => line).ToList();
+        Assert.True(phantom.Count == 0,
+            $"{page}: line(s) {string.Join(", ", phantom)} are registered as DOM-synced controls but "
+            + "no input, select, textarea or Disabled-bearing child component starts there. Either "
+            + "the control moved, or it lost the Disabled= parameter that is the only thing making a "
+            + "child component visible to this scan - which for a component like CountryCodePicker "
+            + "is the whole defect, not a bookkeeping error.");
+    }
+
+    [Theory]
+    [MemberData(nameof(ConvertedPages))]
+    public void NoControlRecordedUngatedHasQuietlyAcquiredAGate(string page)
+    {
+        // Without this, UngatedDomSyncedControls is a free pass out of the completeness assertion:
+        // anything awkward goes in the list and stays there forever, including a control that was
+        // later gated properly and now sits in the wrong half of the registry telling the next
+        // reader it has no gate.
+        //
+        // What is the cheapest broken implementation that still passes this?
+        //   - "delete the feature" fails: a recorded control that no longer exists, or that changed
+        //     element type, fails at the locate step rather than being skipped.
+        //   - "never call the thing under test" is that same failure.
+        //   - "hard-code one value" - an empty reason - fails on the WhyUngated check.
+        //   - "change nothing" passes, correctly.
+        // Limits, both ways. The test for "has acquired a gate" is a conjunction: the tag carries a
+        // disabled=/Disabled= attribute AND the tag mentions a registered busy signal. A control
+        // gated on something this page does not register as a flag reads as ungated, which is
+        // accurate - it is not busy-gated - and a control that mentions a flag in some unrelated
+        // attribute while carrying an unrelated disabled= would fail spuriously. That direction of
+        // error is the safe one: it says "re-check this by hand", which is what a reviewer should
+        // do. What this cannot do is judge a reason; a plausible sentence attached to a real gap
+        // passes, and that is why the reasons on Migration 390 and 821 say in as many words that
+        // they are recorded rather than granted.
+        var entry = Entry(page);
+        var source = ClickGateSource.Load(page);
+        var found = DomSyncedTags(source);
+
+        foreach (var control in entry.UngatedDomSyncedControls)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(control.WhyUngated),
+                $"{page}:{control.Line} is recorded as an ungated DOM-synced control with no reason. "
+                + "An inferred exemption is an oversight that looks like a decision.");
+
+            var tag = LocateDomSyncedControl(page, found, control.Line, control.Snippet, control.Tag);
+
+            Assert.False(
+                DisabledAttribute.IsMatch(tag.Text) && NamesAnyBusySignal(entry, tag.Text),
+                $"{page}:{control.Line} is recorded as ungated but now carries a disabled attribute "
+                + "naming a busy signal. If it was gated on purpose, move it to DomSyncedControls "
+                + $"with the expression registered verbatim. Recorded reason: {control.WhyUngated}");
+        }
     }
 
     // ---- where the guard may not live --------------------------------------------------------
@@ -686,6 +879,102 @@ public class ClickGateTests
 
     private static IEnumerable<string> AllFlags(PageGateEntry entry) =>
         entry.Predicates.SelectMany(predicate => predicate.Members).Distinct(StringComparer.Ordinal);
+
+    /// <summary>
+    /// True if <paramref name="text"/> names a predicate OR one of the flags a predicate is built
+    /// from. Wider than <see cref="NamesAnyPredicate"/> on purpose: Migration's form controls are
+    /// gated on a single member flag rather than on IsBusy, which is that page's pre-ruling shape
+    /// and not something a test can change without editing the page.
+    /// </summary>
+    private static bool NamesAnyBusySignal(PageGateEntry entry, string text) =>
+        NamesAnyPredicate(entry, text)
+        || AllFlags(entry).Any(flag => Regex.IsMatch(text, ClickGateSource.WholeWord(flag)));
+
+    /// <summary>
+    /// A disabled attribute or Disabled parameter that has a VALUE. A bare <c>disabled</c> with no
+    /// "=" is a static, inert control, which is a different thing and is registered as ungated.
+    /// </summary>
+    private static readonly Regex DisabledAttribute = new(@"\b[Dd]isabled\s*=", RegexOptions.Compiled);
+
+    private static readonly string[] FormElementTags = { "input", "select", "textarea" };
+
+    /// <summary>
+    /// Every control on the page that renders server state into the DOM: the html form elements,
+    /// plus any child component carrying a disabled attribute or a Disabled parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Built on <see cref="ClickGateSource.Tags"/>, which is quote-aware, and deliberately NOT on
+    /// ClickGateSource.ExtractBlock, whose brace counting is not - a brace inside an interpolated
+    /// string ends its block in the wrong place, and Migration's placeholder at 324 is exactly such
+    /// a string. Recorded in .agents/state.md; fixing it is its own slice.
+    /// </para>
+    /// <para>
+    /// Tags() needs a name, so child components are found by harvesting PascalCase tag names first.
+    /// That harvest also hits C# generics in the @code block - List&lt;NamedLocation&gt;,
+    /// Task&lt;PermissionResult&gt; - and the disabled filter is what keeps them out: a type
+    /// argument carries no disabled=.
+    /// </para>
+    /// <para>
+    /// Honest limitation, stated rather than papered over: a child component carrying NO disabled
+    /// attribute at all is invisible here, because there is nothing to tell it apart from a generic.
+    /// Once a component IS registered the gap closes from the other side - losing the attribute
+    /// fails <see cref="EveryDomSyncedControlIsRegisteredOrRecordedUngated"/> in its backward
+    /// direction - so what remains uncovered is a child component that was never gated at all.
+    /// </para>
+    /// </remarks>
+    private static IReadOnlyList<ClickGateSource.Tag> DomSyncedTags(ClickGateSource source)
+    {
+        var tags = FormElementTags.SelectMany(source.Tags).ToList();
+
+        var components = Regex.Matches(source.Text, @"<(?<name>[A-Z][A-Za-z0-9]*)\b")
+            .Select(match => match.Groups["name"].Value)
+            .Distinct(StringComparer.Ordinal);
+
+        tags.AddRange(components
+            .SelectMany(source.Tags)
+            .Where(tag => DisabledAttribute.IsMatch(tag.Text)));
+
+        return tags.OrderBy(tag => tag.Index).ToList();
+    }
+
+    /// <summary>The element or component name a tag opens with, e.g. "input", "CountryCodePicker".</summary>
+    private static string TagNameOf(ClickGateSource.Tag tag) =>
+        Regex.Match(tag.Text, @"^<(?<name>[A-Za-z][A-Za-z0-9]*)").Groups["name"].Value;
+
+    /// <summary>The first line of a tag's text, for a failure message that stays one line.</summary>
+    private static string FirstLineOf(string text) =>
+        text.Split('\n')[0].Trim();
+
+    /// <summary>
+    /// The live tag a registered DOM-synced entry points at. Located by line, disambiguated by
+    /// snippet, and checked for element type - so an entry cannot silently start covering whatever
+    /// drifted onto its line, which is the failure mode ExemptControl.Snippet was added for.
+    /// </summary>
+    private static ClickGateSource.Tag LocateDomSyncedControl(
+        string page,
+        IReadOnlyList<ClickGateSource.Tag> found,
+        int line,
+        string snippet,
+        string tagName)
+    {
+        var onLine = found.Where(tag => tag.Line == line).ToList();
+        Assert.True(onLine.Count > 0,
+            $"{page}: no input, select, textarea or Disabled-bearing child component starts at line "
+            + $"{line}, where a DOM-synced control is registered.");
+
+        var match = onLine.FirstOrDefault(tag => tag.Text.Contains(snippet, StringComparison.Ordinal));
+        Assert.True(match is not null,
+            $"{page}:{line} no DOM-synced control there contains '{snippet}'. The entry may now be "
+            + "covering a different control; re-check it against the file rather than updating the "
+            + "snippet to whatever is there.");
+
+        Assert.True(string.Equals(TagNameOf(match!), tagName, StringComparison.Ordinal),
+            $"{page}:{line} is registered as <{tagName}> but is now <{TagNameOf(match!)}>. The "
+            + "refusal mechanism depends on which element this is, so re-check the entry.");
+
+        return match!;
+    }
 
     /// <summary>
     /// A regex matching a READ of <paramref name="identifier"/>: a whole-word occurrence that is not

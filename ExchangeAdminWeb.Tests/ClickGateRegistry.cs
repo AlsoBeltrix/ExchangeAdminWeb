@@ -94,6 +94,17 @@ public static class ClickGateRegistry
     /// page whose gating is already known-good, so it is what proves the shared assertions
     /// actually pass correct code before any other page is touched.
     /// </summary>
+    /// <remarks>
+    /// One thing this entry records as FOUND rather than as approved, so nobody reads the reference
+    /// page as the pattern for the new field. Twelve of its sixteen DOM-synced controls are gated on
+    /// a single flag - disabled="@isLoading" or disabled="@isCreating" - not on IsBusy, because this
+    /// page was converted under docs/MigrationButtonGating-Plan.md before the page-wide ruling that
+    /// the tier-1 pages are being converted under. Its buttons DO name IsBusy; its form controls do
+    /// not. <see cref="ClickGateTests.EveryDomSyncedControlStillCarriesItsRegisteredGate"/> therefore
+    /// requires the registered expression to name a busy signal this page registers - a predicate
+    /// OR one of its flags - rather than the page predicate itself. Requiring the predicate would
+    /// fail this page, and the fix for that is a decision about Migration.razor, not a test.
+    /// </remarks>
     private static PageGateEntry Migration => new()
     {
         Page = "Migration.razor",
@@ -163,6 +174,67 @@ public static class ClickGateRegistry
                 RefusalMechanism.HandlerGuard, "SelectStatusTab"),
         ],
 
+        // Sixteen DOM-synced controls, censused against the file when DomSyncedControls was added.
+        // Twelve are gated and four are not; see the remarks on this entry for what that means and
+        // what it does not mean. The gates here name ONE flag rather than IsBusy, which is this
+        // page's own pre-ruling shape and is registered as found rather than as approved.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(50, "@bind=\"singleEmail\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(54, "@bind=\"singleMigrationDirection\"", "select",
+                "disabled=\"@isLoading\""),
+            new DomSyncedControl(61, "@bind=\"singleTicketNumber\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(154, "@bind=\"singleBatchName\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(160, "@bind=\"singleAutoStart\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(164, "@bind=\"singleAutoComplete\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(222, "OnChange=\"HandleCsvUpload\"", "InputFile",
+                "disabled=\"@isLoading\""),
+            new DomSyncedControl(228, "@bind=\"migrationDirection\"", "select", "disabled=\"@isLoading\""),
+            new DomSyncedControl(235, "@bind=\"bulkTicketNumber\"", "input", "disabled=\"@isLoading\""),
+            new DomSyncedControl(324, "@bind=\"bulkBatchName\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(330, "@bind=\"bulkAutoStart\"", "input", "disabled=\"@isCreating\""),
+            new DomSyncedControl(334, "@bind=\"bulkAutoComplete\"", "input", "disabled=\"@isCreating\""),
+        ],
+
+        UngatedDomSyncedControls =
+        [
+            new UngatedDomSyncedControl(390, "placeholder=\"Search batch or user email...\"", "input",
+                "NOT adjudicated - recorded, not granted. The field itself is a client-side filter "
+                + "over already-loaded batches, and both buttons beside it are gated (ClearSearch at "
+                + "395 and SearchUser at 400 on IsBusy). But it also carries "
+                + "@onkeydown=\"HandleSearchKeyDown\", and that handler (1742) calls SearchUser with "
+                + "no busy guard, so Enter reaches the operation the button refuses. A disabled "
+                + "input fires no keydown, so the gate this control lacks is also what would close "
+                + "that path. Closing it means editing Migration.razor, which is outside the slice "
+                + "that added this field"),
+
+            new UngatedDomSyncedControl(521, "title=\"Select all loaded batches\"", "input",
+                "left live on purpose, and the purpose is written into the page. The selection "
+                + "toolbar comment at 455-459 records owner ruling D2(a): the bulk-action buttons "
+                + "are never conditioned on eligibility, and the staged callback re-plans from the "
+                + "LIVE selection (1346) rather than from a snapshot, so the tick boxes are an input "
+                + "to the confirm step and not a value in flight. Nothing can be executed from this "
+                + "state while the page is busy - all three action buttons carry "
+                + "disabled=\"@(IsBusy || pendingActionLabel != null)\" (464, 469, 474)"),
+
+            new UngatedDomSyncedControl(544, "title=\"Select for a bulk action\"", "input",
+                "the per-row half of the same selection, on the same owner ruling and the same "
+                + "re-plan at 1346. ToggleBatchSelected (1281) writes only to selectedBatches and "
+                + "nulls the result banner; it makes no call and awaits nothing"),
+
+            new UngatedDomSyncedControl(821, "placeholder=\"Ticket # (required)\"", "input",
+                "NOT adjudicated - recorded, not granted. pendingActionTicket is a registered "
+                + "ExcludedField (staged form state, not an operation) and Confirm beside it at 825 "
+                + "is gated on IsBusy, so the field must stay typeable while a confirmation is "
+                + "staged. What is not settled is the @onkeydown=\"HandleConfirmKeyDown\" beside the "
+                + "binding: that handler (1429) calls ConfirmPendingAction with no busy guard, so "
+                + "Enter reaches the destructive action while the button refuses it. "
+                + "ConfirmPendingAction is single-flight by accident rather than by gate - it nulls "
+                + "pendingActionCallback via CancelPendingAction before its await (1447-1450), so a "
+                + "second Enter returns - but that is re-entrancy protection, not a busy gate, and "
+                + "it does not stop the action starting during an unrelated refresh"),
+        ],
+
         ForbiddenGuardSites =
         [
             new ForbiddenGuardSite("LoadMigrationStatus", ["ExecuteBulkBatchAction"],
@@ -188,7 +260,9 @@ public static class ClickGateRegistry
     /// than isOperating alone. They are absent from NonButtonTargets on purpose: that list is keyed
     /// to what ClickGateSource can locate, and an input element is in neither of its tag sets, so
     /// registering one would fail EveryNonButtonTargetIsRefusedByItsDeclaredMechanism rather than
-    /// document anything.
+    /// document anything. That much was right; the conclusion drawn from it - that nothing could
+    /// check these - was not. They are in <see cref="PageGateEntry.DomSyncedControls"/> below, which
+    /// is NonButtonTargets' counterpart for the controls the disabled attribute does reach.
     /// </para>
     /// <para>
     /// isDownloadingCsv is new. DownloadCsvAsync owned no in-flight flag at all, and its raise has
@@ -286,6 +360,19 @@ public static class ClickGateRegistry
         // Verified by exhaustive census, not inherited from the plan: this page has none. It is the
         // only tier-1 page of which that is true, which is why it was taken first.
         NonButtonTargets = [],
+
+        // The three @bind inputs the remarks above describe in prose. They are here rather than in
+        // NonButtonTargets because that list is keyed to what ClickGateSource can locate and an
+        // input is in neither of its tag sets; the prose was correct about the mechanism and wrong
+        // only in concluding that nothing could check it.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(110, "@bind=\"newDnsName\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(114, "@bind=\"newIpAddress\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(118, "@bind=\"ticketNumber\"", "input", "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls = [],
 
         ForbiddenGuardSites =
         [
@@ -414,7 +501,9 @@ public static class ClickGateRegistry
     /// locate, and an input, a select, a textarea and a child component are in neither Tags("a")
     /// nor NonButtonClickTargets(), so registering one would fail
     /// <see cref="ClickGateTests.EveryNonButtonTargetIsRefusedByItsDeclaredMechanism"/> rather than
-    /// document anything.
+    /// document anything. True, and the reason all seven were left in prose - but the prose was the
+    /// only thing holding them, and a mutation that stripped 172's Disabled="@IsBusy" left the whole
+    /// suite green. They are now in <see cref="PageGateEntry.DomSyncedControls"/> below.
     /// </para>
     /// <para>
     /// CountryCodePicker was the hazard Revision 1 falsification 2 singled out as the worst in
@@ -537,6 +626,33 @@ public static class ClickGateRegistry
         // button, and the seven DOM-synced controls it cannot see are covered by the disabled
         // attribute rather than by an entry here. See the remarks above for why they are not listed.
         NonButtonTargets = [],
+
+        // The seven controls the remarks above enumerate in prose, now data. 172 is the one that
+        // forced this field to exist: the M6 mutation of the page-2 conversion stripped its
+        // Disabled="@IsBusy" and the whole suite stayed green.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(136, "@bind=\"formDisplayName\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(143, "@bind=\"formType\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(161, "@bind=\"formIpRanges\"", "textarea", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(164, "@bind=\"formIsTrusted\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(172, "@bind-Value=\"formCountryCodes\"", "CountryCodePicker",
+                "Disabled=\"@IsBusy\""),
+            new DomSyncedControl(175, "@bind=\"formIncludeUnknown\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(182, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls =
+        [
+            new UngatedDomSyncedControl(153, "NamedLocationType.Ip ? \"IP Ranges\"", "input",
+                "inert. It is the read-only echo of an existing location's type, rendered only in "
+                + "the editingLocation != null branch: no @bind, no @onchange, no handler of any "
+                + "kind, and a static `disabled` with no expression. There is nothing here for a "
+                + "click to desync, and gating it on IsBusy would change nothing an operator can "
+                + "see. Its value attribute reads editingLocation, which is a registered "
+                + "PostAwaitLiveReads field - that obligation is what protects the value, not this "
+                + "control"),
+        ],
 
         ForbiddenGuardSites =
         [
@@ -725,6 +841,33 @@ public sealed record PageGateEntry
     public IReadOnlyList<NonButtonTarget> NonButtonTargets { get; init; } = [];
 
     /// <summary>
+    /// Every control that renders server state into the DOM and IS gated, with the gate recorded
+    /// verbatim. An input, a select, a textarea or a child component taking a Disabled parameter.
+    /// </summary>
+    /// <remarks>
+    /// Forced by a measured blind spot, not by symmetry. The NamedLocations conversion ran seven
+    /// guard mutations and six bit; the one that did not was stripping Disabled="@IsBusy" from
+    /// CountryCodePicker at 172, which left the suite at 0 failed / 63 passed. That control latches
+    /// _initialized on its first parameter push and Apply is its sole ValueChanged path, so a click
+    /// the server does not take desyncs it permanently and the next save writes the OLD country set
+    /// to Graph. <see cref="NonButtonTargets"/> could not cover it: that list is keyed to what
+    /// ClickGateSource.NonButtonClickTargets() can locate, which is @onclick only, so registering an
+    /// input or a child component there fails
+    /// <see cref="ClickGateTests.EveryNonButtonTargetIsRefusedByItsDeclaredMechanism"/> rather than
+    /// protecting anything. Both page authors therefore left these controls in prose; this is that
+    /// prose promoted to data.
+    /// </remarks>
+    public IReadOnlyList<DomSyncedControl> DomSyncedControls { get; init; } = [];
+
+    /// <summary>
+    /// DOM-synced controls that carry no busy gate, each with the recorded reason. Inert controls
+    /// exist - NamedLocations 153 is a statically disabled read-only display - so this has to be
+    /// possible; it is explicit so an oversight cannot pass for a decision. Same bargain as
+    /// <see cref="NotYetConverted"/>: an entry here is a deliberate, reviewable registry edit.
+    /// </summary>
+    public IReadOnlyList<UngatedDomSyncedControl> UngatedDomSyncedControls { get; init; } = [];
+
+    /// <summary>
     /// Methods that must NOT carry a guard, because a busy handler calls them. Six of the eleven
     /// reconnoitred pages call a refresh or shared helper from a handler that is already busy, and
     /// a guard there turns the confirming refresh into a silent no-op.
@@ -888,6 +1031,43 @@ public sealed record NonButtonTarget(
     RefusalMechanism Mechanism,
     string Handler,
     string? WhyNotHandlerGuard = null);
+
+/// <summary>
+/// A control that renders server state into the DOM and is gated in markup.
+/// </summary>
+/// <param name="Line">Where it starts. The registry key, as everywhere else in this file.</param>
+/// <param name="Snippet">
+/// A distinctive substring of the live tag, on the tag's FIRST line so a multi-line element does
+/// not make the literal depend on indentation. It is the disambiguator, not decoration: the line
+/// alone is not a key, for the same reason <see cref="ExemptControl.Snippet"/> exists.
+/// </param>
+/// <param name="Tag">
+/// The element or component name as written - "input", "select", "textarea", or the PascalCase
+/// component. Asserted, so a select silently becoming an input fails rather than passing.
+/// </param>
+/// <param name="DisabledExpression">
+/// The WHOLE disabled=/Disabled= attribute, verbatim, e.g. <c>disabled="@IsBusy"</c>. Whole rather
+/// than just the identifier: a bare name can be matched incidentally elsewhere in the tag and
+/// proves nothing. Verbatim rather than reconstructed, in the same spirit as
+/// <see cref="PageGateEntry.SpinnerExpressions"/> - narrow the gate and the assertion fails instead
+/// of quietly accepting the narrower one.
+/// </param>
+public sealed record DomSyncedControl(
+    int Line,
+    string Snippet,
+    string Tag,
+    string DisabledExpression);
+
+/// <param name="WhyUngated">
+/// Why this DOM-synced control carries no busy gate. Two honest kinds of answer: the control is
+/// inert (no binding, no handler, nothing a click can desync), or the gap is real and recorded
+/// pending a decision. Both are fine; silence is not.
+/// </param>
+public sealed record UngatedDomSyncedControl(
+    int Line,
+    string Snippet,
+    string Tag,
+    string WhyUngated);
 
 public sealed record ForbiddenGuardSite(
     string Method,
