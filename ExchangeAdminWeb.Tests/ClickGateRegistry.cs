@@ -36,6 +36,7 @@ public static class ClickGateRegistry
         CalendarPermissions,
         IntuneDevices,
         GroupManagement,
+        M365GroupManagement,
     };
 
     /// <summary>
@@ -48,10 +49,10 @@ public static class ClickGateRegistry
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             // Approved for conversion, in the order of docs/ClickGatingAudit-Plan.md Revision 1.
-            // Pages 1 to 6 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
-            // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor and
-            // GroupManagement.razor - are converted and live in Pages above.
-            ["M365GroupManagement.razor"] = "tier 1, page 7 of 9",
+            // Pages 1 to 7 of 9 - DhcpAuthorization.razor, NamedLocations.razor,
+            // MailboxPermissions.razor, CalendarPermissions.razor, IntuneDevices.razor,
+            // GroupManagement.razor and M365GroupManagement.razor - are converted and live in
+            // Pages above.
             ["ConferenceRooms.razor"] = "tier 1, page 8 of 9",
             ["SelfServiceGroups.razor"] = "tier 1, page 9 of 9; needs view-scoped predicates",
 
@@ -2671,6 +2672,596 @@ public static class ClickGateRegistry
                 + "and LoadMembers used to dereference the field it nulls, which is how this page's "
                 + "circuit-teardown defect was reachable from the keyboard as well as the mouse",
                 GatedTwinButtonLine: 39),
+        ],
+
+        HarmlessKeyboardPaths = [],
+    };
+
+    /// <summary>
+    /// M365 Group Management: tier 1, page 7 of 9, converted 2026-09-19 under
+    /// docs/ClickGatingAudit-Plan.md Revision 1.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The flag that was wired to no attribute at all, and what it turned out to be.</b>
+    /// Revision 1 predicted four flags with one of them gating nothing. The hand census confirms
+    /// the count - isSearching, isLoadingDetails, isOperating, isMemberOp, and
+    /// Get-ClickGateAudit.ps1 names the same four - and the one is isLoadingDetails. Its only
+    /// appearance in the markup was the row spinner at 98; no disabled= anywhere consulted it. It
+    /// is a MISSING GATE rather than a field that was never a flag, and the difference matters
+    /// because the two have opposite fixes: SelectGroup raises it as its first statement, awaits
+    /// GetGroupDetailsAsync, GetMembersAsync and GetOwnersAsync, and lowers it in a finally, which
+    /// is the in-flight shape exactly. What the gap cost: every per-row View button was gated on
+    /// isOperating alone, so a second View was live for the whole of the first load. SelectGroup
+    /// assigns selectedGroup at entry and members and owners after its awaits, so two interleaved
+    /// invocations leave the details panel describing one group while the member and owner tables
+    /// below list another - and the ticket box, both Add buttons and every per-row Remove act on
+    /// selectedGroup, not on the table they are rendered beside. Folding it into IsBusy is the
+    /// whole of the fix; nothing else on the page had to change to close it.
+    /// </para>
+    /// <para>
+    /// <b>The Cancel at 216 inverts the exemption heuristic, and the Cancel at 287 does not.</b>
+    /// On every converted page so far a Cancel is exempt because the operator must always be able
+    /// to back out of a staged action, and backing out is a pure reset of a field nothing reads
+    /// mid-flight. This page has one of each, and it had them the wrong way round: the staged
+    /// Cancel at 287 (confirmDelete = null) already carried disabled="@isOperating", while the
+    /// form Cancel at 216 carried no attribute at all.
+    /// </para>
+    /// <para>
+    /// 216 is not a staged cancel. It calls CancelForm, which nulls editingGroup - and editingGroup
+    /// is what SaveGroup steers on. SaveGroup suspends at its yield and again at
+    /// GetAuthenticationStateAsync and AuthorizeAsync, all of them BEFORE it used to read
+    /// editingGroup to choose its branch. A Cancel accepted in any of those windows flipped the
+    /// handler from Update to Create: it called CreateGroupAsync with the mail nickname EditGroup
+    /// blanks at 444, and audited and emailed the click as M365GroupManagement_Create against a
+    /// bare display name with no group id in it. So the usual reasoning inverts - here backing out
+    /// is not a no-op on a staged selection, it retargets a write already in flight - and the
+    /// control is GATED rather than exempt. It costs the operator nothing: every other control in
+    /// that panel (243, 250, 264, 269, 277, 286, 287, 291, 295) was already refused during
+    /// isOperating, so a live Cancel was the only thing in the form that could do anything, and
+    /// the only thing it could do is the above. SaveGroup closes the form itself on success. The
+    /// gate is one round trip stale, so the editingGroup capture in PostAwaitLiveReads is what
+    /// actually closes the window; both landed together. 287 keeps its exemption and its narrower
+    /// guard, on the DhcpAuthorization 83 and NamedLocations 192 footing.
+    /// </para>
+    /// <para>
+    /// <b>One page-wide predicate, tested rather than assumed.</b> Revision 1 found a single
+    /// predicate provably wrong on two other pages, so this one was checked: there is one view
+    /// here and no control in it is safe to leave live while another works. SearchGroups nulls
+    /// selectedGroup, members, owners and showForm; SelectGroup replaces all three of the last;
+    /// SaveGroup and DeleteGroup end by calling SearchGroups, which throws the selection away; and
+    /// RunMemberOpAsync replaces the member and owner lists. The sharpest proof is the pairing the
+    /// gate closes: before this slice the Search box and button were gated on isSearching alone,
+    /// so a search could be started in the middle of a member write, and RunMemberOpAsync then
+    /// dereferenced the selectedGroup that search had just nulled - see PostAwaitLiveReads.
+    /// </para>
+    /// <para>
+    /// <b>Falsification 6 on this page, and the ticket it names.</b> Thirteen obligations. Three
+    /// are the operationResult publish that makes the banner dismiss at 44 safe to leave
+    /// clickable; ten are entry captures. formTicketNumber is the one Revision 1 names for this
+    /// page by name - EditGroup (447) and ShowCreateForm (435) both blank it, DeleteGroup audited
+    /// and emailed it from the catch after several awaits, and SaveGroup read it live at four
+    /// sites - and memberTicketNumber is the same defect on the member and owner half. Worth
+    /// stating plainly because it changes what those clauses are worth: nothing on this page
+    /// validates a ticket against ServiceNow. The emptiness clauses in AnnotatedControls are the
+    /// ONLY thing requiring a ticket before a write, and the capture is the only thing making the
+    /// recorded ticket the one the operator typed.
+    /// </para>
+    /// <para>
+    /// <b>Two live reads that PostAwaitLiveReads cannot express, fixed in code and recorded
+    /// here.</b> AddMember and AddOwner built a closure reading addMemberIdentity / addOwnerIdentity
+    /// live, and RunMemberOpAsync invoked it two awaits later - while the eagerly evaluated
+    /// targetLabel argument beside it had already snapshotted the same value at the click. A
+    /// keystroke in the gap therefore wrote one identity into Graph and a different one into the
+    /// audit row and the admin email. Both thunks now capture the identity into a local before
+    /// calling the pipeline. The obligation cannot be registered: AddMember and AddOwner contain
+    /// no await of their own, so AssertSnapshotObligationHolds would fail them for that rather
+    /// than check anything. The closures also read selectedGroup live; that half IS covered,
+    /// because the pipeline now passes the captured group into the op.
+    /// </para>
+    /// </remarks>
+    private static PageGateEntry M365GroupManagement => new()
+    {
+        Page = "M365GroupManagement.razor",
+        ExpectedLineCount = 714,
+
+        Predicates =
+        [
+            new PredicateScope("IsBusy",
+                ["isSearching", "isLoadingDetails", "isOperating", "isMemberOp"],
+                AppliesWhen: "the whole page"),
+        ],
+
+        // Get-ClickGateAudit.ps1 reported FOUR flags and ZERO stuck flags before this slice, and
+        // four flags and ONE stuck flag after it. The change is an artefact of this page's own
+        // snapshot fix, exactly as on pages 1 and 2, and is recorded so nobody "corrects" it.
+        ScannerFalsePositives =
+        [
+            new ScannerFalsePositive("operationResult",
+                "the result banner's model. The scanner counts a bare-token assignment to a "
+                + "nullable as a raise (Get-ClickGateAudit.ps1:209), so each new "
+                + "`operationResult = result;` publish reads as one and the `operationResult = null;` "
+                + "at handler entry reads as the lowering, outside a finally - the stuck-flag shape. "
+                + "Moving the clear into a finally would wipe the banner at the end of the handler "
+                + "that just wrote it, so the operator would never see the outcome of a create, an "
+                + "update, a delete or a membership change. The scanner is wrong here and must stay "
+                + "wrong. DhcpAuthorization and NamedLocations report the same thing for the same "
+                + "reason."),
+        ],
+
+        // Twenty-two, by hand census of this file rather than the three Revision 1 predicted. The
+        // prediction named the staged-confirmation trio; the census adds the form state that gates
+        // the controls it would disable, two bools that are raised and never lowered, and the form
+        // values four buttons read as preconditions. Every one of them sits on a control that
+        // renders only while the operator is deciding, typing or reading.
+        ExcludedFields =
+        [
+            new ExcludedField("confirmDelete", "the Confirm Delete / Cancel pair at 286-287",
+                "holds the id of the group whose deletion is staged, not an operation in flight. "
+                + "The pair renders only while confirmDelete == editingGroup.Id, so folding it in "
+                + "would disable Confirm Delete at the only moment it is ever shown and no M365 "
+                + "group could be deleted again - the regression a review of the Migration plan "
+                + "caught before any code was written"),
+
+            new ExcludedField("confirmRemoveMember", "the Confirm / cancel pair at 144-145",
+                "the id of the member whose removal is staged. Same shape as confirmDelete, once "
+                + "per member row: the pair renders only while confirmRemoveMember == m.Id"),
+
+            new ExcludedField("confirmRemoveOwner", "the Confirm / cancel pair at 186-187",
+                "the id of the owner whose removal is staged, on the same footing as "
+                + "confirmRemoveMember. Removing the last owner of a group is the quietest "
+                + "destructive act on this page, and it is confirmed here"),
+
+            new ExcludedField("showForm", "the whole create/edit form at 239-301",
+                "means 'the operator is filling in a form', not 'the page is working'. Every "
+                + "control IsBusy exists to protect - the name, nickname, description, visibility, "
+                + "ticket, Delete, Confirm Delete and Save - is inside the block showForm gates, so "
+                + "folding it in would disable the form at the only moment it renders"),
+
+            new ExcludedField("editingGroup", "the Delete cluster at 282-293 and the Save at 295",
+                "which group is being edited, and the field that decides Update versus Create. The "
+                + "Delete cluster renders only while it is non-null and the Save button's own "
+                + "nickname clause reads it, so a predicate naming it would disable the destructive "
+                + "half of the form at the only moment it is reachable. It is also a registered "
+                + "PostAwaitLiveReads field; that obligation is what protects its value, not this"),
+
+            new ExcludedField("selectedGroup", "the member/owner panel at 113-205 and details at 222-232",
+                "the group the operator is looking at. Both panels render only while it is "
+                + "non-null, so folding it in would disable every control inside either at the only "
+                + "moment any of them is shown. SelectGroup also assigns it before its first await, "
+                + "so the predicate would latch the instant a group was picked and never clear"),
+
+            new ExcludedField("members", "the member panel at 113-205",
+                "the loaded membership. Nulled at entry and re-assigned after the awaits in both "
+                + "SelectGroup and RunMemberOpAsync, which is most of the in-flight shape, but the "
+                + "panel renders only while it is non-null - so a predicate naming it would disable "
+                + "every control that acts on the rows it just loaded"),
+
+            new ExcludedField("owners", "the owners table at 172-199",
+                "the loaded owner list, on exactly the same footing as members and written by the "
+                + "same two handlers"),
+
+            new ExcludedField("hasSearched", "the empty-state prose at 71-74 and 108-111",
+                "set true by SearchGroups and never lowered anywhere. Fold it in and the page is "
+                + "dead from the first search onwards, permanently, which is the same failure shape "
+                + "as a raise above an early return"),
+
+            new ExcludedField("authChecked", "the whole page; the body at 16-26 returns while it is false",
+                "the one-shot initialisation gate, raised at the end of OnInitializedAsync and "
+                + "never lowered. It has the same raised-in-an-awaiting-method shape as a flag and "
+                + "is the opposite of one: IsBusy naming it would be true for the entire life of "
+                + "every usable render, and false only while nothing it could gate is on screen"),
+
+            new ExcludedField("operationResult", "the result banner at 40-46",
+                "the previous operation's verdict, held until the next handler nulls it or the "
+                + "operator dismisses it at 44. Fold it in and the page stays dead for as long as "
+                + "the banner is up - which, since nothing auto-dismisses it, is indefinitely"),
+
+            new ExcludedField("searchError", "the error alert at 67-70",
+                "the search failure message, nulled at entry and set in the catch of SelectGroup "
+                + "and SearchGroups. A report of work already finished, not work in progress"),
+
+            new ExcludedField("groups", "the results table at 75-107",
+                "the groups found. The table renders only while the list is non-empty, so a "
+                + "predicate naming it would disable every View button at the only moment any of "
+                + "them is on screen and no group could be selected after a search"),
+
+            new ExcludedField("searchTerm", "the search box at 58 and Search at 60",
+                "the search text. Search reads it as an emptiness precondition (AnnotatedControls "
+                + "60); folding it in would disable the box being typed into and, with it, the "
+                + "Enter path registered under KeyboardPaths"),
+
+            new ExcludedField("memberTicketNumber", "the ticket input at 118; read by 124, 144, 166, 186",
+                "the staged ticket for every member and owner change. FOUR buttons read it as an "
+                + "emptiness precondition, and nothing in the handlers or the service re-checks it, "
+                + "so typing the ticket that unlocks all four would disable all four"),
+
+            new ExcludedField("addMemberIdentity", "the identity box at 123 and Add at 124",
+                "the member being typed. It is the precondition Add reads, so folding it in "
+                + "disables Add the instant an identity is entered, and disables the box it was "
+                + "entered into"),
+
+            new ExcludedField("addOwnerIdentity", "the identity box at 165 and Add at 166",
+                "the owner being typed, on the same footing as addMemberIdentity"),
+
+            new ExcludedField("formTicketNumber", "the ticket input at 277; read by 286 and 295",
+                "the staged ticket for a create, an update or a delete. Same shape as "
+                + "memberTicketNumber, and the same absence of any re-check behind it"),
+
+            new ExcludedField("formDisplayName", "the name input at 243 and Save at 295",
+                "the group name. Save reads it as an emptiness precondition, so a predicate naming "
+                + "it would disable Save the moment a name was typed and disable the box as well"),
+
+            new ExcludedField("formMailNickname", "the nickname input at 250 and Save at 295",
+                "the mail nickname, required for a create and read by Save's third clause. Same "
+                + "shape as formDisplayName, and it renders only in the editingGroup == null branch"),
+
+            new ExcludedField("formDescription", "the description textarea at 264",
+                "a form value the operator is mid-way through typing exactly when the predicate "
+                + "would be consulted. No button reads it, which is the only thing that makes it "
+                + "milder than formDisplayName - it is still a value, not an operation"),
+
+            new ExcludedField("formVisibility", "the visibility select at 269",
+                "which is Private or Public for the group being written, on the same footing as "
+                + "formDescription. A bound select is the worst control to gate on its own value: "
+                + "the change that set it would disable the control that shows it"),
+        ],
+
+        // Four, exactly the four the scanner names as narrow after this conversion (44, 145, 187,
+        // 287). One banner dismiss and three staged cancels. The form Cancel at 216 is NOT here -
+        // see this entry's remarks for why that one is gated instead.
+        ExemptControls =
+        [
+            new ExemptControl(44, "@onclick=\"() => operationResult = null\"",
+                "dismisses the result banner. Gating it on IsBusy would trap the previous "
+                + "operation's message on screen for the whole of the next search, details load or "
+                + "write, the same reason Migration's dismiss at 442, DhcpAuthorization's at 40, "
+                + "NamedLocations' at 45, MailboxPermissions' at 179, CalendarPermissions' at 178 "
+                + "and GroupManagement's at 179 are exempt. It renders only while operationResult "
+                + "!= null, so a dismiss is always executed against a banner that is really there",
+                KeepsItsOwnGuard: "disabled=\"@(isOperating || isMemberOp)\"",
+                ConditionThatKeepsItTrue:
+                "the handler stays a pure field reset. The moment anything else is wired to this "
+                + "button it is an operation and belongs behind IsBusy with the rest",
+                PrerequisiteBeforeExemptionHolds:
+                "SaveGroup, DeleteGroup and RunMemberOpAsync must keep the write result in a local "
+                + "- var result = await ...; operationResult = result; - and read that local "
+                + "afterwards. Before they did, this control could null operationResult while any "
+                + "of the three was suspended at its admin-notification await, and the following "
+                + "operationResult.Success read threw a NullReferenceException into the handler's "
+                + "own catch, which then audited and emailed a Graph write that had SUCCEEDED as a "
+                + "failure and skipped the confirming refresh. On DeleteGroup that is a group that "
+                + "really is gone reported as still present. The narrower guard above is belt and "
+                + "braces only: the browser's copy of a disabled attribute is one round trip stale, "
+                + "so the guard narrows that window and the local is what closes it. It names the "
+                + "two write flags rather than IsBusy so a banner is not trapped on screen for the "
+                + "whole of a search or a details load, which is the case the exemption exists for. "
+                + "Reinstate the field reads and this exemption is a live defect again"),
+
+            new ExemptControl(145, "@onclick=\"() => confirmRemoveMember = null\"",
+                "backs out of a staged member removal, and the operator must always be able to do "
+                + "that. Confirm beside it at 144 is gated on IsBusy, so nothing can be executed "
+                + "from this state while the page is busy; cancelling only nulls one id and makes "
+                + "no call. The pair can still be on screen during another operation because "
+                + "nothing except a successful removal clears confirmRemoveMember",
+                KeepsItsOwnGuard: "disabled=\"@isMemberOp\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads confirmRemoveMember after an await. RemoveMember's onSuccess "
+                + "callback assigns it and never reads it; the moment a handler READS it "
+                + "mid-flight, this control can null it under them and the exemption stops holding"),
+
+            new ExemptControl(187, "@onclick=\"() => confirmRemoveOwner = null\"",
+                "backs out of a staged owner removal, on exactly the footing of 145 above and with "
+                + "the same narrower guard. Confirm beside it at 186 is gated",
+                KeepsItsOwnGuard: "disabled=\"@isMemberOp\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads confirmRemoveOwner after an await, as for confirmRemoveMember"),
+
+            new ExemptControl(287, "@onclick=\"() => confirmDelete = null\"",
+                "backs out of a staged group deletion. THIS is the staged cancel the usual "
+                + "exemption is written for, and the contrast with the form Cancel at 216 is the "
+                + "point: this one resets one nullable that no handler reads after an await, while "
+                + "216 nulls the editingGroup SaveGroup steers on. Confirm Delete beside it at 286 "
+                + "is gated, so nothing can be executed from this state while the page is busy",
+                KeepsItsOwnGuard: "disabled=\"@isOperating\"",
+                ConditionThatKeepsItTrue:
+                "nothing reads confirmDelete after an await. SaveGroup and DeleteGroup both null it "
+                + "- DeleteGroup before its first await and again on success - and neither reads it "
+                + "back. The moment one does, this control can null it under them"),
+        ],
+
+        // Verified by exhaustive census rather than inherited: Get-ClickGateAudit.ps1 reports
+        // OtherClick 0, and the hand census of what it cannot see finds no anchor, no div/span/td
+        // handler, no @onchange, no @onsubmit, no InputFile and no child component taking a
+        // Disabled parameter. The nine @bind controls and the one @onkeydown input it cannot see
+        // are registered under DomSyncedControls and KeyboardPaths, on the precedent of the six
+        // pages before it: this list is keyed to what ClickGateSource can locate, which is @onclick
+        // only, so an input registered here would fail the assertion rather than protect anything.
+        NonButtonTargets = [],
+
+        // Nine gated, and none of them keeps a non-busy clause: on this page every precondition
+        // lives on the button, not on the control it reads. Each one renders server state into the
+        // DOM, so the disabled attribute is the only safe refusal - refuse in the handler and the
+        // backing field is unchanged, the render diff emits no correction, and the browser keeps a
+        // value the server never took.
+        DomSyncedControls =
+        [
+            new DomSyncedControl(58, "placeholder=\"Search by display name...\"", "input",
+                "disabled=\"@IsBusy\""),
+            new DomSyncedControl(118, "@bind=\"memberTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(123, "@bind=\"addMemberIdentity\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(165, "@bind=\"addOwnerIdentity\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(243, "@bind=\"formDisplayName\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(250, "@bind=\"formMailNickname\"", "input", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(264, "@bind=\"formDescription\"", "textarea", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(269, "@bind=\"formVisibility\"", "select", "disabled=\"@IsBusy\""),
+            new DomSyncedControl(277, "@bind=\"formTicketNumber\"", "input", "disabled=\"@IsBusy\""),
+        ],
+
+        UngatedDomSyncedControls =
+        [
+            new UngatedDomSyncedControl(258, "value=\"@editingGroup.Mail\"", "input",
+                "inert, and the same shape as NamedLocations 153. It is the read-only echo of an "
+                + "existing group's mail address, rendered only in the editingGroup != null branch: "
+                + "no @bind, no @onchange, no handler of any kind, and a static `disabled` with no "
+                + "expression at all. There is nothing here for a click to desync, and gating it on "
+                + "IsBusy would change nothing an operator can see. Its value attribute reads "
+                + "editingGroup, which is a registered PostAwaitLiveReads field - that obligation is "
+                + "what protects the value, not this control"),
+        ],
+
+        // One, and it is the refresh every write ends with.
+        ForbiddenGuardSites =
+        [
+            new ForbiddenGuardSite("SearchGroups", ["SaveGroup", "DeleteGroup"],
+                "Both write handlers call it to re-run the last search while isOperating is still "
+                + "true, so IsBusy is true at that call. A guard here makes every confirming "
+                + "refresh a silent no-op: the banner says the Graph write succeeded while the "
+                + "table still lists the group under its old name, or lists a group that has been "
+                + "deleted, and the operator concludes it failed and retries. It is also the Search "
+                + "button's own handler and the Enter path's, both of which are refused in markup "
+                + "by a disabled attribute and must not be refused twice."),
+        ],
+
+        // Empty for the same structural reason as pages 1, 2, 5 and 6: no handler here is called by
+        // another handler that could carry the refusal instead. SearchGroups is the one callee, and
+        // it is a ForbiddenGuardSite rather than a guarded one. RunMemberOpAsync is reached only by
+        // the four thunks, which raise nothing before calling it, so a guard there would be the
+        // re-entrancy shape the 2026-09-17 ruling rejects.
+        ExactlyOneGuard = [],
+
+        // Eight. Seven keep a non-busy clause; the eighth keeps none and is registered for what the
+        // scanner cannot see. No anchor carries the "|| " convention here, and that is a fact about
+        // the page rather than a lapse: not one control on it has a title attribute, so no clause is
+        // mirrored in prose and none can be satisfied by a tooltip. The assertion reads the disabled
+        // attribute value in any case.
+        //
+        // Worth saying once for all seven clause-bearing entries: nothing on this page validates a
+        // ticket against ServiceNow and no handler re-checks one, so the four ticket clauses below
+        // are the ONLY enforcement of the ticket requirement anywhere in the module - the
+        // NamedLocations 191 and IntuneDevices 403 shape, four times over.
+        AnnotatedControls =
+        [
+            new AnnotatedControl(60, "@onclick=\"SearchGroups\"",
+                ["string.IsNullOrWhiteSpace(searchTerm)"],
+                RendersOnlyWhen:
+                "always, once the authorization check has completed. The clause stops an empty "
+                + "search being submitted; HandleSearchKeyDown applies the same emptiness test to "
+                + "the Enter path on the box beside it, registered under KeyboardPaths"),
+
+            new AnnotatedControl(124, "@onclick=\"AddMember\"",
+                [
+                    "string.IsNullOrWhiteSpace(addMemberIdentity)",
+                    "string.IsNullOrWhiteSpace(memberTicketNumber)",
+                ],
+                RendersOnlyWhen:
+                "only inside the member/owner panel, so only while selectedGroup != null && members "
+                + "!= null && !showForm. Neither clause is belt and braces: RunMemberOpAsync checks "
+                + "only that a group is selected, and the service takes no ticket at all"),
+
+            new AnnotatedControl(144, "@onclick=\"() => RemoveMember(m)\"",
+                ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
+                RendersOnlyWhen:
+                "once per member row, inside the member panel, and then only while "
+                + "confirmRemoveMember == m.Id. The clause is the only thing requiring a ticket "
+                + "before a member is removed from an M365 group"),
+
+            new AnnotatedControl(166, "@onclick=\"AddOwner\"",
+                [
+                    "string.IsNullOrWhiteSpace(addOwnerIdentity)",
+                    "string.IsNullOrWhiteSpace(memberTicketNumber)",
+                ],
+                RendersOnlyWhen:
+                "as AddMember at 124, on the owners half of the same panel"),
+
+            new AnnotatedControl(186, "@onclick=\"() => RemoveOwner(o)\"",
+                ["string.IsNullOrWhiteSpace(memberTicketNumber)"],
+                RendersOnlyWhen:
+                "once per owner row, only while confirmRemoveOwner == o.Id. Same sole enforcement "
+                + "as 144, on the half where removing the last row leaves a group nobody owns"),
+
+            new AnnotatedControl(216, "@onclick=\"CancelForm\"",
+                [],
+                RendersOnlyWhen:
+                "only while showForm - it is the card header's Cancel, and it is registered with no "
+                + "clause to preserve because what needs recording is the decision, not a clause. "
+                + "This is the Cancel that inverts the usual exemption: CancelForm nulls "
+                + "editingGroup, SaveGroup steers on editingGroup across three awaits, so leaving "
+                + "this control live turned an update into a create. It is gated on IsBusy rather "
+                + "than exempt, and the editingGroup capture in PostAwaitLiveReads closes the round "
+                + "trip the gate cannot. Full reasoning on this entry's remarks; without an entry "
+                + "here, a later reader sweeping the page for exempt Cancels would find this one "
+                + "gated and helpfully 'fix' it"),
+
+            new AnnotatedControl(286, "@onclick=\"() => DeleteGroup(editingGroup)\"",
+                ["string.IsNullOrWhiteSpace(formTicketNumber)"],
+                RendersOnlyWhen:
+                "only while showForm && editingGroup != null && confirmDelete == editingGroup.Id. "
+                + "DeleteGroup does not re-check the ticket, so this clause IS the only enforcement "
+                + "of the ticket requirement on the most destructive action in the module"),
+
+            new AnnotatedControl(295, "@onclick=\"SaveGroup\"",
+                [
+                    "string.IsNullOrWhiteSpace(formDisplayName)",
+                    "string.IsNullOrWhiteSpace(formTicketNumber)",
+                    "(editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname))",
+                ],
+                RendersOnlyWhen:
+                "always, while the form is open. Three clauses that IsBusy is OR-ed in front of and "
+                + "never substituted for. The third is conditional on the branch: a mail nickname is "
+                + "required to create a group and meaningless when updating one, which is why the "
+                + "whole parenthesised clause is registered rather than its inner test"),
+        ],
+
+        SpinnerExpressions =
+        [
+            // Four, and not one of them is the predicate. Collapsing any to IsBusy shows a spinner
+            // on a control that is not the one working: the Search button would spin during a
+            // member write, the row spinner would appear on every row at once rather than on the
+            // one being loaded, and both Add buttons and Save would spin during a search.
+            "@if (isSearching)",
+            "@if (isLoadingDetails && selectedGroup?.Id == g.Id)",
+            "@if (isMemberOp)",
+            "@if (isOperating)",
+        ],
+
+        // Thirteen. Ten entry captures and three publishes, and on this page the captures matter
+        // more than the gate: the ticket defect falsification 6 names, the editingGroup read that
+        // made the Cancel at 216 a retargeting hazard, and the selectedGroup read in
+        // RunMemberOpAsync that could tear the circuit down.
+        PostAwaitLiveReads =
+        [
+            new PostAwaitLiveRead("SearchGroups", "searchTerm", "term",
+                SnapshotShape.CapturedAtEntry,
+                "the term the operator submitted must be the term searched for and the term written "
+                + "into the lookup audit row. The box binds on oninput and the browser's copy of its "
+                + "disabled attribute is one round trip stale, so a keystroke landing in the gap "
+                + "would run a search nobody asked for and label the audit row with it"),
+
+            new PostAwaitLiveRead("SaveGroup", "editingGroup", "existing",
+                SnapshotShape.CapturedAtEntry,
+                "the sharpest defect on this page and the reason the Cancel at 216 is gated rather "
+                + "than exempt. editingGroup decides Update versus Create, supplies the id the write "
+                + "targets and the id in the audit row. CancelForm nulls it, EditGroup and "
+                + "ShowCreateForm reassign it, and this handler's own success path nulls it - so a "
+                + "live read below the awaits could send a create to Graph for a click the operator "
+                + "made on Update, with the mail nickname EditGroup blanks, and audit and email it "
+                + "as M365GroupManagement_Create against a name with no group id"),
+
+            new PostAwaitLiveRead("SaveGroup", "formDisplayName", "name",
+                SnapshotShape.CapturedAtEntry,
+                "the display name the operator saw when the click was accepted is the one that must "
+                + "be written to Graph, audited and emailed; a later keystroke must not rename the "
+                + "target or desync the audit row from it"),
+
+            new PostAwaitLiveRead("SaveGroup", "formMailNickname", "nickname",
+                SnapshotShape.CapturedAtEntry,
+                "the mail nickname becomes the group's permanent email prefix and cannot be changed "
+                + "afterwards through this module, so a keystroke landing during the authorization "
+                + "round trip would create a group at an address nobody chose"),
+
+            new PostAwaitLiveRead("SaveGroup", "formDescription", "description",
+                SnapshotShape.CapturedAtEntry,
+                "the description written to Graph. Milder than the two above and captured on the "
+                + "same footing: the value the click was accepted for is the value that is written"),
+
+            new PostAwaitLiveRead("SaveGroup", "formVisibility", "visibility",
+                SnapshotShape.CapturedAtEntry,
+                "Private or Public, which is who can see and join the group. A bound select changed "
+                + "during the authorization round trip must not change the write the operator "
+                + "confirmed - and unlike a text box, a select can be moved with one keystroke"),
+
+            new PostAwaitLiveRead("SaveGroup", "formTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket recorded against the change, and the defect falsification 6 names for "
+                + "this page. EditGroup (447) and ShowCreateForm (435) both blank the field, and "
+                + "this handler read it live at four sites including two inside the catch, so the "
+                + "audit row and the admin email could record a ticket that was not the one the "
+                + "operator typed - or no ticket at all. Nothing re-validates it, so the record is "
+                + "all there is"),
+
+            new PostAwaitLiveRead("SaveGroup", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "the dismiss at 44 nulls operationResult, so reading the field after the write await "
+                + "throws a NullReferenceException into this handler's own catch, which then audits "
+                + "and emails a Graph create or update that SUCCEEDED as a failure and skips the "
+                + "confirming refresh"),
+
+            new PostAwaitLiveRead("DeleteGroup", "formTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the same obligation on the destructive handler, whose catch audits and emails the "
+                + "ticket after several awaits. group needs no entry: it is a parameter, so the row "
+                + "the operator confirmed is already captured at the click"),
+
+            new PostAwaitLiveRead("DeleteGroup", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "same path as SaveGroup on the destructive half: an M365 group that really was "
+                + "deleted reported and emailed as still present, and the table left listing it"),
+
+            new PostAwaitLiveRead("RunMemberOpAsync", "selectedGroup", "group",
+                SnapshotShape.CapturedAtEntry,
+                "not a desync but a circuit teardown, the GroupManagement LoadMembers shape. This "
+                + "handler read the field at four sites below its awaits - the admin email, the "
+                + "member reload, the owner reload and, worst, the catch. SearchGroups nulls "
+                + "selectedGroup and SelectGroup replaces it, and before this slice the Search box "
+                + "and button were gated on isSearching alone so a search could be started in the "
+                + "middle of a member write. The live read then threw a NullReferenceException into "
+                + "the catch, whose own selectedGroup.DisplayName threw again and escaped the "
+                + "handler. With no ErrorBoundary anywhere in this app the operator does not see an "
+                + "error, they lose the page. The capture is also what lets the op be handed a "
+                + "group rather than closing over the field"),
+
+            new PostAwaitLiveRead("RunMemberOpAsync", "memberTicketNumber", "ticket",
+                SnapshotShape.CapturedAtEntry,
+                "the ticket for every add and remove of a member or an owner. It was captured one "
+                + "line BELOW the yield, which is the shape that looks correct and is not: the "
+                + "capture has to sit above the first await or it is a snapshot of whatever the box "
+                + "held after the operator had a round trip to keep typing into it"),
+
+            new PostAwaitLiveRead("RunMemberOpAsync", "operationResult", "result",
+                SnapshotShape.PublishedFromLocal,
+                "the third of the three publishes the dismiss at 44 depends on. This one also "
+                + "carries the serviced-override note into the audit row through "
+                + "ProtectedPrincipalServicing.Extra, so a dismiss nulling the field mid-flight "
+                + "would lose the record of who permitted a protected-principal write as well as "
+                + "reporting a successful membership change as failed"),
+        ],
+
+        // One, and it is the ordering the conversion had to preserve rather than create.
+        RaiseMustFollowEarlyReturn =
+        [
+            new RaiseAfterEarlyReturn("RunMemberOpAsync", "isMemberOp", "group == null",
+                "the early return leaves no finally behind it, so a raise above the guard is never "
+                + "lowered. isMemberOp is a member of the page-wide predicate, so it would not grey "
+                + "the Add button - it would deaden every control on the page, permanently, the "
+                + "first time a member operation was dispatched with no group selected. The guard "
+                + "read 'selectedGroup == null' before this slice and now reads the captured local, "
+                + "which is what puts the capture above it; the raise stayed where it was."),
+        ],
+
+        // The page's one keyboard handler, and it is worth being precise about what it was.
+        // Unlike Migration and GroupManagement, this box was NOT the asymmetric 2eb8c15 shape: it
+        // already carried disabled="@isSearching" and the Search button beside it carried the same
+        // flag, so the two agreed. What they agreed on was too narrow - during a member write, a
+        // details load or a save, BOTH were live and Enter reached SearchGroups exactly as the
+        // button did, which is the defect PostAwaitLiveReads describes for RunMemberOpAsync. The
+        // lesson from page 5 applies in the other direction here: widening the button to IsBusy
+        // without widening the box would have MANUFACTURED the asymmetry, so both widen together.
+        // The disabled attribute rather than a handler guard, on the Migration precedent: a
+        // disabled input fires no key events, so one attribute closes the key path and the typing
+        // path together.
+        KeyboardPaths =
+        [
+            new KeyboardPath(58, "placeholder=\"Search by display name...\"", "input",
+                "keydown", "HandleSearchKeyDown", "SearchGroups",
+                KeyboardRefusal.DisabledAttribute, "disabled=\"@IsBusy\"",
+                "Enter runs the group search the Search button at 60 refuses while the page is "
+                + "busy. SearchGroups is not a read-only refresh: it nulls selectedGroup, members, "
+                + "owners and showForm, so started from the keyboard during a member write it "
+                + "throws away the selection that write is acting on - and RunMemberOpAsync used to "
+                + "dereference the field it nulls, which is how this page's circuit-teardown path "
+                + "was reachable from the keyboard as well as the mouse",
+                GatedTwinButtonLine: 60),
         ],
 
         HarmlessKeyboardPaths = [],

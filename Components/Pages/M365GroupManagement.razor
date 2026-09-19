@@ -41,7 +41,7 @@
     {
         <div class="alert @(operationResult.Success ? "alert-success" : "alert-danger") alert-dismissible">
             @operationResult.Message
-            <button type="button" class="btn-close" @onclick="() => operationResult = null"></button>
+            <button type="button" class="btn-close" @onclick="() => operationResult = null" disabled="@(isOperating || isMemberOp)"></button>
         </div>
     }
 
@@ -50,14 +50,14 @@
             <div class="card mb-3">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <strong>M365 Groups</strong>
-                    <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isSearching">New Group</button>
+                    <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@IsBusy">New Group</button>
                 </div>
                 <div class="card-body p-0">
                     <div class="p-3 pb-0">
                         <div class="input-group">
                             <input type="text" class="form-control" placeholder="Search by display name..." @bind="searchTerm"
-                                   @bind:event="oninput" @onkeydown="HandleSearchKeyDown" disabled="@isSearching" />
-                            <button class="btn btn-outline-primary" @onclick="SearchGroups" disabled="@(isSearching || string.IsNullOrWhiteSpace(searchTerm))">
+                                   @bind:event="oninput" @onkeydown="HandleSearchKeyDown" disabled="@IsBusy" />
+                            <button class="btn btn-outline-primary" @onclick="SearchGroups" disabled="@(IsBusy || string.IsNullOrWhiteSpace(searchTerm))">
                                 @if (isSearching) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 Search
                             </button>
@@ -94,7 +94,7 @@
                                             <td>@(string.IsNullOrEmpty(g.Visibility) ? "Private" : g.Visibility)</td>
                                             <td><small class="text-muted">@FormatDate(g.CreatedDateTime)</small></td>
                                             <td>
-                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => SelectGroup(g)" disabled="@isOperating">
+                                                <button class="btn btn-outline-secondary btn-sm" @onclick="() => SelectGroup(g)" disabled="@IsBusy">
                                                     @if (isLoadingDetails && selectedGroup?.Id == g.Id) { <span class="spinner-border spinner-border-sm"></span> }
                                                     else { <span>View</span> }
                                                 </button>
@@ -115,14 +115,14 @@
                         <div class="border-top p-3">
                             <div class="mb-3">
                                 <label class="form-label fw-semibold mb-1"><small>Ticket Number (required for member/owner changes)</small></label>
-                                <input type="text" class="form-control form-control-sm" @bind="memberTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isMemberOp" />
+                                <input type="text" class="form-control form-control-sm" @bind="memberTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                             </div>
 
                             <h6>Members (@members.Count)</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@isMemberOp" />
+                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addMemberIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddMember"
-                                        disabled="@(isMemberOp || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addMemberIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                     Add
                                 </button>
@@ -141,12 +141,12 @@
                                                     <td>
                                                         @if (confirmRemoveMember == m.Id)
                                                         {
-                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveMember(m)" disabled="@(isMemberOp || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveMember(m)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
                                                             <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveMember = null" disabled="@isMemberOp">×</button>
                                                         }
                                                         else
                                                         {
-                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveMember = m.Id" disabled="@isMemberOp">Remove</button>
+                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveMember = m.Id" disabled="@IsBusy">Remove</button>
                                                         }
                                                     </td>
                                                 </tr>
@@ -162,9 +162,9 @@
 
                             <h6 class="mt-3">Owners (@(owners?.Count ?? 0))</h6>
                             <div class="input-group input-group-sm mb-2">
-                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@isMemberOp" />
+                                <input type="text" class="form-control" placeholder="UPN or email to add..." @bind="addOwnerIdentity" @bind:event="oninput" disabled="@IsBusy" />
                                 <button class="btn btn-outline-primary" @onclick="AddOwner"
-                                        disabled="@(isMemberOp || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
+                                        disabled="@(IsBusy || string.IsNullOrWhiteSpace(addOwnerIdentity) || string.IsNullOrWhiteSpace(memberTicketNumber))">
                                     @if (isMemberOp) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                     Add
                                 </button>
@@ -183,12 +183,12 @@
                                                     <td>
                                                         @if (confirmRemoveOwner == o.Id)
                                                         {
-                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveOwner(o)" disabled="@(isMemberOp || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
+                                                            <button class="btn btn-danger btn-sm me-1" @onclick="() => RemoveOwner(o)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(memberTicketNumber))">Confirm</button>
                                                             <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmRemoveOwner = null" disabled="@isMemberOp">×</button>
                                                         }
                                                         else
                                                         {
-                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveOwner = o.Id" disabled="@isMemberOp">Remove</button>
+                                                            <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmRemoveOwner = o.Id" disabled="@IsBusy">Remove</button>
                                                         }
                                                     </td>
                                                 </tr>
@@ -213,7 +213,7 @@
                     <strong>@(showForm ? (editingGroup != null ? "Edit Group" : "New Group") : "Group Details")</strong>
                     @if (showForm)
                     {
-                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm">Cancel</button>
+                        <button class="btn btn-outline-secondary btn-sm" @onclick="CancelForm" disabled="@IsBusy">Cancel</button>
                     }
                 </div>
                 <div class="card-body">
@@ -228,26 +228,26 @@
                                 <dt>Description</dt><dd>@(string.IsNullOrEmpty(selectedGroup.Description) ? "(none)" : selectedGroup.Description)</dd>
                                 <dt>Created</dt><dd>@FormatDate(selectedGroup.CreatedDateTime)</dd>
                             </dl>
-                            <button class="btn btn-primary btn-sm" @onclick="() => EditGroup(selectedGroup)" disabled="@isOperating">Edit</button>
+                            <button class="btn btn-primary btn-sm" @onclick="() => EditGroup(selectedGroup)" disabled="@IsBusy">Edit</button>
                         }
                         else
                         {
                             <p class="text-muted mb-3">Search and select a group to view its details, or create a new one.</p>
-                            <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@isSearching">New Group</button>
+                            <button class="btn btn-primary btn-sm" @onclick="ShowCreateForm" disabled="@IsBusy">New Group</button>
                         }
                     }
                     else
                     {
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Display Name</label>
-                            <input type="text" class="form-control" @bind="formDisplayName" disabled="@isOperating" />
+                            <input type="text" class="form-control" @bind="formDisplayName" disabled="@IsBusy" />
                         </div>
 
                         @if (editingGroup == null)
                         {
                             <div class="mb-3">
                                 <label class="form-label fw-semibold">Mail Nickname</label>
-                                <input type="text" class="form-control" @bind="formMailNickname" placeholder="no spaces or special chars" disabled="@isOperating" />
+                                <input type="text" class="form-control" @bind="formMailNickname" placeholder="no spaces or special chars" disabled="@IsBusy" />
                                 <small class="text-muted">Used for the group email address prefix.</small>
                             </div>
                         }
@@ -261,12 +261,12 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Description</label>
-                            <textarea class="form-control" rows="3" @bind="formDescription" disabled="@isOperating"></textarea>
+                            <textarea class="form-control" rows="3" @bind="formDescription" disabled="@IsBusy"></textarea>
                         </div>
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Visibility</label>
-                            <select class="form-select" @bind="formVisibility" disabled="@isOperating">
+                            <select class="form-select" @bind="formVisibility" disabled="@IsBusy">
                                 <option value="Private">Private</option>
                                 <option value="Public">Public</option>
                             </select>
@@ -274,7 +274,7 @@
 
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Ticket Number</label>
-                            <input type="text" class="form-control" @bind="formTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@isOperating" />
+                            <input type="text" class="form-control" @bind="formTicketNumber" @bind:event="oninput" placeholder="INC/REQ number" disabled="@IsBusy" />
                         </div>
 
                         <div class="d-flex justify-content-between align-items-center">
@@ -283,17 +283,17 @@
                                 {
                                     @if (confirmDelete == editingGroup.Id)
                                     {
-                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteGroup(editingGroup)" disabled="@(isOperating || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
+                                        <button class="btn btn-danger btn-sm me-1" @onclick="() => DeleteGroup(editingGroup)" disabled="@(IsBusy || string.IsNullOrWhiteSpace(formTicketNumber))">Confirm Delete</button>
                                         <button class="btn btn-outline-secondary btn-sm" @onclick="() => confirmDelete = null" disabled="@isOperating">Cancel</button>
                                     }
                                     else
                                     {
-                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = editingGroup.Id" disabled="@isOperating">Delete</button>
+                                        <button class="btn btn-outline-danger btn-sm" @onclick="() => confirmDelete = editingGroup.Id" disabled="@IsBusy">Delete</button>
                                     }
                                 }
                             </div>
                             <button class="btn btn-primary" @onclick="SaveGroup"
-                                    disabled="@(isOperating || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber) || (editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname)))">
+                                    disabled="@(IsBusy || string.IsNullOrWhiteSpace(formDisplayName) || string.IsNullOrWhiteSpace(formTicketNumber) || (editingGroup == null && string.IsNullOrWhiteSpace(formMailNickname)))">
                                 @if (isOperating) { <span class="spinner-border spinner-border-sm me-1"></span> }
                                 @(editingGroup != null ? "Update" : "Create")
                             </button>
@@ -313,6 +313,15 @@
     private bool isLoadingDetails;
     private bool isOperating;
     private string? searchError;
+
+    // One page-wide predicate over all four in-flight flags. isLoadingDetails is the one that
+    // was wired to nothing: before this slice its only appearance in markup was the row spinner
+    // at 98, so SelectGroup could await three Graph calls with every View button still live. A
+    // second View started in that window races the first, and because each invocation assigns
+    // selectedGroup at entry and members and owners after its awaits, the header can end up
+    // describing one group while the member and owner tables below it list another - and the
+    // Add and Remove buttons act on the header group.
+    private bool IsBusy => isSearching || isLoadingDetails || isOperating || isMemberOp;
 
     private string searchTerm = "";
     private bool hasSearched;
@@ -366,6 +375,11 @@
 
     private async Task SearchGroups()
     {
+        // The box binds on oninput and the browser's copy of its disabled attribute is one round
+        // trip stale, so the term that is searched for and the term written into the lookup audit
+        // row must both be the one that was on screen when the click - or the Enter - was taken.
+        var term = searchTerm.Trim();
+
         isSearching = true;
         searchError = null;
         selectedGroup = null;
@@ -376,10 +390,10 @@
 
         try
         {
-            groups = await GroupService.SearchGroupsAsync(searchTerm.Trim());
+            groups = await GroupService.SearchGroupsAsync(term);
             hasSearched = true;
 
-            try { Audit.LogLookupAction(currentUser, clientIpAddress, "M365GroupManagement_Search", searchTerm.Trim(), true); }
+            try { Audit.LogLookupAction(currentUser, clientIpAddress, "M365GroupManagement_Search", term, true); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group search"); }
         }
         catch (Exception ex)
@@ -387,7 +401,7 @@
             searchError = ex.Message;
             Logger.LogError(ex, "Failed to search M365 groups");
 
-            try { Audit.LogLookupAction(currentUser, clientIpAddress, "M365GroupManagement_Search", searchTerm.Trim(), false, ex.Message); }
+            try { Audit.LogLookupAction(currentUser, clientIpAddress, "M365GroupManagement_Search", term, false, ex.Message); }
             catch { }
         }
         finally
@@ -458,6 +472,23 @@
 
     private async Task SaveGroup()
     {
+        // Every one of these was read live below the awaits, and editingGroup is the sharp one:
+        // it decides Update versus Create, supplies the id the write targets and the id in the
+        // audit row. The Cancel at 216 nulls it - which is why that control is gated rather than
+        // exempt - but the gate is one round trip stale, so only the capture closes the window in
+        // which a Cancel turns an update into a create against the blank mail nickname EditGroup
+        // leaves behind, and audits the click as a create. Holding them here also puts them in
+        // scope in the catch, which is where the failure audit and the admin email read them.
+        var existing = editingGroup;
+        var name = formDisplayName.Trim();
+        var nickname = formMailNickname.Trim();
+        var description = formDescription.Trim();
+        var visibility = formVisibility;
+        var ticket = formTicketNumber.Trim();
+
+        var action = existing != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
+        var target = existing != null ? $"{name} ({existing.Id})" : name;
+
         isOperating = true;
         operationResult = null;
         await Task.Yield();
@@ -469,34 +500,26 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new M365GroupResult { Success = false, Message = "Authorization denied." };
-                var deniedAction = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
-                var deniedTarget = editingGroup != null ? $"{formDisplayName.Trim()} ({editingGroup.Id})" : formDisplayName.Trim();
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, deniedAction, "M365GroupManagement", deniedTarget, false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", deniedAction); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action} auth denial", action); }
                 return;
             }
 
-            var action = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
-            var target = formDisplayName.Trim();
+            // Held in a local and only then published: the banner dismiss at 44 stays clickable
+            // during an operation, so reading operationResult back after this await would let a
+            // dismiss turn a Graph write that SUCCEEDED into a NullReferenceException audited and
+            // emailed as a failure.
+            var result = await (existing != null
+                ? GroupService.UpdateGroupAsync(existing.Id, name, description, visibility)
+                : GroupService.CreateGroupAsync(name, nickname, description, visibility));
+            operationResult = result;
 
-            if (editingGroup != null)
-            {
-                operationResult = await GroupService.UpdateGroupAsync(editingGroup.Id, target, formDescription.Trim(), formVisibility);
-                target = $"{target} ({editingGroup.Id})";
-            }
-            else
-            {
-                operationResult = await GroupService.CreateGroupAsync(target, formMailNickname.Trim(), formDescription.Trim(), formVisibility);
-            }
-
-            var ticket = formTicketNumber.Trim();
-
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, result.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, result.Success ? null : result.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
 
-            if (operationResult.Success)
+            if (result.Success)
             {
                 showForm = false;
                 editingGroup = null;
@@ -509,10 +532,8 @@
         {
             operationResult = new M365GroupResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to save M365 group");
-            var failAction = editingGroup != null ? "M365GroupManagement_Update" : "M365GroupManagement_Create";
-            var failTarget = editingGroup != null ? $"{formDisplayName.Trim()} ({editingGroup.Id})" : formDisplayName.Trim();
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, failAction, "M365GroupManagement", failTarget, false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", failAction); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, failAction, false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = failTarget }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", failAction); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, false, ticket, new Dictionary<string, string> { ["Group"] = target }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", action); }
         }
         finally
         {
@@ -522,6 +543,13 @@
 
     private async Task DeleteGroup(M365Group group)
     {
+        // group is a parameter, so the row the operator confirmed is already captured. The ticket
+        // is not: the box binds on oninput, the disabled attribute reaches the browser one round
+        // trip late, and this handler audits and emails the ticket from the catch as well as the
+        // success path. It used to read the field at all three sites.
+        var ticket = formTicketNumber.Trim();
+        var target = $"{group.DisplayName} ({group.Id})";
+
         isOperating = true;
         operationResult = null;
         confirmDelete = null;
@@ -534,21 +562,23 @@
             if (!authCheck.Succeeded)
             {
                 operationResult = new M365GroupResult { Success = false, Message = "Authorization denied." };
-                try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365GroupManagement_Delete auth denial"); }
+                try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, false, ticket, "Authorization denied"); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365GroupManagement_Delete auth denial"); }
                 return;
             }
 
-            var target = $"{group.DisplayName} ({group.Id})";
-            var ticket = formTicketNumber.Trim();
-            operationResult = await GroupService.DeleteGroupAsync(group.Id, group.DisplayName);
+            // Published from a local for the same reason as SaveGroup, on the destructive half: a
+            // dismiss at 44 landing during the delete would otherwise report a group that really
+            // is gone as still there, and skip the confirming refresh.
+            var result = await GroupService.DeleteGroupAsync(group.Id, group.DisplayName);
+            operationResult = result;
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, result.Success, ticket, result.Success ? null : result.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", result.Success, ticket, new Dictionary<string, string> { ["Group"] = target }, result.Success ? null : result.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for M365 group delete"); }
 
-            if (operationResult.Success)
+            if (result.Success)
             {
                 showForm = false;
                 editingGroup = null;
@@ -564,8 +594,8 @@
         {
             operationResult = new M365GroupResult { Success = false, Message = ex.Message };
             Logger.LogError(ex, "Failed to delete M365 group {Id}", group.Id);
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", $"{group.DisplayName} ({group.Id})", false, formTicketNumber.Trim(), ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", false, formTicketNumber.Trim(), new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})" }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for M365 group delete"); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, "M365GroupManagement_Delete", "M365GroupManagement", target, false, ticket, ex.Message); } catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for M365 group delete"); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, "M365GroupManagement_Delete", false, ticket, new Dictionary<string, string> { ["Group"] = target }, ex.Message); } catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for M365 group delete"); }
         }
         finally
         {
@@ -576,43 +606,57 @@
     // The op takes the acting principal rather than closing over one: these closures are built
     // before the pipeline re-authenticates, so the only principal they could capture is a stale
     // or absent one. The pipeline hands them the freshly authorised user.
-    private Task AddMember() =>
-        RunMemberOpAsync("M365GroupManagement_AddMember", addMemberIdentity.Trim(),
-            user => GroupService.AddMemberAsync(selectedGroup!.Id, addMemberIdentity.Trim(), user),
+    private Task AddMember()
+    {
+        var identity = addMemberIdentity.Trim();
+        return RunMemberOpAsync("M365GroupManagement_AddMember", identity,
+            (group, user) => GroupService.AddMemberAsync(group.Id, identity, user),
             () => addMemberIdentity = "");
+    }
 
-    private Task AddOwner() =>
-        RunMemberOpAsync("M365GroupManagement_AddOwner", addOwnerIdentity.Trim(),
-            user => GroupService.AddOwnerAsync(selectedGroup!.Id, addOwnerIdentity.Trim(), user),
+    private Task AddOwner()
+    {
+        var identity = addOwnerIdentity.Trim();
+        return RunMemberOpAsync("M365GroupManagement_AddOwner", identity,
+            (group, user) => GroupService.AddOwnerAsync(group.Id, identity, user),
             () => addOwnerIdentity = "");
+    }
 
     private Task RemoveMember(M365GroupMember m) =>
         RunMemberOpAsync("M365GroupManagement_RemoveMember",
             string.IsNullOrEmpty(m.Mail) ? m.UserPrincipalName : m.Mail,
-            user => GroupService.RemoveMemberAsync(selectedGroup!.Id, m.Id,
+            (group, user) => GroupService.RemoveMemberAsync(group.Id, m.Id,
                 string.IsNullOrEmpty(m.UserPrincipalName) ? m.Mail : m.UserPrincipalName, user),
             () => confirmRemoveMember = null);
 
     private Task RemoveOwner(M365GroupMember o) =>
         RunMemberOpAsync("M365GroupManagement_RemoveOwner",
             string.IsNullOrEmpty(o.Mail) ? o.UserPrincipalName : o.Mail,
-            user => GroupService.RemoveOwnerAsync(selectedGroup!.Id, o.Id,
+            (group, user) => GroupService.RemoveOwnerAsync(group.Id, o.Id,
                 string.IsNullOrEmpty(o.UserPrincipalName) ? o.Mail : o.UserPrincipalName, user),
             () => confirmRemoveOwner = null);
 
     // Shared member/owner mutation pipeline: server re-auth, invoke the service write,
     // audit + admin notification (no affected-user notification — owner decision
     // 2026-06-29, docs/M365MemberOwnerManagement-Plan.md), reload on success.
-    private async Task RunMemberOpAsync(string action, string targetLabel, Func<System.Security.Claims.ClaimsPrincipal, Task<M365GroupResult>> op, Action onSuccess)
+    private async Task RunMemberOpAsync(string action, string targetLabel, Func<M365Group, System.Security.Claims.ClaimsPrincipal, Task<M365GroupResult>> op, Action onSuccess)
     {
-        if (selectedGroup == null) return;
+        // Captured above the guard and the raise. selectedGroup is replaced by View and nulled by
+        // Search, and this handler read it after three awaits - at the Graph write, at the admin
+        // email, at the reload and, worst, inside the catch, where a NullReferenceException on
+        // selectedGroup.DisplayName escapes the handler. There is no ErrorBoundary in this app, so
+        // that does not show the operator an error, it takes the page away from them.
+        var group = selectedGroup;
+        if (group == null) return;
+
+        // Below the early return by construction: isMemberOp is a member of IsBusy, and a raise
+        // above a guard that has no finally behind it would deaden the whole page permanently.
+        var ticket = memberTicketNumber.Trim();
+        var target = $"{targetLabel} → {group.DisplayName} ({group.Id})";
 
         isMemberOp = true;
         operationResult = null;
         await Task.Yield();
-
-        var ticket = memberTicketNumber.Trim();
-        var target = $"{targetLabel} → {selectedGroup.DisplayName} ({selectedGroup.Id})";
 
         try
         {
@@ -626,23 +670,24 @@
                 return;
             }
 
-            operationResult = await op(authState.User);
+            var result = await op(group, authState.User);
+            operationResult = result;
 
             // A serviced override succeeded, so it cannot ride errorDetail - that field is
             // written as null on success and the record of who permitted it would vanish.
-            var extra = ProtectedPrincipalServicing.Extra(operationResult.ServicedNote);
+            var extra = ProtectedPrincipalServicing.Extra(result.ServicedNote);
 
-            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, operationResult.Success, ticket, operationResult.Success ? null : operationResult.Message, extra); }
+            try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, result.Success, ticket, result.Success ? null : result.Message, extra); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
 
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, operationResult.Success, ticket, new Dictionary<string, string> { ["Group"] = $"{selectedGroup.DisplayName} ({selectedGroup.Id})", ["Target"] = targetLabel }, operationResult.Success ? null : operationResult.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, result.Success, ticket, new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})", ["Target"] = targetLabel }, result.Success ? null : result.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email notification failed for {Action}", action); }
 
-            if (operationResult.Success)
+            if (result.Success)
             {
                 onSuccess();
-                members = await GroupService.GetMembersAsync(selectedGroup.Id);
-                owners = await GroupService.GetOwnersAsync(selectedGroup.Id);
+                members = await GroupService.GetMembersAsync(group.Id);
+                owners = await GroupService.GetOwnersAsync(group.Id);
             }
         }
         catch (Exception ex)
@@ -651,7 +696,7 @@
             Logger.LogError(ex, "Failed {Action} for {Target}", action, target);
             try { Audit.LogModuleAction(currentUser, clientIpAddress, action, "M365GroupManagement", target, false, ticket, ex.Message); }
             catch (Exception auditEx) { Logger.LogError(auditEx, "Audit failed for {Action}", action); }
-            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, false, ticket, new Dictionary<string, string> { ["Group"] = $"{selectedGroup.DisplayName} ({selectedGroup.Id})", ["Target"] = targetLabel }, ex.Message); }
+            try { await Email.SendAdminNotificationAsync(currentUser, clientIpAddress, action, false, ticket, new Dictionary<string, string> { ["Group"] = $"{group.DisplayName} ({group.Id})", ["Target"] = targetLabel }, ex.Message); }
             catch (Exception emailEx) { Logger.LogError(emailEx, "Email failed for {Action}", action); }
         }
         finally

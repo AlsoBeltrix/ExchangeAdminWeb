@@ -408,7 +408,7 @@ public sealed class ModuleCatalog
             Category = ModuleCategories.DirectoryAndGroups,
             EnabledByDefault = false,
             IsSystemModule = false,
-            Version = "1.3.0",
+            Version = "1.4.0",
             MainPermission = new(
                 "Access",
                 "M365GroupManagement",
