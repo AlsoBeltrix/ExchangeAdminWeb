@@ -389,7 +389,7 @@
                         <div class="input-group input-group-sm" style="width: 280px;">
                             <input type="text" class="form-control" placeholder="Search batch or user email..."
                                    @bind="searchQuery" @bind:event="oninput"
-                                   @onkeydown="HandleSearchKeyDown" />
+                                   @onkeydown="HandleSearchKeyDown" disabled="@IsBusy" />
                             @if (!string.IsNullOrWhiteSpace(searchQuery))
                             {
                                 <button class="btn btn-outline-secondary" type="button" @onclick="ClearSearch" title="Clear"
@@ -820,7 +820,7 @@
         <div class="input-group input-group-sm" style="width: 220px;">
             <input type="text" class="form-control" placeholder="Ticket # (required)"
                    @bind="pendingActionTicket" @bind:event="oninput"
-                   @onkeydown="HandleConfirmKeyDown" />
+                   @onkeydown="HandleConfirmKeyDown" disabled="@IsBusy" />
         </div>
         <button class="btn btn-sm btn-primary" @onclick="ConfirmPendingAction"
                 disabled="@(IsBusy || string.IsNullOrWhiteSpace(pendingActionTicket))">

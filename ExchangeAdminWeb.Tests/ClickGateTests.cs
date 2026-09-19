@@ -590,8 +590,11 @@ public class ClickGateTests
         // attribute while carrying an unrelated disabled= would fail spuriously. That direction of
         // error is the safe one: it says "re-check this by hand", which is what a reviewer should
         // do. What this cannot do is judge a reason; a plausible sentence attached to a real gap
-        // passes, and that is why the reasons on Migration 390 and 821 say in as many words that
-        // they are recorded rather than granted.
+        // passes. Migration 390 and 821 used to be the worked example here - their reasons said in
+        // as many words that they were recorded rather than granted - and both have since been
+        // gated, so the example is gone and this limitation now rests on nothing but its own
+        // argument. That is worth saying rather than quietly deleting: a recorded-ungated entry is
+        // a promise to come back, and the only thing enforcing it is a reader.
         var entry = Entry(page);
         var source = ClickGateSource.Load(page);
         var found = DomSyncedTags(source);

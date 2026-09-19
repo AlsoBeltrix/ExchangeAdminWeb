@@ -211,7 +211,10 @@ public sealed class ModuleCatalog
             // circuit (docs/MigrationButtonGating-Plan.md, prerequisite to the button gate).
             // 1.9.0: every control on the page is gated on one in-flight predicate, so a click is
             // never accepted unless it will definitively execute (docs/MigrationButtonGating-Plan.md).
-            Version = "1.9.0",
+            // 1.9.1: the search box and the staged-ticket box carry that predicate too, so Enter can
+            // no longer reach a search or a destructive confirmation that the button beside it is
+            // refusing (docs/ClickGatingAudit-Plan.md; a disabled input fires no keydown).
+            Version = "1.9.1",
             DependsOn = "ExchangeOnline",
             MainPermission = new(
                 "Access",

@@ -99,8 +99,9 @@ public static class ClickGateRegistry
     /// page as the pattern for the new field. Twelve of its sixteen DOM-synced controls are gated on
     /// a single flag - disabled="@isLoading" or disabled="@isCreating" - not on IsBusy, because this
     /// page was converted under docs/MigrationButtonGating-Plan.md before the page-wide ruling that
-    /// the tier-1 pages are being converted under. Its buttons DO name IsBusy; its form controls do
-    /// not. <see cref="ClickGateTests.EveryDomSyncedControlStillCarriesItsRegisteredGate"/> therefore
+    /// the tier-1 pages are being converted under. Its buttons DO name IsBusy, as do the two
+    /// Enter-key inputs gated at 390 and 821; those twelve form controls do not.
+    /// <see cref="ClickGateTests.EveryDomSyncedControlStillCarriesItsRegisteredGate"/> therefore
     /// requires the registered expression to name a busy signal this page registers - a predicate
     /// OR one of its flags - rather than the page predicate itself. Requiring the predicate would
     /// fail this page, and the fix for that is a decision about Migration.razor, not a test.
@@ -175,9 +176,11 @@ public static class ClickGateRegistry
         ],
 
         // Sixteen DOM-synced controls, censused against the file when DomSyncedControls was added.
-        // Twelve are gated and four are not; see the remarks on this entry for what that means and
-        // what it does not mean. The gates here name ONE flag rather than IsBusy, which is this
-        // page's own pre-ruling shape and is registered as found rather than as approved.
+        // Fourteen are gated and two are not; see the remarks on this entry for what that means and
+        // what it does not mean. The twelve form-control gates here name ONE flag rather than
+        // IsBusy, which is this page's own pre-ruling shape and is registered as found rather than
+        // as approved. The two Enter-key inputs at 390 and 821 are the exception: they name IsBusy,
+        // because they were gated later to close the keydown paths recorded below.
         DomSyncedControls =
         [
             new DomSyncedControl(50, "@bind=\"singleEmail\"", "input", "disabled=\"@isLoading\""),
@@ -194,20 +197,30 @@ public static class ClickGateRegistry
             new DomSyncedControl(324, "@bind=\"bulkBatchName\"", "input", "disabled=\"@isCreating\""),
             new DomSyncedControl(330, "@bind=\"bulkAutoStart\"", "input", "disabled=\"@isCreating\""),
             new DomSyncedControl(334, "@bind=\"bulkAutoComplete\"", "input", "disabled=\"@isCreating\""),
+
+            // Gated 2026-09-18, closing the two Enter-key holes this entry had recorded as found
+            // rather than granted. Each input carries an @onkeydown whose handler reaches the very
+            // operation the button beside it refuses - HandleSearchKeyDown (1742) calls SearchUser
+            // with no busy guard while Find at 400 is gated, and HandleConfirmKeyDown (1429) calls
+            // ConfirmPendingAction with no busy guard while Confirm at 825 is gated. A disabled
+            // input fires no keydown, so the attribute closes the handler path as well as the
+            // typing path; a handler guard would not, and on a control that renders server state it
+            // would leave the browser holding a change the server refused (docs/ClickGatingAudit-
+            // Plan.md Revision 1, falsification 2). Neither input had a gate to widen or OR - both
+            // were bare - so both take the page predicate whole.
+            //
+            // IsBusy and not IsBusy || pendingActionLabel != null for 821: pendingActionLabel is a
+            // registered ExcludedField, and folding it in would disable the ticket box at the only
+            // moment it is ever rendered. The gate matches Confirm at 825 exactly, less that
+            // button's own emptiness clause, which a field cannot apply to itself.
+            new DomSyncedControl(390, "placeholder=\"Search batch or user email...\"", "input",
+                "disabled=\"@IsBusy\""),
+            new DomSyncedControl(821, "placeholder=\"Ticket # (required)\"", "input",
+                "disabled=\"@IsBusy\""),
         ],
 
         UngatedDomSyncedControls =
         [
-            new UngatedDomSyncedControl(390, "placeholder=\"Search batch or user email...\"", "input",
-                "NOT adjudicated - recorded, not granted. The field itself is a client-side filter "
-                + "over already-loaded batches, and both buttons beside it are gated (ClearSearch at "
-                + "395 and SearchUser at 400 on IsBusy). But it also carries "
-                + "@onkeydown=\"HandleSearchKeyDown\", and that handler (1742) calls SearchUser with "
-                + "no busy guard, so Enter reaches the operation the button refuses. A disabled "
-                + "input fires no keydown, so the gate this control lacks is also what would close "
-                + "that path. Closing it means editing Migration.razor, which is outside the slice "
-                + "that added this field"),
-
             new UngatedDomSyncedControl(521, "title=\"Select all loaded batches\"", "input",
                 "left live on purpose, and the purpose is written into the page. The selection "
                 + "toolbar comment at 455-459 records owner ruling D2(a): the bulk-action buttons "
@@ -221,18 +234,6 @@ public static class ClickGateRegistry
                 "the per-row half of the same selection, on the same owner ruling and the same "
                 + "re-plan at 1346. ToggleBatchSelected (1281) writes only to selectedBatches and "
                 + "nulls the result banner; it makes no call and awaits nothing"),
-
-            new UngatedDomSyncedControl(821, "placeholder=\"Ticket # (required)\"", "input",
-                "NOT adjudicated - recorded, not granted. pendingActionTicket is a registered "
-                + "ExcludedField (staged form state, not an operation) and Confirm beside it at 825 "
-                + "is gated on IsBusy, so the field must stay typeable while a confirmation is "
-                + "staged. What is not settled is the @onkeydown=\"HandleConfirmKeyDown\" beside the "
-                + "binding: that handler (1429) calls ConfirmPendingAction with no busy guard, so "
-                + "Enter reaches the destructive action while the button refuses it. "
-                + "ConfirmPendingAction is single-flight by accident rather than by gate - it nulls "
-                + "pendingActionCallback via CancelPendingAction before its await (1447-1450), so a "
-                + "second Enter returns - but that is re-entrancy protection, not a busy gate, and "
-                + "it does not stop the action starting during an unrelated refresh"),
         ],
 
         ForbiddenGuardSites =
